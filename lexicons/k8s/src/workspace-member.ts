@@ -246,17 +246,4 @@ export async function readK8sMember(opts: {
   };
 }
 
-let lastReport: K8sMemberReport | undefined;
-
-/**
- * The report of the read in this process. `graphMeta` receives only the
- * entities, so the hook that read the member leaves its report here for the
- * hook that publishes it; `chant graph` runs the two in order in one process.
- */
-export function setLastMemberReport(report: K8sMemberReport | undefined): void {
-  lastReport = report;
-}
-
-export function lastMemberReport(): K8sMemberReport | undefined {
-  return lastReport;
-}
+export { lastMemberReport, setLastMemberReport } from "./member-report";

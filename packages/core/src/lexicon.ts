@@ -2111,9 +2111,11 @@ export interface LexiconPlugin {
    * folded source, as it calls `workspaceOutputs`, and checks each link like
    * one a kind's reader found (WSP093 to WSP095, WSP099 for `gaps`), naming
    * the file and line of the declaring entity. Pure: no I/O. Return
-   * `undefined` when the project declares nothing that links.
+   * `undefined` when the project declares nothing that links. It may return
+   * a promise, so a lexicon can load the code that reads its links only when
+   * a workspace asks for them (#5219).
    */
-  workspaceLinks?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceLinks | undefined;
+  workspaceLinks?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceLinks | undefined | Promise<LexiconWorkspaceLinks | undefined>;
 
   // LSP
   /** Provide completions for LSP */

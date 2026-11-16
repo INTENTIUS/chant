@@ -39,7 +39,7 @@ import { canDescribe, describeOwnProperties, stampRegion } from "./properties";
 import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
-import { lastMemberReport, readCloudFormationMember, setLastMemberReport } from "./workspace-member";
+import { lastMemberReport, setLastMemberReport } from "./member-report";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
@@ -76,6 +76,7 @@ export const awsPlugin: LexiconPlugin = {
     setLastMemberReport(undefined);
     const member = (ctx.config as { aws?: { member?: { kind?: "cloudformation" | "cdk"; dir: string; label?: string } } }).aws?.member;
     if (!member) return { entities: new Map() };
+    const { readCloudFormationMember } = await import("./workspace-member");
     const read = readCloudFormationMember({ member });
     setLastMemberReport(read.report);
     return { entities: read.entities, warnings: read.warnings };

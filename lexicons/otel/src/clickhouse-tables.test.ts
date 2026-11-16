@@ -184,10 +184,10 @@ describe("OTEL129: the exporter's tables against the sql build in the same root"
 });
 
 describe("the otel lexicon's workspace links", () => {
-  test("each table the exporter writes, and each column its insert names anchored on the table", () => {
+  test("each table the exporter writes, and each column its insert names anchored on the table", async () => {
     const entities = new Map<string, Declarable>();
     collector({ database: "otel", create_schema: false }).forEach((e, i) => entities.set(i === 2 ? "clickhouse" : `e${i}`, e));
-    const links = otelPlugin.workspaceLinks!(entities)!;
+    const links = (await otelPlugin.workspaceLinks!(entities))!;
     expect(links.gaps).toBeUndefined();
     const tables = links.links.filter((l) => !l.anchor).map((l) => l.output);
     expect(tables).toEqual([

@@ -20,17 +20,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** The variable a generated job hands the runner key in, as PEM (the same one the tick and `chant ci run` read). */
-export const CHECK_EVIDENCE_KEY_ENV = "CHANT_RUNNER_KEY";
+import { CHECK_EVIDENCE_KEY_ENV, RUNNER_IDENTITY_ENV } from "../../ci-evidence-claims";
+
+/** The runner key and runner identity variables live in ../../ci-evidence-claims.ts (#5219). */
+export { CHECK_EVIDENCE_KEY_ENV, RUNNER_IDENTITY_ENV };
 
 /** The variable a developer's or an agent's local evidence key is read from, as PEM (#4868). A check hook never sees it. */
 export const LOCAL_EVIDENCE_KEY_ENV = "CHANT_LOCAL_EVIDENCE_KEY";
-
-/**
- * The variable a generated job sets to `oidc` when it signs keyless from
- * its OIDC identity (#4869) instead of with a runner key.
- */
-export const RUNNER_IDENTITY_ENV = "CHANT_RUNNER_IDENTITY";
 
 /** The GitLab `id_tokens` variable a keyless signing job's token comes in (#4869), with the signing audience. */
 export const SIGNING_ID_TOKEN_VAR = "CHANT_ID_TOKEN_SIGSTORE";

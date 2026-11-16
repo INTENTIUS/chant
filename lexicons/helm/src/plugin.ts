@@ -21,7 +21,7 @@ import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
 import { helmConfigSchema } from "./config";
-import { lastMemberReport, readHelmMember, setLastMemberReport } from "./workspace-member";
+import { lastMemberReport, setLastMemberReport } from "./member-report";
 import { helmProjectCodegen } from "./project-codegen";
 import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
@@ -53,6 +53,7 @@ export const helmPlugin: LexiconPlugin = {
     setLastMemberReport(undefined);
     const member = (ctx.config as { helm?: { member?: { dir: string; label?: string } } }).helm?.member;
     if (!member) return { entities: new Map() };
+    const { readHelmMember } = await import("./workspace-member");
     const read = await readHelmMember({ member });
     setLastMemberReport(read.report);
     return { entities: read.entities, warnings: read.warnings };

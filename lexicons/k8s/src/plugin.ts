@@ -38,7 +38,7 @@ import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import { k8sConfigSchema } from "./config-schema";
 import type { K8sChantConfig } from "./config";
 import { renderKustomizeRoots } from "./kustomize/root";
-import { lastMemberReport, readK8sMember, setLastMemberReport } from "./workspace-member";
+import { lastMemberReport, setLastMemberReport } from "./member-report";
 import { encryptedSecretBuildRoot } from "./sops/encrypted-secret-file";
 import { k8sProjectCodegen } from "./crd/project-codegen";
 import { includeBuildRoot } from "./include/resolve";
@@ -121,6 +121,7 @@ export const k8sPlugin: LexiconPlugin = {
     setLastMemberReport(undefined);
     const member = (ctx.config as { k8s?: K8sChantConfig }).k8s?.member;
     if (member) {
+      const { readK8sMember } = await import("./workspace-member");
       const read = await readK8sMember({ member });
       for (const [name, entity] of read.entities) entities.set(name, entity);
       warnings.push(...read.warnings);
