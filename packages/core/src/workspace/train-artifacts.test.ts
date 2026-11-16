@@ -74,6 +74,7 @@ async function setup(opts: { files?: boolean } = {}) {
       label: m.label,
       actor: "alice",
       env: {},
+      npmPublished: () => true,
       now: () => new Date("2026-11-16T10:00:00.000Z"),
       ...(app
         ? {
