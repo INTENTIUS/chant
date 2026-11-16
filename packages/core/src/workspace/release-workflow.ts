@@ -1041,7 +1041,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const { gitTop } = await import("./tree");
   const { securityGroupsAt } = await import("./security");
   const { shellArg } = await import("./member-pipeline");
-  const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]";
+  const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]";
   const { args } = ctx;
   // #5149: a project with only a chant.config.ts, and no chant.workspace.json, renders its release workflow too.
   const found = findWorkspaceRoot(process.cwd());
@@ -1170,6 +1170,12 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   if (args.buildCommand) parts.push("--build", args.buildCommand);
   if (args.ciChant) parts.push("--chant", args.ciChant);
   if (args.output && !(isRenderPath(target) && asCommitted === defaultTarget)) parts.push("--output", relative(root, asCommitted).split(sep).join("/"));
+  // A file a person wrote, such as the npm publish workflow release.workflow.file names, is replaced only with --force.
+  if (args.force !== true && existsSync(target) && !readFileSync(target, "utf-8").includes(GENERATED_MARKER)) {
+    const shownTarget = relative(process.cwd(), target).split(sep).join("/") || target;
+    console.error(formatError({ message: `${shownTarget} exists and chant did not write it [release-workflow-exists]`, hint: "Run again with --force to replace it." }));
+    return 1;
+  }
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;

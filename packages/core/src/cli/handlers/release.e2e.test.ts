@@ -115,6 +115,11 @@ describe("chant release cut, publish and list", () => {
         expect(dry.stdout).toContain("  dev: 1 template(s)");
         expect(dry.stdout).toContain("chant release publish v1: nothing, since this member declares no publish target (release.publish in chant.config.ts)");
         expect(dry.stderr).toContain(`Dry run: nothing was cut, signed or tagged. Run again with --yes to cut: ${sameWithYes(["release", "cut", "v1", "--build", BUILD])}`);
+        // #5236: --dry-run keeps a run with --yes a dry run, and the command it suggests leaves --dry-run out.
+        const named = cut("--dry-run", "--yes");
+        expect(named.code, named.stderr).toBe(0);
+        expect(named.stderr).toContain(`Run again with --yes to cut: ${sameWithYes(["release", "cut", "v1", "--build", BUILD])}`);
+        expect(hasRef(dir, "refs/tags/release/v1")).toBe(false);
         const dryJson = JSON.parse(cut("--json").stdout);
         expect(dryJson).toMatchObject({ dryRun: true, label: "v1", commit: sha, actor: "t@chant.dev", actorSource: "git", tag: { name: "release/v1", exists: false }, build: [] });
         expect(dryJson.releaseDigest).toMatch(/^jcs1-sha256:/);

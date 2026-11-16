@@ -6,10 +6,12 @@ export const workflowCommand: ReleaseCommandDoc = {
   helpOrder: 120,
   help: [
     "  release workflow [--forge github|gitlab|forgejo] [--install <command>]",
-    "              [--build <command>] [--chant <command>] [--output <file>]",
+    "              [--build <command>] [--chant <command>] [--output <file>] [--force]",
     "                        Write the publish workflow, run on the tags",
     "                        release.tag makes (default release/**).",
     "                        Under supply-chain it passes --require-provenance, and",
-    "                        under verified-releases it runs release verify first",
+    "                        under verified-releases it runs release verify first.",
+    "                        A file there that chant did not write is replaced",
+    "                        only with --force",
   ],
 };

@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
+chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green]
                   [--image <component>=<repository>@sha256:<hex>]... [--json]
 chant release next [--at <sha>] [--pre <id>] [--json]
@@ -21,7 +21,7 @@ chant release stamp <label> [--json]
 chant release tag <label|digest|tag> [--json]
 chant release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
 chant release init [--yes] [--force] [--one-release] [--forge github|gitlab|forgejo] [--json]
-chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
+chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]
 chant release deprecate <label|digest> [--yes] [--reason <text>] [--replacement <label>] [--actor <name>] [--sign [<key file>]] [--json]
 chant release yank <label|digest> [--yes] [--reason <text>] [--replacement <label>] [--forge-release prerelease|draft|delete]
                   [--actor <name>] [--sign [<key file>]] [--json]

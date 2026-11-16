@@ -252,6 +252,24 @@ export function ensureTypeScriptLoader(): boolean {
 }
 
 /**
+ * Whether this process can load a TypeScript module such as
+ * `chant.config.ts`: always from source, where a loader already runs chant
+ * itself, and in the compiled CLI when tsx resolves from chant's install.
+ * Nothing is registered; `chant release init` asks before it writes a
+ * config it would have to read back.
+ */
+export function typeScriptLoaderAvailable(): boolean {
+  const state = compiledState();
+  if (!state || state.tsx) return true;
+  try {
+    nodeModule.createRequire(import.meta.url).resolve("tsx/cjs/api");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * #3981 — register tsx only when the module about to be imported is not
  * JavaScript. `pathOrUrl` is the resolved module, a path or a file URL. A
  * compiled lexicon (`dist/*.js`) imports with plain node, so a command that
