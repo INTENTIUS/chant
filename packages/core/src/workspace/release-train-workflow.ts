@@ -35,7 +35,7 @@
  */
 import { tagComments } from "../action-pins";
 import type { ReleaseGreenSource } from "../lifecycle/release-green";
-import { gateScript, githubSetup, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
+import { gateScript, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
 
 export interface TrainWorkflowInput {
   forge: Exclude<ReleaseWorkflowForge, "gitlab">;
@@ -122,9 +122,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
     "  push:",
     `    tags: [${JSON.stringify(trainTagFilter(env))}]`,
     "permissions:",
-    "  contents: write",
-    "  id-token: write",
-    ...o.extra.permissions,
+    "  contents: read",
     "concurrency:",
     "  group: chant-release",
     "  cancel-in-progress: false",
@@ -135,6 +133,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       "  gate:",
       "    if: github.event_name == 'workflow_dispatch' && inputs.train == ''",
       "    runs-on: ubuntu-latest",
+      ...jobPermissions(o.extra, { contents: "read" }, "gate"),
       ...defaults,
       "    outputs:",
       "      commit: ${{ steps.green.outputs.commit }}",
@@ -147,6 +146,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       "  cut:",
       "    needs: gate",
       "    runs-on: ubuntu-latest",
+      ...jobPermissions(o.extra, { contents: "write" }, "cut"),
       ...defaults,
       "    outputs:",
       "      train: ${{ steps.cut.outputs.train }}",
@@ -176,6 +176,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
     "  publish:",
     ...(dispatch ? ["    needs: [gate, cut]", publishIf!] : []),
     "    runs-on: ubuntu-latest",
+    ...jobPermissions(o.extra, { contents: "write", "id-token": "write" }, "publish"),
     ...defaults,
     ...o.extra.githubEnv([...(dispatch ? [`      CHANT_RELEASE_TRAIN: ${dispatchedTrain}`] : []), ...o.forgeToken]),
     "    steps:",
@@ -197,6 +198,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       `    needs: ${dispatch ? "[gate, cut, publish]" : "publish"}`,
       ...(dispatch ? ["    if: ${{ always() && needs.publish.result == 'success' }}"] : []),
       "    runs-on: ubuntu-latest",
+      ...jobPermissions(o.extra, { contents: "read" }, "after"),
       ...defaults,
       ...(dispatch ? ["    env:", `      CHANT_RELEASE_TRAIN: ${dispatchedTrain}`] : []),
       "    steps:",
