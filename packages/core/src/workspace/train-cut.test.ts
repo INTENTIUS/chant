@@ -23,6 +23,9 @@ import { cutTrain, highestVersion, npmVersions, parseTrainLevels, planTrainCut, 
 import { prepareTrain } from "./train-prepare";
 import { runToStderr } from "./train-shell";
 import { publishTrain } from "./train-publish";
+import { appendPublishRecord } from "../lifecycle/publish-record";
+import { createRedactor } from "../lifecycle/publish-credentials";
+import { publishTargetKey } from "../lifecycle/publish-targets";
 
 const repos: TestRepo[] = [];
 afterAll(() => {
@@ -56,7 +59,7 @@ function setup(opts: { first?: "together" } = {}) {
   }
   // util is a workspace package core builds against and no member releases.
   r.write("pkgs/util/package.json", pkg("@acme/util", "1.0.0", { scripts: { prepack: "true" } }));
-  r.write("pkgs/core/package.json", pkg("@acme/core", "1.0.0", { dependencies: { "@acme/util": "^1.0.0" } }));
+  r.write("pkgs/core/package.json", pkg("@acme/core", "1.0.0", { dependencies: { "@acme/util": "^1.0.0" }, scripts: { build: "true" } }));
   r.write("pkgs/lex/package.json", pkg("@acme/lex", "1.0.0", { peerDependencies: { "@acme/core": "^1.0.0" } }));
   r.write("package.json", pkg("acme", "0.0.0", { private: true, workspaces: ["pkgs/*"] }));
   const head = r.commit("init");
@@ -272,6 +275,31 @@ describe("prepare and publish", () => {
     const env = { PATH: `${dirname(npm)}:${process.env.PATH}` };
     const plan = await publishTrain({ cwd: nested, env: "npm", processEnv: env });
     expect(plan.kind).toBe("planned");
+  });
+});
+
+describe("prepare, resuming a publish that revealed a member (#5222)", () => {
+  const f = fixture(async () => {
+    const x = setup();
+    await cutTrain({ cwd: x.nested, env: "npm", at: x.head, registry: npmVersions(x.npm), yes: true, noPush: true, cutter: cutter(x.r), actor: "alice" });
+    return x;
+  });
+
+  test("builds a member an earlier run revealed when a member still to publish needs it, since npm does not pack it again", async () => {
+    const { nested } = f();
+    const train = (await readReleaseTrains(nested, "npm")).records.at(-1)!;
+    const core = train.members.find((m) => m.member === "core")!;
+    const decl = { type: "npm", stage: false, packages: ["../../pkgs/core"] } as const;
+    const target = publishTargetKey(ChantConfigSchema.parse({ release: { publish: [decl] } }).release!.publish![0]!);
+    await appendPublishRecord(
+      { version: 1, releaseDigest: core.releaseDigest, label: core.label, target, kind: "npm", name: "npm", step: "revealed", items: [{ name: "@acme/core@1.0.8", destination: "npm" }], state: {}, runId: "earlier", timestamp: "2026-11-16T10:00:00.000Z" },
+      createRedactor(),
+      { cwd: join(nested, "core") },
+    );
+    const runs: string[] = [];
+    const out = await prepareTrain({ cwd: nested, env: "npm", run: (command, cwd) => (runs.push(`${command} in ${cwd.slice(cwd.indexOf("pkgs/"))}`), 0) });
+    expect(runs).toEqual(["npm run prepack in pkgs/util", "npm run build in pkgs/core"]);
+    expect(out.built.map((b) => b.dir)).toEqual(["pkgs/util", "pkgs/core"]);
   });
 });
 
