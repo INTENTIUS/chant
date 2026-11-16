@@ -282,7 +282,7 @@ export function differingBuildSteps(targets: readonly CompiledTarget[]): Array<{
 }
 
 /** The earlier release of this member cut from the nearest ancestor of `commit`. */
-async function previousRelease(top: string, commit: string, cwd: string): Promise<Release | undefined> {
+export async function previousRelease(top: string, commit: string, cwd: string): Promise<Release | undefined> {
   const { releases } = await readAllReleases({ cwd });
   const { cuts } = await readCuts({ cwd });
   const cutAt = new Map<string, string>();

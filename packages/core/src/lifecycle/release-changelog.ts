@@ -34,8 +34,8 @@ export interface ReleaseChangelog {
 const HEADER = /^(\w+)(?:\(([^)]*)\))?(!)?:\s*(.*)$/;
 const BREAKING_FOOTER = /^BREAKING[ -]CHANGE:/m;
 
-/** The group, scope and description of one commit message. A subject that is not conventional is `other`, kept whole. */
-export function classifyCommit(message: string): { kind: ChangelogKind; scope?: string; subject: string } {
+/** The group, type, scope and description of one commit message. A subject that is not conventional is `other`, kept whole, with no type. */
+export function classifyCommit(message: string): { kind: ChangelogKind; type?: string; scope?: string; subject: string } {
   const subject = message.split("\n", 1)[0]!.trim();
   const m = HEADER.exec(subject);
   const breaking = BREAKING_FOOTER.test(message) || (m !== null && m[3] === "!");
@@ -43,7 +43,7 @@ export function classifyCommit(message: string): { kind: ChangelogKind; scope?: 
   const type = m[1]!;
   const scope = m[2] ? m[2].trim() : undefined;
   const kind: ChangelogKind = breaking ? "breaking" : type === "feat" ? "feat" : type === "fix" ? "fix" : "other";
-  return { kind, ...(scope ? { scope } : {}), subject: m[4]!.trim() || subject };
+  return { kind, type, ...(scope ? { scope } : {}), subject: m[4]!.trim() || subject };
 }
 
 /** The bump a set of commit messages implies, as terragucci's `bumpFor` decides it. */
@@ -68,4 +68,38 @@ export function releaseChangelog(commits: readonly ChangelogCommit[]): ReleaseCh
     groups[kind].push(entry);
   }
   return { bump: changelogBump(commits.map((c) => c.message)), entries, groups };
+}
+
+/** The commit types a forge release's notes generated from commits list when none are declared (#5153). */
+export const DEFAULT_NOTES_TYPES: readonly string[] = ["feat", "fix", "perf"];
+
+const NOTES_GROUPS: Array<[ChangelogKind, string]> = [
+  ["breaking", "Breaking changes"],
+  ["feat", "Features"],
+  ["fix", "Fixes"],
+  ["other", "Other changes"],
+];
+
+/**
+ * Release notes from `commits` (#5153), newest first as `git log` lists
+ * them: the commits whose conventional type is in `types`, grouped by
+ * {@link releaseChangelog} under a `###` heading each, one line per commit
+ * with its scope and short sha. A breaking change is listed whatever its
+ * type; `*` in `types` lists every commit, conventional or not. Empty when
+ * no commit is listed.
+ */
+export function changelogNotes(commits: readonly ChangelogCommit[], types: readonly string[] = DEFAULT_NOTES_TYPES): string {
+  const all = types.includes("*");
+  const listed = commits.filter((c) => {
+    const { kind, type } = classifyCommit(c.message);
+    return all || kind === "breaking" || (type !== undefined && types.includes(type));
+  });
+  const { groups } = releaseChangelog(listed);
+  const out: string[] = [];
+  for (const [kind, title] of NOTES_GROUPS) {
+    if (groups[kind].length === 0) continue;
+    if (out.length > 0) out.push("");
+    out.push(`### ${title}`, "", ...groups[kind].map((e) => `- ${e.scope ? `${e.scope}: ` : ""}${e.subject} (${e.sha.slice(0, 7)})`));
+  }
+  return out.join("\n");
 }

@@ -76,7 +76,7 @@ With neither variable set, the target reads the registry's `auths` entry from th
 | `forge` | `github`, `gitlab` or `forgejo` |
 | `repo` | `owner/name` on GitHub and Forgejo; the project path or numeric id on GitLab |
 | `assets` | Files to attach. Each is named by its file name, which must be unique. May be empty when `notes` is set |
-| `notes` | The release's notes: `{ file, heading, linkBase?, before?, after? }`, a section of a file in the member. See below. Read by chant 0.124.71 and newer |
+| `notes` | The release's notes: `{ file?, heading?, linkBase?, generate?, types?, before?, after? }`, a section of a file in the member, notes generated for the release, or both. See below. Read by chant 0.124.71 and newer; `generate` and `types` by chant 0.124.101 and newer |
 | `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
 | `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
@@ -103,7 +103,26 @@ An asset already on the draft with the same name and a matching `digest` is left
            after: "Every release is on the [changes page](https://docs.acme.dev/changes/)." } }
 ```
 
-The notes are read when the publish plans its targets, so a missing file or section, or an empty one, stops the publish with `publish-forge-notes-missing` before any target stages. The dry run prints them. GitHub and Forgejo get them on the draft and again when the reveal publishes it. A release already published when the stage ran keeps the notes it has. On Forgejo, which has no setting for the latest release and takes the newest one that is not a prerelease, a release cut with `--channel` is published as a prerelease. A release of notes alone attaches the SBOM unless `sbom` is `false`, and no provenance statement, since it has no assets.
+The file is read when the publish plans its targets, so a missing file or section, or an empty one, stops the publish with `publish-forge-notes-missing` before any target stages. `file` and `heading` go together. On Forgejo, which has no setting for the latest release and takes the newest one that is not a prerelease, a release cut with `--channel` is published as a prerelease. A release of notes alone attaches the SBOM unless `sbom` is `false`, and no provenance statement, since it has no assets.
+
+### Generated notes
+
+`generate` adds notes made for the release after the file's section, or on their own when there is no `file` ([#5153](https://github.com/INTENTIUS/chant/issues/5153)). The body is `before`, the section, the generated notes, then `after`, with a blank line between each.
+
+| `generate` | Notes |
+|---|---|
+| `commits` | chant's own, from the conventional commits in the member's directory since the member's previous release, merges left out. A `###` heading for each of breaking changes, features, fixes and other changes, and under it one line per commit: its scope, its description and its short sha. `types` lists the commit types to include, default `["feat", "fix", "perf"]`. A breaking change (`type!:` or a `BREAKING CHANGE:` footer) is listed whatever its type, and `"*"` lists every commit, conventional or not |
+| `forge` | The forge's own. GitHub: `POST /repos/{repo}/releases/generate-notes` for the tag at the release's commit, with the previous release's tag as `previous_tag_name` when the forge release uses the cut's tag; otherwise GitHub picks the release to start from. GitLab: `GET /projects/{id}/repository/changelog` with `version` (the label from its first digit), `to` the release's commit and `from` the previous release's commit; GitLab lists only the commits that carry a `Changelog:` trailer. Forgejo has no such API, so the plan refuses with `publish-forge-notes-unsupported` |
+
+```ts
+{ type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux.tar.gz"],
+  notes: { generate: "commits", types: ["feat", "fix", "perf", "revert"],
+           before: "Install with `npm i @acme/api@{version}`." } }
+```
+
+The previous release is the one the cut finds: the member's release cut from the nearest ancestor of this release's commit. A member's first release lists every commit in its directory. The commits come from the checkout's git history, so the publish needs the full history (`fetch-depth: 0` on `actions/checkout`, `GIT_DEPTH: 0` on GitLab, as the generated release workflow sets); a shallow checkout, or a directory outside a git checkout, is refused with `publish-forge-notes-history`.
+
+The stage decides the notes. GitHub and Forgejo get them on the draft, which is created with them or, when an earlier stage left it, edited to them, so the draft shows the notes before the reveal. They are kept in the publish record, and the reveal publishes those, so a resumed publish asks the forge nothing again and the release's notes are the ones its draft showed. The dry run prints the notes from commits in full; the forge's own are fetched only when the stage runs, so the dry run names them instead. A release already published when the stage ran keeps the notes it has.
 
 ## Homebrew tap
 
