@@ -16,7 +16,7 @@
  *       --allow-unsigned (#4049), and with a target a checkout that is not
  *       the release's commit; warns with no OIDC provenance, and refuses
  *       under --require-provenance; attaches SBOMs and provenance (#4049)
- *   release verify <label|digest> [--json]
+ *   release verify <label|digest> [--sigstore [--assets <dir>]] [--json]
  *       check the release's signature offline against .chant/allowed_signers
  *       at the release's commit (#4049)
  *   release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
@@ -53,7 +53,7 @@ import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--sigstore [--assets <dir>]] [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -892,7 +892,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   await fetchLifecycle({ cwd }).catch(() => false);
   const prepared = await preparePublish({ cwd, ref, allowUnsigned: args.allowUnsigned === true, requireProvenance: args.requireProvenance === true });
   if ("refusal" in prepared) return fail(prepared.refusal.code, prepared.refusal.message, prepared.refusal.fix);
-  const { release, label, signature, provenance, warning, signatureWarning, targets, redactor } = prepared;
+  const { release, label, signature, provenance, warning, signatureWarning, signingWarning, targets, redactor } = prepared;
   const name = label ?? release.releaseDigest;
   const deploySteps = release.targets.map((t) => t.env);
   const say = (line: string) => console.error(redactor.redact(line));
@@ -907,6 +907,8 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   // The warnings go to stderr with --json too, before any target runs.
   if (signatureWarning) console.error(formatWarning({ message: signatureWarning }));
   if (warning) console.error(formatWarning({ message: warning }));
+  if (signingWarning) console.error(formatWarning({ message: signingWarning }));
+  if (prepared.signing && !args.json) say(`  signing images and forge assets with Sigstore (${prepared.signing.signer.name}) as ${prepared.signing.identity.identity}, issuer ${prepared.signing.identity.issuer}`);
   // #4168 4.3: a release cut with --channel moves that tag, not latest.
   const pctx = publishContext(prepared, { cwd, tag: prepared.channel, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
 
@@ -931,7 +933,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   const pre = prereleaseOf(label);
   if (pre && !args.json) say(`  prerelease: ${prereleaseNote(label, prepared.channel ?? undefined)}`);
   const floating = prepared.floating ?? null;
-  const base = { releaseDigest: release.releaseDigest, label, prerelease: pre !== null, ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}), commit: release.commit, signature, provenance, warnings: [signatureWarning, warning].filter((w): w is string => w !== null), ...(floating ? { floating } : {}) };
+  const base = { releaseDigest: release.releaseDigest, label, prerelease: pre !== null, ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}), commit: release.commit, signature, provenance, warnings: [signatureWarning, warning, signingWarning].filter((w): w is string => w !== null), signing: prepared.signing ? { identity: prepared.signing.identity, signer: prepared.signing.signer.name } : null, ...(floating ? { floating } : {}) };
   const floatingLine = (f: import("../../lifecycle/release-publish").FloatingTag, done: boolean): string =>
     f.move ? `  floating tag ${f.name}: ${done ? "moved" : "moves"} to ${f.commit.slice(0, 12)} once every target has revealed` : `  floating tag ${f.name}: left where it is, since ${f.reason}`;
 
@@ -1000,7 +1002,16 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
 
 /** One item a target publishes, for a line: what, where, and the SBOM or attachment it is (#4049). */
 function describeItem(i: import("../../lifecycle/release-publish").PublishItem): string {
-  const what = i.attachment === "sbom" ? `${i.name} (SBOM)` : i.attachment === "provenance" ? `${i.name} (provenance)` : i.name;
+  const what =
+    i.attachment === "sbom"
+      ? `${i.name} (SBOM)`
+      : i.attachment === "provenance"
+        ? `${i.name} (provenance)`
+        : i.attachment === "signature"
+          ? `${i.name} (Sigstore signature)`
+          : i.attachment === "attestation"
+            ? `${i.name} (SLSA provenance, Sigstore)`
+            : i.name;
   if (i.notes !== undefined) return `${i.name} to ${i.destination}:\n${i.notes.trimEnd().split("\n").map((l) => `      ${l}`.trimEnd()).join("\n")}`;
   return `${what} to ${i.destination}${i.sbom ? `, carrying ${i.sbom}` : ""}`;
 }
@@ -1018,7 +1029,7 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "release verify needs a release", hint: USAGE }));
     return 1;
   }
-  const { verifyRelease, verificationCode } = await import("../../lifecycle/release-verify");
+  const { verifyRelease, verificationCode, verifySigstore, recordedSignatures } = await import("../../lifecycle/release-verify");
   const result = await verifyRelease({ cwd: resolve("."), ref });
   if ("error" in result) {
     if (args.json) console.log(JSON.stringify({ ref, error: result.error }, null, 2));
@@ -1032,8 +1043,15 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     code = "release-pin-unknown";
     result.reason = pins;
   }
+  // #5164: --sigstore checks the bundles the publish recorded; without it, verify stays offline and says how many there are.
+  const sigstore = args.sigstore ? await verifySigstore({ cwd: resolve("."), releaseDigest: result.releaseDigest, ...(args.assets ? { assetsDir: args.assets } : {}) }) : null;
+  const recorded = sigstore ? sigstore.checks.length : (await recordedSignatures(resolve("."), result.releaseDigest)).length;
+  if (!code && sigstore && sigstore.status !== "verified") {
+    code = sigstore.status === "none" ? "release-sigstore-unsigned" : "release-sigstore-unverified";
+    result.reason = sigstore.reason;
+  }
   if (args.json) {
-    console.log(JSON.stringify({ ...result, ...(code ? { error: { code, message: result.reason } } : {}) }, null, 2));
+    console.log(JSON.stringify({ ...result, ...(sigstore ? { sigstore } : { sigstore: { recorded } }), ...(code ? { error: { code, message: result.reason } } : {}) }, null, 2));
     return code ? 1 : 0;
   }
   const name = result.label ? `${formatBold(result.label)} (${result.releaseDigest})` : result.releaseDigest;
@@ -1042,16 +1060,24 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     // #5149: what let the commit be cut.
     console.log(`    ${c.override ? `not green: cut under the override by ${c.override.by}: ${c.override.reason}` : describeGreen(c.green)}`);
   }
+  for (const c of sigstore?.checks ?? []) console.log(`  ${c.name} (${c.target}): ${c.status}, ${c.reason}`);
+  if (!sigstore && recorded > 0) console.error(`  the publish recorded ${recorded} Sigstore signature(s); check them with: chant release verify ${result.label ?? result.releaseDigest} --sigstore`);
   if (code) {
     console.error(
       formatError({
         message: `${name} does not verify: ${result.reason} [${code}]`,
-        hint: code === "release-digest-mismatch" ? "Do not publish or deploy it; cut the release again." : code === "release-pin-unknown" ? "Build the package from the digests the release records: chant release images <label>, then the build with CHANT_RELEASE_DIGESTS set." : `Cut it again signed with a key ${result.signers.path} lists: chant release cut ${result.label ?? "<label>"} --sign --yes`,
+        hint: code === "release-digest-mismatch"
+          ? "Do not publish or deploy it; cut the release again."
+          : code === "release-sigstore-unsigned"
+            ? "Publish it from CI with release.signing on, or drop --sigstore."
+            : code === "release-sigstore-unverified"
+              ? "Download the release's assets into a directory and pass it as --assets; install cosign 3 or set CHANT_COSIGN; a bundle that failed was not signed by the identity shown."
+              : code === "release-pin-unknown" ? "Build the package from the digests the release records: chant release images <label>, then the build with CHANT_RELEASE_DIGESTS set." : `Cut it again signed with a key ${result.signers.path} lists: chant release cut ${result.label ?? "<label>"} --sign --yes`,
       }),
     );
     return 1;
   }
-  console.error(formatSuccess(`Verified ${name}: ${result.reason}`));
+  console.error(formatSuccess(`Verified ${name}: ${result.reason}${sigstore ? `; ${sigstore.reason}` : ""}`));
   return 0;
 }
 

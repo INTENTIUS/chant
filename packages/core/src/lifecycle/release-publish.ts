@@ -24,6 +24,10 @@
  * none, before any target runs; `--require-provenance` refuses instead
  * (`publish-provenance-missing`). Without either, provenance is only the
  * plan's `provenance` field.
+ * When `release.signing` or `supply-chain` asks for Sigstore signing and an
+ * OCI or forge target is declared (#5164, ./publish-signing.ts), a run that
+ * can't sign keylessly is refused (`publish-signing-no-oidc`,
+ * `publish-signing-tool-missing`).
  * The targets come from {@link releasePublishTargets}: the member declares them under `release.publish` in its `chant.config.ts` (#4047).
  * With a target, the checkout must be the release's commit with a clean
  * tree ({@link checkCheckoutIsRelease}), every target is planned before any
@@ -89,8 +93,18 @@ export interface PublishItem {
   present?: boolean;
   /** True when the destination refused it and the target turns a refusal into a warning (a marketplace's `onRefusal: "warn"`, #4698), so it was not published. */
   refused?: boolean;
-  /** Set on a file attached to what the target publishes (#4049): an SBOM or the release's provenance statement. */
-  attachment?: "sbom" | "provenance";
+  /**
+   * Set on a file attached to what the target publishes: an SBOM or the
+   * release's provenance statement (#4049), or a Sigstore bundle (#5164), a
+   * `signature` over a file or an image, or an `attestation`, SLSA provenance.
+   */
+  attachment?: "sbom" | "provenance" | "signature" | "attestation";
+  /** On a Sigstore bundle (#5164): what it signs, each name and digest. An image is named `<repository>@<digest>`. */
+  signs?: Array<{ name: string; digest: string }>;
+  /** On a Sigstore bundle over a statement (#5164): the statement's predicate type. */
+  predicateType?: string;
+  /** On a Sigstore bundle (#5164): the OIDC issuer and the identity (a regular expression) its certificate was issued to. */
+  sigstore?: { issuer: string; identity: string };
   /** The SBOM file an npm package carries at its root (#4049). */
   sbom?: string;
   /** The notes a forge release is given (#4658), which a dry run prints. */
@@ -157,6 +171,8 @@ export interface PublishDeps {
   sleep?: (ms: number) => Promise<void>;
   /** The clock a target's wait reads (#4244). Default: `Date.now`. */
   now?: () => number;
+  /** What signs with Sigstore (#5164). Default: cosign, run keylessly (./publish-signing.ts). */
+  signer?: import("./publish-signing").Signer;
 }
 
 /** The subset of the WHATWG `fetch` the targets use. */
@@ -215,6 +231,11 @@ export interface PublishContext extends PublishContextBase {
    * without an SBOM. A declared `sbom` file is attached either way.
    */
   requireSbom?: boolean;
+  /**
+   * Set when the publish signs with Sigstore (#5164): the OCI and forge
+   * targets sign what they stage with it. Null or absent: nothing is signed.
+   */
+  signing?: import("./publish-signing").SigningContext | null;
 }
 
 /** A target refused or failed. The message never holds a credential. */
@@ -337,6 +358,8 @@ export interface PublishRefusal {
     | "release-unsigned"
     | "release-signature-unverified"
     | "publish-provenance-missing"
+    | "publish-signing-no-oidc"
+    | "publish-signing-tool-missing"
     | "publish-config-invalid"
     | "release-head-mismatch"
     | "release-worktree-dirty"
@@ -372,6 +395,10 @@ export interface PublishPlan {
   requireSbom: boolean;
   /** The channel a cut of the release names (#4168 4.3), the tag moved in place of `latest`, or null. */
   channel: string | null;
+  /** What the OCI and forge targets sign with (#5164), or null when the publish does not sign. */
+  signing: import("./publish-signing").SigningContext | null;
+  /** The warning printed when the `supply-chain` group asks for signing and `release.signing: false` turns it off. */
+  signingWarning: string | null;
 }
 
 /**
@@ -499,6 +526,38 @@ export async function preparePublish(req: {
   const warning = provenance.oidc || !groups.has("supply-chain")
     ? null
     : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
+  // #5164: Sigstore signing, when release.signing or supply-chain asks for it and a target signs.
+  const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
+  const { loadChantConfig: loadConfig } = await import("../config");
+  const signingConfig = (await loadConfig(cwd).catch(() => null))?.config.release?.signing;
+  const setting = resolveSigning(signingConfig, groups);
+  let signing: PublishPlan["signing"] = null;
+  const signs = targets.filter((t) => t.kind === "oci" || t.kind === "forge");
+  if (setting.on && signs.length > 0) {
+    const why = setting.from === "config" ? "release.signing in chant.config.ts" : "the supply-chain group";
+    const id = signingIdentity(env);
+    if ("reason" in id) {
+      return {
+        refusal: {
+          code: "publish-signing-no-oidc",
+          message: `${name} would be signed with Sigstore, as ${why} asks, and this run can't sign keylessly: ${id.reason}`,
+          fix: "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), or set release.signing: false.",
+        },
+      };
+    }
+    const signer = req.deps?.signer ?? cosignSigner(env, createRedactor(env));
+    const missing = signer.unavailable();
+    if (missing) {
+      return {
+        refusal: {
+          code: "publish-signing-tool-missing",
+          message: `${name} would be signed with Sigstore, as ${why} asks, and ${missing}`,
+          fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.",
+        },
+      };
+    }
+    signing = { signer, identity: id.identity };
+  }
   // #5150: the tag release.tag gives the label, as the cut made it, and the floating tag the publish moves.
   const { memberTags, ReleaseTagError } = await import("./release-tag");
   let tags: MemberTags;
@@ -526,7 +585,7 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, releaseTagOf, floating, targets, redactor, requireSbom: groups.has("supply-chain"), channel };
+  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, releaseTagOf, floating, targets, redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
 }
 
 /**
@@ -659,6 +718,7 @@ export function publishContext(plan: PublishPlan, req: { cwd: string; env?: Node
     redactor: plan.redactor,
     log: (line) => req.log(plan.redactor.redact(line)),
     requireSbom: plan.requireSbom,
+    signing: plan.signing,
   };
 }
 

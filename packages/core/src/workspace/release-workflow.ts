@@ -36,7 +36,7 @@
 import { readFileSync } from "node:fs";
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { IMAGE_PINS, imageRef } from "../image-pins";
-import { GORELEASER_PIN, goreleaserInstallLine } from "../goreleaser-pin";
+import { TOOL_PINS, toolInstallLine } from "../tool-pins";
 import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
 import { tagShape, type MemberTags } from "../lifecycle/release-tag";
@@ -168,7 +168,7 @@ export interface ReleaseWorkflowInput {
   artifacts?: boolean;
   /**
    * An entry of `release.artifacts` is built by goreleaser (#5151): the job
-   * that builds the files installs the goreleaser {@link GORELEASER_PIN} pins,
+   * that builds the files installs the goreleaser {@link TOOL_PINS} pins,
    * checked by SHA-256, and on GitHub and Forgejo sets up Go from the
    * member's `go.mod`.
    */
@@ -188,6 +188,12 @@ export interface ReleaseWorkflowInput {
    * default: the `release/**` file it always was.
    */
   tags?: MemberTags;
+  /**
+   * The publish signs with Sigstore (#5164): `release.signing` or the
+   * `supply-chain` group, with an `oci` or `forge` target. The jobs download
+   * cosign pinned by SHA-256 ({@link cosignSetup}).
+   */
+  signing?: boolean;
   /**
    * The config declares `release.version` (#4840): the publish job runs
    * `chant release stamp <label>` before the images and the build, so what
@@ -304,13 +310,25 @@ export const RELEASE_ARTIFACTS_STAGE: Record<ReleaseWorkflowForge, string> = {
 export function goreleaserSetup(forge: ReleaseWorkflowForge, root: string | null, p: ReleasePipelineConfig): { github: string[]; gitlab: string[] } {
   const install = p.env?.CHANT_GORELEASER === undefined;
   if (forge === "gitlab") {
-    return { github: [], gitlab: install ? [`${goreleaserInstallLine(RELEASE_RUNNER_PLATFORM, "/tmp/goreleaser")} && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser`] : [] };
+    return { github: [], gitlab: install ? [`${toolInstallLine(TOOL_PINS.goreleaser, RELEASE_RUNNER_PLATFORM, "/tmp/goreleaser")} && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser`] : [] };
   }
   const go = (p.setup ?? []).some((s) => "uses" in s && /^actions\/setup-go@/.test(s.uses))
     ? []
     : [`      - uses: ${usesRef(ACTION_PINS.setupGo7)}`, "        with:", `          go-version-file: ${root ? `${root}/` : ""}go.mod`];
-  const line = `${goreleaserInstallLine(RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP/goreleaser")} && echo "CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser" >> "$GITHUB_ENV"`;
-  return { github: [...go, ...(install ? [`      - name: goreleaser ${GORELEASER_PIN.version}`, `        run: ${JSON.stringify(line)}`] : [])], gitlab: [] };
+  const line = `${toolInstallLine(TOOL_PINS.goreleaser, RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP/goreleaser")} && echo "CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser" >> "$GITHUB_ENV"`;
+  return { github: [...go, ...(install ? [`      - name: goreleaser ${TOOL_PINS.goreleaser.version}`, `        run: ${JSON.stringify(line)}`] : [])], gitlab: [] };
+}
+
+/**
+ * The step that installs cosign for Sigstore signing (#5164): the binary
+ * {@link TOOL_PINS} pins for the runner's platform, downloaded to the job's
+ * temp directory and checked against its SHA-256, and `CHANT_COSIGN` set to
+ * it. A config whose `setup` already sets `CHANT_COSIGN` gets nothing.
+ */
+export function cosignSetup(forge: ReleaseWorkflowForge, p: ReleasePipelineConfig): OpSetupStep[] {
+  if ((p.setup ?? []).some((s) => !("uses" in s) && s.run.includes("CHANT_COSIGN")) || p.env?.CHANT_COSIGN !== undefined) return [];
+  if (forge === "gitlab") return [{ run: `${toolInstallLine(TOOL_PINS.cosign, RELEASE_RUNNER_PLATFORM, "/tmp")} && export CHANT_COSIGN=/tmp/cosign` }];
+  return [{ name: `Install cosign ${TOOL_PINS.cosign.version}`, run: `${toolInstallLine(TOOL_PINS.cosign, RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP")} && echo "CHANT_COSIGN=$RUNNER_TEMP/cosign" >> "$GITHUB_ENV"` }];
 }
 
 /** The flags `chant release publish` gets under the groups. */
@@ -375,12 +393,14 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   }
   // #4876: QEMU before the config's setup, where the products named it.
   const qemu = images ? qemuSetup(input.forge, input.imagePlatforms ?? [], p) : [];
+  // #5164: cosign after the config's setup, so a config that installs its own is left alone. It goes in the jobs that run chant release (the cut, whose doctor checks it, and the publish, which signs), never in a per-platform build job.
+  const cosign = input.signing === true ? cosignSetup(input.forge, p) : [];
   const extra = jobExtras(
     {
       ...p,
       ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
       ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
-      ...(derived.setup || qemu.length > 0 ? { setup: [...qemu, ...(p.setup ?? []), ...(derived.setup ?? [])] } : {}),
+      ...(derived.setup || qemu.length > 0 || cosign.length > 0 ? { setup: [...qemu, ...(p.setup ?? []), ...(derived.setup ?? []), ...cosign] } : {}),
     },
     input.forge,
   );
@@ -394,7 +414,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     const cutToken = green === "forge-checks" && input.forge !== "gitlab" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [];
     const buildJobs = builds.map((b) => ({ ...b, setup: toolchainLines(resolveToolchains(b.toolchains !== undefined ? b.toolchains : p.toolchains, files, root, false)) }));
     if (input.forge === "gitlab" && builds.some((b) => b.toolchains && b.toolchains.length > 0)) throw new Error("release.workflow.builds: toolchains: a GitLab job runs in its runner's image, which brings the toolchain; leave toolchains out");
-    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, artifacts, goreleaser, forge: input.forge, extra, forgeToken, cutToken, green, doctor: p.doctor !== false, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, artifacts, goreleaser, forge: input.forge, extra, forgeToken, cutToken, green, doctor: p.doctor !== false, signing: input.signing === true, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #5150: a release.tag template triggers on its own tags.
@@ -740,6 +760,8 @@ interface DispatchInput {
   green: import("../lifecycle/release-green").ReleaseGreenSource;
   /** The cut job runs `chant release doctor` before the cut (#5161), with the publish job's forge token. */
   doctor: boolean;
+  /** The publish signs with Sigstore (#5164). The doctor in the GitLab cut job then gets the publish job's `SIGSTORE_ID_TOKEN`, so it can check that signing will work. */
+  signing: boolean;
 }
 
 /** The cut job's token lines: `forge-checks`' (#5149) and, when the doctor runs there (#5161), the publish job's forge token, once. */
@@ -1054,7 +1076,11 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...cutScript(o, "/tmp/chant-cut.json"),
         ...(o.artifacts ? [`${o.chant} release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "${RELEASE_ARTIFACTS_STAGE.gitlab}"`] : []),
       ],
-      o.archives.length > 0 || o.artifacts ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), ...(o.artifacts ? ['      - ".chant-release-artifacts/"'] : []), "    expire_in: 1 day"] : [],
+      [
+        ...(o.archives.length > 0 || o.artifacts ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), ...(o.artifacts ? ['      - ".chant-release-artifacts/"'] : []), "    expire_in: 1 day"] : []),
+        // #5164: the doctor checks the token the publish will sign with.
+        ...(o.signing && o.doctor ? ["  id_tokens:", "    SIGSTORE_ID_TOKEN:", "      aud: sigstore"] : []),
+      ],
       o.extra.gitlabVariables,
     ),
     "",
@@ -1164,6 +1190,8 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     console.error(formatError({ message: `${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`, hint: usage }));
     return 1;
   }
+  const { resolveSigning } = await import("../lifecycle/publish-signing");
+  const signs = resolveSigning(release?.signing, groups).on && (release?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge");
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
   const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
@@ -1196,6 +1224,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
       return resolveGreenSource(release?.green, (scopeSource(root).declaration?.ci?.green ?? null) !== null, release?.green === undefined && greenTags !== "");
     })(),
     ...(release?.version ? { version: true } : {}),
+    ...(signs ? { signing: true } : {}),
     ...(release?.publish ? { publish: release.publish } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
@@ -1219,7 +1248,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
-  const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null].filter(Boolean);
+  const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null].filter(Boolean);
   const what =
     release?.workflow?.trigger === "dispatch"
       ? "cuts and publishes a release started by hand with its label, from a green commit"

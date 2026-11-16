@@ -121,3 +121,130 @@ export async function verifyRelease(req: { cwd: string; ref: string }): Promise<
     cuts,
   };
 }
+
+/** One Sigstore bundle a publish recorded, and how its check went (#5164). */
+export interface SigstoreCheck {
+  /** The bundle: `<file>.sigstore.json`, `release.slsa.sigstore.json`, or an image's `cosign signature` or `SLSA provenance`. */
+  name: string;
+  /** The publish target's kind and name. */
+  kind: string;
+  target: string;
+  attachment: "signature" | "attestation";
+  /** What it signs, each name and digest. */
+  signs: Array<{ name: string; digest: string }>;
+  /** The identity it was checked against. */
+  identity: { issuer: string; identity: string } | null;
+  status: "verified" | "failed" | "unchecked";
+  reason: string;
+}
+
+/** What `release verify --sigstore` adds: each bundle's check, and the outcome. */
+export interface SigstoreVerification {
+  /** `verified` when every bundle verifies; `failed` when one does not or can't be checked; `none` when the publish record holds none. */
+  status: "verified" | "failed" | "none";
+  checks: SigstoreCheck[];
+  reason: string;
+}
+
+/**
+ * The Sigstore bundles the publish record holds for `releaseDigest` (#5164):
+ * each signature or attestation item of the newest revealed line of each
+ * target, with its target's kind and name.
+ */
+export async function recordedSignatures(cwd: string, releaseDigest: string): Promise<Array<{ kind: string; target: string; item: import("./release-publish").PublishItem }>> {
+  const { readPublishRecords } = await import("./publish-record");
+  const records = await readPublishRecords(releaseDigest, { cwd }).catch(() => []);
+  const newest = new Map<string, (typeof records)[number]>();
+  for (const r of records) if (r.step === "revealed") newest.set(r.target, r);
+  return [...newest.values()].flatMap((r) =>
+    r.items.filter((i) => (i.attachment === "signature" || i.attachment === "attestation") && (i.signs?.length ?? 0) > 0).map((item) => ({ kind: r.kind, target: r.name, item })),
+  );
+}
+
+/**
+ * Check the Sigstore bundles a publish recorded for `releaseDigest`
+ * (#5164). An image's are read from its registry by cosign. A forge
+ * release's are read from `assetsDir`, where its assets were downloaded
+ * (such as `gh release download <tag> -D <dir>`): each bundle must be the
+ * bytes the record names, and a file beside it must be the digest it signs.
+ * The identity is `release.signing.identity` and `issuer` when the config
+ * names them, else the one the publish recorded: a workflow of the
+ * repository the publish ran in.
+ */
+export async function verifySigstore(req: {
+  cwd: string;
+  releaseDigest: string;
+  assetsDir?: string;
+  verifier?: import("./publish-signing").SigstoreVerifier;
+  env?: NodeJS.ProcessEnv;
+}): Promise<SigstoreVerification> {
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { join, resolve } = await import("node:path");
+  const { cosignVerifier } = await import("./publish-signing");
+  const { bytesDigest } = await import("./publish-targets");
+  const { loadChantConfig } = await import("../config");
+  const recorded = await recordedSignatures(req.cwd, req.releaseDigest);
+  if (recorded.length === 0) return { status: "none", checks: [], reason: "the publish record holds no Sigstore signature for this release" };
+  const config = (await loadChantConfig(req.cwd).catch(() => null))?.config.release?.signing;
+  const pinned = typeof config === "object" ? config : {};
+  const verifier = req.verifier ?? cosignVerifier(req.env ?? process.env);
+  const missing = verifier.unavailable();
+  const checks: SigstoreCheck[] = [];
+  for (const { kind, target, item } of recorded) {
+    const attachment = item.attachment as "signature" | "attestation";
+    const signs = item.signs ?? [];
+    const issuer = pinned.issuer ?? item.sigstore?.issuer;
+    const identity = pinned.identity ?? item.sigstore?.identity;
+    const id = issuer && identity ? { issuer, identity } : null;
+    const base = { name: item.name, kind, target, attachment, signs, identity: id };
+    const done = (status: SigstoreCheck["status"], reason: string) => checks.push({ ...base, status, reason });
+    if (!id) {
+      done("unchecked", "the record names no identity for it; set release.signing.identity and issuer");
+      continue;
+    }
+    if (missing) {
+      done("unchecked", missing);
+      continue;
+    }
+    if (kind === "oci") {
+      const ref = signs[0]!.name;
+      const why = attachment === "signature" ? await verifier.verifyImage(ref, id) : await verifier.verifyImageAttestation(ref, item.predicateType ?? "", id);
+      done(why ? "failed" : "verified", why ?? `${verifier.name} verified it on ${ref}`);
+      continue;
+    }
+    if (!req.assetsDir) {
+      done("unchecked", "it is a release asset; download the release's assets and pass --assets <dir>");
+      continue;
+    }
+    const file = join(resolve(req.assetsDir), item.name);
+    if (!existsSync(file)) {
+      done("unchecked", `${item.name} is not in ${req.assetsDir}`);
+      continue;
+    }
+    const bundle = new Uint8Array(readFileSync(file));
+    if (item.digest && bytesDigest(bundle) !== item.digest) {
+      done("failed", `${item.name} in ${req.assetsDir} is ${bytesDigest(bundle)}, and the publish uploaded ${item.digest}`);
+      continue;
+    }
+    const changed = signs.find((s) => existsSync(join(resolve(req.assetsDir!), s.name)) && bytesDigest(new Uint8Array(readFileSync(join(resolve(req.assetsDir!), s.name)))) !== s.digest);
+    if (changed) {
+      done("failed", `${changed.name} in ${req.assetsDir} is not the ${changed.digest} the release published`);
+      continue;
+    }
+    let why: string | null = null;
+    for (const s of signs) {
+      why = attachment === "signature" ? await verifier.verifyBlob(bundle, s.digest, id) : await verifier.verifyBlobAttestation(bundle, s.digest, item.predicateType ?? "", id);
+      if (why) {
+        why = `${s.name}: ${why}`;
+        break;
+      }
+    }
+    done(why ? "failed" : "verified", why ?? `${verifier.name} verified it for ${signs.map((s) => s.name).join(", ")}`);
+  }
+  const bad = checks.filter((c) => c.status !== "verified");
+  return {
+    status: bad.length === 0 ? "verified" : "failed",
+    checks,
+    reason: bad.length === 0 ? `${checks.length} Sigstore bundle(s) verified` : bad.map((c) => `${c.name} (${c.target}): ${c.status}, ${c.reason}`).join("; "),
+  };
+}

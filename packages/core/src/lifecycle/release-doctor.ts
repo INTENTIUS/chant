@@ -27,6 +27,10 @@
  * with the token the cut would use (`green-forge-checks`). Whether that
  * commit is green is the cut's question; the doctor only asks whether the
  * forge answers.
+ *
+ * When the publish signs with Sigstore (#5164, ./publish-signing.ts), the
+ * doctor checks what signing needs from the job it runs in: the OIDC token
+ * cosign signs with (`signing-oidc`) and cosign 3 (`signing-cosign`).
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -92,6 +96,8 @@ export interface DoctorDeps {
   npm?: string;
   /** The vsce executable. Default `vsce`. */
   vsce?: string;
+  /** What would sign with Sigstore (#5164). Default: cosign, as the publish runs it. */
+  signer?: Pick<import("./publish-signing").Signer, "name" | "unavailable">;
 }
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -151,6 +157,9 @@ export async function releaseDoctor(req: {
   green?: import("./release-green").ReleaseGreenSource;
   /** The commit whose checks are read under `forge-checks`. Default: HEAD of `cwd`. */
   commit?: string;
+  /** `release.signing` (#5164), and the workspace's security groups, which decide whether the publish signs. */
+  signing?: import("./publish-signing").SigningConfig;
+  groups?: ReadonlySet<import("../workspace/security").SecurityGroup>;
   deps?: DoctorDeps;
 }): Promise<DoctorReport> {
   const env = req.env ?? process.env;
@@ -176,6 +185,8 @@ export async function releaseDoctor(req: {
     }
   }
   if (req.green === "forge-checks") targets.push(await checkForgeChecks(ctx, req.commit));
+  const signing = await checkSigning(ctx, req.publish, req.signing, req.groups ?? new Set(), deps.signer);
+  if (signing) targets.push(signing);
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
@@ -233,6 +244,38 @@ async function checkForgeChecks(ctx: Ctx, commit: string | undefined): Promise<D
     checks.push({ check: "green-forge-checks", status: "fail", message: `the cut can't read the commit's checks: ${err.message}`, fix: err.fix ?? `Give the token from ${target.tokenSource} read access to ${target.repo}'s checks and statuses.` });
   }
   return t;
+}
+
+/**
+ * Sigstore signing (#5164), when `release.signing` or the `supply-chain`
+ * group turns it on and an `oci` or `forge` target signs: whether this job
+ * has the OIDC token the certificate is issued for, and cosign 3. Null when
+ * the publish does not sign.
+ */
+async function checkSigning(
+  ctx: Ctx,
+  publish: readonly PublishDeclaration[],
+  config: import("./publish-signing").SigningConfig | undefined,
+  groups: ReadonlySet<import("../workspace/security").SecurityGroup>,
+  injected: DoctorDeps["signer"],
+): Promise<DoctorTarget | null> {
+  const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
+  const setting = resolveSigning(config, groups);
+  if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge")) return null;
+  const why = setting.from === "config" ? "release.signing" : "the supply-chain group";
+  const checks: DoctorCheck[] = [];
+  const id = signingIdentity(ctx.env);
+  if ("reason" in id) {
+    checks.push(
+      missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), or set release.signing: false."),
+    );
+  } else {
+    checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
+  }
+  const signer = injected ?? cosignSigner(ctx.env, ctx.redactor);
+  const gone = signer.unavailable();
+  checks.push(gone ? missing(ctx, "signing-cosign", gone, "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.") : { check: "signing-cosign", status: "ok", message: `${signer.name} signs` });
+  return { kind: "signing", name: "Sigstore signing", checks };
 }
 
 /** A credential the publish needs and this environment lacks: a failure in CI, a warning on a workstation. */

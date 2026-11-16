@@ -183,6 +183,10 @@ export interface ParsedArgs {
   allowUnsigned?: boolean;
   /** `chant release publish --require-provenance` (#4049): refuse a run with no OIDC token, where it warns. */
   requireProvenance?: boolean;
+  /** `chant release verify --sigstore` (#5164): check the Sigstore signatures and SLSA provenance the publish recorded. */
+  sigstore?: boolean;
+  /** `chant release verify --sigstore --assets <dir>` (#5164): the directory holding the forge release's downloaded assets. */
+  assets?: string;
   /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
   source?: string;
   /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */

@@ -23,7 +23,7 @@
  *   records the files `<dist>/artifacts.json` lists of `types`. chant's own
  *   targets publish them. The goreleaser run is `CHANT_GORELEASER` when set,
  *   which `chant release workflow` points at the version it pins
- *   (../goreleaser-pin.ts), else `goreleaser` on the PATH.
+ *   (../tool-pins.ts), else `goreleaser` on the PATH.
  * - `{ name, checksums, of? }`: a file of `<sha256>  <file name>` lines, as
  *   `sha256sum` writes and checks them, over the files of the entries `of`
  *   names (default: every entry before it).

@@ -50,6 +50,11 @@
  * the publish record, so the reveal publishes what the draft showed, and a
  * resumed reveal does not ask the forge again.
  *
+ * When the publish signs (#5164, ./publish-signing.ts), the stage also
+ * uploads `<file>.sigstore.json` beside each file and
+ * `release.slsa.sigstore.json`, SLSA provenance over the declared assets. A
+ * bundle already on the draft is kept, since signing again gives other bytes.
+ *
  * The token is read from `tokenEnv`, else `GITHUB_TOKEN`, `GITLAB_TOKEN`
  * then `CI_JOB_TOKEN`, or `FORGEJO_TOKEN`, and is masked in all output.
  */
@@ -58,6 +63,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { memberSbom, releaseProvenance } from "./publish-attachments";
+import { SIGSTORE_BUNDLE_SUFFIX, SLSA_BUNDLE_FILE, SLSA_PROVENANCE_PREDICATE, slsaProvenanceStatement } from "./publish-signing";
 import { releaseVersion } from "./publish-homebrew";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
@@ -139,6 +145,15 @@ interface Asset {
   digest: string;
   /** Set on the SBOM and the provenance statement chant attaches (#4049). */
   attachment?: "sbom" | "provenance";
+}
+
+/** A Sigstore bundle the stage signs and uploads beside the files (#5164). */
+interface PlannedSignature {
+  name: string;
+  attachment: "signature" | "attestation";
+  signs: Array<{ name: string; digest: string }>;
+  predicateType?: string;
+  make(): Promise<Uint8Array>;
 }
 
 interface ForgeRelease {
@@ -408,13 +423,24 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
             assets.map((a) => ({ name: a.name, digest: a.digest })),
           )
         : null;
+    const declared = assets.map((a) => ({ name: a.name, digest: a.digest }));
     for (const a of [sbom, provenance]) if (a) assets.push({ path: a.name, name: a.name, bytes: a.bytes, digest: a.digest, attachment: a.kind });
+    // #5164: a bundle beside each file, and SLSA provenance over the declared assets, signed in the stage.
+    const signing = ctx.signing;
+    const signatures: PlannedSignature[] = signing
+      ? [
+          ...assets.map((a) => ({ name: `${a.name}${SIGSTORE_BUNDLE_SUFFIX}`, attachment: "signature" as const, signs: [{ name: a.name, digest: a.digest }], make: () => signing.signer.signBlob(a.bytes, a.name) })),
+          ...(declared.length > 0
+            ? [{ name: SLSA_BUNDLE_FILE, attachment: "attestation" as const, signs: declared, predicateType: SLSA_PROVENANCE_PREDICATE, make: () => signing.signer.signStatement(slsaProvenanceStatement(ctx, declared)) }]
+            : []),
+        ]
+      : [];
     const names = new Set<string>();
-    for (const a of assets) {
-      if (names.has(a.name)) throw new PublishTargetError("publish-forge-asset-name-taken", `two assets are named ${a.name}, and a release holds one asset per name`);
-      names.add(a.name);
+    for (const n of [...assets.map((a) => a.name), ...signatures.map((x) => x.name)]) {
+      if (names.has(n)) throw new PublishTargetError("publish-forge-asset-name-taken", `two assets are named ${n}, and a release holds one asset per name`);
+      names.add(n);
     }
-    return { tag, api, token, assets, section: notesSection(ctx, tag) };
+    return { tag, api, token, assets, signatures, section: notesSection(ctx, tag) };
   };
   // #4658: the file's section is read when the target is planned, so a missing or empty section refuses before any target publishes.
   const notesSection = (ctx: PublishContext, tag: string): string | undefined => {
@@ -467,6 +493,24 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
   };
   const att = (a: Asset): Pick<PublishItem, "attachment"> => (a.attachment ? { attachment: a.attachment } : {});
   const where = (tag: string, name: string) => `${decl.forge} ${decl.repo} release ${tag}, asset ${name}`;
+  const sigItem = (ctx: PublishContext, tag: string, x: PlannedSignature, o: { destination?: string; digest?: string | null; present?: boolean } = {}): PublishItem => ({
+    name: x.name,
+    destination: o.destination ?? `${where(tag, x.name)}${o.digest === undefined && !o.present ? ", signed when staged" : ""}`,
+    ...(o.digest ? { digest: o.digest } : {}),
+    attachment: x.attachment,
+    signs: x.signs,
+    ...(x.predicateType ? { predicateType: x.predicateType } : {}),
+    ...(ctx.signing ? { sigstore: ctx.signing.identity } : {}),
+    ...(o.present ? { present: true } : {}),
+  });
+  /** Sign `x` and upload its bundle. */
+  const signAndUpload = async (ctx: PublishContext, client: ForgeClient, rel: ForgeRelease | null, version: string, tag: string, x: PlannedSignature): Promise<PublishItem> => {
+    ctx.log(`signing ${x.signs.length === 1 ? x.signs[0]!.name : `${x.signs.length} assets`} with ${ctx.signing!.signer.name}: ${x.name}`);
+    const bytes = await x.make();
+    const digest = bytesDigest(bytes);
+    const destination = await client.upload(rel, version, { path: x.name, name: x.name, bytes, digest });
+    return sigItem(ctx, tag, x, { destination: decl.forge === "gitlab" ? destination : where(tag, x.name), digest });
+  };
   const exists = (tag: string, a: Asset, theirs: string | null | undefined, before: PublishItem[]) =>
     new PublishTargetError(
       "publish-forge-asset-exists",
@@ -480,15 +524,16 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
     async plan(ctx) {
-      const { tag, assets, section } = setup(ctx);
+      const { tag, assets, signatures, section } = setup(ctx);
       const notes = await releaseNotes(ctx, tag, section, null);
       return [
         ...assets.map((a) => ({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a) })),
+        ...signatures.map((x) => sigItem(ctx, tag, x)),
         ...(notes !== undefined ? [{ name: decl.notes!.file ?? "generated notes", destination: `${decl.forge} ${decl.repo} release ${tag}, notes`, notes }] : []),
       ];
     },
     async stage(ctx): Promise<StagedTarget> {
-      const { tag, api, token, assets, section } = setup(ctx);
+      const { tag, api, token, assets, signatures, section } = setup(ctx);
       ctx.log(`using the token from ${token.from}`);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
       const done = (items: PublishItem[], state: Record<string, string>): StagedTarget => ({ target: this.name, destination: this.destination, items, state });
@@ -509,6 +554,17 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
           if (theirs !== a.digest && !(decl.forge !== "github" && theirs === null)) throw exists(tag, a, theirs, items);
           items.push({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a), present: true });
         }
+        // #5164: a bundle signed by an earlier run is kept; signing again gives other bytes.
+        for (const x of signatures) {
+          if (!published.assets.has(x.name)) {
+            throw new PublishTargetError(
+              "publish-forge-release-published",
+              `release ${tag} on ${decl.forge} ${decl.repo} is already published without ${x.name}, so the signatures uploaded to it would show after its assets`,
+              "Delete the forge release so the publish makes it whole, or set release.signing: false.",
+            );
+          }
+          items.push(sigItem(ctx, tag, x, { digest: published.assets.get(x.name) ?? null, present: true }));
+        }
         ctx.log(`release ${tag} is already published with every asset`);
         return done(items, { published: "true" });
       }
@@ -524,6 +580,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
           ctx.log(`uploading ${a.name} (${a.bytes.byteLength} bytes) to the generic package registry`);
           items.push({ name: a.path, destination: await client.upload(null, version, a), digest: a.digest, ...att(a) });
         }
+        for (const x of signatures) items.push(await signAndUpload(ctx, client, null, version, tag, x));
         return done(items, kept);
       }
 
@@ -540,12 +597,28 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         ctx.log(`uploading ${a.name} (${a.bytes.byteLength} bytes) to the draft`);
         items.push({ name: a.path, destination: await client.upload(rel, version, a), digest: a.digest, ...att(a) });
       }
+      for (const x of signatures) {
+        if (rel.assets.has(x.name)) {
+          ctx.log(`${x.name} is already on the draft release ${tag}; it is not signed again`);
+          items.push(sigItem(ctx, tag, x, { digest: rel.assets.get(x.name) ?? null, present: true }));
+          continue;
+        }
+        items.push(await signAndUpload(ctx, client, rel, version, tag, x));
+      }
       return done(items, { releaseId: rel.id, ...kept });
     },
     async reveal(ctx, staged) {
       const { tag, api, token, section } = setup(ctx);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
-      const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}), ...(i.attachment ? { attachment: i.attachment } : {}) }));
+      const items = staged.items.map((i) => ({
+        name: i.name,
+        destination: i.destination,
+        ...(i.digest ? { digest: i.digest } : {}),
+        ...(i.attachment ? { attachment: i.attachment } : {}),
+        ...(i.signs ? { signs: i.signs } : {}),
+        ...(i.predicateType ? { predicateType: i.predicateType } : {}),
+        ...(i.sigstore ? { sigstore: i.sigstore } : {}),
+      }));
       if (staged.state.published === "true") return { target: this.name, destination: this.destination, items: items.map((i) => ({ ...i, present: true })) };
       // The notes the stage decided; a stage recorded before chant kept them has them decided again.
       const notes = staged.state.notes ?? (await releaseNotes(ctx, tag, section, client));

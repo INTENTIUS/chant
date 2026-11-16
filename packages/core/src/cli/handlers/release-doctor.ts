@@ -81,17 +81,28 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   const cwd = resolve(".");
   let publish: import("../../lifecycle/publish-declaration").PublishDeclaration[];
   let declaredGreen: import("../../lifecycle/release-green").ReleaseGreenSource | undefined;
+  let signing: import("../../lifecycle/publish-signing").SigningConfig | undefined;
   try {
     const { loadChantConfig } = await import("../../config");
     const release = (await loadChantConfig(cwd)).config.release;
     publish = release?.publish ?? [];
     declaredGreen = release?.green;
+    signing = release?.signing;
   } catch (err) {
     console.error(formatError({ message: `release.publish in chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)} [doctor-config-invalid]`, hint: USAGE }));
     return 1;
   }
   const { releaseDoctor } = await import("../../lifecycle/release-doctor");
-  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), green: await greenGate(cwd, declaredGreen) });
+  // #5164: the security groups decide whether the publish signs, as they do for the publish.
+  let groups: ReadonlySet<import("../../workspace/security").SecurityGroup> = new Set();
+  try {
+    const { scopeSource } = await import("../../workspace/write-scope");
+    const { securityGroupsIn } = await import("../../workspace/security");
+    groups = securityGroupsIn(scopeSource(cwd), cwd);
+  } catch {
+    groups = new Set();
+  }
+  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), groups });
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
   } else if (report.targets.length === 0) {

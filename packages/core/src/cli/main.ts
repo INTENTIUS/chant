@@ -551,9 +551,13 @@ Releases:
                         supply-chain it warns when the run has no OIDC token
                         and refuses a target with no SBOM source.
                         --require-provenance refuses a run with no OIDC.
-  release verify <label|digest> [--json]
+  release verify <label|digest> [--sigstore [--assets <dir>]] [--json]
                         Check, offline, that the release was signed by a key
                         .chant/allowed_signers lists at the release's commit.
+                        --sigstore also checks the Sigstore signatures and
+                        SLSA provenance the publish recorded, with cosign:
+                        an image's in its registry, a forge release's in the
+                        directory --assets names.
   release images <label|digest> [--no-build] [-o <file>] [--json]
                         Build the images release.images declares again from
                         the release's commit, refuse one whose digest is not

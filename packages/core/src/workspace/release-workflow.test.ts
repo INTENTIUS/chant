@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { parseYAML } from "../yaml";
 import { ACTION_PINS } from "../action-pins";
 import { IMAGE_PINS } from "../image-pins";
-import { GORELEASER_PIN } from "../goreleaser-pin";
+import { TOOL_PINS } from "../tool-pins";
 import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
 import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
@@ -943,7 +943,7 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
     expect(go!.uses).toContain(ACTION_PINS.setupGo7.sha);
     expect(go!.with).toEqual({ "go-version-file": "cli/go.mod" });
     const install = cut!.steps.find((s) => s.name?.startsWith("goreleaser "))!;
-    expect(install.run).toContain(GORELEASER_PIN.platforms["linux/amd64"]!.sha256);
+    expect(install.run).toContain(TOOL_PINS.goreleaser.platforms["linux/amd64"]!.sha256);
     expect(install.run).toContain("sha256sum -c -");
     expect(install.run).toContain('CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser');
     expect(cut!.steps.indexOf(install)).toBeLessThan(cut!.steps.findIndex((s) => s.run?.includes("release cut")));
@@ -955,7 +955,7 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
     expect(own.cut!.steps.filter((s) => s.uses?.startsWith("actions/setup-go@")).map((s) => s.uses)).toEqual(["actions/setup-go@abc"]);
     expect(own.cut!.steps.some((s) => s.name?.startsWith("goreleaser "))).toBe(false);
     const gitlab = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), artifacts: true, goreleaser: true, pipeline: { trigger: "dispatch" } })) as Record<string, { script: string[] }>;
-    expect(gitlab["chant-release-cut"]!.script.some((l) => l.includes(GORELEASER_PIN.platforms["linux/amd64"]!.url) && l.endsWith("export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"))).toBe(true);
+    expect(gitlab["chant-release-cut"]!.script.some((l) => l.includes(TOOL_PINS.goreleaser.platforms["linux/amd64"]!.url) && l.endsWith("export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"))).toBe(true);
   });
 
   test("without release.artifacts the files render as before", () => {
