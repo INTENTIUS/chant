@@ -23,6 +23,9 @@ const KINDS: Record<string, { group: string; version: string; plural: string }> 
   ReplicaSet: { group: "apps", version: "v1", plural: "replicasets" },
   StatefulSet: { group: "apps", version: "v1", plural: "statefulsets" },
   EndpointSlice: { group: "discovery.k8s.io", version: "v1", plural: "endpointslices" },
+  Job: { group: "batch", version: "v1", plural: "jobs" },
+  CronJob: { group: "batch", version: "v1", plural: "cronjobs" },
+  DaemonSet: { group: "apps", version: "v1", plural: "daemonsets" },
   Ingress: { group: "networking.k8s.io", version: "v1", plural: "ingresses" },
 };
 
@@ -67,7 +70,10 @@ let uidSeq = 0;
 const meta = (name: string, extra: Record<string, unknown> = {}) => ({ name, namespace: "shop", uid: `uid-${name}-${++uidSeq}`, ...extra });
 
 /** A Deployment with one ReplicaSet and one Pod, as a cluster holds it. */
-function deployment(name: string, opts: { labels?: Record<string, string>; annotations?: Record<string, string>; ns?: string; podSpec?: Record<string, unknown> } = {}): Obj[] {
+function deployment(
+  name: string,
+  opts: { labels?: Record<string, string>; annotations?: Record<string, string>; ns?: string; podSpec?: Record<string, unknown>; status?: { ready: number; replicas: number; restarts: number } } = {},
+): Obj[] {
   const ns = opts.ns ?? "shop";
   const podSpec: Record<string, unknown> = { containers: [{ name, image: `${name}:1` }], ...(opts.podSpec ?? {}) };
   const d = { apiVersion: "apps/v1", kind: "Deployment", metadata: meta(name, { namespace: ns, labels: opts.labels ?? {}, annotations: opts.annotations ?? {} }), spec: { selector: { matchLabels: { app: name } }, template: { metadata: { labels: { app: name } }, spec: podSpec } } } as Obj;
@@ -82,6 +88,11 @@ function deployment(name: string, opts: { labels?: Record<string, string>; annot
       volumes: [...((podSpec.volumes as unknown[]) ?? []), { name: "kube-api-access-abcde", projected: { sources: [{ serviceAccountToken: { path: "token" } }, { configMap: { name: "kube-root-ca.crt" } }] } }],
     },
   } as Obj;
+  if (opts.status) {
+    (d.spec as Record<string, unknown>).replicas = opts.status.replicas;
+    d.status = { replicas: opts.status.replicas, readyReplicas: opts.status.ready };
+    pod.status = { phase: "Running", containerStatuses: [{ name, restartCount: opts.status.restarts }], conditions: [{ type: "Ready", status: opts.status.ready > 0 ? "True" : "False" }] };
+  }
   return [d, rs, pod];
 }
 
@@ -160,11 +171,23 @@ describe("two workloads, one naming the other's Service", () => {
     for (const n of result.ir.nodes) expect((n.attrs.liveNames as string[]).map(short)).not.toContain("shop/ServiceAccount/default");
   });
 
-  it("says a mounted Secret is masked by the live read and leaves it out", async () => {
+  it("takes in a mounted Secret, whose name the live read keeps", async () => {
     const { result, short } = await infer(objects);
     const payments = result.ir.nodes.find((n) => n.id === "payments")!;
-    expect((payments.attrs.liveNames as string[]).map(short)).not.toContain("shop/Secret/payments-db");
-    expect(result.notes).toEqual(["payments: 1 Secret reference is masked by the live read, so that Secret is not taken in"]);
+    expect((payments.attrs.members as Array<{ id: string; role: string }>).map((m) => [short(m.id), m.role])).toContainEqual(["shop/Secret/payments-db", "config"]);
+    expect(result.notes).toEqual([]);
+  });
+
+  it("notes a Secret reference that still reads as masked, and leaves it out", () => {
+    const node = (kind: string, name: string, attrs: Record<string, unknown>) => ({ id: `k/${kind}/${name}`, kind, lexicon: "kubernetes", listedType: kind === "Deployment" ? "apps/v1/Deployment" : `v1/${kind}`, location: "shop", nativeId: `shop/${name}`, attrs: { metadata: { name, namespace: "shop" }, ...attrs } });
+    const result = inferK8sComponents({
+      nodes: [
+        node("Deployment", "old", { spec: { template: { metadata: { labels: { app: "old" } }, spec: { containers: [{ name: "c" }], volumes: [{ name: "db", secret: "<masked>" }] } } } }),
+        node("Secret", "db", {}),
+      ],
+    });
+    expect(result.ir.nodes[0].attrs.liveNames).toEqual(["k/Deployment/old"]);
+    expect(result.notes).toEqual(["old: 1 Secret reference is masked by the live read, so that Secret is not taken in"]);
   });
 });
 
@@ -193,6 +216,37 @@ describe("labels that set the boundary", () => {
     expect(result.ir.nodes.map((n) => [n.id, n.attrs.boundary])).toEqual([["cache", { by: "helm", value: "cache" }]]);
     const live = (result.ir.nodes[0].attrs.liveNames as string[]).map(short);
     expect(live).toEqual(expect.arrayContaining(["shop/Deployment/cache-metrics", "shop/StatefulSet/cache-redis", "shop/Service/cache-redis"]));
+  });
+
+  it("joins one Argo CD instance across the namespaces it deploys into, named by the instance", async () => {
+    const argo = { labels: { "argocd.argoproj.io/instance": "shop-app" } };
+    const { result, short } = await infer([
+      ...deployment("web", { ...argo, ns: "front" }),
+      ...deployment("api", { ...argo, ns: "back" }),
+      ...deployment("api", { ns: "other" }),
+      ...service("api", "back"),
+      ...namespaceObjects("front"),
+      ...namespaceObjects("back"),
+      ...namespaceObjects("other"),
+    ]);
+    expect(result.ir.nodes.map((n) => n.id).sort()).toEqual(["api", "shop-app"]);
+    const app = result.ir.nodes.find((n) => n.id === "shop-app")!;
+    expect(app.attrs.boundary).toEqual({ by: "argocd", value: "shop-app" });
+    expect(app.attrs.namespaces).toEqual(["back", "front"]);
+    expect(app.attrs.namespace).toBeUndefined();
+    const workloads = (app.attrs.members as Array<{ id: string; role: string }>).filter((m) => m.role === "workload").map((m) => short(m.id));
+    expect(workloads).toEqual(["back/Deployment/api", "front/Deployment/web"]);
+    // Each namespace's default ServiceAccount is its own, not shared across namespaces.
+    expect((app.attrs.liveNames as string[]).map(short)).toEqual(expect.arrayContaining(["back/ServiceAccount/default", "front/ServiceAccount/default"]));
+  });
+
+  it("keeps the Argo CD instance's plain name and qualifies another namespace's workload of that name", async () => {
+    const { result } = await infer([
+      ...deployment("a", { labels: { "argocd.argoproj.io/instance": "web" }, ns: "x" }),
+      ...deployment("b", { labels: { "argocd.argoproj.io/instance": "web" }, ns: "y" }),
+      ...deployment("web", { ns: "z" }),
+    ]);
+    expect(result.ir.nodes.map((n) => n.id).sort()).toEqual(["web", "z/web"]);
   });
 
   it("comes out as the Argo CD application, which wins over a chart's release annotation", async () => {
@@ -254,5 +308,44 @@ describe("serviceNamesIn", () => {
     expect(serviceNamesIn("pay with payments today", "shop")).toEqual([]);
     expect(serviceNamesIn("payments.shop.svc.example.com", "shop")).toEqual([]);
     expect(serviceNamesIn("https://api.example.com", "shop")).toEqual([]);
+  });
+});
+
+describe("seeds without a workload owner", () => {
+  const podSpec = { containers: [{ name: "c", image: "busybox" }] };
+  it("seeds an ownerless Job, ReplicaSet and Pod, and not a Job its CronJob owns", async () => {
+    const cron: Obj = { kind: "CronJob", metadata: meta("nightly"), spec: { schedule: "0 1 * * *", jobTemplate: { spec: { template: { metadata: { labels: { app: "nightly" } }, spec: podSpec } } } } };
+    const owned: Obj = { kind: "Job", metadata: meta("nightly-2911", { ownerReferences: [{ kind: "CronJob", name: "nightly", uid: cron.metadata.uid, controller: true }] }), spec: { template: { metadata: { labels: { app: "nightly" } }, spec: podSpec } } };
+    const job: Obj = { kind: "Job", metadata: meta("migrate"), spec: { template: { metadata: { labels: { app: "migrate" } }, spec: podSpec } } };
+    const rs: Obj = { kind: "ReplicaSet", metadata: meta("legacy"), spec: { template: { metadata: { labels: { app: "legacy" } }, spec: podSpec } } };
+    const pod: Obj = { kind: "Pod", metadata: meta("debug", { labels: { app: "debug" } }), spec: podSpec };
+    const { result, short } = await infer([cron, owned, job, rs, pod, ...namespaceObjects()]);
+    expect(result.ir.nodes.map((n) => n.id).sort()).toEqual(["debug", "legacy", "migrate", "nightly"]);
+    const role = (c: string) => (result.ir.nodes.find((n) => n.id === c)!.attrs.members as Array<{ id: string; role: string }>).map((m) => [short(m.id), m.role]);
+    expect(role("migrate")).toContainEqual(["shop/Job/migrate", "workload"]);
+    expect(role("legacy")).toContainEqual(["shop/ReplicaSet/legacy", "workload"]);
+    expect(role("debug")).toContainEqual(["shop/Pod/debug", "workload"]);
+    expect(role("nightly")).toEqual(expect.arrayContaining([["shop/CronJob/nightly", "workload"], ["shop/Job/nightly-2911", "runtime"]]));
+  });
+});
+
+describe("health on each application", () => {
+  it("sums ready over desired replicas and the restarts of every Pod", async () => {
+    const partOf = { "app.kubernetes.io/part-of": "shop" };
+    const { result } = await infer([
+      ...deployment("web", { labels: partOf, status: { ready: 1, replicas: 1, restarts: 2 } }),
+      ...deployment("api", { labels: partOf, status: { ready: 0, replicas: 1, restarts: 5 } }),
+      ...deployment("quiet"),
+    ]);
+    expect(result.ir.nodes.find((n) => n.id === "shop")!.attrs.status).toEqual({ readyReplicas: 1, desiredReplicas: 2, restarts: 7 });
+    expect(result.ir.nodes.find((n) => n.id === "quiet")!.attrs.status).toBeUndefined();
+  });
+
+  it("counts a bare Pod as one replica, and a DaemonSet by its scheduled pods", async () => {
+    const pod: Obj = { kind: "Pod", metadata: meta("debug", { labels: { app: "debug" } }), spec: { containers: [{ name: "c" }] }, status: { phase: "Running", containerStatuses: [{ restartCount: 3 }], conditions: [{ type: "Ready", status: "True" }] } };
+    const ds: Obj = { kind: "DaemonSet", metadata: meta("agent"), spec: { selector: { matchLabels: { app: "agent" } }, template: { metadata: { labels: { app: "agent" } }, spec: { containers: [{ name: "a" }] } } }, status: { desiredNumberScheduled: 3, numberReady: 2 } };
+    const { result } = await infer([pod, ds]);
+    expect(result.ir.nodes.find((n) => n.id === "debug")!.attrs.status).toEqual({ readyReplicas: 1, desiredReplicas: 1, restarts: 3 });
+    expect(result.ir.nodes.find((n) => n.id === "agent")!.attrs.status).toEqual({ readyReplicas: 2, desiredReplicas: 3, restarts: 0 });
   });
 });

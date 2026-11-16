@@ -214,7 +214,7 @@ export async function listKubernetes(ctx: ListerContext, target: KubernetesTarge
           nativeId: k.namespaced ? `${ns}/${meta.name}` : meta.name,
           cloudIds: meta.uid ? [{ kind: "k8s-uid", value: meta.uid }] : [],
           tags,
-          properties: maskKubernetesObject(obj),
+          properties: withWorkloadStatus(maskKubernetesObject(obj), item, k),
           observedAt,
           labels: true,
         });
@@ -236,6 +236,46 @@ export async function listKubernetes(ctx: ListerContext, target: KubernetesTarge
     for (const r of found) ctx.resources.push(buildResource(ctx, r));
     for (const l of coverageLocations) ctx.coverage.push({ listedType: k.listedType, location: l, ...listedVerdict(scope) });
   }
+}
+
+/**
+ * What a workload's or a Pod's `status` says about its health (chant#5252),
+ * kept beside the object as `workloadStatus` because typing prunes `status`
+ * whole. A Deployment, StatefulSet or ReplicaSet gives ready and desired
+ * replicas (desired is `spec.replicas`, 1 when absent); a DaemonSet its ready
+ * and desired scheduled pods; a Pod its phase, the restarts summed over its
+ * containers, and whether its `Ready` condition is true. Other kinds, and an
+ * object with no `status`, get none.
+ */
+export type WorkloadStatus =
+  | { readyReplicas: number; desiredReplicas: number }
+  | { phase?: string; restarts: number; ready: boolean };
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+export function workloadStatusView(obj: Record<string, unknown>, group: string, kind: string): WorkloadStatus | undefined {
+  const status = obj.status as Record<string, unknown> | undefined;
+  if (!status || typeof status !== "object") return undefined;
+  const spec = (obj.spec ?? {}) as Record<string, unknown>;
+  if (group === "apps" && (kind === "Deployment" || kind === "StatefulSet" || kind === "ReplicaSet")) {
+    return { readyReplicas: num(status.readyReplicas), desiredReplicas: typeof spec.replicas === "number" ? spec.replicas : 1 };
+  }
+  if (group === "apps" && kind === "DaemonSet") {
+    return { readyReplicas: num(status.numberReady), desiredReplicas: num(status.desiredNumberScheduled) };
+  }
+  if (group === "" && kind === "Pod") {
+    const containers = [...(Array.isArray(status.containerStatuses) ? status.containerStatuses : []), ...(Array.isArray(status.initContainerStatuses) ? status.initContainerStatuses : [])];
+    const restarts = containers.reduce((sum: number, c) => sum + num((c as Record<string, unknown>)?.restartCount), 0);
+    const conditions = Array.isArray(status.conditions) ? (status.conditions as Array<Record<string, unknown>>) : [];
+    const ready = conditions.some((c) => c?.type === "Ready" && c?.status === "True");
+    return { ...(typeof status.phase === "string" ? { phase: status.phase } : {}), restarts, ready };
+  }
+  return undefined;
+}
+
+function withWorkloadStatus(masked: Record<string, unknown>, item: Record<string, unknown>, k: ServedKind): Record<string, unknown> {
+  const view = workloadStatusView(item, k.group, k.kind);
+  return view ? { ...masked, workloadStatus: view } : masked;
 }
 
 /**

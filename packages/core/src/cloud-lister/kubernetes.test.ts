@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { listCloud } from "./index";
-import { kubeTargetFromKubeconfig } from "./kubernetes";
+import { kubeTargetFromKubeconfig, workloadStatusView } from "./kubernetes";
 import { ListerConfigError } from "./credentials";
 import { MASKED } from "./mask";
 import { fakeFetcher, json, refusingChains, steppingClock } from "./fakes";
@@ -156,5 +156,42 @@ ${user}
 
   it("refuses an exec plugin", () => {
     expect(() => kubeTargetFromKubeconfig(base("    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: aws"))).toThrow(ListerConfigError);
+  });
+});
+
+describe("workloadStatusView (chant#5252)", () => {
+  it("keeps ready and desired replicas for a Deployment, StatefulSet and ReplicaSet", () => {
+    for (const kind of ["Deployment", "StatefulSet", "ReplicaSet"]) {
+      expect(workloadStatusView({ spec: { replicas: 3 }, status: { replicas: 3, readyReplicas: 2 } }, "apps", kind)).toEqual({ readyReplicas: 2, desiredReplicas: 3 });
+    }
+    expect(workloadStatusView({ spec: {}, status: {} }, "apps", "Deployment")).toEqual({ readyReplicas: 0, desiredReplicas: 1 });
+  });
+
+  it("keeps a DaemonSet's ready and desired scheduled pods", () => {
+    expect(workloadStatusView({ status: { desiredNumberScheduled: 4, numberReady: 3 } }, "apps", "DaemonSet")).toEqual({ readyReplicas: 3, desiredReplicas: 4 });
+  });
+
+  it("keeps a Pod's phase, its restarts summed over containers and its Ready condition", () => {
+    const status = { phase: "Running", containerStatuses: [{ restartCount: 2 }, { restartCount: 1 }], initContainerStatuses: [{ restartCount: 1 }], conditions: [{ type: "Ready", status: "True" }] };
+    expect(workloadStatusView({ status }, "", "Pod")).toEqual({ phase: "Running", restarts: 4, ready: true });
+    expect(workloadStatusView({ status: { phase: "Pending", conditions: [{ type: "Ready", status: "False" }] } }, "", "Pod")).toEqual({ phase: "Pending", restarts: 0, ready: false });
+  });
+
+  it("gives none for other kinds or with no status", () => {
+    expect(workloadStatusView({ status: { active: 1 } }, "batch", "Job")).toBeUndefined();
+    expect(workloadStatusView({ spec: { replicas: 1 } }, "apps", "Deployment")).toBeUndefined();
+  });
+
+  it("is on the listed object as workloadStatus", async () => {
+    const routes = (call: WireCall) => {
+      const path = new URL(call.url).pathname;
+      if (path === "/api/v1") return json(200, { resources: [{ name: "pods", kind: "Pod", namespaced: true, verbs: ["list"] }] });
+      if (path === "/apis") return json(200, { groups: [] });
+      if (path === "/api/v1/pods") return json(200, { items: [{ metadata: { name: "p", namespace: "app" }, spec: {}, status: { phase: "Running", containerStatuses: [{ restartCount: 1 }], conditions: [{ type: "Ready", status: "True" }] } }] });
+      return undefined;
+    };
+    const { fetcher } = fakeFetcher(routes);
+    const result = await listCloud({ substrate: "kubernetes", scopeId: "c", locations: "*", types: "*" }, { substrate: "kubernetes", kubernetes: { server: SERVER, token: "t" } }, { fetcher, now: steppingClock(), retryDelays: [] });
+    expect(result.resources[0].properties.workloadStatus).toEqual({ phase: "Running", restarts: 1, ready: true });
   });
 });

@@ -32,13 +32,14 @@ export type { AwsTarget } from "./aws";
 export type { AzureTarget } from "./azure";
 export type { GcpTarget } from "./gcp";
 export type { KubernetesTarget } from "./kubernetes";
-export { kubeTargetFromKubeconfig } from "./kubernetes";
+export { kubeTargetFromKubeconfig, workloadStatusView } from "./kubernetes";
+export type { WorkloadStatus } from "./kubernetes";
 export { ListerConfigError } from "./credentials";
 export { MutatingCallRefused, READ_OPERATIONS } from "./guard";
 export { OriginRefused } from "./transport";
 export { listedNodeId, parseListedNodeId } from "./ids";
 export { inferK8sComponents, serviceNamesIn, K8S_COMPONENTS_FLOOR } from "./kubernetes-components";
-export type { InferredK8sComponents, K8sBoundary, K8sComponentMember, K8sMemberRole, K8sOutsideName, K8sSharedObject } from "./kubernetes-components";
+export type { InferredK8sComponents, K8sBoundary, K8sComponentMember, K8sMemberRole, K8sComponentStatus, K8sOutsideName, K8sSharedObject } from "./kubernetes-components";
 
 /** Where and how to reach the scope's substrate. The variant must match `scope.substrate`. */
 export type SubstrateTarget =

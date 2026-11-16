@@ -12,9 +12,10 @@
  * of the declared component graph reads this one with no new code.
  *
  * Seeds. A workload (Deployment, StatefulSet, DaemonSet, CronJob, Job,
- * ReplicaSet, Pod) that no other workload controls. Owner references are
- * followed by uid, and by kind and name in the namespace when the uid is not
- * in the read.
+ * ReplicaSet, Pod) that no other workload controls, so a Job, ReplicaSet or
+ * Pod with no workload owner seeds as well and nothing running is left out.
+ * Owner references are followed by uid, and by kind and name in the
+ * namespace when the uid is not in the read.
  *
  * Boundaries. The first of these on a seed's own labels and annotations
  * names its unit, and seeds of one namespace with the same unit are one
@@ -22,6 +23,15 @@
  * the `meta.helm.sh/release-name` annotation, `app.kubernetes.io/instance`,
  * and `app.kubernetes.io/name` on an object a k8s composite made
  * (`app.kubernetes.io/managed-by: chant`). A seed with none stands alone.
+ * An Argo CD instance is one application across every namespace it deploys
+ * into, since one Application can name several.
+ *
+ * Names. An application is named by its unit's value, or by its workload's
+ * name when it has no unit. Inside one namespace a second unit with a taken
+ * name is told apart by its kind (`cronjob-web`) or its label
+ * (`instance-web`). When two namespaces in one read give the same name, each
+ * is written `<namespace>/<name>`; an Argo CD instance keeps its plain name.
+ * A read of one namespace never qualifies a name.
  *
  * Membership. An application takes in its seeds' runtime children, the
  * Services that select their pods (with those Services' Endpoints and
@@ -38,9 +48,14 @@
  * its bare name inside the reader's namespace when that is the whole value or
  * a URL's host.
  *
- * What a live read cannot show: the lister masks keys matching /secret/i
- * (../sensitive-key.ts), so a Secret named only in `volumes[].secret` or
- * `secretKeyRef` is not taken in, and a note says so. Pure, and it reads only
+ * Health. Each application's `attrs.status` sums the lister's
+ * `workloadStatus` views (./kubernetes.ts): ready over desired replicas for
+ * its workloads, and the restarts of every Pod they run.
+ *
+ * Secrets. The lister keeps a pod spec's Secret names readable and masks the
+ * rest (`podSecretNameView`, ../sensitive-key.ts), so a mounted Secret is
+ * taken in. A reference that still reads as masked (a read by an older
+ * lister) is left out, and a note says so. Pure, and it reads only
  * each node's listed type, location, native id, attributes and uid, so a
  * graph typed without the k8s lexicon gives the same answer.
  */
@@ -74,6 +89,18 @@ export interface K8sOutsideName {
 export interface K8sBoundary {
   by: "part-of" | "argocd" | "helm" | "instance" | "chant" | "workload";
   value: string;
+}
+
+/**
+ * An application's health, from the lister's `workloadStatus` views: ready
+ * over desired replicas summed over its workloads (a bare Pod counts as one),
+ * absent when none of them has replica counts (a CronJob, a Job), and the
+ * restarts summed over every Pod they run.
+ */
+export interface K8sComponentStatus {
+  readyReplicas?: number;
+  desiredReplicas?: number;
+  restarts: number;
 }
 
 /** An object two or more applications use. */
@@ -283,7 +310,10 @@ export function serviceNamesIn(value: string, ns: string): Array<[string, string
 
 interface Unit {
   key: string;
+  /** The first of {@link namespaces}. */
   ns: string;
+  /** Every namespace its seeds are in: one, except for an Argo CD instance. */
+  namespaces: string[];
   boundary: K8sBoundary;
   seeds: Obj[];
   name: string;
@@ -330,13 +360,20 @@ export function inferK8sComponents(graph: Pick<GraphIR, "nodes">): InferredK8sCo
     return !owner || !isWorkload(owner);
   });
 
-  // Units, then their names.
+  // Units, then their names. An Argo CD instance is one unit whatever namespaces it deploys into.
   const units = new Map<string, Unit>();
   for (const s of seeds) {
     const boundary = unitOf(s);
-    const key = boundary.by === "workload" ? `${s.ns}\u0000workload\u0000${s.kind}\u0000${s.name}` : `${s.ns}\u0000${boundary.by}\u0000${boundary.value}`;
-    const u = units.get(key) ?? { key, ns: s.ns, boundary, seeds: [], name: "" };
+    const key =
+      boundary.by === "workload"
+        ? `${s.ns}\u0000workload\u0000${s.kind}\u0000${s.name}`
+        : boundary.by === "argocd"
+          ? `\u0000argocd\u0000${boundary.value}`
+          : `${s.ns}\u0000${boundary.by}\u0000${boundary.value}`;
+    const u = units.get(key) ?? { key, ns: s.ns, namespaces: [], boundary, seeds: [], name: "" };
     u.seeds.push(s);
+    if (!u.namespaces.includes(s.ns)) u.namespaces = [...u.namespaces, s.ns].sort(byString);
+    u.ns = u.namespaces[0];
     units.set(key, u);
   }
   const ordered = [...units.values()].sort((a, b) => {
@@ -344,16 +381,21 @@ export function inferK8sComponents(graph: Pick<GraphIR, "nodes">): InferredK8sCo
     const wb = b.boundary.by === "workload" ? 1 : 0;
     return wa - wb || byString(a.ns, b.ns) || byString(a.key, b.key);
   });
-  const taken = new Map<string, string>();
+  // Inside one namespace a second unit with a taken name is told apart by its kind or its label.
+  const taken = new Set<string>();
   for (const u of ordered) {
     const plain = u.boundary.value;
-    const inNs = `${u.ns}\u0000${plain}`;
-    u.name = taken.has(inNs) ? (u.boundary.by === "workload" ? `${u.seeds[0].kind.toLowerCase()}-${plain}` : `${u.boundary.by}-${plain}`) : plain;
-    taken.set(`${u.ns}\u0000${u.name}`, u.key);
+    const clash = u.namespaces.some((ns) => taken.has(`${ns}\u0000${plain}`));
+    u.name = clash ? (u.boundary.by === "workload" ? `${u.seeds[0].kind.toLowerCase()}-${plain}` : `${u.boundary.by}-${plain}`) : plain;
+    for (const ns of u.namespaces) taken.add(`${ns}\u0000${u.name}`);
   }
-  const nsOfName = new Map<string, Set<string>>();
-  for (const u of ordered) (nsOfName.get(u.name) ?? nsOfName.set(u.name, new Set()).get(u.name)!).add(u.ns);
-  for (const u of ordered) if (nsOfName.get(u.name)!.size > 1) u.name = `${u.ns}/${u.name}`;
+  // Across namespaces a name two units give is written <namespace>/<name>; an Argo CD instance keeps its plain name.
+  const unitsOfName = new Map<string, Unit[]>();
+  for (const u of ordered) (unitsOfName.get(u.name) ?? unitsOfName.set(u.name, []).get(u.name)!).push(u);
+  for (const group of unitsOfName.values()) {
+    if (group.length < 2) continue;
+    for (const u of group) if (u.namespaces.length === 1) u.name = `${u.ns}/${u.name}`;
+  }
   const unitOfSeed = new Map<string, Unit>();
   for (const u of ordered) for (const s of u.seeds) unitOfSeed.set(s.id, u);
 
@@ -563,6 +605,36 @@ export function inferK8sComponents(graph: Pick<GraphIR, "nodes">): InferredK8sCo
     notes.push(`${c}: ${n} Secret reference${n === 1 ? " is" : "s are"} masked by the live read, so ${n === 1 ? "that Secret is" : "those Secrets are"} not taken in`);
   }
 
+  // Health: ready over desired for the workloads, and restarts over every Pod they run.
+  const statusOf = (u: Unit): K8sComponentStatus | undefined => {
+    let ready = 0;
+    let desired = 0;
+    let counted = false;
+    let restarts = 0;
+    let pods = 0;
+    for (const seed of u.seeds) {
+      const view = rec(seed.attrs.workloadStatus);
+      if (typeof view.desiredReplicas === "number") {
+        ready += typeof view.readyReplicas === "number" ? view.readyReplicas : 0;
+        desired += view.desiredReplicas;
+        counted = true;
+      } else if (seed.kind === "Pod" && typeof view.ready === "boolean") {
+        ready += view.ready ? 1 : 0;
+        desired += 1;
+        counted = true;
+      }
+      for (const pod of [...(seed.kind === "Pod" ? [seed] : []), ...(runtimePods.get(seed.id) ?? [])]) {
+        const pv = rec(pod.attrs.workloadStatus);
+        if (typeof pv.restarts === "number") {
+          restarts += pv.restarts;
+          pods++;
+        }
+      }
+    }
+    if (!counted && pods === 0) return undefined;
+    return { ...(counted ? { readyReplicas: ready, desiredReplicas: desired } : {}), restarts };
+  };
+
   const unitByName = new Map(ordered.map((u) => [u.name, u]));
   const nodes: IRNode[] = waves.flat().map((name) => {
     const u = unitByName.get(name)!;
@@ -575,8 +647,9 @@ export function inferK8sComponents(graph: Pick<GraphIR, "nodes">): InferredK8sCo
         wave: waveOf.get(name) ?? null,
         liveNames: mine.map((m) => m.id),
         members: mine,
-        namespace: u.ns,
+        ...(u.namespaces.length === 1 ? { namespace: u.ns } : { namespaces: u.namespaces }),
         boundary: u.boundary,
+        ...(statusOf(u) ? { status: statusOf(u) } : {}),
         inferredFrom: "kubernetes",
         ...(shares.get(name)?.length ? { shares: shares.get(name) } : {}),
         ...(outside.get(name)?.length ? { outside: outside.get(name) } : {}),
