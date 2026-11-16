@@ -487,6 +487,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-") || !value.includes("=")) throw new Error("--pin needs a member and a release: --pin <member>=<label|digest>");
       (result.pins ??= []).push(value);
+    } else if (arg === "--train") {
+      // `chant release stamp <label> --train <id|digest>` (#5155): the train whose labels the workspace ranges take.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--train needs a train id or digest: --train <id|digest>");
+      result.train = value;
     } else if (arg === "--from-affected") {
       result.fromAffected = args[++i];
     } else if (arg === "--gate") {

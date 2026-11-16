@@ -18,10 +18,13 @@
  * publish job runs `chant release stamp <label>` before its build, and
  * `chant release publish` accepts a tree whose only changes are those files
  * as the commit's own stamped with the release's label
- * ({@link stampedChanges}). Only `version` changes: dependency ranges and
- * every other field are left as committed. scripts/release-pack.sh does the
- * same for chant itself, and more (the `@intentius/` ranges, the floors, the
- * packing in dependency layers), so chant's own release keeps it.
+ * ({@link stampedChanges}). By default only `version` changes. With
+ * `ranges` (#5155) each workspace dependency's range follows the label the
+ * release or a train gives that package: `exact` and `caret` for the
+ * packages the release stamps, `train` also for the packages of the other
+ * members a release train pins. scripts/release-pack.sh --train does the
+ * same for chant itself, and more (the floors, the packing in dependency
+ * layers), so chant's own release keeps it for now.
  *
  * This module reaches only Node's built-ins and git.
  */
@@ -33,12 +36,31 @@ import { isAbsolute, posix, relative, resolve } from "node:path";
 /** The first chant with `release.version` and `chant release stamp` (#4840). Products feature-detect on it. */
 export const RELEASE_VERSION_FLOOR = "0.124.79";
 
+/**
+ * How `release.version` treats the ranges of workspace dependencies (#5155).
+ * A workspace dependency is a dependency named like a package the release
+ * stamps or, under `train`, like a package of a member the train pins.
+ *
+ * - `keep` (the default): every range stays as committed.
+ * - `exact`: a dependency on a package this release stamps becomes the label, `1.4.0`.
+ * - `caret`: the same, as `^1.4.0`.
+ * - `train`: `^<label>` for every workspace dependency, where a package of another member takes the label the train gives that member (`chant release stamp <label> --train <id>`). The cut, which runs before any train exists, stamps the packages of its own release only.
+ */
+export type ReleaseRanges = "keep" | "exact" | "caret" | "train";
+
+/** A package name to the label a train gives it; null for a member the train pins with no label. */
+export type RangeLabels = Record<string, string | null>;
+
+const RANGE_FIELDS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
+
 /** `release.version` in `chant.config.ts`. */
 export interface ReleaseVersionConfig {
   /** The package directories, relative to the member, whose `package.json` takes the label as its `version`: `"."` for the member's own. */
   packages: string[];
   /** The lockfile whose entries for those packages take it too. Default `package-lock.json` when the member has one; `false` for none. */
   lockfile?: string | false;
+  /** What happens to the ranges of workspace dependencies: `keep` (default), `exact`, `caret` or `train`. */
+  ranges?: ReleaseRanges;
 }
 
 export class ReleaseVersionError extends Error {
@@ -75,6 +97,9 @@ const outside = (p: string): boolean => isAbsolute(p) || norm(p).split("/").incl
 
 /** Check the declaration's paths: at least one package, every path inside the member. */
 export function checkReleaseVersion(config: ReleaseVersionConfig): void {
+  if (config.ranges !== undefined && !["keep", "exact", "caret", "train"].includes(config.ranges)) {
+    throw new ReleaseVersionError("release-version-invalid", `release.version.ranges is "${String(config.ranges)}", not keep, exact, caret or train`);
+  }
   if (config.packages.length === 0) throw new ReleaseVersionError("release-version-invalid", "release.version.packages names no package directory");
   for (const p of [...config.packages, ...(typeof config.lockfile === "string" ? [config.lockfile] : [])]) {
     if (outside(p)) throw new ReleaseVersionError("release-version-invalid", `release.version: ${p} is not a path inside the member`);
@@ -107,36 +132,90 @@ function rewrite(text: string, edit: (doc: Record<string, unknown>) => void): st
   return text.endsWith("\n") ? `${out}\n` : out;
 }
 
+/** The range a dependency takes under `mode` at `label`. */
+function rangeAt(mode: ReleaseRanges, label: string): string {
+  return mode === "exact" ? label : `^${label}`;
+}
+
+/** The workspace dependencies' ranges in one `dependencies`-bearing object, rewritten in place. A range of `*` is left. */
+function rewriteRanges(holder: Record<string, unknown>, mode: ReleaseRanges, table: ReadonlyMap<string, string | null>, self: string | undefined): void {
+  for (const field of RANGE_FIELDS) {
+    const deps = holder[field];
+    if (!deps || typeof deps !== "object") continue;
+    const map = deps as Record<string, unknown>;
+    for (const name of Object.keys(map)) {
+      if (name === self || !table.has(name) || map[name] === "*") continue;
+      const label = table.get(name);
+      if (label === null || label === undefined) {
+        throw new ReleaseVersionError("release-ranges-unpinned", `${name} is a package of a member the train pins with no label, so its range in ${field} has no version to take`, "Cut that member with a label, record the train again, and stamp from it.");
+      }
+      map[name] = rangeAt(mode, label);
+    }
+  }
+}
+
+/** How the ranges are rewritten: the mode and the package name to label table. */
+interface RangePlan {
+  mode: ReleaseRanges;
+  table: ReadonlyMap<string, string | null>;
+}
+
 /**
  * One file's text stamped with `label`: a `package.json`'s `version`, or a
  * lockfile's entries for `packageDirs` (relative to the lockfile's
  * directory), with the root entry's `version` beside it for `"."`. A
- * lockfile entry that is not there is not added.
+ * lockfile entry that is not there is not added. With `ranges` the
+ * workspace dependencies' ranges follow (#5155).
  */
-export function stampText(text: string, label: string, kind: "package" | "lockfile", packageDirs: readonly string[] = []): string {
+export function stampText(text: string, label: string, kind: "package" | "lockfile", packageDirs: readonly string[] = [], ranges?: RangePlan): string {
+  const active = ranges && ranges.mode !== "keep" ? ranges : undefined;
   if (kind === "package") {
     return rewrite(text, (doc) => {
       if (typeof doc.version !== "string") throw new ReleaseVersionError("release-version-no-package", "package.json has no version to stamp");
       doc.version = label;
+      if (active) rewriteRanges(doc, active.mode, active.table, typeof doc.name === "string" ? doc.name : undefined);
     });
   }
   return rewrite(text, (doc) => {
-    const packages = (doc.packages ?? {}) as Record<string, { version?: unknown }>;
+    const packages = (doc.packages ?? {}) as Record<string, { version?: unknown; name?: unknown }>;
     for (const dir of packageDirs) {
       const key = dir === "." ? "" : dir;
       const entry = packages[key];
       if (entry && typeof entry === "object" && typeof entry.version === "string") entry.version = label;
+      if (entry && typeof entry === "object" && active) rewriteRanges(entry as Record<string, unknown>, active.mode, active.table, typeof entry.name === "string" ? entry.name : undefined);
       if (key === "" && typeof doc.version === "string") doc.version = label;
     }
   });
 }
 
-/** Each stamped file's text, given its committed text. */
-function stamper(cwd: string, config: ReleaseVersionConfig, label: string): (file: string, text: string) => string {
+/** The names of the packages `config` stamps, read from their package.json. A file that is missing or has no name is skipped; the stamp refuses it. */
+export function ownNames(cwd: string, config: ReleaseVersionConfig): string[] {
+  const names: string[] = [];
+  for (const p of config.packages) {
+    try {
+      const name = (JSON.parse(readFileSync(resolve(cwd, norm(p) === "." ? "package.json" : `${norm(p)}/package.json`), "utf-8")) as { name?: unknown }).name;
+      if (typeof name === "string") names.push(name);
+    } catch {
+      // Refused with its own code when the stamp reads the file.
+    }
+  }
+  return names;
+}
+
+/** Each stamped file's text, given its committed text. `train` is the labels a train gives other members' packages, for `ranges: "train"`. */
+function stamper(cwd: string, config: ReleaseVersionConfig, label: string, train?: RangeLabels): (file: string, text: string) => string {
   const lock = lockfileOf(cwd, config);
   const lockDir = lock ? posix.dirname(lock) : ".";
   const dirs = config.packages.map((p) => norm(posix.relative(lockDir, norm(p))) || ".");
-  return (file, text) => (file === lock ? stampText(text, label, "lockfile", dirs) : stampText(text, label, "package"));
+  const mode = config.ranges ?? "keep";
+  let plan: RangePlan | undefined;
+  if (mode !== "keep") {
+    const table = new Map<string, string | null>();
+    if (mode === "train") for (const [name, l] of Object.entries(train ?? {})) table.set(name, l);
+    for (const name of ownNames(cwd, config)) table.set(name, label);
+    plan = { mode, table };
+  }
+  return (file, text) => (file === lock ? stampText(text, label, "lockfile", dirs, plan) : stampText(text, label, "package", [], plan));
 }
 
 export interface Stamped {
@@ -151,10 +230,10 @@ export interface Stamped {
  * return how to put them back. Refuses a label that is not a version and a
  * package directory with no `package.json`, before anything is written.
  */
-export function stampReleaseVersion(i: { cwd: string; config: ReleaseVersionConfig; label: string | null }): Stamped {
+export function stampReleaseVersion(i: { cwd: string; config: ReleaseVersionConfig; label: string | null; train?: RangeLabels }): Stamped {
   checkReleaseVersion(i.config);
   checkVersionLabel(i.label);
-  const stamp = stamper(i.cwd, i.config, i.label);
+  const stamp = stamper(i.cwd, i.config, i.label, i.train);
   const files = releaseVersionFiles(i.cwd, i.config);
   const before = new Map<string, string>();
   for (const f of files) {
@@ -167,7 +246,7 @@ export function stampReleaseVersion(i: { cwd: string; config: ReleaseVersionConf
     try {
       after.set(f, stamp(f, text));
     } catch (err) {
-      if (err instanceof ReleaseVersionError) throw new ReleaseVersionError(err.code, `${f}: ${err.message}`);
+      if (err instanceof ReleaseVersionError) throw new ReleaseVersionError(err.code, `${f}: ${err.message}`, err.fix);
       throw new ReleaseVersionError("release-version-invalid", `${f} is not JSON: ${(err as Error).message}`);
     }
   }
@@ -198,10 +277,12 @@ function gitShow(cwd: string, commit: string, file: string): string | null {
  * change still makes the tree dirty. `top` is the repository root the
  * porcelain paths are relative to.
  */
-export function stampedChanges(i: { cwd: string; top: string; commit: string; config: ReleaseVersionConfig; label: string | null; status: string }): Set<string> {
+export function stampedChanges(i: { cwd: string; top: string; commit: string; config: ReleaseVersionConfig; label: string | null; status: string; trains?: readonly RangeLabels[] }): Set<string> {
   const out = new Set<string>();
   if (i.label === null || !SEMVER.test(i.label)) return out;
-  const stamp = stamper(i.cwd, i.config, i.label);
+  // Under `ranges: "train"` a tree is also the commit's when it was stamped from a train (#5155).
+  const label = i.label;
+  const stamps = [stamper(i.cwd, i.config, label), ...(i.config.ranges === "train" ? (i.trains ?? []).map((t) => stamper(i.cwd, i.config, label, t)) : [])];
   const files = new Set(releaseVersionFiles(i.cwd, i.config));
   // git prints the top as its real path (macOS's /private/var for /var).
   const cwd = realpathSync(i.cwd);
@@ -214,13 +295,17 @@ export function stampedChanges(i: { cwd: string; top: string; commit: string; co
     if (!files.has(rel)) continue;
     const committed = gitShow(i.cwd, i.commit, rel);
     if (committed === null) continue;
-    let expected: string;
-    try {
-      expected = stamp(rel, committed);
-    } catch {
-      continue;
+    const actual = readFileSync(resolve(i.cwd, rel), "utf-8");
+    for (const stamp of stamps) {
+      try {
+        if (stamp(rel, committed) === actual) {
+          out.add(path);
+          break;
+        }
+      } catch {
+        // This stamp can't be made from the commit's file; try the next.
+      }
     }
-    if (readFileSync(resolve(i.cwd, rel), "utf-8") === expected) out.add(path);
   }
   return out;
 }

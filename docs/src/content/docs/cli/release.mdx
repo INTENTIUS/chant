@@ -163,10 +163,34 @@ release: {
 
 | Field | Meaning |
 |---|---|
-| `packages` | Package directories relative to the member, `"."` for the member's own. Each `package.json` gets the label as its `version`. No other field changes, dependency ranges included |
+| `packages` | Package directories relative to the member, `"."` for the member's own. Each `package.json` gets the label as its `version`. With the default `ranges`, no other field changes |
 | `lockfile` | The lockfile whose entries for those packages follow, with the root entry and the top-level `version` for `"."`. Default `package-lock.json` when the member has one; `false` for none |
+| `ranges` | What happens to the ranges of workspace dependencies: `keep` (the default), `exact`, `caret` or `train`. See [Workspace dependency ranges](#workspace-dependency-ranges) |
 
 The cut stamps the files once it has found the tree clean, before it builds the images and before any compile or `--build`, and puts them back byte for byte when it is done, whether it cut or failed. Every image build, `prepare` and build then reads the label as the package's version, so `releaseImagePins` accepts the label and the bundle carries it. A Dockerfile entry in `release.images` also gets the label as the build argument `CHANT_RELEASE_LABEL`. The publish job runs [`chant release stamp <label>`](#release-stamp) before its images and its build, and `chant release publish` takes those files as the commit's when each is exactly the commit's file stamped with the release's label. Any other change still makes the tree dirty. A label that is not a version npm takes (`1.4.0`, `1.4.0-rc.1`, not `v1.4.0`) is refused with `release-version-label-invalid`, a cut with no label with `release-version-no-label`, and a directory with no `package.json` with `release-version-no-package`. `RELEASE_VERSION_FLOOR` in `@intentius/chant/lifecycle/release-version` is the first chant with the setting.
+
+#### Workspace dependency ranges
+
+A package that depends on another package of the same workspace carries a range for it, and that range names a version the release may not publish. `ranges` rewrites it to the label the release gives that package. It applies to `dependencies`, `peerDependencies` and `optionalDependencies` in each stamped `package.json` and in the lockfile's entry for it; `devDependencies` and a range of `*` stay as committed, and so does a dependency on a package the release has no label for.
+
+| `ranges` | A dependency on a package the release stamps becomes | A dependency on another member's package |
+|---|---|---|
+| `keep` | its committed range | its committed range |
+| `exact` | the label, `1.4.0` | its committed range |
+| `caret` | `^1.4.0` | its committed range |
+| `train` | `^1.4.0` | `^` and the label the [release train](/chant/cli/workspace-train/) pins for the member that owns the package |
+
+```ts
+release: { version: { packages: ["packages/conformance", "packages/reference"], ranges: "exact" } },
+```
+
+With two packages released in lockstep, `reference` then publishes depending on exactly the `conformance` published beside it. With `train`, members release at their own labels and each package's ranges name the labels of the train it ships in. The cut runs before any train is recorded, so it stamps only the packages of its own release, and the pack step stamps the rest from the train:
+
+```bash
+chant release stamp 0.125.3 --train train-2f6c   # in the member's directory
+```
+
+`--train` takes a train's id or digest, found in the environments the member's `chant.config.ts` declares. A member owns the packages its `release.version.packages` names; a member with no `release.version` owns none, so dependencies on it keep their ranges. `chant release publish` takes a tree stamped from a train that pins the release's label as the commit's. A package of a member the train pins with no label is refused with `release-ranges-unpinned`, a train that pins none of the member's packages at the release's label with `release-train-not-pinned`, an unknown train with `release-train-unknown`, and `--train` under any other `ranges` with `release-ranges-not-train`.
 
 #### Files that embed the version
 
@@ -559,6 +583,8 @@ Writes the label as the `version` of each `package.json` that `release.version` 
 ```bash
 chant release stamp 1.4.0   # Stamped 1.4.0 into packages/cli/package.json, package-lock.json
 ```
+
+With `ranges` set, the workspace dependencies' ranges follow the label too. `--train <id|digest>` gives a `ranges: "train"` member the labels of the other members' packages from a recorded train (see [Workspace dependency ranges](#workspace-dependency-ranges)).
 
 It refuses a member with no `release.version` (`release-version-not-declared`), and the label and package problems the cut refuses.
 

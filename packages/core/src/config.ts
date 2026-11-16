@@ -137,6 +137,8 @@ export const ChantConfigSchema = z.object({
     version: z.object({
       packages: z.array(z.string().min(1)).min(1),
       lockfile: z.union([z.string().min(1), z.literal(false)]).optional(),
+      // #5155: what happens to the ranges of workspace dependencies.
+      ranges: z.enum(["keep", "exact", "caret", "train"]).optional(),
     }).strict().optional(),
     workflow: z.object({
       trigger: z.enum(["tag", "dispatch"]).optional(),
@@ -452,8 +454,9 @@ export interface ChantConfig {
      * before it builds the images and runs the build and puts them back, and
      * the publish job stamps them with `chant release stamp <label>` before
      * its build. The lockfile's entries for them follow (`lockfile`, default
-     * `package-lock.json` when there is one). See
-     * ./lifecycle/release-version.ts.
+     * `package-lock.json` when there is one). `ranges` (#5155) sets each
+     * workspace dependency's range to the label the release or a train gives
+     * that package. See ./lifecycle/release-version.ts.
      */
     version?: import("./lifecycle/release-version").ReleaseVersionConfig;
     /**

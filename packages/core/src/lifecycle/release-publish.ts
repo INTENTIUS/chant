@@ -454,7 +454,8 @@ export async function preparePublish(req: {
     // #4840: the files release.version names may carry the label, as the publish job's `chant release stamp` writes them.
     const { loadChantConfig } = await import("../config");
     const version = (await loadChantConfig(cwd)).config.release?.version;
-    const refused = checkCheckoutIsRelease(cwd, release.commit, name, version ? { version, label } : {});
+    const trains = version?.ranges === "train" && label !== null ? (await import("../workspace/train-range-labels")).trainLabelCandidates(cwd, label) : undefined;
+    const refused = checkCheckoutIsRelease(cwd, release.commit, name, version ? { version, label, ...(trains ? { trains: await trains } : {}) } : {});
     if (refused) return { refusal: refused };
   }
 
@@ -496,7 +497,7 @@ export function checkCheckoutIsRelease(
   cwd: string,
   commit: string,
   name: string,
-  o: { version?: ReleaseVersionConfig; label?: string | null } = {},
+  o: { version?: ReleaseVersionConfig; label?: string | null; trains?: readonly import("./release-version").RangeLabels[] } = {},
 ): PublishRefusal | null {
   const head = tryGit(cwd, ["rev-parse", "HEAD"]);
   if (head !== commit) {
@@ -507,7 +508,7 @@ export function checkCheckoutIsRelease(
     };
   }
   let status = tryGit(cwd, ["status", "--porcelain", "--untracked-files=normal"]);
-  if (status && o.version) status = withoutStamps(cwd, commit, o.version, o.label ?? null, status);
+  if (status && o.version) status = withoutStamps(cwd, commit, o.version, o.label ?? null, status, o.trains);
   if (status) {
     const n = status.split("\n").length;
     return {
@@ -520,7 +521,7 @@ export function checkCheckoutIsRelease(
 }
 
 /** The porcelain status without the files {@link stampedChanges} takes as the commit's stamped with the label. */
-function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfig, label: string | null, status: string): string {
+function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfig, label: string | null, status: string, trains?: readonly import("./release-version").RangeLabels[]): string {
   let raw: string;
   let top: string;
   try {
@@ -529,7 +530,7 @@ function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfi
   } catch {
     return status;
   }
-  const stamped = stampedChanges({ cwd, top, commit, config: version, label, status: raw });
+  const stamped = stampedChanges({ cwd, top, commit, config: version, label, status: raw, ...(trains ? { trains } : {}) });
   return raw
     .split("\n")
     .filter((l) => l.length > 0 && !stamped.has(l.slice(3)))

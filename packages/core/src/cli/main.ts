@@ -558,11 +558,14 @@ Releases:
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to
                         the file CHANT_RELEASE_DIGESTS names for the build.
-  release stamp <label> [--json]
+  release stamp <label> [--train <id|digest>] [--json]
                         Write the label as the version of each package.json
                         release.version names, and the lockfile's entries for
                         them, as the cut does before its build. The publish
-                        job runs it before its build.
+                        job runs it before its build. With ranges set in
+                        release.version, each workspace dependency's range
+                        takes the label its package has; --train gives the
+                        labels of the other members' packages from a train.
   release workflow [--forge github|gitlab|forgejo] [--install <command>]
               [--build <command>] [--chant <command>] [--output <file>]
                         Write the publish workflow, run on a release/** tag.
