@@ -35,6 +35,9 @@
  *    npm's `dist-tags.latest` names the version), so no package is visible
  *    before the packages it needs are.
  *
+ * Within a member, targets reveal in `revealOrder`: uploads at reveal after
+ * the rest, and the MCP Registry last.
+ *
  * A target whose stage is already visible (npm under `stage: false`) is not
  * staged up front: it publishes in pass 2, in its layer's turn, after the
  * layers before it are visible.
@@ -48,7 +51,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { PublishItem, PublishedTarget, PublishContext, PublishDeps, PublishPlan, PublishTarget, StagedTarget } from "../lifecycle/release-publish";
-import { PublishTargetError } from "../lifecycle/release-publish";
+import { PublishTargetError, revealOrder } from "../lifecycle/release-publish";
 import type { Redactor } from "../lifecycle/publish-credentials";
 import { readDeclaration } from "./declaration";
 import { findTrain, readReleaseTrains, type ReadTrain, type TrainMember } from "./release-train";
@@ -447,7 +450,7 @@ async function runTrain(req: {
     for (const p of inLayer) {
       const progress = req.progressOfMember.get(p.m.member)!;
       const out: PublishedTarget[] = [];
-      for (const t of p.plan.targets) {
+      for (const t of revealOrder(p.plan.targets)) {
         const done = progress.revealed.get(t.key);
         if (done) {
           resumed.push({ member: p.m.member, target: t.name, step: "revealed" });

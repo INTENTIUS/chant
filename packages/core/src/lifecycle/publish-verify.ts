@@ -15,7 +15,7 @@
  * staged after the commands pass, in its turn to reveal, so it is never
  * visible before them; they can't see it, and the publish says so
  * ({@link unstagedForVerify}). A target that uploads at reveal (marketplace,
- * PyPI, Cargo: `uploadsAtReveal`) stages nothing and uploads after the
+ * PyPI, Cargo, the MCP Registry: `uploadsAtReveal`) stages nothing and uploads after the
  * commands pass, so they can't see it either, and the same warning names it.
  *
  * Why `release.verify` and not `release.workflow.verify`: the commands are
@@ -71,7 +71,7 @@ export function stagedReference(target: Pick<PublishTarget, "kind" | "name" | "d
 /**
  * The targets of `targets` the verify commands can't see, `name` each: those
  * whose stage is already visible (npm `stage: false`) and those that stage
- * nothing and upload at reveal (marketplace, PyPI, Cargo).
+ * nothing and upload at reveal (marketplace, PyPI, Cargo, the MCP Registry).
  */
 export function unstagedForVerify(targets: ReadonlyArray<Pick<PublishTarget, "name" | "stagesVisibly" | "uploadsAtReveal">>): string[] {
   return targets.filter((t) => t.stagesVisibly === true || t.uploadsAtReveal === true).map((t) => t.name);

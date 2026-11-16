@@ -284,3 +284,5 @@ export const RELEASE_DOCTOR_FLOOR = NEXT_RELEASE;
 
 /** The first chant with `chant release next` and `chant release cut auto`, the label from the conventional commits and the `.chant/release/*.md` intent files since the member's previous release; a cut records the intent files it consumed (`intents` on its cut line), `release changed` computes each member's bump from them (`bumpFrom`, `intents`, `intent-pending`), notes generated from commits lead with their summaries, and a dispatched release workflow takes the label `auto` (#5159). */
 export const RELEASE_NEXT_FLOOR = NEXT_RELEASE;
+/** The first chant with the `mcp-registry` publish target: a `server.json` published to the MCP Registry after the packages it names, with GitHub OIDC, and the `mcp-registry-*` checks of `chant release doctor` (#5162). */
+export const PUBLISH_MCP_REGISTRY_FLOOR = NEXT_RELEASE;
