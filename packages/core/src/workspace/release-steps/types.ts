@@ -74,8 +74,11 @@ export type ReleaseStepJob = "cut" | "publish";
  * - `beforePublish`: a publish, right before `chant release publish`.
  * - `artifactPaths`: GitLab dispatch cut only, lines under its `artifacts: paths:`.
  * - `jobKeys`: GitLab dispatch cut only, lines added to the job's keys.
+ * - `idTokens`: GitLab publish job only, entries under its `id_tokens:`
+ *   beside `SIGSTORE_ID_TOKEN`, as lines indented four spaces for the name
+ *   and six for `aud`.
  */
-export type ReleaseStepSlot = "afterCheckout" | "prepare" | "beforeCut" | "afterCut" | "beforeBuild" | "afterBuild" | "beforePublish" | "artifactPaths" | "jobKeys";
+export type ReleaseStepSlot = "afterCheckout" | "prepare" | "beforeCut" | "afterCut" | "beforeBuild" | "afterBuild" | "beforePublish" | "artifactPaths" | "jobKeys" | "idTokens";
 
 /** A step: a shell line, which the job writes as its forge writes one (`- run: ...`, a script entry), or `lines` placed as they are. */
 export type ReleaseStepItem = string | { lines: string[] };

@@ -19,6 +19,21 @@ const FORGES = ["github", "forgejo", "gitlab"] as const;
 const SECURE = new Set<SecurityGroup>(["supply-chain", "verified-releases"]);
 
 describe("a config with only publish (#4656)", () => {
+  test("a GitLab publish job declares PYPI_ID_TOKEN for a pypi target that may use trusted publishing (#5202)", () => {
+    const ids = (publish: ReleaseWorkflowTarget[], pipeline: ReleaseWorkflowInput["pipeline"]) => {
+      const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), publish, pipeline })) as Record<string, { id_tokens?: Record<string, { aud: string }> }>;
+      return Object.fromEntries(Object.entries(doc["chant-release-publish"]?.id_tokens ?? {}).map(([k, v]) => [k, v.aud]));
+    };
+    for (const trigger of ["dispatch", undefined] as const) {
+      const p = trigger ? { trigger } : undefined;
+      expect(ids([{ type: "pypi", auth: "trusted-publishing" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore", PYPI_ID_TOKEN: "pypi" });
+      expect(ids([{ type: "pypi", index: "testpypi" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore", PYPI_ID_TOKEN: "testpypi" });
+      expect(ids([{ type: "pypi", auth: "token" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
+      expect(ids([{ type: "pypi", uploadUrl: "https://pypi.acme.dev/legacy/" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
+      expect(ids([{ type: "npm" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
+    }
+  });
+
   test("renders, byte for byte, the file chant 0.124.70 wrote, on every forge, with and without the security groups and a workspace root", () => {
     for (const forge of FORGES) {
       for (const [name, groups] of [["plain", new Set<SecurityGroup>()], ["secure", SECURE]] as const) {

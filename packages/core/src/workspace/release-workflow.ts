@@ -229,6 +229,10 @@ export interface ReleaseWorkflowTarget {
   passwordEnv?: string;
   /** An `npm` target's registry. */
   registry?: string;
+  /** A `pypi` target's `auth`, `index` and `uploadUrl`. */
+  auth?: string;
+  index?: string;
+  uploadUrl?: string;
 }
 
 // #5196: each feature's helpers and constants live with its steps in ./release-steps; these keep their names here.
@@ -336,9 +340,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       "chant-release-publish:",
       "  rules:",
       "    - if: $CI_COMMIT_TAG =~ /^release\\//",
-      "  id_tokens:",
-      "    SIGSTORE_ID_TOKEN:",
-      "      aud: sigstore",
+      ...publishIdTokens(at("idTokens")),
       ...(extra.gitlabVariables.length > 0 ? ["  variables:", ...extra.gitlabVariables] : []),
       "  script:",
       ...(root ? [`    - cd ${root}`] : []),
@@ -422,6 +424,11 @@ function stepLines(items: readonly ReleaseStepItem[], run: (line: string) => str
   return items.flatMap((i) => (typeof i === "string" ? [run(i)] : i.lines));
 }
 
+/** A GitLab publish job's `id_tokens:`: `SIGSTORE_ID_TOKEN`, and the entries the features add. */
+function publishIdTokens(extra: readonly ReleaseStepItem[]): string[] {
+  return ["  id_tokens:", "    SIGSTORE_ID_TOKEN:", "      aud: sigstore", ...stepLines(extra, (l) => l)];
+}
+
 /** A glob character GitHub's and Forgejo's tag filters treat as special, escaped. */
 function globLiteral(s: string): string {
   return s.replace(/[*?+[\]!\\]/g, (c) => `\\${c}`);
@@ -491,9 +498,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
       "chant-release-publish:",
       "  rules:",
       `    - if: ${filters.gitlabRule}`,
-      "  id_tokens:",
-      "    SIGSTORE_ID_TOKEN:",
-      "      aud: sigstore",
+      ...publishIdTokens(at("idTokens")),
       ...(extra.gitlabVariables.length > 0 ? ["  variables:", ...extra.gitlabVariables] : []),
       "  script:",
       ...(root ? [q(`cd ${root}`)] : []),
@@ -953,7 +958,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
         ...publish("beforePublish"),
         `${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
       ],
-      ["  id_tokens:", "    SIGSTORE_ID_TOKEN:", "      aud: sigstore"],
+      publishIdTokens(publish("idTokens")),
       o.extra.gitlabVariables,
     ),
   ];
