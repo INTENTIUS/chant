@@ -574,6 +574,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant release cut --channel <tag>` (#4168 4.3): the tag a publish moves in place of latest.
       result.channel = args[++i];
       if (!result.channel || !/^[A-Za-z][A-Za-z0-9._-]*$/.test(result.channel)) throw new Error(`--channel needs a channel name, such as next or hotfix: got "${result.channel ?? ""}"`);
+    } else if (arg === "--pre") {
+      // `chant release next --pre <id>` (#5159): the next label is a prerelease, such as 1.5.0-rc.0.
+      result.pre = args[++i];
+      if (!result.pre || result.pre.startsWith("-")) throw new Error("--pre needs a prerelease id, such as rc or beta");
     } else if (arg === "--forge") {
       result.forge = args[++i];
       if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");

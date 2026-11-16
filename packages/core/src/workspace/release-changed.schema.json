@@ -76,7 +76,8 @@
                 "declaration-missing",
                 "revision-unknown",
                 "bump-invalid",
-                "ledger-unreadable"
+                "ledger-unreadable",
+                "intent-invalid"
               ]
             },
             "message": {
@@ -118,7 +119,8 @@
               "enum": [
                 "paths-changed",
                 "needed-by",
-                "range-broken-by"
+                "range-broken-by",
+                "intent-pending"
               ]
             },
             "member": {
@@ -181,6 +183,22 @@
             "type": "string"
           },
           "description": "The changed paths that count, from the outermost workspace root. Empty for a member taken only by the closure."
+        },
+        "bumpFrom": {
+          "enum": [
+            "flag",
+            "commits",
+            "intents",
+            "default"
+          ],
+          "description": "Added within contract version 1 by #5159. Where bump came from: flag for --bump-member, commits or intents for the higher of the conventional commits over paths since the last release and the pending intent files (commits when they tie), default for a patch when neither gives one."
+        },
+        "intents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Added within contract version 1 by #5159. The intent files under .chant/release/ that name the member and that no cut of it consumed, by path from the repository root."
         }
       }
     }

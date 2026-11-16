@@ -391,6 +391,8 @@ export const REASONS = {
   "paths-changed": "The member has paths changed since its last release, after changes.ignore and generated files, or has no release yet.",
   "needed-by": "A member of the release depends on this one, and this one has changes since its last release.",
   "range-broken-by": "The range this member last published for a dependency does not admit that dependency's next label.",
+  "intent-pending": "An intent file under .chant/release names the member, and no cut of it consumed the file (#5159).",
+  "intent-invalid": "An intent file under .chant/release can't be read: its front matter is not lines of <member>: major|minor|patch, or names a member the declaration does not have (#5159).",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

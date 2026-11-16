@@ -7,9 +7,10 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
+chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green]
                   [--image <component>=<repository>@sha256:<hex>]... [--json]
+chant release next [--at <sha>] [--pre <id>] [--json]
 chant release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
 chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
@@ -65,6 +66,8 @@ The cut refuses before it writes anything when:
 | `publish-npm-carries-image` | An `npm` target in `release.publish` would pack an image archive the cut just built ([#4941](https://github.com/INTENTIUS/chant/issues/4941)). The cut runs the npm target's own check (see [Images the package pins](#images-the-package-pins)) once the images are built, so the label is not spent on a release the publish would refuse. `publish-npm-pack-failed` when `npm pack --dry-run` can't list the package. |
 
 The code is printed in square brackets at the end of the message. The dry run refuses with the same codes, and also with `release-label-taken` when the label already names a release of another commit.
+
+`auto` in place of the label cuts the label [`release next`](#release-next) computes for the commit being cut, and refuses with its codes. `--pre <id>` goes with `auto` only. Every cut with a label, `auto` or typed, consumes the [intent files](#intent-files) at the commit that name the member: its cut line lists them, and the dry run prints them.
 
 ### Cutting a chosen commit
 
@@ -776,10 +779,12 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 
 | Job | What it does |
 |---|---|
-| gate | `chant ci last-green --from <dispatched commit>`, honouring `release.lane`, and hands the commit on. When `release.green` is `forge-checks` or `none`, it hands on the dispatched commit, which the cut then checks |
+| gate | `chant ci last-green --from <dispatched commit>`, honouring `release.lane`, and hands the commit on. When `release.green` is `forge-checks` or `none`, it hands on the dispatched commit, which the cut then checks. It hands on the label too, computed by `release next` for `auto` |
 | cut | Checks the commit out, runs `chant release doctor` (with the run's `GITHUB_TOKEN` when a GitHub forge target or `forge-checks` needs it), then `chant release cut <label> --at <commit> --yes`, which pushes `chant/lifecycle`, and pushes the tag the cut made; a cut whose record did not land exits 1 and the tag is not pushed |
 | publish | Checks the commit out, builds, and publishes, with the security groups' `--require-provenance` and `release verify` as above |
 | after-release | Runs `after`, when there is any |
+
+The label input takes `auto` (on GitLab, `CHANT_RELEASE_LABEL=auto`): the gate fetches `chant/lifecycle` and runs `chant release next --at <commit>` at the commit it chose, stops when that refuses, and hands the label on, so every later job, the build jobs among them, sees the computed label in `CHANT_RELEASE_LABEL`. A label typed in is handed on as it is. On GitLab a pipeline variable outranks the gate's dotenv, so the gate hands the label on as `CHANT_RELEASE_NEXT` and each later job exports it as `CHANT_RELEASE_LABEL` first.
 
 No tag exists until the gate has passed and the cut has run. Under `forge-checks` the cut job gets the run's token as `GITHUB_TOKEN`, and on GitHub the workflow gets `checks: read` and `statuses: read`; on GitLab the cut reads pipelines with `CHANT_RELEASE_TOKEN` unless `CHANT_GITLAB_TOKEN` is set. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
 
@@ -943,6 +948,58 @@ GH_TOKEN=$(gh auth token) chant release candidates --forge-issues --json
 
 With `--json` the output is the [read contract](/chant/reference/workspace-read-contract/)'s `release-candidates.schema.json` document. Its `environments` field lists what each one runs, `since` is the commit the walk stopped at (or `null`), `candidates` and `skipped` are newest first, and `pending` holds the commits after the newest candidate. Each change has `commit`, `subject`, `date`, `work`, `records` (every `Chant-Record` trailer as `<kind>:<id>`), `pr` and `merge`, the merge record `_merges/<sha>.json` on `chant/lifecycle` when one exists. Each change also has `closes`: `null` without `--forge-issues` or a pull request, else what the forge says the pull request closes, `{ resolved, issues, reason }`. Each candidate's `groups` holds the same changes as `{ work, issue, pullRequests: [{ pr, commits }] }`, with `null` for no work item, no issue and no pull request, in the order the text output prints them. Outside git the command exits 1 with `not-a-git-repository`. When the ledger or the tags can't be read it exits 1 with `ledger-unreadable`. Nothing is fetched, so fetch the tags and `chant/lifecycle` first. `--forge-issues` reads the forge's API and fetches no git ref.
 
+## release next
+
+```
+chant release next [--at <sha>] [--pre <id>] [--json]
+```
+
+Prints the label of the member's next release, from the conventional commits and the [intent files](#intent-files) since its previous release. The label alone goes to stdout, so a script can read it, and why goes to stderr. `--at` reads another commit than `HEAD`. It fetches `chant/lifecycle` first, as `release tag` does.
+
+```bash
+chant release next          # 1.5.0
+                            #   minor from 1.4.2 (3f2a9c1e0b7d): 4 commits, 1 intent file
+                            #     minor  9b1c2d4 feat(api): stream responses
+                            #     minor  .chant/release/streaming.md
+                            #   tag v1.5.0
+chant release cut auto --yes
+```
+
+The previous release is found in the member's ledger, never from a tag: the release cut from the nearest ancestor of the commit whose label is a version without a prerelease part. The commits counted are the ones after it that touch the member's directory, merges left out. A release member that sits in a nested workspace, such as `release/core` beside a package at `packages/core`, counts the directory of the outer workspace's member of its name, as `release changed` maps paths. Each commit gives a level: a `type!:` subject or a `BREAKING CHANGE:` footer a major, `feat` a minor, anything else a patch. The pending intent files give theirs, and the highest of all is applied to the previous label. A label with a leading `v` gives labels with one, and a `0.x` version becomes `1.0.0` on a breaking change.
+
+Prereleases cut since the previous release count too. When one has a higher version than the bumped one, the next label is that version, so `2.0.0-rc.1` is followed by `2.0.0` even when only fixes landed after it. With `--pre <id>` the label is a prerelease of the computed version, `<version>-<id>.<n>`, with `n` one past the highest that version and id have in the member's ledger: `1.5.0-rc.0`, then `1.5.0-rc.1`.
+
+A commit the member already has a labelled release of answers that label (`alreadyCut: true`), so a release workflow run again at the same commit cuts nothing new.
+
+| Code | When |
+|---|---|
+| `release-next-no-previous` | The member has no release with a version label before the commit. Cut the first release with the label you choose |
+| `release-next-unchanged` | No commit since the previous release touches the member, and no intent file names it |
+| `release-next-pre-invalid` | `--pre` is not a letter followed by letters, digits and `-` |
+| `release-next-history-shallow` | The clone is shallow, so the commits since the previous release can't be listed |
+| `release-intent-invalid` | An intent file can't be read |
+| `not-a-git-repository`, `revision-unknown` | No git repository here, or `--at` names no commit |
+
+`--json` prints `{ label, at, bump, alreadyCut, from: { label, commit }, commits: [{ sha, subject, bump }], intents: [{ path, added, bump, summary }], tag }`, where `tag` is the one `release.tag` gives the label, or `{ error: { code, message, fix } }` with exit 1.
+
+### Intent files
+
+An intent file says what a change releases, for a change whose commits don't say it, or to write the summary the release notes show. It is a Markdown file under `.chant/release/` at the repository root, committed with the change. Its front matter names members and the level each takes, and the text after it is the summary:
+
+```md
+---
+core: minor
+lexicon-aws: patch
+---
+The core reads its config once, at start.
+```
+
+A key is a member's name as `release changed` lists it (a full ledger name such as `npm/core` also works), or `*` for every member, which is the key a project that is no workspace member uses. A level is `major`, `minor` or `patch`. `README.md` in the directory is not an intent file, and any other `.md` file directly in it is one.
+
+Intent files are read from the commit's tree. A cut of a member records each intent file at its commit that names the member and that no earlier cut of the member consumed, by its path and the commit that added it, on its cut line in `chant/lifecycle`. The file stays in the tree, and no commit to the branch is needed when releasing, since the next release of the member skips what a cut consumed. Delete consumed files whenever it suits; a file deleted and written again under the same name is a new intent. Each member consumes a file once, so one file naming two members applies to both releases.
+
+[Generated notes](/chant/reference/publish-targets/#generated-notes) from commits lead with the summaries of the intent files the release's cut consumed.
+
 ## release changed
 
 ```
@@ -956,7 +1013,9 @@ For each `chant` member the command finds its last release: the newest cut in th
 Dependencies then pull in more members, until nothing changes. The edges are the `dependencies`, `peerDependencies` and `optionalDependencies` of each member's `package.json` at the commit.
 
 - A member of the release also releases each workspace dependency of it, direct or transitive, that has changes since its own last release (`needed-by <member>`; a changed member no other member needs keeps `paths-changed`).
-- A dependent is added when the range its last release's `package.json` gives a dependency does not admit that dependency's next label (`range-broken-by <member>`). The next label is the last label with `--bump-member` applied, a patch by default. Under `^0.124.34`, a patch of the dependency forces nothing and a minor forces the dependent.
+- A dependent is added when the range its last release's `package.json` gives a dependency does not admit that dependency's next label (`range-broken-by <member>`). Under `^0.124.34`, a patch of the dependency forces nothing and a minor forces the dependent.
+
+A member that an [intent file](#intent-files) names, which no cut of it consumed, is in the release too (`intent-pending`), when no path of its own changed. Its next label is the last label bumped by the highest of its commits over the changed paths, classified as [`release next`](#release-next) does, and its pending intent files, a patch when neither gives one. `--bump-member` sets a member's level outright.
 
 ```
 chant release changed --bump-member core=minor
@@ -966,7 +1025,7 @@ layer 1  lexicon-aws  0.124.44 -> 0.124.45  (range-broken-by core)
 
 Members come in dependency layers: a member publishes after every member of the release it depends on, and layer 0 needs none. Within a layer they are sorted by name. A commit range that touches only `lexicons/aws/` lists `lexicon-aws`, and `core` only when core has changes of its own since its last release.
 
-`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `release-changed.schema.json`, a read contract at version 1, written by chant 0.124.100 and newer. Each member has `member`, `layer`, `reason` (`{ code, member }`, with `code` one of `paths-changed`, `needed-by` and `range-broken-by`), `last` (`{ label, commit, source }`, or `null`), `bump`, `next` and `paths`. A failure exits 1 with `not-a-git-repository`, `declaration-missing`, `revision-unknown`, `bump-invalid` or `ledger-unreadable`. The read uses local refs and tags and never fetches.
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `release-changed.schema.json`, a read contract at version 1, written by chant 0.124.100 and newer. Each member has `member`, `layer`, `reason` (`{ code, member }`, with `code` one of `paths-changed`, `needed-by`, `range-broken-by` and `intent-pending`), `last` (`{ label, commit, source }`, or `null`), `bump`, `bumpFrom` (`flag`, `commits`, `intents`, or `default` for a patch neither gave), `next`, `paths` and `intents`, the paths of its pending intent files. A failure exits 1 with `not-a-git-repository`, `declaration-missing`, `revision-unknown`, `bump-invalid`, `ledger-unreadable` or `intent-invalid`, an intent file that can't be read or that names a member the declaration does not have. The read uses local refs and tags and never fetches.
 
 ## release compose
 

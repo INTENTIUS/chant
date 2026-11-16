@@ -482,7 +482,7 @@ CI:
                         a run of its own.
 
 Releases:
-  release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
+  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
               [--actor <name>] [--sign [<key file>]] [--channel <tag>]
               [--lane <name>] [--override-green]
@@ -521,6 +521,8 @@ Releases:
                         under a person's override, recorded with chant
                         approve policy-override release-<sha12>; the cut
                         spends it and records who and why.
+                        auto cuts the label release next computes, and every
+                        labelled cut records the intent files it consumed.
   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)...
                   [--yes] [--json]
                         Cherry-pick the chosen trunk changes, in trunk order,
@@ -593,10 +595,17 @@ Releases:
                         release.tag makes (default release/**).
                         Under supply-chain it passes --require-provenance, and
                         under verified-releases it runs release verify first
+  release next [--at <sha>] [--pre <id>] [--json]
+                        The label of this member's next release, from the
+                        conventional commits since its previous release and
+                        the .chant/release/*.md intent files no cut consumed.
+                        --pre <id> makes it a prerelease, <version>-<id>.<n>.
   release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
                         The members to release at a commit, in publish order,
-                        each with why: changed, needed-by <member>, or
-                        range-broken-by <member>. Reads local refs only
+                        each with why: changed, needed-by <member>,
+                        range-broken-by <member> or intent-pending, and the
+                        bump the commits and intent files give, unless
+                        --bump-member sets it. Reads local refs only
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
   release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -2097,6 +2106,8 @@ export const commandRegistry: CommandDef[] = [
   // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
   { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },
   { name: "release candidates", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCandidates(ctx) },
+  // #5159: the next label from the commits and intent files since the previous release.
+  { name: "release next", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseNext(ctx) },
   { name: "release changed", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseChanged(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
