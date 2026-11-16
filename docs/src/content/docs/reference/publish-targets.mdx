@@ -80,7 +80,7 @@ With neither variable set, the target reads the registry's `auths` entry from th
 | `assets` | Files to attach. Each is named by its file name, which must be unique. May be empty when `notes` is set |
 | `notes` | The release's notes: `{ file?, heading?, linkBase?, generate?, types?, before?, after? }`, a section of a file in the member, notes generated for the release, or both. See below. Read by chant 0.124.71 and newer; `generate` and `types` by chant 0.124.101 and newer |
 | `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
-| `tag` | The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>` |
+| `tag` | The forge release's tag. Default: the tag the cut made, which [`release.tag`](/chant/cli/release/#the-releases-tag) names (`release/<label>` or `release/<member>/<label>` when it is unset) |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: `sbom.spdx.json` written from the member's lockfile. `false` attaches none |
 | `latest` | GitHub only: `true`, `false` or `"legacy"`, sent as GitHub's `make_latest` when the reveal publishes the draft. `false` keeps the repository's latest release where it is, and `"legacy"` lets GitHub pick by creation date and semantic version. Unset, the reveal sends `true`, or `false` for a release cut with `--channel`. Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant 0.124.63 and newer |
@@ -318,6 +318,8 @@ A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is 
 | `homebrew` | Skipped. The formula is what `brew upgrade` installs, so the target changes nothing and the dry run says it is skipped |
 | `tauri-updater` | Skipped, as the updater feed is what installed apps update from |
 | `marketplace` | Unchanged. A pre-release is a property of the packaged `.vsix` |
+
+The member's floating tag (`release.tag.floating`, see [the release's tag](/chant/cli/release/#the-releases-tag)) stays where it is.
 
 A `channel` recorded on the cut wins for the tags it names: npm moves the channel, and OCI pushes only the channel. The forge release is still marked a prerelease, since the label is one. [`release cut`](/chant/cli/release/#release-cut) and [`release publish`](/chant/cli/release/#release-publish) print `prerelease` in their dry run and in `--json`.
 

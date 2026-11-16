@@ -43,6 +43,8 @@ import { execFileSync } from "node:child_process";
 import type { Release } from "./release-store";
 import { stampedChanges, type ReleaseVersionConfig } from "./release-version";
 import { createRedactor, type Redactor } from "./publish-credentials";
+import { floatingTagOfLine, renderReleaseTag, stableVersionOf, type MemberTags } from "./release-tag";
+import { prereleaseOf } from "./release-prerelease";
 
 /** Whether this run can sign provenance with an OIDC token, and why not when it can't. */
 export interface ProvenanceCheck {
@@ -195,8 +197,14 @@ export interface PublishContextBase {
 export interface PublishContext extends PublishContextBase {
   release: Release;
   label: string | null;
-  /** The tag the cut made for the release, `release/<label>` or `release/<member>/<label>`, or null for a release with no label. */
+  /** The tag the cut made for the release, from `release.tag` (#5150; default `release/<label>` or `release/<member>/<label>`), or null for a release with no label. */
   releaseTag: string | null;
+  /**
+   * The tag `release.tag` gives another label of this member (#5150), such
+   * as the previous release's, which a forge's generated notes start from.
+   * Absent where the template is not known.
+   */
+  releaseTagOf?: (label: string) => string | null;
   /** The cut whose signature the provenance statement carries (#4049), or null when none is known. */
   cut?: PublishCut | null;
   /** The member's directory, which the declaration's paths are relative to. */
@@ -331,7 +339,9 @@ export interface PublishRefusal {
     | "publish-provenance-missing"
     | "publish-config-invalid"
     | "release-head-mismatch"
-    | "release-worktree-dirty";
+    | "release-worktree-dirty"
+    | "release-tag-template-invalid"
+    | "release-tag-collision";
   message: string;
   fix?: string;
 }
@@ -351,6 +361,10 @@ export interface PublishPlan {
   cut: PublishCut | null;
   /** The tag the cut made, or null for a release with no label. */
   releaseTag: string | null;
+  /** The tag the member's `release.tag` gives another label (#5150). */
+  releaseTagOf?: (label: string) => string | null;
+  /** The floating tag `release.tag.floating` names (#5150), and whether this release moves it; null when there is none. */
+  floating?: FloatingTag | null;
   targets: PublishTarget[];
   /** Masks the run's credentials in what the publish prints. */
   redactor: Redactor;
@@ -485,14 +499,34 @@ export async function preparePublish(req: {
   const warning = provenance.oidc || !groups.has("supply-chain")
     ? null
     : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
-  const { resolveMemberLedger } = await import("./member-ledger");
-  const { releaseTagName } = await import("./release-workstation");
-  const ledger = await resolveMemberLedger(cwd).catch(() => ({ members: [] as string[] }));
-  const member = ledger.members.length > 0 ? ledger.members.join("/") : null;
-  const releaseTag = label !== null ? releaseTagName(member, label) : null;
+  // #5150: the tag release.tag gives the label, as the cut made it, and the floating tag the publish moves.
+  const { memberTags, ReleaseTagError } = await import("./release-tag");
+  let tags: MemberTags;
+  try {
+    tags = await memberTags(cwd);
+  } catch (err) {
+    if (err instanceof ReleaseTagError) return { refusal: { code: err.code, message: err.message, ...(err.fix ? { fix: err.fix } : {}) } };
+    const { legacyTagTemplate } = await import("./release-tag");
+    tags = { place: { member: null, path: null }, template: { name: legacyTagTemplate(null), floating: null, legacy: true } };
+  }
+  let releaseTag: string | null;
+  try {
+    releaseTag = label !== null ? renderReleaseTag(tags.template, tags.place, label) : null;
+  } catch (err) {
+    if (err instanceof ReleaseTagError) return { refusal: { code: err.code, message: err.message, ...(err.fix ? { fix: err.fix } : {}) } };
+    throw err;
+  }
   const redactor = createRedactor(env, targets.flatMap((t) => t.credentialEnv));
   const channel = [...cuts].reverse().find((c) => c.channel)?.channel ?? null;
-  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, targets, redactor, requireSbom: groups.has("supply-chain"), channel };
+  const floating = label !== null ? floatingTagPlan(tags, label, release.commit, channel, (await readCuts({ cwd })).cuts.map((c) => c.label).filter((l): l is string => l !== null)) : null;
+  const releaseTagOf = (other: string): string | null => {
+    try {
+      return renderReleaseTag(tags.template, tags.place, other);
+    } catch {
+      return null;
+    }
+  };
+  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, releaseTagOf, floating, targets, redactor, requireSbom: groups.has("supply-chain"), channel };
 }
 
 /**
@@ -558,12 +592,65 @@ function tryGit(cwd: string, args: string[]): string | null {
   }
 }
 
+/** A floating tag (#5150), such as `v1`, and whether the publish moves it to the release's commit once every target has revealed. */
+export interface FloatingTag {
+  name: string;
+  commit: string;
+  /** True when the publish moves it; false with `reason` when it leaves it. */
+  move: boolean;
+  reason: string | null;
+}
+
+/**
+ * Whether a release labelled `label` moves the member's floating tag: only
+ * a stable version, cut with no channel, whose version is the highest of its
+ * major among the member's labels, so a fix to an older line never moves
+ * `v1` back. A prerelease label leaves it where it is. Null when the member
+ * declares no floating tag or the label names no version.
+ */
+export function floatingTagPlan(tags: MemberTags, label: string, commit: string, channel: string | null, labels: readonly string[]): FloatingTag | null {
+  const name = floatingTagOfLine(tags.template, tags.place, label);
+  if (name === null) return null;
+  const leave = (reason: string): FloatingTag => ({ name, commit, move: false, reason });
+  // #5166: the prerelease check every publish target makes; a prerelease never moves the floating tag.
+  if (prereleaseOf(label) !== null) return leave(`${label} is a prerelease, and only a stable version moves it`);
+  const version = stableVersionOf(label);
+  if (version === null) return null;
+  if (channel !== null) return leave(`the release was cut for the channel ${channel}, not latest`);
+  const cmp = (a: readonly number[], b: readonly number[]) => a[0]! - b[0]! || a[1]! - b[1]! || a[2]! - b[2]!;
+  const newer = labels.map((l) => ({ l, v: stableVersionOf(l) })).find((o) => o.v !== null && o.v[0] === version[0] && cmp(o.v, version) > 0);
+  if (newer) return leave(`${newer.l} is a later release of major ${version[0]}`);
+  if (labels.some((l) => renderReleaseTag(tags.template, tags.place, l) === name)) return leave(`the release labelled ${labels.find((l) => renderReleaseTag(tags.template, tags.place, l) === name)} has the tag ${name}`);
+  return { name, commit, move: true, reason: null };
+}
+
+/**
+ * Move the floating tag to the release's commit, here and on `remote`
+ * (#5150). Returns a warning when it could not, naming the commands to run
+ * by hand; the release is published either way.
+ */
+export function moveFloatingTag(cwd: string, floating: FloatingTag, remote = "origin"): string | null {
+  const run = (args: string[]) => execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    run(["tag", "-f", floating.name, floating.commit]);
+  } catch (err) {
+    return `the floating tag ${floating.name} was not moved: ${err instanceof Error ? err.message.trim() : String(err)}. Move it by hand: git tag -f ${floating.name} ${floating.commit} && git push --force ${remote} refs/tags/${floating.name}`;
+  }
+  try {
+    run(["push", "--force", remote, `refs/tags/${floating.name}`]);
+  } catch (err) {
+    return `the floating tag ${floating.name} was moved here and not pushed: ${err instanceof Error ? err.message.trim() : String(err)}. Push it: git push --force ${remote} refs/tags/${floating.name}`;
+  }
+  return null;
+}
+
 /** The context each target is planned and published with. */
 export function publishContext(plan: PublishPlan, req: { cwd: string; env?: NodeJS.ProcessEnv; tag?: string | null; log: (line: string) => void }): PublishContext {
   return {
     release: plan.release,
     label: plan.label,
     releaseTag: plan.releaseTag,
+    ...(plan.releaseTagOf ? { releaseTagOf: plan.releaseTagOf } : {}),
     provenance: plan.provenance,
     cut: plan.cut,
     cwd: req.cwd,

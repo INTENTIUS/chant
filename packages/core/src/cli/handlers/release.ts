@@ -53,7 +53,7 @@ import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -158,6 +158,11 @@ export function describeGreen(green: import("../../lifecycle/release-store").Rel
 
 /** The warning a cut under `release.green: "none"` prints (#5149). */
 const GREEN_NONE_WARNING = 'release.green is "none": this cut checked no CI result for the commit, and the release records that it had no green gate';
+
+async function releaseTagOf(cwd: string): Promise<import("../../lifecycle/release-tag").ReleaseTagConfig | undefined> {
+  const { loadChantConfig } = await import("../../config");
+  return (await loadChantConfig(cwd)).config.release?.tag;
+}
 
 async function releaseVersionOf(cwd: string): Promise<import("../../lifecycle/release-version").ReleaseVersionConfig | undefined> {
   const { loadChantConfig } = await import("../../config");
@@ -284,6 +289,61 @@ export async function runReleaseStamp(ctx: CommandContext): Promise<number> {
   }
   if (args.json) console.log(JSON.stringify({ label, files }, null, 2));
   else console.error(formatSuccess(`Stamped ${label} into ${files.join(", ")}`));
+  return 0;
+}
+
+/**
+ * `release tag <label|digest|tag> [--json]` (#5150): the tag `release.tag`
+ * gives a release of this member, found by its label, its digest, or the tag
+ * itself. The ledger names the release: a tag is matched by rendering the
+ * template for each label the member's ledger holds, never parsed. The
+ * publish job of `chant release workflow` reads the label of the tag that
+ * started it this way.
+ */
+export async function runReleaseTag(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional ?? null;
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ ref, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  if (ref === null) return fail("release-not-named", "release tag needs a release, by label, digest or tag", "chant release tag <label|digest|tag> [--json]");
+  const cwd = resolve(".");
+  const { fetchLifecycle } = await import("../../lifecycle/git");
+  const { resolveRelease, readCuts } = await import("../../lifecycle/release-store");
+  const t = await import("../../lifecycle/release-tag");
+  await fetchLifecycle({ cwd }).catch(() => false);
+  let tags: import("../../lifecycle/release-tag").MemberTags;
+  try {
+    tags = await t.memberTags(cwd);
+  } catch (err) {
+    if (err instanceof t.ReleaseTagError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  let found = await resolveRelease(ref, { cwd });
+  if (!found) {
+    const labels = (await readCuts({ cwd })).cuts.map((c) => c.label).filter((l): l is string => l !== null);
+    const label = t.labelOfTag(tags.template, tags.place, ref, new Set(labels));
+    if (label !== null) found = await resolveRelease(label, { cwd });
+  }
+  if (!found) return fail("release-not-found", `no release of this member is labelled, digested or tagged "${ref}"`, "Fetch chant/lifecycle (git fetch origin chant/lifecycle:chant/lifecycle), then list them with: chant release list");
+  const { release, label } = found;
+  let tag: string | null;
+  let floating: string | null;
+  try {
+    tag = label !== null ? t.renderReleaseTag(tags.template, tags.place, label) : null;
+    floating = label !== null ? t.renderFloatingTag(tags.template, tags.place, label) : null;
+  } catch (err) {
+    if (err instanceof t.ReleaseTagError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  if (args.json) {
+    console.log(JSON.stringify({ releaseDigest: release.releaseDigest, label, commit: release.commit, tag, floating, template: tags.template.name }, null, 2));
+    return 0;
+  }
+  if (tag === null) return fail("release-no-label", `${release.releaseDigest} has no label, so it has no tag`);
+  console.log(tag);
   return 0;
 }
 
@@ -421,7 +481,6 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       return 1;
     }
     const actor = who.actor;
-    const tag = label !== null && commit !== null && top ? { name: ws.releaseTagName(member, label), state: ws.checkReleaseTag(top, ws.releaseTagName(member, label), commit) } : null;
     const ci = resolveCiRun(process.env);
     const params = parseParamFlags(args.param);
     // #4694: images built elsewhere, handed to the cut by digest, one per component.
@@ -440,6 +499,12 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // --at: the cut reads, compiles and builds the commit's tree, not the checkout's.
     if (args.at !== undefined && top && commit) checkout = at.checkoutCommit(top, cwd, commit);
     const cutCwd = checkout?.memberDir ?? cwd;
+    // #5150: the tag from release.tag in the commit's own config, refused when another member's template can render it.
+    const tagsMod = await import("../../lifecycle/release-tag");
+    const tags = top ? await tagsMod.memberTags(cwd, { config: await releaseTagOf(cutCwd), top }) : null;
+    if (tags) await tagsMod.checkTagCollisions(cwd, tags);
+    const tagName = (l: string): string => tagsMod.renderReleaseTag(tags!.template, tags!.place, l);
+    const tag = label !== null && commit !== null && top ? { name: tagName(label), state: ws.checkReleaseTag(top, tagName(label), commit) } : null;
     const versionConfig = await releaseVersionOf(cutCwd);
     // #4657: the images release.images declares are built first, and their digests handed to the build command.
     const declaredImages = await releaseImagesOf(cutCwd);
@@ -621,7 +686,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     let tagged: { name: string; created: boolean } | null = null;
     let tagWarning: string | undefined;
     if (result.label !== null && top) {
-      const name = ws.releaseTagName(member, result.label);
+      const name = tagName(result.label);
       try {
         const state = ws.checkReleaseTag(top, name, result.release.commit);
         if (state === "absent") ws.createReleaseTag(top, name, result.release.commit, { releaseDigest: result.release.releaseDigest, label: result.label, member });
@@ -672,6 +737,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     if (result.cut?.green?.source === "none") console.error(formatWarning({ message: GREEN_NONE_WARNING }));
     return 0;
   } catch (err) {
+    if (err instanceof (await import("../../lifecycle/release-tag")).ReleaseTagError) return fail(err.code, `no release was cut: ${err.message}`, err.fix);
     if (err instanceof ws.WorkstationCheckError || err instanceof ReleaseCutError || err instanceof at.CutAtError) {
       // #4693: a request for an override goes where the person who answers it reads.
       if (err instanceof ReleaseCutError && err.recorded) {
@@ -767,7 +833,10 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   };
   const pre = prereleaseOf(label);
   if (pre && !args.json) say(`  prerelease: ${prereleaseNote(label, prepared.channel ?? undefined)}`);
-  const base = { releaseDigest: release.releaseDigest, label, prerelease: pre !== null, ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}), commit: release.commit, signature, provenance, warnings: [signatureWarning, warning].filter((w): w is string => w !== null) };
+  const floating = prepared.floating ?? null;
+  const base = { releaseDigest: release.releaseDigest, label, prerelease: pre !== null, ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}), commit: release.commit, signature, provenance, warnings: [signatureWarning, warning].filter((w): w is string => w !== null), ...(floating ? { floating } : {}) };
+  const floatingLine = (f: import("../../lifecycle/release-publish").FloatingTag, done: boolean): string =>
+    f.move ? `  floating tag ${f.name}: ${done ? "moved" : "moves"} to ${f.commit.slice(0, 12)} once every target has revealed` : `  floating tag ${f.name}: left where it is, since ${f.reason}`;
 
   if (dryRun) {
     const next = [sameWithYes(process.argv.slice(2))];
@@ -778,6 +847,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     const out = (line: string) => console.log(redactor.redact(line));
     out("What would be published where:");
     if (planned.length === 0) out("  nothing: this member declares no publish target (release.publish in chant.config.ts)");
+    if (floating) out(floatingLine(floating, false));
     for (const p of planned) {
       const earlier = p.progress === "revealed" ? " (published by an earlier run; skipped)" : p.progress === "staged" ? " (staged by an earlier run; only revealed)" : "";
       out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}${earlier}:`);
@@ -806,9 +876,16 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     return failed(e.code, e.message, e.fix);
   }
   const { published } = run;
+  // #5150: the floating tag moves only once every target has revealed; a target that refused with a warning leaves it.
+  let floatingWarning: string | null = null;
+  if (floating?.move) {
+    if (published.some((p) => p.warning)) floatingWarning = `the floating tag ${floating.name} was not moved, since a target refused the release`;
+    else floatingWarning = (await import("../../lifecycle/release-publish")).moveFloatingTag(cwd, floating);
+  }
+  if (floatingWarning) console.error(formatWarning({ message: floatingWarning }));
   if (run.recordWarning && targets.length > 0) console.error(formatWarning({ message: redactor.redact(`${run.recordWarning}. A resume asks the registries what is already there.`) }));
   if (args.json) {
-    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, resumed: run.resumed, environments: deploySteps }, null, 2)));
+    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, resumed: run.resumed, environments: deploySteps, ...(floating ? { floatingMoved: floating.move && floatingWarning === null } : {}) }, null, 2)));
     return 0;
   }
   if (targets.length === 0) {
@@ -820,6 +897,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     const refused = published.filter((p) => p.warning);
     console.error(formatSuccess(`Published ${name} to ${published.length - refused.length} target(s)${refused.length > 0 ? `; ${refused.length} refused it, with a warning` : ""}`));
   }
+  if (floating && !floatingWarning) say(floatingLine(floating, true));
   return 0;
 }
 

@@ -494,8 +494,9 @@ Releases:
                         build, record and tag, and what publishes where.
                         --yes cuts: builds the artifacts once, stores the
                         release on chant/lifecycle under its digest, records
-                        the actor and run id, tags the commit release/<label>
-                        here, and prints the next command.
+                        the actor and run id, tags the commit with the tag
+                        release.tag names (default release/<label>) here,
+                        and prints the next command.
                         --build runs before each environment's templates are
                         read, with CHANT_ENV set; {env} in --params-file is
                         replaced by the environment. --sign signs the cut with
@@ -566,9 +567,14 @@ Releases:
                         release.version, each workspace dependency's range
                         takes the label its package has; --train gives the
                         labels of the other members' packages from a train.
+  release tag <label|digest|tag> [--json]
+                        The tag release.tag gives a release of this member
+                        (default release/<label>), found by its label, its
+                        digest or the tag itself, with its floating tag.
   release workflow [--forge github|gitlab|forgejo] [--install <command>]
               [--build <command>] [--chant <command>] [--output <file>]
-                        Write the publish workflow, run on a release/** tag.
+                        Write the publish workflow, run on the tags
+                        release.tag makes (default release/**).
                         Under supply-chain it passes --require-provenance, and
                         under verified-releases it runs release verify first
   release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
@@ -2067,6 +2073,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
   // #4840: the label into the package.json files release.version names, in the publish job before its build.
   { name: "release stamp", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStamp(ctx) },
+  // #5150: the tag release.tag gives a release, found by label, digest or the tag itself.
+  { name: "release tag", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseTag(ctx) },
   { name: "release workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-workflow")).runReleaseWorkflow(ctx) },
   // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
   { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },

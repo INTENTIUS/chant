@@ -16,6 +16,7 @@ chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [-
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--json]
 chant release stamp <label> [--json]
+chant release tag <label|digest|tag> [--json]
 chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -49,8 +50,10 @@ The cut refuses before it writes anything when:
 | `release-forge-checks-unavailable` | `release.green` is `forge-checks`, and the forge can't be asked: the origin remote names no GitHub, GitLab or Forgejo repository, no token is set, or the forge answered with an error. |
 | `release-green-none-refused` | `release.green` is `none`, and the declaration at base turns on the `supply-chain` or `verified-releases` security group, or names a `release` gate in `identity.gates`. |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag, or with a lane a `ci/revoked-<lane>/<sha>` tag. |
-| `release-tag-taken` | The tag the release would get, `release/<label>`, already names another commit. |
+| `release-tag-taken` | The tag the release would get (see [The release's tag](#the-releases-tag)) already names another commit. |
 | `release-tag-invalid` | The label makes a tag name git refuses. |
+| `release-tag-template-invalid` | `release.tag` is not a template: it names no `{version}` or `{label}`, names one twice, names a placeholder there is none of, holds a character a tag can't, or names `{member}` or `{path}` where there is no member or the project is at the repository root. |
+| `release-tag-collision` | `release.tag` can make a tag another `chant` member of the workspace can make, so one member's release could take the other's tag. |
 | `release-no-environments` | The member's `chant.config.ts` declares no `environments` and no `release.publish` target or `release.images`, so there is nothing to release. With targets and no environments the cut is an [artifact release](#a-release-with-no-environments). |
 | `release-no-components` | The member declares environments and components, none is enabled in any environment, and nothing was compiled. A project that declares no component is released from its build output instead, see [a project with no components](#a-project-with-no-components). A project that only publishes packages or files declares no environments. |
 | `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and the cut is not signed. See [Who may cut](#who-may-cut). |
@@ -270,11 +273,40 @@ The line also records the [green gate](#the-green-gate) the commit passed, as `g
 
 Everything else in the line, and the whole release, is the same wherever the cut runs. A cut of one commit on a workstation and in CI stores byte-identical release files, and cut lines that differ only in `runId`, `runOrigin`, `actor` and `timestamp`, and in `signature` when two keys signed.
 
-The cut then tags the commit `release/<label>`, or `release/<member>/<label>` in a workspace member, as an annotated tag whose message names the release digest. The tag is made in this clone only. chant pushes `chant/lifecycle` when there is a remote and never pushes the tag, so pushing it is a step you take, and a CI workflow can publish on it. A release cut without a label gets no tag.
+The cut then tags the commit with the [release's tag](#the-releases-tag), `release/<label>` (or `release/<member>/<label>` in a workspace member) unless `release.tag` names another, as an annotated tag whose message names the release digest. The tag is made in this clone only. chant pushes `chant/lifecycle` when there is a remote and never pushes the tag, so pushing it is a step you take, and a CI workflow can publish on it. A release cut without a label gets no tag.
 
 The record is pushed before the tag is made ([#4965](https://github.com/INTENTIUS/chant/issues/4965)). A push the remote refuses is tried again, up to three pushes, after a fetch and a replay onto the remote's tip when another writer pushed first. When none lands, the cut makes no tag and exits 1 with `release-record-not-pushed`, naming what git said. The release workflow pushes the tag only after the cut succeeds, so a tag never names a release the publish job can't find, and the label is not spent: run the cut, or the workflow, again. `RELEASE_CUT_RECORD_FLOOR` is the first chant that does this; before it, the cut printed a warning and tagged. Cutting a release that is already cut is a no-op, and makes the tag if it is missing.
 
-The last lines name the next command. In CI that is `chant release publish <label>`. On a workstation it is `git push origin release/<label>`, so that CI publishes. After that it names the publish command and the deploy of the first environment as other choices.
+The last lines name the next command. In CI that is `chant release publish <label>`. On a workstation it is `git push origin <tag>`, so that CI publishes. After that it names the publish command and the deploy of the first environment as other choices.
+
+### The release's tag
+
+`release.tag` in the member's `chant.config.ts` names the tag a cut makes, as a template ([#5150](https://github.com/INTENTIUS/chant/issues/5150)):
+
+```ts
+release: {
+  tag: "v{version}",                               // v1.4.0
+  // tag: "cli-v{version}",                        // a prefix of the member's own
+  // tag: "{path}/v{version}",                     // a Go module in a subdirectory: tools/v1.4.0
+  // tag: { name: "v{version}", floating: "v{major}" },  // and v1, moved at each release
+},
+```
+
+| Placeholder | Value |
+|---|---|
+| `{version}` | The label, with one leading `v` dropped when a digit follows it: `v{version}` gives `v1.4.0` for the label `1.4.0` and for `v1.4.0` |
+| `{label}` | The label as given |
+| `{member}` | The workspace member's ledger name, outer names first and joined by `/`, such as `npm/core` |
+| `{path}` | The member's directory from the repository root |
+| `{major}` | In `floating` only: the major version of a `MAJOR.MINOR.PATCH` label |
+
+A template names `{version}` or `{label}` once, and holds letters, digits and `. _ + - /` around its placeholders. A member that sets no `release.tag` gets `release/<label>`, or `release/<member>/<label>` in a workspace member, as it always has, so an existing release workflow, script or trusted publisher that reads those tags is unchanged. Setting `release.tag: "release/{label}"` names the same tag in a project with no members.
+
+The cut refuses a template another `chant` member of the workspace could render to the same tag (`release-tag-collision`), reading each member's own `chant.config.ts`. `v{version}` in two members collides, and so do `v{version}` and `v{version}-cli`; `{member}-v{version}`, `{path}/v{version}`, or a prefix per member keeps them apart. A member that sets no `release.tag` never collides with another that sets none, since its tag holds its name.
+
+The ledger names a release by its record, not by its tag. A tag is the template's rendering of the label, and chant reads a release back from its tag by rendering the template for each label the member's ledger holds, with [`release tag`](#release-tag). Changing `release.tag` changes the tags of later cuts; a release cut before keeps the tag it got, and `release tag` and the publish job then render the new template for it.
+
+`floating` names a tag that [`release publish`](#release-publish) moves to the release's commit, here and on `origin`, once every target has revealed: `v1` for an action or a Go major version that consumers pin. The cut never makes it. It moves only for a `MAJOR.MINOR.PATCH` label cut with no `--channel`, never for a [prerelease label](/chant/reference/publish-targets/#prereleases) such as `1.5.0-rc.1` (the publish says it left the tag where it was), and only when no cut of the member has a later version of the same major, so a fix to `1.3` after `1.4` leaves `v1` on `1.4`. A publish that can't move or push it publishes anyway, and warns with the commands to run.
 
 ### What the cut compiles
 
@@ -560,7 +592,7 @@ To publish the releases a [release train](/chant/cli/workspace-train/#publish) p
 
 ## release workflow
 
-Writes the publish workflow, the job that runs `chant release publish` for the release a `release/**` tag names ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). It is generated the way [`chant ci workflow`](/chant/cli/ci/#ci-workflow) writes the tick, with a header naming the command that regenerates it.
+Writes the publish workflow, the job that runs `chant release publish` for the release a `release/**` tag names, or a tag `release.tag` makes ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). It is generated the way [`chant ci workflow`](/chant/cli/ci/#ci-workflow) writes the tick, with a header naming the command that regenerates it.
 
 ```bash
 chant release workflow
@@ -616,7 +648,7 @@ release: {
 
 | Field | Meaning |
 |---|---|
-| `trigger` | `tag` (default) publishes on a `release/**` tag, as above. `dispatch` starts the release by hand with its label |
+| `trigger` | `tag` (default) publishes on the release's tag, as above. `dispatch` starts the release by hand with its label |
 | `gate` | For `dispatch`: `last-green` (default) cuts the newest green commit at or below the dispatched one; `head` cuts the dispatched commit and refuses it when it is not green |
 | `install`, `build`, `chant` | As the flags. `install: false` installs nothing and `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
 | `toolchains` | The toolchains the jobs set up, in place of those the files name: `"node"`, `"go"`, `"python"`, `"rust"`, `"java"`, or `{ name, version }` for a version, such as `[{ name: "go", version: "1.24" }]`. Jobs that run chant get Node as well. `false` sets up nothing and leaves the runner's own. GitHub and Forgejo |
@@ -643,6 +675,8 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 No tag exists until the gate has passed and the cut has run. Under `forge-checks` the cut job gets the run's token as `GITHUB_TOKEN`, and on GitHub the workflow gets `checks: read` and `statuses: read`; on GitLab the cut reads pipelines with `CHANT_RELEASE_TOKEN` unless `CHANT_GITLAB_TOKEN` is set. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
 
 With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. In a dispatched release the cut job hands the archives it built to the publish job as a workflow artifact (`chant-release-images`; on GitLab, the cut job's `artifacts:`), and the publish job checks them with `chant release images <label> --no-build`, which reads the archives on disk and refuses one whose digest is not the recorded one. The images published are then the ones the cut built, even when the package mirror an image installs from moved between the two jobs. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
+
+With `release.tag` (see [The release's tag](#the-releases-tag)), the tag trigger runs on the tags the template makes, with `{member}` and `{path}` filled in: `v{version}` runs on `v*`. A `floating` tag is left out with a negated pattern (`!v[0-9]+`), so moving it starts nothing; on GitLab the rule is a regular expression with the same effect. The publish job fetches `chant/lifecycle` right after the install, reads the label with `chant release tag "$GITHUB_REF_NAME" --json`, and exits 1 for a tag that names no release of the member. Every later step uses `CHANT_RELEASE_LABEL`, and the after-release job gets it from the publish job. A floating tag is pushed by the publish job with git: GitHub and Forgejo jobs can, with `contents: write`; a GitLab job token can't, so `chant release workflow` says so, and a dispatched release on GitLab pushes it with `CHANT_RELEASE_TOKEN`. A dispatched release pushes whatever tag the cut made. A member with no `release.tag` renders the `release/**` file it did.
 
 ### Builds on other runners
 
@@ -689,6 +723,17 @@ chant release stamp 1.4.0   # Stamped 1.4.0 into packages/cli/package.json, pack
 With `ranges` set, the workspace dependencies' ranges follow the label too. `--train <id|digest>` gives a `ranges: "train"` member the labels of the other members' packages from a recorded train (see [Workspace dependency ranges](#workspace-dependency-ranges)).
 
 It refuses a member with no `release.version` (`release-version-not-declared`), and the label and package problems the cut refuses.
+
+## release tag
+
+Prints the tag `release.tag` gives a release of the member here, found by its label, its digest, or the tag itself ([#5150](https://github.com/INTENTIUS/chant/issues/5150)). It fetches `chant/lifecycle` first, as `release publish` does. A tag is matched by rendering the template for each label in the member's ledger, never parsed.
+
+```bash
+chant release tag 1.4.0            # v1.4.0
+chant release tag v1.4.0 --json    # { "releaseDigest": "sha256:…", "label": "1.4.0", "commit": "…", "tag": "v1.4.0", "floating": "v1", "template": "v{version}" }
+```
+
+`floating` is the floating tag the release would move, or null. It exits 1 with `release-not-found` when no release of the member has that label, digest or tag, `release-no-label` for a release with no label (`--json` prints `tag: null` instead), and `release-tag-template-invalid` as the cut does. The publish job of [`release workflow`](#release-workflow) reads the label of the tag that started it this way.
 
 ## release verify
 

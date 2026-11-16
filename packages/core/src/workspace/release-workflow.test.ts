@@ -11,6 +11,7 @@ import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
 import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
+import { resolveTagTemplate, type MemberTags } from "../lifecycle/release-tag";
 
 const FIXTURES = join(__dirname, "__fixtures__", "release-workflow");
 const FORGES = ["github", "forgejo", "gitlab"] as const;
@@ -743,5 +744,71 @@ describe("toolchains and per-platform builds (#5152)", () => {
     expect(() => dispatch("github", { pipeline: { trigger: "dispatch", builds: [b, b] } })).toThrow(/linux-arm64 is named twice/);
     expect(() => dispatch("gitlab", { pipeline: { trigger: "dispatch", toolchains: ["go"] } })).toThrow(/runner's image/);
     expect(() => dispatch("github", { pipeline: { trigger: "dispatch", toolchains: ["go", "go"] } })).toThrow(/go is named twice/);
+  });
+});
+
+describe("release.tag templates in the workflow (#5150)", () => {
+  const tagsOf = (tag: Parameters<typeof resolveTagTemplate>[0], member: string | null = null, path: string | null = null): MemberTags => ({ place: { member, path }, template: resolveTagTemplate(tag, member) });
+
+  test("an unset release.tag renders the release/** file it always did", () => {
+    for (const forge of FORGES) {
+      for (const root of [".", "packages/app"]) {
+        const file = `${forge}-plain${root === "." ? "" : "-member"}.yml`;
+        expect(renderReleaseWorkflow({ forge, groups: new Set(), workspaceRoot: root, tags: tagsOf(undefined, root === "." ? null : "app") }), file).toBe(readFileSync(join(FIXTURES, file), "utf-8"));
+      }
+    }
+  });
+
+  test("GitHub and Forgejo run on the template's tags, skip the floating tag, and read the label from the ledger", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const text = renderReleaseWorkflow({ forge, groups: SECURE, tags: tagsOf({ name: "v{version}", floating: "v{major}" }), version: true, pipeline: { after: ["echo $CHANT_RELEASE_LABEL"] } });
+      const doc = parseYAML(text) as { on: { push: { tags: string[] } }; jobs: Record<string, { steps: Array<{ run?: string; id?: string }>; outputs?: Record<string, string>; env?: Record<string, string> }> };
+      expect(doc.on.push.tags).toEqual(["v*", "!v[0-9]+"]);
+      const runs = doc.jobs.publish!.steps.map((s) => s.run ?? "");
+      const ledger = runs.indexOf("git fetch origin chant/lifecycle:chant/lifecycle");
+      const label = doc.jobs.publish!.steps.findIndex((s) => s.id === "label");
+      const stamp = runs.findIndex((r) => r.startsWith("npx chant release stamp"));
+      expect(ledger).toBeGreaterThan(-1);
+      expect(label).toBe(ledger + 1);
+      expect(stamp).toBe(label + 1);
+      expect(runs[label]).toContain('npx chant release tag "$GITHUB_REF_NAME" --json');
+      expect(runs.at(-1)).toBe('npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes');
+      expect(runs).toContain('npx chant release verify "$CHANT_RELEASE_LABEL"');
+      expect(text).not.toContain("release/");
+      expect(doc.jobs.publish!.outputs).toEqual({ label: "${{ steps.label.outputs.label }}" });
+      expect(doc.jobs["after-release"]!.env).toEqual({ CHANT_RELEASE_LABEL: "${{ needs.publish.outputs.label }}" });
+    }
+  });
+
+  test("a member's {member} and {path} are filled in the trigger, and glob characters are escaped", () => {
+    const doc = (t: MemberTags) => (parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), workspaceRoot: "go/sub", tags: t })) as { on: { push: { tags: string[] } } }).on.push.tags;
+    expect(doc(tagsOf("{path}/v{version}", "sub", "go/sub"))).toEqual(["go/sub/v*"]);
+    expect(doc(tagsOf("{member}-v{version}", "cli", "go/sub"))).toEqual(["cli-v*"]);
+    expect(doc(tagsOf("c++-{label}", "cli", "go/sub"))).toEqual(["c\\+\\+-*"]);
+  });
+
+  test("GitLab's rule matches the template's tags and not the floating tag", () => {
+    const text = renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), tags: tagsOf({ name: "cli/v{version}", floating: "cli/v{major}" }), pipeline: { after: ["echo done"] } });
+    const doc = parseYAML(text) as Record<string, { rules: Array<{ if: string }>; script: string[] }>;
+    expect(doc["chant-release-publish"]!.rules[0]!.if).toBe("$CI_COMMIT_TAG =~ /^cli\\/v[A-Za-z0-9._+-]+$/ && $CI_COMMIT_TAG !~ /^cli\\/v[0-9]+$/");
+    const script = doc["chant-release-publish"]!.script;
+    expect(script).toContain('export CHANT_RELEASE_LABEL="$label"');
+    expect(script.at(-1)).toBe('npx chant release publish "$CHANT_RELEASE_LABEL" --yes');
+    expect(doc["chant-release-after"]!.script).toContain('export CHANT_RELEASE_LABEL="$label"');
+  });
+
+  test("a template's tag workflow sets up the toolchains the project's files name, as the release/** one does (#5152)", () => {
+    const text = renderReleaseWorkflow({ forge: "github", groups: new Set(), tags: tagsOf("v{version}"), projectFiles: ["go.mod"], install: null, pipeline: { after: ["echo done"] } });
+    const setupGo = `actions/setup-go@${ACTION_PINS.setupGo7.sha} # ${ACTION_PINS.setupGo7.tag}`;
+    expect(text.split(setupGo).length - 1).toBe(2);
+    expect(text).not.toContain("npm ci");
+    const legacy = renderReleaseWorkflow({ forge: "github", groups: new Set(), projectFiles: ["go.mod"], install: null, pipeline: { after: ["echo done"] } });
+    expect(legacy.split(setupGo).length - 1).toBe(2);
+  });
+
+  test("a dispatched release pushes the tag the cut made, whatever the template", () => {
+    const text = renderReleaseWorkflow({ forge: "github", groups: new Set(), tags: tagsOf("v{version}"), pipeline: { trigger: "dispatch" } });
+    expect(text).toContain('git push origin "refs/tags/$tag"');
+    expect(text).not.toContain("tags: [");
   });
 });

@@ -275,3 +275,6 @@ export const COMMENT_ALLOW_FLOOR = "0.124.98";
 
 /** The first chant with `chant release changed`, the members to release at a commit with their dependency closure, and `release.legacyTags` in `chant.config.ts` (#5134). */
 export const RELEASE_CHANGED_FLOOR = "0.124.100";
+
+/** The first chant with `release.tag` in `chant.config.ts`: the cut makes the tag the template renders (`{version}`, `{label}`, `{member}`, `{path}`), refuses one another member's template can render (`release-tag-collision`), `chant release tag` reads a release back from its tag through the ledger, `chant release publish` moves a `floating` tag at reveal, and `chant release workflow` triggers on the template's tags (#5150). */
+export const RELEASE_TAG_FLOOR = NEXT_RELEASE;

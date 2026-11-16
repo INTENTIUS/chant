@@ -139,6 +139,8 @@ export const ChantConfigSchema = z.object({
     green: z.enum(["chant", "forge-checks", "none"]).optional(),
     // #5134: tag prefixes of releases cut before members had ledgers, read as a last release by `chant release changed`.
     legacyTags: z.array(z.string().min(1)).optional(),
+    // #5150: the tag a cut makes, as a template, and the floating tag a publish moves.
+    tag: z.union([z.string().min(1), z.object({ name: z.string().min(1), floating: z.string().min(1).optional() }).strict()]).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
     version: z.object({
       packages: z.array(z.string().min(1)).min(1),
@@ -474,6 +476,15 @@ export interface ChantConfig {
      * no cut.
      */
     legacyTags?: string[];
+    /**
+     * The tag `chant release cut` makes (#5150), as a template: `v{version}`,
+     * `cli-v{version}`, `{member}/v{version}` or `{path}/v{version}`. The
+     * object form adds `floating`, such as `v{major}`, a tag `chant release
+     * publish` moves to the release once every target has revealed. Unset,
+     * the tag is `release/<label>`, or `release/<member>/<label>` in a
+     * workspace member. See ./lifecycle/release-tag.ts.
+     */
+    tag?: import("./lifecycle/release-tag").ReleaseTagConfig;
     /**
      * The package directories whose `package.json` the release stamps with
      * its label (#4840), so the version needs no commit: the cut stamps them

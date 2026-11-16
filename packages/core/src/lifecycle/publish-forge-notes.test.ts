@@ -328,6 +328,19 @@ describe("a forge release's generated notes (#5153)", () => {
     expect(forge.calls.filter((x) => x.url.endsWith("/releases/generate-notes"))).toHaveLength(1);
   });
 
+  test("GitHub forge notes: the previous release's tag is its label through release.tag (#5150)", async () => {
+    const { ctx } = await repo();
+    const forge = startFakeForge("github", "https://api.github.test", "acme/api");
+    const [t] = await createPublishTargets([decl({ ...GH, notes: { generate: "forge" } })], { fetch: forge.fetch });
+    const releaseTagOf = (label: string) => `pkg@${label.replace(/^v/, "")}`;
+    const c = ctx({ env: { GITHUB_TOKEN: "ghs_x" }, label: "v1.4.0", releaseTag: "pkg@1.4.0", releaseTagOf });
+    const [item] = await t!.plan(c);
+    expect(item!.notes).toBe("(GitHub's generated notes since pkg@1.0.0, made when the release stages)\n");
+    await t!.stage(c);
+    const asked = forge.calls.find((x) => x.url.endsWith("/releases/generate-notes"))!;
+    expect(JSON.parse(asked.body as string)).toMatchObject({ tag_name: "pkg@1.4.0", previous_tag_name: "pkg@1.0.0" });
+  });
+
   test("GitLab forge notes: the changelog API from the previous release's commit, as the release's description", async () => {
     const { first, head, ctx } = await repo();
     const api = "https://gitlab.test/api/v4";
