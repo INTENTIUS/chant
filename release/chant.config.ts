@@ -41,7 +41,13 @@ export default {
       trigger: "dispatch",
       file: ".github/workflows/publish.yml",
       install: "cd .. && npm ci",
-      build: false,
+      // Runs in the publish job after train prepare. Every lexicon's generated
+      // sources, which a lexicon whose build compiles another's source
+      // (docker against otel) needs even when that one is not packed in this
+      // run. train prepare builds such a member since #5222; this step comes
+      // from the dispatched branch's publish.yml, so it also reaches a train
+      // whose commit's chant predates that, as a resumed publish runs.
+      build: "cd .. && npm run generate --workspaces --if-present",
       chant: "npx tsx ../packages/core/src/cli/main.ts",
       toolchains: ["node"],
       env: {

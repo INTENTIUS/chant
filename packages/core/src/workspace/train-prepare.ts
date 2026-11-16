@@ -14,7 +14,10 @@
  * - the workspace packages it depends on, directly or not, that this run
  *   does not publish are built once each, dependencies first, so a package
  *   that builds against another's output finds it. The members this run
- *   publishes build when npm packs them, in the train's layer order. The
+ *   publishes build when npm packs them, in the train's layer order. A
+ *   member cut here whose package an earlier run of the publish already
+ *   revealed is not packed again, so it builds here like any other
+ *   dependency (#5222): a resumed publish finds what it left built. The
  *   command is `release.train.buildDependencies`, else the package's
  *   `prepack` script, else its `build` script.
  *
@@ -34,6 +37,7 @@ import { findTrain, readReleaseTrains, type ReadTrain } from "./release-train";
 import { TrainCutError, trainConfigAt } from "./train-cut";
 import { runToStderr } from "./train-shell";
 import { locateWorkspace } from "./which-chant";
+import type { PublishDeclaration } from "../lifecycle/publish-declaration";
 
 export interface TrainPrepareQuery {
   cwd: string;
@@ -89,12 +93,19 @@ export async function prepareTrain(q: TrainPrepareQuery): Promise<TrainPrepareOu
   // Every workspace package the members name, by name.
   const packages = new Map<string, WorkspacePackage>();
   const ownedBy = new Map<string, string[]>();
+  // Per member, each package it owns and the npm targets that pack it (none for a package only release.version names).
+  const packedBy = new Map<string, Map<string, PublishDeclaration[]>>();
+  const declsOf = new Map<string, PublishDeclaration[]>();
   for (const m of members) {
     const dir = resolve(root, m.dir);
     if (!existsSync(dir)) continue;
     const release = (await loadChantConfig(dir)).config.release;
-    const dirs = [...(release?.version?.packages ?? []), ...(release?.publish ?? []).flatMap((t) => (t.type === "npm" ? ((t as { packages?: string[] }).packages ?? []) : []))];
-    for (const p of dirs) {
+    declsOf.set(m.name, (release?.publish ?? []) as PublishDeclaration[]);
+    const dirs: Array<{ p: string; decl: PublishDeclaration | null }> = [
+      ...(release?.version?.packages ?? []).map((p) => ({ p, decl: null })),
+      ...(release?.publish ?? []).flatMap((t) => (t.type === "npm" ? ((t as { packages?: string[] }).packages ?? []).map((p) => ({ p, decl: t as PublishDeclaration })) : [])),
+    ];
+    for (const { p, decl } of dirs) {
       const file = resolve(dir, p, "package.json");
       if (!existsSync(file)) continue;
       const abs = realpathSync(resolve(dir, p));
@@ -106,7 +117,10 @@ export async function prepareTrain(q: TrainPrepareQuery): Promise<TrainPrepareOu
       }
       if (typeof pkg.name !== "string") continue;
       packages.set(pkg.name, { dir: abs, name: pkg.name, needs: Object.keys({ ...pkg.dependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies }), scripts: pkg.scripts ?? {} });
-      ownedBy.set(m.name, [...(ownedBy.get(m.name) ?? []), pkg.name]);
+      if (!(ownedBy.get(m.name) ?? []).includes(pkg.name)) ownedBy.set(m.name, [...(ownedBy.get(m.name) ?? []), pkg.name]);
+      const by = packedBy.get(m.name) ?? new Map<string, PublishDeclaration[]>();
+      by.set(pkg.name, [...(by.get(pkg.name) ?? []), ...(decl ? [decl] : [])]);
+      packedBy.set(m.name, by);
     }
   }
 
@@ -144,7 +158,7 @@ export async function prepareTrain(q: TrainPrepareQuery): Promise<TrainPrepareOu
   // Build, once each and dependencies first, the packages the published ones need and this run does not publish.
   const built: TrainPrepareOutcome["built"] = [];
   if (config.buildDependencies !== false) {
-    const published = new Set(here.flatMap((t) => ownedBy.get(t.member) ?? []));
+    const published = await packedThisRun(here, members, root, ownedBy, packedBy, declsOf);
     const order: string[] = [];
     const seen = new Set<string>();
     const visit = (name: string) => {
@@ -168,6 +182,43 @@ export async function prepareTrain(q: TrainPrepareQuery): Promise<TrainPrepareOu
     }
   }
   return { train, stamped, built };
+}
+
+/**
+ * The packages the publish packs in this run: those of each member cut here,
+ * less the ones an earlier run already revealed (#5222). A package is
+ * revealed when every npm target that packs it is; a package no npm target
+ * packs, when every target of its member is.
+ */
+async function packedThisRun(
+  here: ReadonlyArray<{ member: string; releaseDigest: string }>,
+  members: ReadonlyArray<{ name: string; dir: string }>,
+  root: string,
+  ownedBy: ReadonlyMap<string, string[]>,
+  packedBy: ReadonlyMap<string, ReadonlyMap<string, PublishDeclaration[]>>,
+  declsOf: ReadonlyMap<string, PublishDeclaration[]>,
+): Promise<Set<string>> {
+  const { publishProgress, readPublishRecords } = await import("../lifecycle/publish-record");
+  const { publishTargetKey } = await import("../lifecycle/publish-targets");
+  const out = new Set<string>();
+  for (const t of here) {
+    const m = members.find((x) => x.name === t.member);
+    const owned = ownedBy.get(t.member) ?? [];
+    if (!m) {
+      owned.forEach((n) => out.add(n));
+      continue;
+    }
+    const progress = publishProgress(await readPublishRecords(t.releaseDigest, { cwd: resolve(root, m.dir) }).catch(() => []));
+    const revealed = (d: PublishDeclaration) => progress.revealed.has(publishTargetKey(d));
+    const decls = declsOf.get(t.member) ?? [];
+    const memberRevealed = decls.length > 0 && decls.every(revealed);
+    for (const name of owned) {
+      const by = packedBy.get(t.member)?.get(name) ?? [];
+      const done = by.length > 0 ? by.every(revealed) : memberRevealed;
+      if (!done) out.add(name);
+    }
+  }
+  return out;
 }
 
 /**
