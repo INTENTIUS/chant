@@ -1,0 +1,408 @@
+{
+  "name": "npm",
+  "schema": 1,
+  "ci": {
+    "green": {
+      "branch": "main",
+      "window": "24h",
+      "phases": {
+        "check": {
+          "runs": [
+            "check"
+          ],
+          "build": "every"
+        },
+        "test": {
+          "runs": [
+            "test"
+          ],
+          "build": "every"
+        }
+      },
+      "require": [
+        "check",
+        "test"
+      ],
+      "mergeQueue": {
+        "retries": 1
+      }
+    }
+  },
+  "members": [
+    {
+      "name": "core",
+      "dir": "core",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file core/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file core/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "k8s-client",
+      "dir": "k8s-client",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file k8s-client/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file k8s-client/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-aws",
+      "dir": "lexicon-aws",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-aws/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-aws/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-azure",
+      "dir": "lexicon-azure",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-azure/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-azure/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-cedar",
+      "dir": "lexicon-cedar",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-cedar/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-cedar/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-cpln",
+      "dir": "lexicon-cpln",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-cpln/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-cpln/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-e2b",
+      "dir": "lexicon-e2b",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-e2b/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-e2b/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-fountain",
+      "dir": "lexicon-fountain",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-fountain/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-fountain/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-gcp",
+      "dir": "lexicon-gcp",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-gcp/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-gcp/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-github",
+      "dir": "lexicon-github",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-github/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-github/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-k3d",
+      "dir": "lexicon-k3d",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-k3d/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-k3d/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-k3s",
+      "dir": "lexicon-k3s",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-k3s/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-k3s/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-otel",
+      "dir": "lexicon-otel",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-otel/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-otel/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-pulumi",
+      "dir": "lexicon-pulumi",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-pulumi/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-pulumi/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-render",
+      "dir": "lexicon-render",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-render/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-render/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-sql",
+      "dir": "lexicon-sql",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-sql/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-sql/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-terraform",
+      "dir": "lexicon-terraform",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-terraform/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-terraform/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-docker",
+      "dir": "lexicon-docker",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-docker/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-docker/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-fly",
+      "dir": "lexicon-fly",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-fly/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-fly/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-forgejo",
+      "dir": "lexicon-forgejo",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-forgejo/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-forgejo/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-gitlab",
+      "dir": "lexicon-gitlab",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-gitlab/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-gitlab/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-prometheus",
+      "dir": "lexicon-prometheus",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-prometheus/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-prometheus/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-k8s",
+      "dir": "lexicon-k8s",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-k8s/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-k8s/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-grafana",
+      "dir": "lexicon-grafana",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-grafana/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-grafana/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-helm",
+      "dir": "lexicon-helm",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-helm/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-helm/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    }
+  ]
+}

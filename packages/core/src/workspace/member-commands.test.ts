@@ -112,22 +112,23 @@ describe("resolveToolchain", () => {
 });
 
 describe("the chant repo's own declaration (#2557)", () => {
-  test("build runs the one chant member, npm (release/, #4040), and the example groups under one toolchain", () => {
+  test("build runs the example groups under one toolchain; npm (release/) is a nested workspace that runs its own (#5133)", () => {
     const plan = planMembers("build", REPO);
     expect(plan.workspace.name).toBe("chant");
     expect(plan.unreadable).toEqual([]);
     expect(plan.groups).toHaveLength(1);
     const units = plan.groups[0].units;
-    expect(units.filter((u) => !u.group).map((u) => u.id)).toEqual(["npm"]);
+    expect(units.filter((u) => !u.group).map((u) => u.id)).toEqual([]);
     expect(units.map((u) => u.id)).toContain("fixtures:test/leftness");
     expect(plan.skipped.every((s) => s.reason.code === "kind-not-run")).toBe(true);
     expect(plan.skipped.map((s) => s.name)).toContain("core");
+    expect(plan.skipped.find((s) => s.name === "npm")?.kind).toBe("workspace");
   });
 
-  test("graph and audit run only npm there: every other member is kind other", () => {
+  test("graph and audit run no member there: every member is kind other, a nested workspace or a group", () => {
     for (const verb of ["graph", "audit"] as const) {
       const plan = planMembers(verb, REPO);
-      expect(plan.groups.flatMap((g) => g.units.map((u) => u.id)), verb).toEqual(["npm"]);
+      expect(plan.groups.flatMap((g) => g.units.map((u) => u.id)), verb).toEqual([]);
     }
   });
 
