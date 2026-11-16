@@ -31,6 +31,9 @@ When the publish signs with Sigstore (`release.signing`, or `supply-chain` with 
 | `--build <command>` | What builds the files the targets upload. Default `npm run build` when the `package.json` has a `build` script, none otherwise. |
 | `--chant <command>` | What runs chant. Default `npx chant` in a project with a `package.json`; otherwise `npx --yes @intentius/chant@<version>`, the version that wrote the file. |
 | `--output <file>` | Write somewhere else. |
+| `--force` | Replace a file at the target that chant did not write. |
+
+A file at the target that chant generated is rewritten. One without chant's generated-by header, such as a hand-written `publish.yml` that `release.workflow.file` names, is refused with `release-workflow-exists` unless `--force`, as [`release init`](/chant/cli/release/init/) refuses it.
 
 A flag wins over the `release.workflow` field it names. With no `--build` and no `release.workflow.build`, a project whose `package.json` has no `build` script, or that has no `package.json`, gets no build step.
 

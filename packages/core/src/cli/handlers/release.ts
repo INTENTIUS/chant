@@ -101,10 +101,10 @@ export function nextCommands(req: {
   return [...(req.tag ? [`git push origin ${req.tag}`] : []), publish, ...(deploy ? [deploy] : [])];
 }
 
-/** The command line that ran, without `--json`, with `--yes` added: what a dry run says to run next. */
+/** The command line that ran, without `--json` or `--dry-run`, with `--yes` added: what a dry run says to run next. */
 export function sameWithYes(argv: readonly string[]): string {
   const quote = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`);
-  return ["chant", ...argv.filter((a) => a !== "--json" && a !== "--yes"), "--yes"].map(quote).join(" ");
+  return ["chant", ...argv.filter((a) => a !== "--json" && a !== "--yes" && a !== "--dry-run"), "--yes"].map(quote).join(" ");
 }
 
 /**
@@ -486,7 +486,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     }));
     return 1;
   }
-  const dryRun = args.yes !== true;
+  // --dry-run is the default without --yes, and keeps a run with --yes a dry run.
+  const dryRun = args.yes !== true || args.dryRun === true;
   const cwd = resolve(".");
   const { spawnTargetCompiler, ReleaseCompileError, RELEASE_LABEL_ENV } = await import("../../components/release-compile");
   const { cutRelease, planRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");

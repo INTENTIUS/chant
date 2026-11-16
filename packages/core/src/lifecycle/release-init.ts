@@ -20,6 +20,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, posix, relative, sep } from "node:path";
+import { GENERATED_MARKER } from "../discovery/files";
 import { forgeOfRemote } from "../forge-remote";
 
 export type ReleaseInitCode =
@@ -27,7 +28,8 @@ export type ReleaseInitCode =
   | "release-init-config-unreadable"
   | "release-init-workflow-exists"
   | "release-init-not-a-project"
-  | "release-init-member-exists";
+  | "release-init-member-exists"
+  | "release-init-tsx-missing";
 
 /** A refusal of `chant release init`, with its code. */
 export class ReleaseInitError extends Error {
@@ -72,6 +74,12 @@ export interface ProjectFacts {
   workflowForge: "github" | "gitlab" | "forgejo";
   /** Other CI files at the repository root, which give a commit checks: workflow files other than chant's release, or `.gitlab-ci.yml`. */
   ciFiles: string[];
+  /**
+   * Workflow files under `.github/workflows` that chant did not write and that
+   * run `npm publish` (or pnpm's or yarn's), for this project: an npm trusted
+   * publisher names one such file, so the release workflow takes its place.
+   */
+  publishWorkflows?: string[];
   node: {
     manager: NodeManager;
     lockfile: string | null;
@@ -360,6 +368,13 @@ export function detectProject(root: string): ProjectFacts {
     ),
     ...(existsSync(join(top, ".gitlab-ci.yml")) ? [".gitlab-ci.yml"] : []),
   ];
+  const publishWorkflows = ciFiles.filter((f) => {
+    if (!f.startsWith(".github/workflows/")) return false;
+    const text = readText(join(top, f));
+    if (text === null || text.includes(GENERATED_MARKER) || !NPM_PUBLISH.test(text)) return false;
+    // A project below the repository root: only a workflow that names its directory publishes it.
+    return path === null || text.includes(path);
+  });
 
   let node: ProjectFacts["node"] = null;
   const rootPkg = readPackage(root, ".");
@@ -398,6 +413,7 @@ export function detectProject(root: string): ProjectFacts {
     origin,
     workflowForge,
     ciFiles,
+    publishWorkflows,
     node,
     go,
     rust,
@@ -408,6 +424,26 @@ export function detectProject(root: string): ProjectFacts {
     chantCi: ciGreen || tagList.some((t) => t.startsWith("ci/green/") || /^ci\/green-[^/]+\//.test(t)),
     distIgnored: /^\/?dist\/?\s*$/m.test(gitignore) || /^\/?dist\/\*\s*$/m.test(gitignore),
   };
+}
+
+/** A command that publishes to npm: `npm publish`, `pnpm publish`, `yarn publish` or `yarn npm publish`. */
+const NPM_PUBLISH = /\b(?:npm|pnpm|yarn(?:\s+npm)?)\s+publish\b/;
+
+/** The default release workflow file for a forge, from the repository root. */
+const DEFAULT_WORKFLOW_FILES = { github: ".github/workflows/chant-release.yml", forgejo: ".forgejo/workflows/chant-release.yml", gitlab: ".gitlab/chant-release.yml" } as const;
+
+/**
+ * The workflow file a release that publishes to npm runs from: the one
+ * workflow under `.github/workflows` that already runs `npm publish`, since
+ * the package's npm trusted publisher names that file, else chant's default.
+ * Several such files adopt none, and say so in `notes`.
+ */
+function releaseWorkflowFile(facts: ProjectFacts, publishesNpm: boolean, notes: string[]): { file: string; adopted: boolean } {
+  const forge = facts.workflowForge;
+  const found = forge === "github" && publishesNpm ? (facts.publishWorkflows ?? []) : [];
+  if (found.length === 1) return { file: found[0]!, adopted: true };
+  if (found.length > 1) notes.push(`Several workflows run npm publish (${found.join(", ")}), so the release workflow is a new file: set release.workflow.file to the one npm's trusted publisher names to release from it instead.`);
+  return { file: DEFAULT_WORKFLOW_FILES[forge], adopted: false };
 }
 
 /** A value in the release block, as it is written to chant.config.ts. */
@@ -544,11 +580,12 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   const publish: Json[] = [];
   const workflow: Record<string, Json> = { trigger: "dispatch" };
   const forge = facts.workflowForge;
-  const workflowFile = { github: ".github/workflows/chant-release.yml", forgejo: ".forgejo/workflows/chant-release.yml", gitlab: ".gitlab/chant-release.yml" }[forge];
-  const workflowName = posix.basename(workflowFile);
 
   const node0 = facts.node;
   const publishedCount = node0 ? (node0.workspaces ? [...(node0.root.private ? [] : [node0.root]), ...node0.workspaces] : [node0.root]).filter((p) => p.name && !p.private && !p.vscode).length : 0;
+  const { file: workflowFile, adopted } = releaseWorkflowFile(facts, publishedCount > 0, notes);
+  const workflowName = posix.basename(workflowFile);
+  if (adopted) workflow.file = workflowFile;
   const tag = tagTemplateOf(facts, publishedCount);
   release.tag = tag.template;
   reasons.push(tag.reason);
@@ -584,7 +621,9 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
       const list = packages.map((p) => p.name).join(", ");
       const one = packages.length === 1;
       registry.push(
-        `npm ${list}: on npmjs.com, add a trusted publisher to ${one ? "the package" : "each package"} for ${forge === "gitlab" ? `GitLab CI/CD naming ${facts.origin?.repo ?? "this project"} and the top-level config .gitlab-ci.yml` : `${forge === "github" ? "GitHub Actions" : "this forge"} naming ${facts.origin?.repo ?? "this repository"} and the workflow file ${workflowName}`}, and allow npm dist-tag, since the reveal moves latest. A package that is not on npm yet needs its first version published by hand before it has settings.`,
+        adopted
+          ? `npm ${list}: the trusted publisher on npmjs.com that names ${facts.origin?.repo ?? "this repository"} and the workflow file ${workflowName} keeps working, since the release runs from that file; edit it to allow npm dist-tag, since the reveal moves latest.${one ? "" : " A package with no trusted publisher yet needs one naming the same file."}`
+          : `npm ${list}: on npmjs.com, add a trusted publisher to ${one ? "the package" : "each package"} for ${forge === "gitlab" ? `GitLab CI/CD naming ${facts.origin?.repo ?? "this project"} and the top-level config .gitlab-ci.yml` : `${forge === "github" ? "GitHub Actions" : "this forge"} naming ${facts.origin?.repo ?? "this repository"} and the workflow file ${workflowName}`}, and allow npm dist-tag, since the reveal moves latest. A package that is not on npm yet needs its first version published by hand before it has settings.`,
       );
     }
     if (skipped.length > 0) notes.push(`Not published, being private: ${skipped.map((p) => p.name).join(", ")}.`);
@@ -690,6 +729,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
 
   release.workflow = workflow;
   reasons.push(`release.workflow: a release started by hand with its label from ${workflowFile}, which cuts a green commit and publishes it`);
+  if (adopted) reasons.push(`release.workflow.file ${workflowFile}: it runs npm publish today, so the npm trusted publisher that names it keeps working; the release workflow replaces it rather than publishing from a second file`);
 
   if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || publish.some((p) => (p as { type?: string }).type === "pypi") || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
@@ -776,7 +816,7 @@ export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainP
   const notes: string[] = [];
   const registry: string[] = [];
   const forge = facts.workflowForge;
-  const workflowFile = { github: ".github/workflows/chant-release.yml", forgejo: ".forgejo/workflows/chant-release.yml", gitlab: ".gitlab/chant-release.yml" }[forge];
+  const { file: workflowFile, adopted } = releaseWorkflowFile(facts, true, notes);
   const workflowName = posix.basename(workflowFile);
   const env = TRAIN_ENV;
 
@@ -829,9 +869,11 @@ export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainP
   release.green = green;
   reasons.push(...greenReasons);
   const workflow: Record<string, Json> = { trigger: "dispatch" };
+  if (adopted) workflow.file = workflowFile;
   nodeWorkflow(node, opts, workflow, reasons);
   release.workflow = workflow;
   reasons.push(`release.workflow: ${workflowFile}, started by hand with the levels, cuts the train from a green commit and publishes it`);
+  if (adopted) reasons.push(`release.workflow.file ${workflowFile}: it runs npm publish today, so the npm trusted publishers that name it keep working; the train workflow replaces it rather than publishing from a second file`);
 
   for (const m of members) {
     const tag = m.release.tag as string;
@@ -848,7 +890,9 @@ export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainP
   const repo = facts.origin?.repo ?? "this repository";
   for (const m of members) {
     registry.push(
-      `npm ${m.package}: on npmjs.com, add a trusted publisher for ${forge === "github" ? "GitHub Actions" : "this forge"} naming ${repo} and the workflow file ${workflowName}, and allow npm dist-tag, since the reveal moves latest. Every package names the same file. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`,
+      adopted
+        ? `npm ${m.package}: keep the trusted publisher on npmjs.com that names ${repo} and the workflow file ${workflowName}, or add one naming them if the package has none, and allow npm dist-tag on it, since the reveal moves latest. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`
+        : `npm ${m.package}: on npmjs.com, add a trusted publisher for ${forge === "github" ? "GitHub Actions" : "this forge"} naming ${repo} and the workflow file ${workflowName}, and allow npm dist-tag, since the reveal moves latest. Every package names the same file. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`,
     );
   }
 

@@ -1,5 +1,5 @@
 Releases:
-  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]
+  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
               [--actor <name>] [--sign [<key file>]] [--channel <tag>]
               [--lane <name>] [--override-green]
@@ -8,7 +8,8 @@ Releases:
                         must be clean, on trunk and pushed, and carry a
                         ci/green tag: compile every environment in the
                         config's environments and print what the cut would
-                        build, record and tag, and what publishes where.
+                        build, record and tag, and what publishes where;
+                        --dry-run asks for it by name, even with --yes.
                         --yes cuts: builds the artifacts once, stores the
                         release on chant/lifecycle under its digest, records
                         the actor and run id, tags the commit with the tag
@@ -110,16 +111,21 @@ Releases:
                         Set up chant release in a project: detect its packages,
                         images and tags, write release in chant.config.ts and
                         the release workflow, and list the registry steps to
-                        take by hand. A workspace with several npm packages
+                        take by hand (chant.config.json when tsx is not
+                        installed). A workflow that runs npm publish becomes
+                        the release workflow, so npm's trusted publisher
+                        keeps naming it. A workspace with several npm packages
                         gets a release train, a member per package, unless
                         --one-release. A dry run unless --yes; --force replaces
                         an existing release block.
   release workflow [--forge github|gitlab|forgejo] [--install <command>]
-              [--build <command>] [--chant <command>] [--output <file>]
+              [--build <command>] [--chant <command>] [--output <file>] [--force]
                         Write the publish workflow, run on the tags
                         release.tag makes (default release/**).
                         Under supply-chain it passes --require-provenance, and
-                        under verified-releases it runs release verify first
+                        under verified-releases it runs release verify first.
+                        A file there that chant did not write is replaced
+                        only with --force
   release next [--at <sha>] [--pre <id>] [--json]
                         The label of this member's next release, from the
                         conventional commits since its previous release and

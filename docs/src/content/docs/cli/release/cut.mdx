@@ -15,7 +15,9 @@ chant release cut v1.4.0 --build "npm run build"         # a dry run: prints the
 chant release cut v1.4.0 --build "npm run build" --yes   # cuts, records and tags
 ```
 
-Without `--yes` the cut is a dry run ([#4027](https://github.com/INTENTIUS/chant/issues/4027)). It makes every check below and compiles every environment, then prints what the cut would record and tag, and what will be published where. Nothing is built or signed, and nothing is written to `chant/lifecycle` or tagged. Run the same command again with `--yes` to cut. The same command runs unchanged in CI, where it needs `--yes` as well.
+Without `--yes` the cut is a dry run ([#4027](https://github.com/INTENTIUS/chant/issues/4027)). It makes every check below and compiles every environment, then prints what the cut would record and tag, and what will be published where. Nothing is built or signed, and nothing is written to `chant/lifecycle` or tagged. Run the same command again with `--yes` to cut; the dry run prints that command. The same command runs unchanged in CI, where it needs `--yes` as well.
+
+`--dry-run` asks for the dry run by name. It is what a cut without `--yes` does already, and it keeps a cut with `--yes` a dry run, so `--dry-run --yes` cuts nothing. The command the dry run prints to run next leaves `--dry-run` out.
 
 The cut refuses before it writes anything when:
 
@@ -577,6 +579,7 @@ A cut signed by chant before `RELEASE_GATE_SEAL_FLOOR` signed only the first fou
 |---|---|
 | `<label>` or `--label <label>` | The release's label, such as a version. Optional; a release with no label gets no tag. |
 | `--yes` | Cut. Without it the command is a dry run. |
+| `--dry-run` | A dry run, as without `--yes`. With `--yes` too, the run stays a dry run. |
 | `--build <command>` | A shell command run in the member's directory before each environment's templates are read, with `CHANT_ENV` set to the environment. |
 | `--param <name=value>` | A build parameter for every environment. Repeatable. |
 | `--params-file <file>` | A JSON file of build parameters. `{env}` in the path is replaced by each environment's name, as in `params.{env}.json`. |

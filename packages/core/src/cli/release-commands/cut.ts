@@ -5,7 +5,7 @@ export const cutCommand: ReleaseCommandDoc = {
   name: "cut",
   helpOrder: 10,
   help: [
-    "  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>]",
+    "  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>]",
     "              [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]",
     "              [--actor <name>] [--sign [<key file>]] [--channel <tag>]",
     "              [--lane <name>] [--override-green]",
@@ -14,7 +14,8 @@ export const cutCommand: ReleaseCommandDoc = {
     "                        must be clean, on trunk and pushed, and carry a",
     "                        ci/green tag: compile every environment in the",
     "                        config's environments and print what the cut would",
-    "                        build, record and tag, and what publishes where.",
+    "                        build, record and tag, and what publishes where;",
+    "                        --dry-run asks for it by name, even with --yes.",
     "                        --yes cuts: builds the artifacts once, stores the",
     "                        release on chant/lifecycle under its digest, records",
     "                        the actor and run id, tags the commit with the tag",
@@ -47,5 +48,5 @@ export const cutCommand: ReleaseCommandDoc = {
     "                        auto cuts the label release next computes, and every",
     "                        labelled cut records the intent files it consumed.",
   ],
-  usage: { order: 10, text: "release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json]" },
+  usage: { order: 10, text: "release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json]" },
 };

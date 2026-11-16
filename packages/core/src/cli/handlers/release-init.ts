@@ -55,14 +55,20 @@ export async function runReleaseInit(ctx: CommandContext): Promise<number> {
   if (!fit.train && fit.why) plan.notes.push(`One release for every package, not a release train: ${fit.why}.`);
   if (fit.train) plan.reasons.unshift("--one-release: every package is released together, at one label under one tag");
 
-  const prepared = await prepareConfig(root, plan.release, force);
+  const { typeScriptLoaderAvailable } = await import("../../ts-loader");
+  const canLoadTs = typeScriptLoaderAvailable();
+  const prepared = await prepareConfig(root, plan.release, force, canLoadTs);
   if ("error" in prepared) return fail(prepared.error.code, prepared.error.message, prepared.error.fix, block);
   const { configPath, configText, configName, created } = prepared;
+  if (created && configName === "chant.config.json") plan.reasons.unshift(TSX_REASON);
 
-  // The workflow file: one chant generated is regenerated; any other is left alone without --force.
+  // The workflow file: one chant generated is regenerated; any other is left alone without --force,
+  // unless it is the npm publish workflow the plan adopts, which the release workflow replaces.
   const { gitTop } = await import("../../workspace/tree");
   const top = gitTop(root) ?? root;
-  if (!force && !(await workflowIsOurs(join(top, plan.workflowFile)))) {
+  const adopted = adoptedWorkflow(plan.release);
+  const handWritten = !(await workflowIsOurs(join(top, plan.workflowFile)));
+  if (handWritten && !force && !adopted) {
     return fail("release-init-workflow-exists", `${plan.workflowFile} exists and chant did not write it`, "Run again with --force to replace it.");
   }
 
@@ -116,13 +122,13 @@ export async function runReleaseInit(ctx: CommandContext): Promise<number> {
     if (json) console.log = console.error;
     let code: number;
     try {
-      code = await runReleaseWorkflow({ ...ctx, args: { ...ctx.args, forge: facts.workflowForge } });
+      code = await runReleaseWorkflow({ ...ctx, args: { ...ctx.args, forge: facts.workflowForge, ...(adopted ? { force: true } : {}) } });
     } finally {
       console.log = log;
     }
     if (code !== 0) return code;
   } else if (!json) {
-    console.log(`\nWould write ${configName} and ${plan.workflowFile} (with chant release workflow)${gr?.append ? `, and add snapshot.version_template to ${gr.file}` : ""}.`);
+    console.log(`\nWould write ${configName} and ${plan.workflowFile} (with chant release workflow${handWritten ? `, replacing the ${plan.workflowFile} there` : ""})${gr?.append ? `, and add snapshot.version_template to ${gr.file}` : ""}.`);
   }
   if (gr?.manual && !json) console.log(formatWarning({ message: gr.manual }));
 
@@ -142,6 +148,15 @@ export async function runReleaseInit(ctx: CommandContext): Promise<number> {
 type Lifecycle = typeof import("../../lifecycle/release-init");
 type Fail = (code: string, message: string, fix?: string, block?: string) => number;
 
+/** Why init writes chant.config.json: the reason line a plan carries for it. */
+const TSX_REASON = "chant.config.json, not chant.config.ts: tsx, which chant needs to read a TypeScript config, is not installed here, so the release block is written as JSON that this run and the workflow's jobs read without it";
+
+/** The `release.workflow.file` init set to adopt the project's npm publish workflow, or null. */
+function adoptedWorkflow(release: Record<string, unknown>): string | null {
+  const file = (release.workflow as { file?: unknown } | undefined)?.file;
+  return typeof file === "string" ? file : null;
+}
+
 /** Whether the workflow file is absent or one chant generated, so writing it replaces nothing a person wrote. */
 async function workflowIsOurs(path: string): Promise<boolean> {
   if (!existsSync(path)) return true;
@@ -152,12 +167,15 @@ async function workflowIsOurs(path: string): Promise<boolean> {
 /**
  * The config of the project at `dir` with `release` written in: its
  * chant.config.ts edited in place, its chant.config.json rewritten, or a new
- * chant.config.ts.
+ * chant.config.ts. Without tsx (`canLoadTs` false) the new config is
+ * chant.config.json, and an existing chant.config.ts is refused, since
+ * nothing could read it back.
  */
 async function prepareConfig(
   dir: string,
   release: Parameters<Lifecycle["insertReleaseBlock"]>[1],
   force: boolean,
+  canLoadTs: boolean,
 ): Promise<{ configPath: string; configText: string; configName: string; created: boolean } | { error: { code: string; message: string; fix?: string } }> {
   const { insertReleaseBlock, newConfigSource, ReleaseInitError } = await import("../../lifecycle/release-init");
   const tsPath = join(dir, "chant.config.ts");
@@ -166,6 +184,7 @@ async function prepareConfig(
   let configText: string;
   try {
     if (existsSync(tsPath)) {
+      if (!canLoadTs) throw new ReleaseInitError("release-init-tsx-missing", "chant.config.ts is TypeScript, and chant needs tsx to read it, which is not installed here", "Add tsx as a dev dependency (npm i -D tsx) and run again, so this run and the release workflow's jobs can read the config.");
       configPath = tsPath;
       const before = readFileSync(tsPath, "utf-8");
       configText = insertReleaseBlock(before, release, force);
@@ -185,9 +204,12 @@ async function prepareConfig(
       const parsed = JSON.parse(readFileSync(jsonPath, "utf-8")) as Record<string, unknown>;
       if (parsed.release !== undefined && !force) throw new ReleaseInitError("release-init-release-exists", "chant.config.json already has a release block", "Run again with --force to replace it, or add the fields shown here to it by hand.");
       configText = `${JSON.stringify({ ...parsed, release }, null, 2)}\n`;
-    } else {
+    } else if (canLoadTs) {
       configPath = tsPath;
       configText = newConfigSource(release);
+    } else {
+      configPath = jsonPath;
+      configText = `${JSON.stringify({ release }, null, 2)}\n`;
     }
   } catch (err) {
     if (err instanceof ReleaseInitError) return { error: { code: err.code, message: err.message, ...(err.fix ? { fix: err.fix } : {}) } };
@@ -217,16 +239,22 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
   const rel = (p: string) => relative(root, p).split(sep).join("/");
 
   // Each member's config, then the root's.
+  const { typeScriptLoaderAvailable } = await import("../../ts-loader");
+  const canLoadTs = typeScriptLoaderAvailable();
   const members: Array<{ name: string; dir: string; package: string; release: (typeof plan.members)[number]["release"]; path: string; text: string; created: boolean }> = [];
   for (const m of plan.members) {
-    const prepared = await prepareConfig(join(root, m.dir), m.release, force);
+    const prepared = await prepareConfig(join(root, m.dir), m.release, force, canLoadTs);
     const block = lib.releaseBlockSource(m.release, "  ");
     if ("error" in prepared) return fail(prepared.error.code, `${m.dir}: ${prepared.error.message}`, prepared.error.fix, block);
     members.push({ name: m.name, dir: m.dir, package: m.package, release: m.release, path: prepared.configPath, text: prepared.configText, created: prepared.created });
   }
   const rootBlock = lib.releaseBlockSource(plan.release, "  ");
-  const prepared = await prepareConfig(root, plan.release, force);
+  const prepared = await prepareConfig(root, plan.release, force, canLoadTs);
   if ("error" in prepared) return fail(prepared.error.code, prepared.error.message, prepared.error.fix, rootBlock);
+  if (!canLoadTs) {
+    plan.reasons.unshift(TSX_REASON);
+    for (const m of members) if (m.path.endsWith(".json")) plan.reasons = plan.reasons.map((r) => r.replace(`${m.dir}/chant.config.ts, member`, `${m.dir}/chant.config.json, member`));
+  }
 
   // chant.workspace.json: a new one, or the members added to the one there.
   const wsPath = join(root, "chant.workspace.json");
@@ -258,7 +286,9 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
 
   const { gitTop } = await import("../../workspace/tree");
   const top = gitTop(root) ?? root;
-  if (!force && !(await workflowIsOurs(join(top, plan.workflowFile)))) {
+  const adopted = adoptedWorkflow(plan.release);
+  const handWritten = !(await workflowIsOurs(join(top, plan.workflowFile)));
+  if (handWritten && !force && !adopted) {
     return fail("release-init-workflow-exists", `${plan.workflowFile} exists and chant did not write it`, "Run again with --force to replace it.");
   }
 
@@ -321,13 +351,13 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
     if (json) console.log = console.error;
     let code: number;
     try {
-      code = await runReleaseWorkflow({ ...ctx, args: { ...ctx.args, forge: fg } });
+      code = await runReleaseWorkflow({ ...ctx, args: { ...ctx.args, forge: fg, ...(adopted ? { force: true } : {}) } });
     } finally {
       console.log = log;
     }
     if (code !== 0) return code;
   } else {
-    console.log(`\nWould write chant.workspace.json, ${prepared.configName}, ${members.map((m) => rel(m.path)).join(", ")} and ${plan.workflowFile} (with chant release workflow). Run with --one-release to release every package together under one label instead.`);
+    console.log(`\nWould write chant.workspace.json, ${prepared.configName}, ${members.map((m) => rel(m.path)).join(", ")} and ${plan.workflowFile} (with chant release workflow${handWritten ? `, replacing the ${plan.workflowFile} there` : ""}). Run with --one-release to release every package together under one label instead.`);
   }
 
   if (json) {
