@@ -873,12 +873,16 @@ export const DEFAULT_CHANT_CONFIG: LoadedChantConfig = {};
  * ({@link normalizeConfig}) happens here, in the trusted process.
  * `chant.config.json` is data, not code — it is parsed in-process under
  * `--sandbox` too, because there is nothing to execute.
+ *
+ * `fresh` re-evaluates `chant.config.ts` instead of taking the module the
+ * process already loaded, for a release step that must see the file as it is
+ * now. Modules the config imports stay cached.
  */
-export async function loadChantConfig(dir: string): Promise<ResolvedConfig> {
+export async function loadChantConfig(dir: string, opts: { fresh?: boolean } = {}): Promise<ResolvedConfig> {
   // Try chant.config.ts first
   const tsPath = join(dir, "chant.config.ts");
   if (existsSync(tsPath)) {
-    const config = await evaluateProjectConfig(tsPath, dir);
+    const config = await evaluateProjectConfig(tsPath, dir, opts.fresh);
     return { config: normalizeConfig(config as Record<string, unknown>, tsPath), configPath: tsPath };
   }
 

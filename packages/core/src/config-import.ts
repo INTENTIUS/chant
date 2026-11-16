@@ -1,5 +1,8 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+let freshLoads = 0;
 import { ensureTypeScriptLoader } from "./ts-loader";
 
 /**
@@ -29,9 +32,11 @@ export type ConfigModuleNamespace = Record<string, unknown>;
  * Node's ESM registry caches it, so repeated loads within one CLI invocation
  * evaluate the file once — the behavior `loadChantConfig` has always had.
  */
-export async function importConfigModule(configPath: string): Promise<ConfigModuleNamespace> {
+export async function importConfigModule(configPath: string, fresh = false): Promise<ConfigModuleNamespace> {
   ensureTypeScriptLoader();
-  return (await import(configPath)) as ConfigModuleNamespace;
+  // `fresh` re-evaluates the config file itself: a query string makes the specifier a new module. Files it imports stay cached.
+  const specifier = fresh ? `${pathToFileURL(configPath).href}?fresh=${++freshLoads}` : configPath;
+  return (await import(specifier)) as ConfigModuleNamespace;
 }
 
 /**

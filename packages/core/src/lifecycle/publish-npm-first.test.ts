@@ -115,6 +115,18 @@ describe("the cut", () => {
     expect((err as ReleaseCutError).code).toBe("publish-npm-registry-unreadable");
   });
 
+  test("an npm target that comes from an imported preset file is still checked", async () => {
+    const r = new TestRepo("npm-first-preset");
+    repos.push(r);
+    r.write("preset.ts", `export const publish = [{ type: "npm", packages: ["."] }];\n`);
+    r.write("chant.config.ts", `import { publish } from "./preset";\nexport default { environments: ["dev"], release: { publish } };\n`);
+    r.write("package.json", JSON.stringify({ name: "@acme/app", version: "2.0.0" }));
+    const head = r.commit("init");
+    r.git(["tag", `ci/green/${head}`]);
+    const err = await cutRelease({ cwd: r.dir, compiler, label: "v2", actor: "alice", env: {}, npmPublished: () => false }).catch((e: unknown) => e);
+    expect((err as ReleaseCutError).code).toBe("publish-npm-never-published");
+  });
+
   test("a published package cuts", async () => {
     const r = repo();
     const out = await cutRelease({ cwd: r.dir, compiler, label: "v2", actor: "alice", env: {}, npmPublished: () => true });

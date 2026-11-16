@@ -102,12 +102,13 @@ export function selectConfigExport(namespace: ConfigModuleNamespace): unknown {
 export async function evaluateProjectConfig(
   configPath: string,
   projectRoot: string = dirname(configPath),
+  fresh = false,
 ): Promise<unknown> {
   if (!armed) {
-    return selectConfigExport(await importConfigModule(configPath));
+    return selectConfigExport(await importConfigModule(configPath, fresh));
   }
 
-  if (memo.has(configPath)) return memo.get(configPath);
+  if (!fresh && memo.has(configPath)) return memo.get(configPath);
 
   // Dynamic, not static, for the same reason `./discovery/index.ts` imports
   // `./sandbox/run` dynamically: this pulls in `esbuild`, a large CJS package
