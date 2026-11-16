@@ -21,7 +21,7 @@ const LEXICONS = join(SRC, "../../../../lexicons");
 // the plugins of the lexicons the goldens' example projects load.
 const ENTRIES: Record<string, string> = {
   ...Object.fromEntries(["build", "lint", "graph", "run", "misc", "init"].map((h) => [`cli/handlers/${h}.ts`, join(SRC, "handlers", `${h}.ts`)])),
-  ...Object.fromEntries(["aws", "helm", "k8s", "otel", "terraform"].map((l) => [`lexicons/${l}/src/plugin.ts`, join(LEXICONS, l, "src", "plugin.ts")])),
+  ...Object.fromEntries(["aws", "helm", "k8s", "otel", "pulumi", "sql", "terraform"].map((l) => [`lexicons/${l}/src/plugin.ts`, join(LEXICONS, l, "src", "plugin.ts")])),
 };
 
 const result = await build({

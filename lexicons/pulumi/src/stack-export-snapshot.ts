@@ -54,7 +54,7 @@ import {
   type PulumiRunner,
 } from "./run";
 import { isObject, PULUMI_BLINDED_SECRET, PULUMI_SECRET_SIG, PULUMI_SIG_KEY } from "./values";
-import { PULUMI_EXPORT_FILE } from "./workspace-member";
+import { PULUMI_EXPORT_FILE } from "./member-report";
 
 const execFileAsync = promisify(execFile);
 

@@ -30,7 +30,7 @@ import { POSTGRES_EMULATOR } from "./op/activities/postgres-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
 import { looksLikePostgres } from "./migrate/from-postgres/detect";
-import { sqlWorkspaceOutputs } from "./workspace-outputs";
+import { sqlWorkspaceOutputs } from "./declared-outputs";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
 import { compositeCatalog } from "./composites/catalog";
 import { sqlCiServices, sqlCiSetup } from "./ci-setup";
@@ -244,7 +244,7 @@ export const sqlPlugin: LexiconPlugin = {
 
   /**
    * Each table and view, and each of their columns, as workspace outputs
-   * (`./workspace-outputs.ts`, #3931): `public.orders`,
+   * (`./declared-outputs.ts`, #3931): `public.orders`,
    * `public.orders.customer_id`. Another member's link to a dropped or
    * renamed column then fails `chant workspace check`.
    */

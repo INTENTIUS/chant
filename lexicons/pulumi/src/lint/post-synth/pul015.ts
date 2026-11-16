@@ -15,7 +15,7 @@
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { pulumiMemberEngine } from "../../run";
-import { lastMemberRead } from "../../workspace-member";
+import { lastMemberRead } from "../../member-report";
 import { finding } from "./member-read-helpers";
 
 export const pul015: PostSynthCheck = {

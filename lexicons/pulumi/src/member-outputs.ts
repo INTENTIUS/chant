@@ -50,7 +50,7 @@ import { pulumiPlannedOutputChanges, type PulumiOutputChange } from "./planned-o
 import { pulumiPlannedStackOutputs, pulumiExportedStackOutputs, type PulumiStackOutput } from "./stack-outputs";
 import { memberExportOf, previewPulumiMemberRead, pulumiMemberStackOutputs, type PulumiMemberEngine, type PulumiRunner } from "./run";
 import { isSecret } from "./values";
-import { PULUMI_EXPORT_FILE } from "./workspace-member";
+import { PULUMI_EXPORT_FILE } from "./member-report";
 
 /** Where a member's applied outputs are read from. */
 export type PulumiAppliedFrom = "cli" | "export";

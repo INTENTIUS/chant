@@ -8,7 +8,7 @@
  * keeps the last one, so the other has no node.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { PULUMI_EXPORT_FILE } from "../../workspace-member";
+import { PULUMI_EXPORT_FILE } from "../../member-report";
 import { entityOf, finding, memberExport } from "./member-read-helpers";
 
 export const pul011: PostSynthCheck = {

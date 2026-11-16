@@ -8,7 +8,7 @@
  * resources out differently, and what chant reads from it is not checked.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { PULUMI_EXPORT_FILE } from "../../workspace-member";
+import { PULUMI_EXPORT_FILE } from "../../member-report";
 import { finding, memberExport } from "./member-read-helpers";
 
 /** The deployment schema version the readers are written against. */

@@ -125,7 +125,7 @@ import { pulumiExportResources, pulumiPreviewPart } from "./change-set";
 import { pulumiRefreshArgs, pulumiRefreshDocumentRecords, pulumiRefreshDriftRecords, type PulumiRefreshRead } from "./drift-record";
 import { plungeDriftArgs, plungeDriftStreamRecords, type PlungeDriftRead } from "./drift-record";
 import { pulumiMemberEngine, type PulumiMemberEngine } from "./member-engine";
-import { PULUMI_EXPORT_FILE } from "./workspace-member";
+import { PULUMI_EXPORT_FILE } from "./member-report";
 
 const execFileAsync = promisify(execFile);
 
