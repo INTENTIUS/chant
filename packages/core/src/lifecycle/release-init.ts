@@ -81,8 +81,21 @@ export interface ProjectFacts {
     hasChant: boolean;
   } | null;
   go: { module: string | null } | null;
-  rust: { name: string | null; workspace: boolean } | null;
-  python: { name: string | null } | null;
+  rust: {
+    name: string | null;
+    workspace: boolean;
+    /** `Cargo.toml` has a `version` string in `[package]` or `[workspace.package]`, which `release.version.files` can stamp. */
+    version: boolean;
+    /** `[package]` sets `publish = false`. */
+    unpublishable: boolean;
+  } | null;
+  python: {
+    name: string | null;
+    /** There is a `pyproject.toml`, which `python -m build` reads. */
+    pyproject: boolean;
+    /** `pyproject.toml` has a static `version` in `[project]` or `[tool.poetry]`, which `release.version.files` can stamp. */
+    version: boolean;
+  } | null;
   /** Dockerfiles, from the project root. */
   dockerfiles: string[];
   goreleaser: {
@@ -290,6 +303,44 @@ export function goreleaserFacts(text: string): { labelTemplate: boolean; snapsho
 export const GORELEASER_SNAPSHOT = 'snapshot:\n  version_template: "{{ .Env.CHANT_RELEASE_LABEL }}"\n';
 
 /** Read the project at `root` (the directory `chant release init` runs in). */
+/** The sections of a TOML file by header, each holding its own lines only. */
+function tomlSections(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let name = "";
+  for (const line of text.split(/\r?\n/)) {
+    const h = /^\s*\[{1,2}\s*([^\]]+?)\s*\]{1,2}\s*(#.*)?$/.exec(line);
+    if (h) {
+      name = h[1]!;
+      continue;
+    }
+    out.set(name, `${out.get(name) ?? ""}${line}\n`);
+  }
+  return out;
+}
+
+/** A `Cargo.toml`'s name, workspace, stampable version and `publish = false`. */
+export function cargoFacts(text: string): NonNullable<ProjectFacts["rust"]> {
+  const sections = tomlSections(text);
+  const pkg = sections.get("package") ?? "";
+  const str = (body: string, key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m").exec(body)?.[1] ?? null;
+  return {
+    name: str(pkg, "name"),
+    workspace: sections.has("workspace"),
+    version: str(pkg, "version") !== null || str(sections.get("workspace.package") ?? "", "version") !== null,
+    unpublishable: /^publish\s*=\s*false\b/m.test(pkg),
+  };
+}
+
+/** A `pyproject.toml`'s project name, and whether its version is a static string that `release.version.files` can stamp. */
+export function pyprojectFacts(text: string): NonNullable<ProjectFacts["python"]> {
+  const sections = tomlSections(text);
+  const str = (body: string, key: string) => new RegExp(`^${key}\\s*=\\s*["']([^"']*)["']`, "m").exec(body)?.[1] ?? null;
+  const project = sections.get("project") ?? "";
+  const poetry = sections.get("tool.poetry") ?? "";
+  const name = str(project, "name") ?? str(poetry, "name");
+  return { name, pyproject: true, version: str(project, "version") !== null || str(poetry, "version") !== null };
+}
+
 export function detectProject(root: string): ProjectFacts {
   const top = git(root, ["rev-parse", "--show-toplevel"])?.trim() || root;
   const fromTop = relative(top, root).split(sep).join("/");
@@ -326,9 +377,9 @@ export function detectProject(root: string): ProjectFacts {
   const gomod = readText(join(root, "go.mod"));
   const go = gomod === null ? null : { module: /^module\s+(\S+)/m.exec(gomod)?.[1] ?? null };
   const cargo = readText(join(root, "Cargo.toml"));
-  const rust = cargo === null ? null : { name: /\[package\][^[]*?^name\s*=\s*"([^"]+)"/ms.exec(cargo)?.[1] ?? null, workspace: /^\[workspace\]/m.test(cargo) };
+  const rust = cargo === null ? null : cargoFacts(cargo);
   const pyproject = readText(join(root, "pyproject.toml"));
-  const python = pyproject === null && !existsSync(join(root, "setup.py")) ? null : { name: pyproject ? (/\[project\][^[]*?^name\s*=\s*"([^"]+)"/ms.exec(pyproject)?.[1] ?? null) : null };
+  const python = pyproject === null ? (existsSync(join(root, "setup.py")) ? { name: null, pyproject: false, version: false } : null) : pyprojectFacts(pyproject);
 
   const grFile = GORELEASER_FILES.find((f) => existsSync(join(root, f)));
   const goreleaser = grFile ? { file: grFile, ...goreleaserFacts(readText(join(root, grFile)) ?? "") } : null;
@@ -579,9 +630,45 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
     } else notes.push(`No forge release is declared for ${gr.file}'s files: origin names no GitHub, GitLab or Forgejo repository.`);
   }
 
-  // Ecosystems with no target.
-  if (facts.python) notes.push(`chant release has no PyPI target: ${facts.python.name ?? "the Python package"} is tagged and not published to PyPI.`);
-  if (facts.rust) notes.push(`chant release has no crates.io target: ${facts.rust.name ?? "the crate"} is tagged and not published to crates.io.`);
+  // Python and Rust packages.
+  const versionFiles: string[] = [];
+  const trustedRepo = facts.origin?.repo ?? "this repository";
+  const trustedFor = (what: string) =>
+    forge === "gitlab" ? `GitLab CI/CD naming ${trustedRepo} and the top-level pipeline file .gitlab-ci.yml` : `${what} naming ${trustedRepo} and the workflow file ${workflowName}`;
+  const py = facts.python;
+  if (py?.pyproject && py.name) {
+    const forgejo = forge === "forgejo";
+    const entry = { name: "python", build: "python -m pip install build && python -m build", outputs: ["dist/*"] };
+    release.artifacts = [...((release.artifacts as Json[] | undefined) ?? []), entry];
+    publish.push({ type: "pypi", files: ["artifact:python"], auth: forgejo ? "token" : "trusted-publishing" });
+    reasons.push(`release.artifacts: ${py.name} is built once at the cut with python -m build, and the release records the sdist and wheel in dist/`);
+    reasons.push(`pypi target: the recorded files of ${py.name}, uploaded to PyPI ${forgejo ? "with the token in PYPI_TOKEN" : "with trusted publishing"}`);
+    if (py.version) versionFiles.push("pyproject.toml");
+    else notes.push("pyproject.toml has no static version (it is dynamic, or unset), so release.version does not stamp it: the build takes the version from wherever the project sets it.");
+    if (forgejo) {
+      workflow.env = { ...((workflow.env as Record<string, Json>) ?? {}), PYPI_TOKEN: "${{ secrets.PYPI_TOKEN }}" };
+      registry.push(`PyPI ${py.name}: create an API token for the project on pypi.org and store it as the secret PYPI_TOKEN; PyPI has no trusted publisher for this forge.`);
+    } else {
+      registry.push(
+        `PyPI ${py.name}: on pypi.org add a trusted publisher to the project's publishing settings (a pending publisher if the project does not exist yet) for ${trustedFor("GitHub Actions")}.${forge === "github" ? " A GitHub publisher can name an environment; leave it empty, since the workflow runs in none." : ""}`,
+      );
+    }
+  } else if (py) notes.push(`${py.name ?? "The Python package"} is tagged and not published to PyPI: ${py.pyproject ? "pyproject.toml has no [project] name" : "there is no pyproject.toml for python -m build to read"}. Add a pypi target to release.publish when it is.`);
+  const rs = facts.rust;
+  if (rs && !rs.unpublishable && (rs.name || rs.workspace)) {
+    publish.push({ type: "cargo" });
+    reasons.push(`cargo target: ${rs.name ?? "the workspace's crates"}${rs.workspace && rs.name ? " and its workspace members" : ""} published with cargo publish, in dependency order`);
+    if (rs.version) versionFiles.push("Cargo.toml");
+    else notes.push("Cargo.toml has no [package] or [workspace.package] version at the root, so release.version does not stamp it: add the member crates' Cargo.toml files to release.version.files.");
+    registry.push(
+      `crates.io ${rs.name ?? "each crate"}: ${forge === "github" ? `add a trusted publisher to ${rs.name ? "the crate" : "each crate"} on crates.io for GitHub Actions naming ${trustedRepo} and the workflow file ${workflowName}. A crate's first version can't be published that way: publish it by hand, or store a token that may publish new crates as the secret CARGO_REGISTRY_TOKEN and set CARGO_REGISTRY_TOKEN: "\${{ secrets.CARGO_REGISTRY_TOKEN }}" in release.workflow.env.` : `create an API token that may publish ${rs.name ? "the crate" : "the crates"} and store it as the ${forge === "gitlab" ? "masked CI/CD variable" : "secret"} CARGO_REGISTRY_TOKEN${forge === "gitlab" ? "." : ", and set CARGO_REGISTRY_TOKEN: \"${{ secrets.CARGO_REGISTRY_TOKEN }}\" in release.workflow.env."}`}`,
+    );
+  } else if (rs) notes.push(`${rs.name ?? "The crate"} is tagged and not published to crates.io: ${rs.unpublishable ? "Cargo.toml sets publish = false" : "Cargo.toml has no [package] name or [workspace]"}.`);
+  if (versionFiles.length > 0) {
+    const current = (release.version as Record<string, Json> | undefined) ?? {};
+    release.version = { ...current, files: versionFiles };
+    reasons.push(`release.version.files: the release stamps its label into ${versionFiles.join(" and ")}, so a release needs no version commit`);
+  }
   if (facts.go && !facts.goreleaser) reasons.push(`Go module ${facts.go.module ?? ""}: the tag is the release the Go module proxy reads; nothing else is published`.replace("  ", " "));
 
   if (publish.length > 0) release.publish = publish;
@@ -590,7 +677,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   release.workflow = workflow;
   reasons.push(`release.workflow: a release started by hand with its label from ${workflowFile}, which cuts a green commit and publishes it`);
 
-  if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
+  if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || publish.some((p) => (p as { type?: string }).type === "pypi") || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
 
   const h = facts.tags.prefix;

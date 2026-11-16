@@ -10,6 +10,7 @@ import { doctorFeature } from "./doctor";
 import { goreleaserFeature } from "./goreleaser";
 import { greenFeature } from "./green";
 import { imagesFeature } from "./images";
+import { pypiFeature } from "./pypi";
 import { qemuFeature } from "./qemu";
 import { signingFeature } from "./signing";
 import { stampFeature } from "./stamp";
@@ -28,6 +29,7 @@ export const RELEASE_WORKFLOW_FEATURES: readonly ReleaseWorkflowFeature[] = [
   goreleaserFeature,
   greenFeature,
   imagesFeature,
+  pypiFeature,
   qemuFeature,
   signingFeature,
   stampFeature,

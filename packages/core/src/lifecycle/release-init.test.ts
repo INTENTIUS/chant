@@ -139,17 +139,60 @@ describe("detecting the project (#5160)", () => {
     expect(plan.notes.join("\n")).toContain("dist/ is not in .gitignore");
   });
 
-  test("a VS Code extension publishes to both marketplaces; Python and Rust are tagged and noted", () => {
+  test("a VS Code extension publishes to both marketplaces; a Python and a Rust package beside it get their targets", () => {
     const root = repo({ "package.json": JSON.stringify({ name: "acme-vscode", publisher: "acme", engines: { vscode: "^1.90.0" } }), "pyproject.toml": '[project]\nname = "acme"\n', "Cargo.toml": '[package]\nname = "acme-rs"\n' }, { origin: "https://github.com/acme/ext" });
     const plan = planRelease(detectProject(root), PLAN);
     expect(plan.release.publish).toEqual([
       { type: "marketplace", marketplace: "vscode", vsix: "dist/acme-vscode.vsix" },
       { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme-vscode.vsix", auth: "trusted-publishing" },
+      { type: "pypi", files: ["artifact:python"], auth: "trusted-publishing" },
+      { type: "cargo" },
     ]);
     expect((plan.release.workflow as { env: Record<string, string> }).env).toEqual({ VSCE_PAT: "${{ secrets.VSCE_PAT }}" });
     expect(plan.registry.join("\n")).toContain("open-vsx.org/user-settings/trusted-publishers");
-    expect(plan.notes.join("\n")).toMatch(/no PyPI target: acme is tagged/);
-    expect(plan.notes.join("\n")).toMatch(/no crates.io target: acme-rs is tagged/);
+  });
+
+  test("pyproject.toml gets a pypi target with a build artifact and a version file (#5202)", () => {
+    const root = repo({ "pyproject.toml": '[project]\nname = "acme-py"\nversion = "0.3.0"\n' }, { origin: "https://github.com/acme/py" });
+    const plan = planRelease(detectProject(root), PLAN);
+    expect(plan.release.artifacts).toEqual([{ name: "python", build: "python -m pip install build && python -m build", outputs: ["dist/*"] }]);
+    expect(plan.release.publish).toEqual([{ type: "pypi", files: ["artifact:python"], auth: "trusted-publishing" }]);
+    expect(plan.release.version).toEqual({ files: ["pyproject.toml"] });
+    expect(plan.registry.join("\n")).toContain("trusted publisher");
+    expect(plan.registry.join("\n")).toContain("chant-release.yml");
+    expect(plan.notes.join("\n")).toContain("dist/ is not in .gitignore");
+    // GitLab names the pipeline file; Forgejo has no trusted publisher, so it takes a token.
+    const gl = planRelease(detectProject(repo({ "pyproject.toml": '[project]\nname = "acme-py"\n', ".gitlab-ci.yml": "x: 1\n" })), PLAN);
+    expect(gl.registry.join("\n")).toContain(".gitlab-ci.yml");
+    const fj = planRelease(detectProject(repo({ "pyproject.toml": '[project]\nname = "acme-py"\n', ".forgejo/workflows/ci.yml": "on: push\n" })), PLAN);
+    expect(fj.release.publish).toEqual([{ type: "pypi", files: ["artifact:python"], auth: "token" }]);
+    expect((fj.release.workflow as { env: Record<string, string> }).env).toEqual({ PYPI_TOKEN: "${{ secrets.PYPI_TOKEN }}" });
+    // A dynamic version is left to the build, and a pyproject with no project name is not published.
+    expect(gl.release.version).toBeUndefined();
+    expect(gl.notes.join("\n")).toContain("no static version");
+    const bare = planRelease(detectProject(repo({ "pyproject.toml": "[tool.ruff]\nline-length = 100\n" })), PLAN);
+    expect(bare.release.publish).toBeUndefined();
+    expect(bare.notes.join("\n")).toContain("not published to PyPI");
+  });
+
+  test("Cargo.toml gets a cargo target and a version file; publish = false gets neither (#5202)", () => {
+    const plan = planRelease(detectProject(repo({ "Cargo.toml": '[package]\nname = "acme-rs"\nversion = "0.2.0"\n' }, { origin: "https://github.com/acme/rs" })), PLAN);
+    expect(plan.release.publish).toEqual([{ type: "cargo" }]);
+    expect(plan.release.version).toEqual({ files: ["Cargo.toml"] });
+    expect(plan.registry.join("\n")).toContain("CARGO_REGISTRY_TOKEN");
+    expect(plan.registry.join("\n")).toContain("trusted publisher");
+    const ws = planRelease(detectProject(repo({ "Cargo.toml": '[workspace]\nmembers = ["a"]\n[workspace.package]\nversion = "1.0.0"\n' })), PLAN);
+    expect(ws.release.publish).toEqual([{ type: "cargo" }]);
+    expect(ws.release.version).toEqual({ files: ["Cargo.toml"] });
+    const priv = planRelease(detectProject(repo({ "Cargo.toml": '[package]\nname = "tool"\nversion = "0.1.0"\npublish = false\n' })), PLAN);
+    expect(priv.release.publish).toBeUndefined();
+    expect(priv.notes.join("\n")).toContain("publish = false");
+  });
+
+  test("a package.json and a pyproject.toml share release.version (#5202)", () => {
+    const root = repo({ "package.json": JSON.stringify({ name: "acme-js" }), "pyproject.toml": '[project]\nname = "acme-py"\nversion = "0.1.0"\n' });
+    const plan = planRelease(detectProject(root), PLAN);
+    expect(plan.release.version).toEqual({ packages: ["."], files: ["pyproject.toml"] });
   });
 
   test("workspace patterns expand ** and plain directories", () => {
