@@ -39,6 +39,8 @@ export const DEFAULT_OP_PIPELINE_DIRS: Record<string, string> = {
   github: ".github/workflows",
   forgejo: ".forgejo/workflows",
   gitlab: ".",
+  // #5189: one job config holding every Op's job.
+  prow: "prow",
 };
 
 /** The first line of every file this command writes. */
@@ -173,6 +175,15 @@ export async function runOpGenerate(ctx: CommandContext): Promise<number> {
     }
   }
 
+  // #5189: Prow keys the jobs by the GitHub repository's owner/name, from the spec's options, --repo or the origin remote.
+  if (provider === "prow" && !options?.forgeRepo) {
+    const resolved = (await import("../../forge-remote")).prowRepoOf(process.cwd(), args.ciRepo);
+    if ("error" in resolved) {
+      console.error(formatError({ message: resolved.error }));
+      return 1;
+    }
+    options = { ...options, forgeRepo: resolved.repo };
+  }
   const result = await generateOpsPipeline(ops, provider, plan ? { ...options, member: plan.member } : options);
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "Failed to generate Op pipelines" }));

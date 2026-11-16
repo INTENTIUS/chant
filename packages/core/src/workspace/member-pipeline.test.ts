@@ -67,6 +67,9 @@ describe("the component pipeline's file and command", () => {
     expect(memberPipelineFile("github", "api", "staging")).toBe(".github/workflows/chant-api-staging.yml");
     expect(memberPipelineFile("forgejo", "api", "staging")).toBe(".forgejo/workflows/chant-api-staging.yml");
     expect(memberPipelineFile("gitlab", "api", "staging")).toBe(".gitlab/ci/chant-api-staging.gitlab-ci.yml");
+    // #5189: a Prow job config, beside the installation's other job config files.
+    expect(memberPipelineFile("prow", "api", "staging")).toBe("prow/chant-api-staging.yaml");
+    expect(memberPipelineFile("prow", "api", "staging", "pr")).toBe("prow/chant-pr.api.staging.yaml");
     expect(memberPipelineFile("jenkins", "api", "staging")).toBeUndefined();
   });
 

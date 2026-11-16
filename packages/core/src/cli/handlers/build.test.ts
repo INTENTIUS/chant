@@ -434,3 +434,37 @@ describe("runBuild --components --generate --format json (chant #2060 env passth
     vi.restoreAllMocks();
   });
 });
+
+describe("runBuild --components --generate prow (#5189)", () => {
+  beforeEach(() => {
+    generateComponentsPipelineMock.mockReset();
+    loadChantConfigUpwardMock.mockReset().mockResolvedValue({ config: {} });
+  });
+
+  test("--repo names the repository the jobs are keyed by", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "x", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await runBuild({ args: makeArgs({ generate: "prow", env: "prod", ciRepo: "acme/app", path: "/nonexistent/chant-prow-project" }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(generateComponentsPipelineMock.mock.calls[0][1]).toBe("prow");
+    expect(generateComponentsPipelineMock.mock.calls[0][2]).toEqual({ env: "prod", forgeRepo: "acme/app" });
+    vi.restoreAllMocks();
+  });
+
+  test("with no --repo and no GitHub origin remote it is refused, and generates nothing", async () => {
+    const stderr = makeStderrSpy();
+    const exit = await runBuild({ args: makeArgs({ generate: "prow", path: "/nonexistent/chant-prow-project" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(generateComponentsPipelineMock).not.toHaveBeenCalled();
+    expect(stderr.join("\n")).toMatch(/pass --repo <owner\/name>/);
+    vi.restoreAllMocks();
+  });
+
+  test("another forge's generate passes no repository", async () => {
+    generateComponentsPipelineMock.mockResolvedValue({ success: true, yaml: "x", stages: [], jobs: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await runBuild({ args: makeArgs({ generate: "github", ciRepo: "acme/app", path: "/nonexistent/chant-prow-project" }), plugins: [], serializers: [] });
+    expect(generateComponentsPipelineMock.mock.calls[0][2]).not.toHaveProperty("forgeRepo");
+    vi.restoreAllMocks();
+  });
+});

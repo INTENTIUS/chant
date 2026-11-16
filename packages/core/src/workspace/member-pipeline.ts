@@ -124,6 +124,8 @@ const PIPELINE_DIRS: Record<string, string> = {
   forgejo: ".forgejo/workflows",
   // GitLab reads only .gitlab-ci.yml, which includes these (`include: local: .gitlab/ci/*.gitlab-ci.yml`).
   gitlab: ".gitlab/ci",
+  // #5189: a Prow job config, which the installation's job_config_path names.
+  prow: "prow",
 };
 
 /** The directory a forge's generated files go in for a member, relative to the repository root, or undefined for a forge chant doesn't know. */
@@ -134,7 +136,8 @@ export function memberPipelineDir(provider: string): string | undefined {
 /**
  * The default path of a member's component pipeline for one environment,
  * relative to the repository root: `chant-<member>-<env>.yml` in the forge's
- * workflow directory, or `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`.
+ * workflow directory, `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`, or
+ * Prow's `prow/chant-<member>-<env>.yaml` (#5189).
  * A pull-request pipeline (`kind` `"pr"`, #3465) is `chant-pr.<member>.<env>`, with the dots the apply group uses so no
  * two member and environment pairs share one name, and it sits beside the
  * member's deploy pipeline for the same environment.
@@ -143,7 +146,7 @@ export function memberPipelineFile(provider: string, member: string, env: string
   const dir = PIPELINE_DIRS[provider];
   if (dir === undefined) return undefined;
   const stem = kind === "pr" ? `chant-pr.${member}.${env}` : `chant-${member}-${env}`;
-  return `${dir}/${stem}${provider === "gitlab" ? ".gitlab-ci.yml" : ".yml"}`;
+  return `${dir}/${stem}${provider === "gitlab" ? ".gitlab-ci.yml" : provider === "prow" ? ".yaml" : ".yml"}`;
 }
 
 /** A repository-relative path for an absolute one. */

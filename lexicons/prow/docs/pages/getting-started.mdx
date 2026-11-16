@@ -105,8 +105,61 @@ const text = forgeJobConfig(
 
 It writes through the same emitter as `chant build`. Prow runs jobs for
 GitHub repositories, so another forge is refused. A repository that is not
-`owner/name` is refused too. It does not turn chant's pipeline jobs into Prow jobs;
-`chant build --components --generate prow` says so and points here.
+`owner/name` is refused too.
+
+## Generate chant's pipeline jobs as Prow jobs
+
+`chant build --components --generate prow` writes the jobs chant generates for
+a component project as a Prow job config, as `--generate github` writes them
+as a GitHub Actions workflow. The jobs are keyed by the repository's
+`owner/name`. It comes from `--repo`, or else from the checkout's origin
+remote:
+
+```bash
+npx chant build --components --generate prow --env prod --pr-loop --apply-on-merge -o prow/chant-prod.yaml
+```
+
+Each job becomes the Prow job of the matching kind. A presubmit runs a pull
+request's code, so no job that holds a credential is one:
+
+| GitHub job | Prow job |
+|---|---|
+| The deploy pipeline's job per component, and the promote job | One postsubmit that runs the components in dependency order, then the promote |
+| The gated-wave jobs (`--wave-gate`) | One postsubmit that runs the waves in order |
+| `plan` (`--pr-loop`) | A presubmit with no credential. Its note and status stay in the report it keeps in its artifacts, and Prow reports its result on the pull request |
+| `check` (`--check-job`) | A presubmit with no credential |
+| `record`, and `apply` with `--apply-on-merge` | Postsubmits; a gate per wave runs the waves in order in the apply |
+| `stale-notes` (`--stale-notes`) | A postsubmit |
+| A scheduled Op (`chant run --generate prow`) | A periodic for a cron, a postsubmit for a push, and a presubmit with no credential for a pull request, all in one file |
+
+Presubmits run on the build cluster `untrusted`. They hold no Secret and mount
+no service account token. Postsubmits and periodics run on `trusted`. They
+read the GitHub token from the Secret `chant-github-token` (key `token`), and
+`CHANT_RUNNER_KEY` from `chant-runner-key` when it exists. The `prow`
+generator option moves the clusters and the Secrets. It also names the service
+accounts the cluster binds to a cloud identity. The jobs read Prow's own
+variables, such as `PULL_BASE_SHA` and `PULL_NUMBER`, and each keeps its
+report in `$ARTIFACTS`. Every PROW rule passes on the output, and PROW104 and
+PROW105 report nothing.
+
+A job that GitHub runs with a credential while a pull request is open has no
+Prow form, since on Prow it would be a presubmit that holds one. The build
+refuses the option that adds it by name. Generate those jobs for GitHub
+Actions.
+
+| Refused on Prow | Why |
+|---|---|
+| `--apply-before-merge` | The apply would run the pull request's head with the apply credentials |
+| `--preview-comment` | Its note job holds the token, and Prow starts no job after a presubmit |
+| `--action-job` | A comment starts only presubmits on Prow, and the action holds a credential |
+| `ci.locks: plan` | The lock jobs hold the token, after the plan and on a close, and Prow has neither trigger |
+| `--pr-env` | `env-up` applies the pull request's own code with the environment's credentials |
+| `--ref-gate-status` | It sets a status with the token while the pull request is open |
+| The evidence flags | Signing takes the runner key after the pull request's code ran |
+| `--control` | The control repo's token is a repository secret this generator does not map yet |
+| `ci.identity.cloud` | A Prow job has no OIDC token to trade; name a service account in the `prow` option |
+
+A rerun from Deck starts a held wave's postsubmit again from the first wave.
 
 ## Import an existing job config
 

@@ -7,7 +7,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { forgeKindOfHost, forgeOfCheckout, forgeOfRemote } from "./forge-remote";
+import { forgeKindOfHost, forgeOfCheckout, forgeOfRemote, prowRepoOf } from "./forge-remote";
 
 describe("forgeOfRemote (#4920)", () => {
   test("https, ssh and scp remotes on each forge", () => {
@@ -33,5 +33,24 @@ describe("forgeOfRemote (#4920)", () => {
     execFileSync("git", ["-C", dir, "remote", "add", "origin", "git@github.com:acme/infra.git"]);
     expect(forgeOfCheckout(dir)).toMatchObject({ kind: "github", repo: "acme/infra" });
     expect(forgeOfCheckout(dir, { remote: "upstream" })).toBeUndefined();
+  });
+});
+
+describe("prowRepoOf (#5189)", () => {
+  const remote = (url: string | undefined) => () => url;
+
+  test("--repo wins, and must be owner/name", () => {
+    expect(prowRepoOf("/x", "acme/app", { remoteUrl: remote("https://github.com/other/repo.git") })).toEqual({ repo: "acme/app" });
+    expect(prowRepoOf("/x", "acme")).toEqual({ error: expect.stringMatching(/owner\/name/) });
+  });
+
+  test("else the origin remote's owner/name, whatever the GitHub host is called", () => {
+    expect(prowRepoOf("/x", undefined, { remoteUrl: remote("git@github.com:acme/app.git") })).toEqual({ repo: "acme/app" });
+    expect(prowRepoOf("/x", undefined, { remoteUrl: remote("https://git.corp.example/acme/app.git") })).toEqual({ repo: "acme/app" });
+  });
+
+  test("a remote that names no owner/name, and none at all, ask for --repo", () => {
+    expect(prowRepoOf("/x", undefined, { remoteUrl: remote("https://gitlab.com/group/sub/proj.git") })).toEqual({ error: expect.stringMatching(/pass --repo/) });
+    expect(prowRepoOf("/x", undefined, { remoteUrl: remote(undefined) })).toEqual({ error: expect.stringMatching(/pass --repo/) });
   });
 });

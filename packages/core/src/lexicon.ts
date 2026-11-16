@@ -645,6 +645,36 @@ export interface ComponentPipelineOptions {
    * gate op, note and statuses on the pull request.
    */
   member?: PipelineMember;
+  /**
+   * The repository's `owner/name` on its forge (#5189). The prow generator
+   * keys the presubmits and postsubmits by it, as Prow's job config does,
+   * and `chant build --components --generate prow` reads it from `--repo`
+   * or the checkout's origin remote. The forge generators read the
+   * repository from the job and ignore it.
+   */
+  forgeRepo?: string;
+  /** Where the Prow jobs run and the Secrets they read (#5189). The prow generator alone reads it. */
+  prow?: ProwPipelineSettings;
+}
+
+/**
+ * The Prow side of a generated job config (#5189). Presubmits run a pull
+ * request's code, so they run on `untrustedCluster` with no Secret and no
+ * service account. Postsubmits and periodics run merged code on
+ * `trustedCluster`, read the GitHub token from `tokenSecret`, and take their
+ * cloud identity from a service account the cluster binds to one.
+ */
+export interface ProwPipelineSettings {
+  /** The build cluster presubmits run on. Default `untrusted`. It must not be `trustedCluster`. */
+  untrustedCluster?: string;
+  /** The build cluster postsubmits and periodics run on. Default `trusted`. */
+  trustedCluster?: string;
+  /** The Secret and key the GitHub token is read from. Default `chant-github-token`, key `token`. */
+  tokenSecret?: { name: string; key: string };
+  /** The Secret and key `CHANT_RUNNER_KEY` is read from when it exists. Default `chant-runner-key`, key `key`. */
+  runnerKeySecret?: { name: string; key: string };
+  /** The service accounts of the jobs that plan after merge (`plan`) and that apply or deploy (`apply`). Absent: the namespace's default, with no token mounted. */
+  serviceAccounts?: { plan?: string; apply?: string };
 }
 
 /** Where a workspace member sits, for a generated pipeline (#2542). */
@@ -1867,7 +1897,7 @@ export interface LexiconPlugin {
   /**
    * Generate a CI pipeline from the discovered component graph — the
    * `chant build --components --generate <name>` seam. Only CI-provider
-   * lexicons (gitlab, github, forgejo) implement this; core owns the generic
+   * lexicons (gitlab, github, forgejo, and prow since #5189) implement this; core owns the generic
    * driver (discovery + graph waves) and dispatches here. Omit for lexicons
    * that are not CI providers.
    */
@@ -1883,7 +1913,8 @@ export interface LexiconPlugin {
    * workflow-scoped in every CI provider chant targets), invoking `chant run
    * <name>` on the local executor — the same one-shot invocation `chant run
    * <op>` runs by hand. Only CI-provider lexicons (gitlab, github, forgejo)
-   * implement this; omit for lexicons that are not CI providers.
+   * implement this; omit for lexicons that are not CI providers. The prow
+   * lexicon writes every Op's job to one job config (#5189).
    */
   generateOpPipeline?(
     ops: ScheduledOpSpec[],

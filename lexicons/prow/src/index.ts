@@ -7,6 +7,10 @@ export { prowSerializer, emitJobConfig, type JobConfigDocument } from "./seriali
 // One repository's jobs keyed by the forge's owner/name, for ci: prow beside forge: github (#5170)
 export { forgeJobConfig, prowForgeProblem, type ProwForgeTarget, type ProwRepoJobs } from "./forge-jobs";
 
+// The jobs chant generates, as Prow jobs: chant build --components --generate prow and chant run --generate prow (#5189)
+export { generateProwPipeline, buildProwPipelineDoc, prowLoopProblem, type ProwPipelineDoc } from "./components/generate-pipeline";
+export { generateProwOpPipeline, prowOpsFileName } from "./components/generate-op-pipeline";
+
 // The first release with these parts
 export { PROW_LEXICON_FLOOR } from "./chant-floors";
 

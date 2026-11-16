@@ -11,7 +11,7 @@
  * A CI system's value is the name of the lexicon that writes its pipeline
  * files, the one `chant build --components --generate <name>` takes:
  * `github` (GitHub Actions), `gitlab` (GitLab CI), `forgejo` (Forgejo
- * Actions) and `prow` (Prow, whose jobs the prow lexicon declares). Prow runs
+ * Actions) and `prow` (Prow, whose jobs the prow lexicon declares and generates). Prow runs
  * jobs for GitHub repositories, so `prow` pairs with the `github` forge only.
  *
  * Code that reads the forge's API takes the forge (`ForgeKind`, ./pr-forge.ts).
@@ -35,7 +35,7 @@ export const CI_SYSTEM_FORGES: Readonly<Record<CiSystem, readonly ForgeKind[]>> 
   prow: ["github"],
 };
 
-/** The first chant with `@intentius/chant/ci-system`, `ci.forge` and `ci.system` in the workspace declaration, an environment executor's `ci`, and forge reads from a Prow job's environment (#5170). Products feature-detect on it. */
+/** The first chant with `@intentius/chant/ci-system`, `ci.forge` and `ci.system` in the workspace declaration, an environment executor's `ci`, forge reads from a Prow job's environment (#5170), and `--generate prow` with `--repo` for `chant build --components` and `chant run` (#5189). Products feature-detect on it. */
 export const FORGE_CI_FLOOR = "0.124.101";
 
 /** A forge and the CI system that runs its jobs. */
@@ -94,8 +94,8 @@ export function resolveForgeCi(input: { forge: ForgeKind; ci?: CiSystem }): Forg
  * The lexicon that writes `ci`'s pipeline files, by the name
  * `chant build --components --generate` and the lexicon plugins use. The
  * forge lexicons' generators write GitHub Actions, GitLab CI and Forgejo
- * Actions files. For `prow` it is the prow lexicon, whose `forgeJobConfig`
- * keys a job config by the forge's `owner/name`.
+ * Actions files. For `prow` it is the prow lexicon, whose generator writes a
+ * Prow job config keyed by the forge's `owner/name` (#5189).
  */
 export function pipelineLexiconOf(ci: CiSystem): string {
   return ci;

@@ -77,3 +77,17 @@ export function forgeOfCheckout(cwd: string, opts: { remote?: string; kind?: For
   const url = (opts.remoteUrl ?? gitRemoteUrl)(cwd, opts.remote ?? "origin");
   return forgeOfRemote(url, opts.kind ? { kind: opts.kind } : {});
 }
+
+/**
+ * The GitHub repository a Prow job config is keyed by (#5189): `given` (a
+ * command's `--repo`), else the `owner/name` the checkout's origin remote
+ * names. Prow runs jobs for GitHub repositories, so the remote is read as
+ * GitHub's whatever its host is called.
+ */
+export function prowRepoOf(cwd: string, given?: string, opts: { remoteUrl?: (cwd: string, remote: string) => string | undefined } = {}): { repo: string } | { error: string } {
+  const ownerName = /^[^/\s]+\/[^/\s]+$/;
+  if (given !== undefined) return ownerName.test(given) ? { repo: given } : { error: `--repo needs the GitHub repository as owner/name, and ${JSON.stringify(given)} is not one` };
+  const remote = forgeOfCheckout(cwd, { kind: "github", ...(opts.remoteUrl ? { remoteUrl: opts.remoteUrl } : {}) });
+  if (remote && ownerName.test(remote.repo)) return { repo: remote.repo };
+  return { error: "--generate prow keys the jobs by the GitHub repository's owner/name, and this checkout's origin remote names none; pass --repo <owner/name>" };
+}
