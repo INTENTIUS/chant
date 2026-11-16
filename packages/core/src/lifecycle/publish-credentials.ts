@@ -33,6 +33,12 @@ export const TOKEN_ENV_VARS = [
   "DOCKER_PASSWORD",
   "VSCE_PAT",
   "OVSX_PAT",
+  "PYPI_TOKEN",
+  "TEST_PYPI_TOKEN",
+  "TWINE_PASSWORD",
+  "PYPI_ID_TOKEN",
+  "CARGO_REGISTRY_TOKEN",
+  "CRATES_IO_ID_TOKEN",
 ] as const;
 
 /** What a masked value is replaced with. */

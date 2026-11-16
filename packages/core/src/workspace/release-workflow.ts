@@ -1219,7 +1219,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     return 1;
   }
   const { resolveSigning } = await import("../lifecycle/publish-signing");
-  const signs = resolveSigning(release?.signing, groups).on && (release?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge");
+  const signs = resolveSigning(release?.signing, groups).on && (release?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi");
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
   const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));

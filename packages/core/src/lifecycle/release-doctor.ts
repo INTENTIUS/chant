@@ -38,12 +38,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
 import type {
+  CargoPublishDeclaration,
   ForgePublishDeclaration,
   HomebrewPublishDeclaration,
   MarketplacePublishDeclaration,
   NpmPublishDeclaration,
   OciPublishDeclaration,
   PublishDeclaration,
+  PypiPublishDeclaration,
   TauriUpdaterPublishDeclaration,
 } from "./publish-declaration";
 import type { PublishFetch } from "./release-publish";
@@ -98,6 +100,8 @@ export interface DoctorDeps {
   vsce?: string;
   /** What would sign with Sigstore (#5164). Default: cosign, as the publish runs it. */
   signer?: Pick<import("./publish-signing").Signer, "name" | "unavailable">;
+  /** The cargo executable. Default `cargo`. */
+  cargo?: string;
 }
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -145,6 +149,7 @@ interface Ctx {
   run: DoctorRun;
   npm: string;
   vsce: string;
+  cargo: string;
 }
 
 /** Check every declared target. Nothing is published, tagged or changed. */
@@ -175,6 +180,7 @@ export async function releaseDoctor(req: {
     run: deps.run ?? defaultRun,
     npm: deps.npm ?? "npm",
     vsce: deps.vsce ?? "vsce",
+    cargo: deps.cargo ?? "cargo",
   };
   const targets: DoctorTarget[] = [];
   for (const decl of req.publish) {
@@ -207,6 +213,10 @@ async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTa
       return [await checkMarketplace(decl, ctx)];
     case "tauri-updater":
       return [await checkTauri(decl, ctx)];
+    case "pypi":
+      return [await checkPypi(decl, ctx)];
+    case "cargo":
+      return [await checkCargo(decl, ctx)];
   }
 }
 
@@ -261,7 +271,7 @@ async function checkSigning(
 ): Promise<DoctorTarget | null> {
   const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
   const setting = resolveSigning(config, groups);
-  if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge")) return null;
+  if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge" || d.type === "pypi")) return null;
   const why = setting.from === "config" ? "release.signing" : "the supply-chain group";
   const checks: DoctorCheck[] = [];
   const id = signingIdentity(ctx.env);
@@ -770,6 +780,119 @@ async function checkMarketplace(decl: MarketplacePublishDeclaration, ctx: Ctx): 
       : r.code === 127
         ? { check: "marketplace-access", status: ctx.environment.ci ? "fail" : "unknown", message: `vsce could not be run, so the ${auth === "azure-credential" ? "identity" : "token"} was not checked: ${said}`, fix: "npm install -g @vscode/vsce" }
         : { check: "marketplace-access", status: "fail", message: `vsce verify-pat refused publisher ${id.publisher}: ${said}`, fix: auth === "azure-credential" ? `Add the job's Entra identity to the publisher ${id.publisher} as a member.` : `Give the token the Marketplace (Manage) scope for ${id.publisher}.` },
+  );
+  return t;
+}
+
+// Python and Rust registries (#5167)
+
+async function checkPypi(decl: PypiPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { PYPI_ID_TOKEN_ENV, normalizeProjectName, pypiAuth, pypiIndex, pypiProjectName, pypiTokenEnv } = await import("./publish-pypi");
+  const index = pypiIndex(decl);
+  const checks: DoctorCheck[] = [];
+  const name = pypiProjectName(ctx.cwd, decl.files);
+  const t: DoctorTarget = { kind: "pypi", name: `pypi ${index.label}${name ? ` ${name}` : ""}`, checks };
+  let exists: boolean | null = null;
+  if (!name) {
+    checks.push({ check: "pypi-project", status: "unknown", message: "no distribution is built and pyproject.toml names no [project] name, so the project can't be looked up" });
+  } else {
+    const res = await answer(ctx, `${index.simple}${normalizeProjectName(name)}/`, { method: "GET", headers: { accept: "application/vnd.pypi.simple.v1+json" } });
+    exists = res.status === 200 ? true : res.status === 404 ? false : null;
+    checks.push(
+      exists === true
+        ? { check: "pypi-project", status: "ok", message: `${index.label} has the project ${name}` }
+        : exists === false
+          ? { check: "pypi-project", status: "warn", message: `${index.label} has no project ${name} yet; the first upload creates it`, fix: index.site ? `For trusted publishing, add a pending publisher for ${name} at ${index.site}/manage/account/publishing/.` : undefined }
+          : { check: "pypi-project", status: "unknown", message: `${index.simple}${normalizeProjectName(name)}/ answered ${res.status}` },
+    );
+  }
+  const auth = pypiAuth(decl, ctx.env);
+  if (auth === "token") {
+    const tokenName = pypiTokenEnv(decl);
+    const token = readCredential(ctx.env, [tokenName], ctx.redactor);
+    checks.push(
+      token
+        ? { check: "pypi-token", status: "unknown", message: `the token in ${tokenName} is set; ${index.label} has no read-only check of a token, so whether it may upload shows at the upload` }
+        : missing(ctx, "pypi-token", `${tokenName} is not set${index.site ? " and there is no OIDC ID token for trusted publishing" : ""}`, `Set ${tokenName} to an API token for the project${index.site ? ", or publish with trusted publishing from a CI job with an OIDC ID token" : ""}.`),
+    );
+    return t;
+  }
+  if (!ctx.environment.ci && !ctx.env[PYPI_ID_TOKEN_ENV]) {
+    checks.push({ check: "pypi-trusted-publisher", status: "unknown", message: `whether ${index.label} takes this workflow as a trusted publisher can only be tested by ${onlyTheWorkflow(ctx)}, with its OIDC token` });
+    return t;
+  }
+  const aud = await answer(ctx, `${index.site}/_/oidc/audience`, { method: "GET", headers: { accept: "application/json" } });
+  const audience = (aud.json as { audience?: unknown } | null)?.audience;
+  if (typeof audience !== "string") {
+    checks.push({ check: "pypi-trusted-publisher", status: "fail", message: `${index.site}/_/oidc/audience answered ${aud.status}, so trusted publishing can't start` });
+    return t;
+  }
+  const tok = await idToken(ctx, audience, PYPI_ID_TOKEN_ENV);
+  if ("none" in tok) {
+    checks.push({ check: "pypi-trusted-publisher", status: "fail", message: tok.none, fix: `Give the job permissions: id-token: write, or declare ${PYPI_ID_TOKEN_ENV} under the GitLab job's id_tokens with the audience ${audience}.` });
+    return t;
+  }
+  const ex = await answer(ctx, `${index.site}/_/oidc/mint-token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: tok.token }) });
+  const value = (ex.json as { token?: unknown } | null)?.token;
+  if (typeof value === "string") ctx.redactor.add(value);
+  checks.push(
+    ex.status >= 200 && ex.status < 300 && typeof value === "string"
+      ? { check: "pypi-trusted-publisher", status: "ok", message: `${index.label} takes this workflow as a trusted publisher` }
+      : { check: "pypi-trusted-publisher", status: "fail", message: `${index.label} gave no upload token for this run (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: `Register this workflow as a trusted publisher${name ? ` of ${name}` : ""} at ${index.site}/manage/account/publishing/.` },
+  );
+  return t;
+}
+
+async function checkCargo(decl: CargoPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { CRATES_IO_API, CRATES_IO_AUDIENCE, CRATES_IO_ID_TOKEN_ENV, CRATES_IO_INDEX, cargoAuth, cargoPublishOrder, cargoTokenEnv, cargoWorkspace, sparseIndexPath } = await import("./publish-cargo");
+  const label = decl.registry ? `registry ${decl.registry}` : "crates.io";
+  const checks: DoctorCheck[] = [];
+  const t: DoctorTarget = { kind: "cargo", name: `cargo ${label}`, checks };
+  const manifest = resolve(ctx.cwd, decl.manifest ?? "Cargo.toml");
+  let names: string[] = [];
+  try {
+    const crates = cargoPublishOrder(await cargoWorkspace(ctx.cargo, manifest, ctx.cwd, ctx.env, (bin, args, cwd, env) => ctx.run(bin, args, { cwd, env })), decl);
+    names = crates.map((c) => c.name);
+    t.name = `cargo ${label} ${names.join(", ")}`;
+    checks.push({ check: "cargo-crates", status: "ok", message: `publishes ${crates.map((c) => `${c.name}@${c.version}`).join(", ")}, in that order` });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    checks.push({ check: "cargo-crates", status: code === "publish-cargo-missing" ? (ctx.environment.ci ? "fail" : "unknown") : "fail", message: err instanceof Error ? err.message : String(err), ...((err as { fix?: string }).fix ? { fix: (err as { fix?: string }).fix } : {}) });
+  }
+  const index = (decl.index ?? CRATES_IO_INDEX).replace(/^sparse\+/, "").replace(/\/*$/, "/");
+  const fresh: string[] = [];
+  for (const n of names) {
+    const res = await answer(ctx, `${index}${sparseIndexPath(n)}`, { method: "GET", headers: {} });
+    if (res.status === 404) fresh.push(n);
+  }
+  if (fresh.length > 0) checks.push({ check: "cargo-new-crates", status: "warn", message: `${fresh.join(", ")} ${fresh.length === 1 ? "is" : "are"} not on ${label} yet; the first version of a crate needs a token that may publish new crates, and trusted publishing can't make one` });
+  const auth = cargoAuth(decl, ctx.env);
+  if (auth === "token") {
+    const tokenName = cargoTokenEnv(decl);
+    const token = readCredential(ctx.env, [tokenName], ctx.redactor);
+    checks.push(token ? { check: "cargo-token", status: "unknown", message: `the token in ${tokenName} is set; ${label} has no read-only check of a token, so whether it may publish shows at the publish` } : missing(ctx, "cargo-token", `${tokenName} is not set`, `Set ${tokenName} to a token of ${label}.`));
+    return t;
+  }
+  if (!ctx.environment.ci && !ctx.env[CRATES_IO_ID_TOKEN_ENV]) {
+    checks.push({ check: "cargo-trusted-publisher", status: "unknown", message: `whether crates.io takes this workflow as a trusted publisher can only be tested by ${onlyTheWorkflow(ctx)}, with its OIDC token` });
+    return t;
+  }
+  const tok = await idToken(ctx, CRATES_IO_AUDIENCE, CRATES_IO_ID_TOKEN_ENV);
+  if ("none" in tok) {
+    checks.push({ check: "cargo-trusted-publisher", status: "fail", message: tok.none, fix: "Give the job permissions: id-token: write." });
+    return t;
+  }
+  const api = (decl.api ?? CRATES_IO_API).replace(/\/+$/, "");
+  const ex = await answer(ctx, `${api}/api/v1/trusted_publishing/tokens`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jwt: tok.token }) });
+  const value = (ex.json as { token?: unknown } | null)?.token;
+  if (typeof value === "string") {
+    ctx.redactor.add(value);
+    await answer(ctx, `${api}/api/v1/trusted_publishing/tokens`, { method: "DELETE", headers: { authorization: `Bearer ${value}` } }).catch(() => null);
+  }
+  checks.push(
+    ex.status >= 200 && ex.status < 300 && typeof value === "string"
+      ? { check: "cargo-trusted-publisher", status: "ok", message: "crates.io takes this workflow as a trusted publisher; the token it gave was revoked" }
+      : { check: "cargo-trusted-publisher", status: "fail", message: `crates.io gave no token for this run (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: "Add this repository and workflow as a trusted publisher in each crate's settings on crates.io." },
   );
   return t;
 }

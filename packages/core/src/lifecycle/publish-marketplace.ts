@@ -313,6 +313,7 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
     destination: label,
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
+    uploadsAtReveal: true,
     async plan(ctx) {
       return [setup(ctx).item];
     },

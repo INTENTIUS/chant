@@ -13,6 +13,8 @@
  *       { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
  *       { type: "tauri-updater", repo: "acme/app", tag: "app-latest", platforms: { "darwin-aarch64": "dist/Acme_aarch64.app.tar.gz" } },
  *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
+ *       { type: "pypi", files: ["dist"] },
+ *       { type: "cargo", crates: ["acme-core", "acme-cli"] },
  *     ],
  *   },
  * };
@@ -267,7 +269,93 @@ export const TauriUpdaterPublishSchema = z
   })
   .strict();
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema]);
+/**
+ * Python distributions on PyPI, TestPyPI or another index that takes PyPI's
+ * upload API (./publish-pypi.ts). The wheels and sdists are uploaded at the
+ * reveal, since an index has no draft.
+ */
+export const PypiPublishSchema = z
+  .object({
+    type: z.literal("pypi"),
+    /**
+     * The wheels and sdists, relative to the member: a file, a directory
+     * (every `.whl`, `.tar.gz` and `.zip` in it), or `artifact:<name>` for the
+     * files the release records for that `release.artifacts` entry.
+     */
+    files: z.array(z.string().min(1)).min(1),
+    /** `pypi` (the default) or `testpypi`. */
+    index: z.enum(["pypi", "testpypi"]).optional(),
+    /** Another index's upload URL, such as `https://pypi.example.com/legacy/`. Needs `simpleUrl`. */
+    uploadUrl: z.string().url().optional(),
+    /** That index's simple API root, such as `https://pypi.example.com/simple/`, which the stage and reveal read. */
+    simpleUrl: z.string().url().optional(),
+    /**
+     * `token` reads an API token from `tokenEnv`. `trusted-publishing`
+     * exchanges the run's OIDC ID token for a short-lived upload token, on
+     * PyPI and TestPyPI only. Unset: a token when `tokenEnv`'s variable is
+     * set, else trusted publishing when the run has an OIDC ID token.
+     */
+    auth: z.enum(["token", "trusted-publishing"]).optional(),
+    /** The variable holding the API token. Default `PYPI_TOKEN`, or `TEST_PYPI_TOKEN` for TestPyPI. */
+    tokenEnv: envName.optional(),
+    /** The variable holding the user name the token is sent with. Default: `__token__`, as PyPI's API tokens take. */
+    usernameEnv: envName.optional(),
+    /**
+     * `false` publishes wheels without an SBOM under the `supply-chain`
+     * group, which otherwise refuses a wheel that carries none in its
+     * `.dist-info/sboms/` (PEP 770).
+     */
+    sbom: z.literal(false).optional(),
+    /**
+     * Upload the PEP 740 attestations beside each file, `<file>.<name>.attestation`
+     * as `pypi-attestations sign` writes them. Default `true`. chant does not
+     * write them.
+     */
+    attestations: z.boolean().optional(),
+  })
+  .strict()
+  .refine((d) => (d.uploadUrl === undefined) === (d.simpleUrl === undefined), { message: "uploadUrl and simpleUrl go together", path: ["simpleUrl"] })
+  .refine((d) => d.uploadUrl === undefined || d.index === undefined, { message: "index names PyPI or TestPyPI; uploadUrl names another index, so set one of them", path: ["index"] })
+  .refine((d) => d.uploadUrl === undefined || d.auth !== "trusted-publishing", { message: "trusted publishing is PyPI's and TestPyPI's; another index takes a token", path: ["auth"] })
+  .refine((d) => d.auth !== "trusted-publishing" || (d.tokenEnv === undefined && d.usernameEnv === undefined), { message: "auth: trusted-publishing reads no token", path: ["tokenEnv"] });
+
+/**
+ * Rust crates on crates.io or another Cargo registry, published with
+ * `cargo publish` one crate at a time in dependency order
+ * (./publish-cargo.ts). A crate is visible as soon as it is published, so
+ * the reveal publishes.
+ */
+export const CargoPublishSchema = z
+  .object({
+    type: z.literal("cargo"),
+    /** The `Cargo.toml` of the workspace or the crate, relative to the member. Default `Cargo.toml`. */
+    manifest: z.string().min(1).optional(),
+    /** The crates to publish, by package name. Default: every workspace member whose `publish` allows the registry. */
+    crates: z.array(z.string().min(1)).min(1).optional(),
+    /** A registry named in the project's `.cargo/config.toml`, passed as `cargo publish --registry`. Default: crates.io. Needs `index`. */
+    registry: z.string().regex(/^[A-Za-z0-9_-]+$/, "a registry name from .cargo/config.toml").optional(),
+    /** The registry's sparse index, such as `sparse+https://cargo.example.com/index/`, which the stage and reveal read. Default: crates.io's. */
+    index: z.string().regex(/^(sparse\+)?https?:\/\//, "a sparse index URL").optional(),
+    /** crates.io's API root, for trusted publishing. Default `https://crates.io`. */
+    api: z.string().url().optional(),
+    /**
+     * `token` reads a registry token from `tokenEnv`. `trusted-publishing`
+     * exchanges the run's OIDC ID token for a short-lived crates.io token,
+     * revoked after the publish. Unset: a token when `tokenEnv`'s variable is
+     * set, else trusted publishing when the run has an OIDC ID token.
+     */
+    auth: z.enum(["token", "trusted-publishing"]).optional(),
+    /** The variable holding the token. Default `CARGO_REGISTRY_TOKEN`, or `CARGO_REGISTRIES_<NAME>_TOKEN` with `registry`, the variables cargo reads. */
+    tokenEnv: envName.optional(),
+    /** `false` publishes under the `supply-chain` group, which otherwise refuses this target: a registry keeps no SBOM beside a crate. */
+    sbom: z.literal(false).optional(),
+  })
+  .strict()
+  .refine((d) => d.registry === undefined || d.index !== undefined, { message: "a registry other than crates.io needs its sparse index", path: ["index"] })
+  .refine((d) => d.registry === undefined || d.auth !== "trusted-publishing", { message: "trusted publishing is crates.io's; another registry takes a token", path: ["auth"] })
+  .refine((d) => d.auth !== "trusted-publishing" || d.tokenEnv === undefined, { message: "auth: trusted-publishing reads no token", path: ["tokenEnv"] });
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema, PypiPublishSchema, CargoPublishSchema]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
@@ -275,4 +363,6 @@ export type ForgePublishDeclaration = z.infer<typeof ForgePublishSchema>;
 export type HomebrewPublishDeclaration = z.infer<typeof HomebrewPublishSchema>;
 export type MarketplacePublishDeclaration = z.infer<typeof MarketplacePublishSchema>;
 export type TauriUpdaterPublishDeclaration = z.infer<typeof TauriUpdaterPublishSchema>;
+export type PypiPublishDeclaration = z.infer<typeof PypiPublishSchema>;
+export type CargoPublishDeclaration = z.infer<typeof CargoPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;
