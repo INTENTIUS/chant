@@ -34,8 +34,8 @@ describe("the generated Forgejo jobs' cloud identities (#4296)", () => {
   });
 
   test("the jobs that trade set enable-openid-connect, which Forgejo reads in place of id-token: write (#4964)", () => {
-    for (const name of ["plan", "record", "apply"]) expect((jobs[name] as Record<string, unknown>)["enable-openid-connect"], name).toBe(true);
-    expect((jobs["plan-note"] as Record<string, unknown>)["enable-openid-connect"]).toBeUndefined();
+    for (const name of ["plan", "record", "apply"]) expect((jobs[name] as unknown as Record<string, unknown>)["enable-openid-connect"], name).toBe(true);
+    expect((jobs["plan-note"] as unknown as Record<string, unknown>)["enable-openid-connect"]).toBeUndefined();
   });
 
   test("the plan job trades for the plan identity first, drops the request variables after its checkout, and names no apply identity", () => {

@@ -4,6 +4,7 @@
  * component graph.
  */
 import { describe, expect, test } from "vitest";
+import type { ProductPlanTarget } from "@intentius/chant/components/product-plan";
 import { generateProductPlanPipeline } from "./product-plan-pipeline";
 
 const words = {
@@ -29,7 +30,7 @@ const options = {
     targets: [
       { name: "staging", secrets: { STAGING_PG_READER_URL: "STAGING_PG_READER_URL" }, writeProbe: "yodel config check staging --write-probe" },
       { name: "prod", secrets: { PROD_PG_READER_URL: "PROD_PG_READER_URL" }, writeProbe: "yodel config check prod staging --write-probe" },
-    ],
+    ] satisfies ProductPlanTarget[] as ProductPlanTarget[],
   },
 };
 

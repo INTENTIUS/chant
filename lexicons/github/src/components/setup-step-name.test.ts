@@ -38,14 +38,14 @@ describe("named setup steps on GitHub (#4932)", () => {
   });
 
   test("a scheduled Op's setup step renders with its name; one without renders as before", () => {
-    const spec: ScheduledOpSpec = { name: "watch-dev", trigger: { kind: "schedule", cron: "0 * * * *" }, setup: [login, { run: "echo unnamed" }] };
+    const spec: ScheduledOpSpec = { name: "watch-dev", trigger: { kind: "cron", schedule: "0 * * * *" }, setup: [login, { run: "echo unnamed" }] };
     const steps = Object.values(jobSteps(generateGithubOpPipeline([spec]).files[0]!.yaml))[0]!;
     expect(steps).toContainEqual({ name: "Log in to the cloud", run: "trade dev" });
     expect(steps).toContainEqual({ run: "echo unnamed" });
   });
 
   test("a blank or multi-line name is refused", () => {
-    const spec: ScheduledOpSpec = { name: "watch-dev", trigger: { kind: "schedule", cron: "0 * * * *" }, setup: [{ name: " ", run: "x" }] };
+    const spec: ScheduledOpSpec = { name: "watch-dev", trigger: { kind: "cron", schedule: "0 * * * *" }, setup: [{ name: " ", run: "x" }] };
     expect(() => generateGithubOpPipeline([spec])).toThrow(/setup step 1 has a blank or multi-line `name`/);
     expect(() => generateGithubOpPipeline([{ ...spec, setup: [{ name: "a\nb", uses: "a/b@v1" }] }])).toThrow(/multi-line/);
   });

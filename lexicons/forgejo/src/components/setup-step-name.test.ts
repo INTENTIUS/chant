@@ -18,7 +18,7 @@ describe("named setup steps on Forgejo (#4932)", () => {
     const login = { name: "Log in to the cloud", run: "trade dev" };
     const spec: OpWavesSpec = { name: "migrations", op: "migrate", plan: ["./bin/plan", "{target}", "{plan}"], waves: [{ name: "dev", runs: [{ target: "dev" }], gate: "never", setup: [login] }] };
     expect(allSteps(generateForgejoOpWavesPipeline(spec, { specFile: "waves.json" }).files[0]!.yaml)).toContainEqual(login);
-    const watch: ScheduledOpSpec = { name: "watch-dev", trigger: { kind: "schedule", cron: "0 * * * *" }, setup: [login] };
+    const watch: ScheduledOpSpec = { name: "watch-dev", trigger: { kind: "cron", schedule: "0 * * * *" }, setup: [login] };
     expect(allSteps(generateForgejoOpPipeline([watch]).files[0]!.yaml)).toContainEqual(login);
   });
 });
