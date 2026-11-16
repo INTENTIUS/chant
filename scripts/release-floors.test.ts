@@ -57,6 +57,28 @@ describe("release floors (#4503)", () => {
   });
 });
 
+describe("release floors are per package (#5138)", () => {
+  const tags = ["release/npm/0.124.50", "lexicon-terraform-v0.125.1", "release/npm/lexicon-terraform/0.125.2", "release/npm/lexicon-aws/0.130.0", "release/npm/core/0.126.0", "lexicon-aws-v0.99.0"];
+
+  it("reads a lexicon's releases from its own tags and the lockstep labels", () => {
+    expect([...releasedVersions(tags, undefined, "terraform")].sort()).toEqual(["0.124.50", "0.125.1", "0.125.2"]);
+  });
+
+  it("reads core's releases from its member tag and the lockstep labels, not a lexicon's", () => {
+    expect([...releasedVersions(tags)].sort()).toEqual(["0.124.50", "0.126.0"]);
+  });
+
+  it("checks a lexicon floor against that lexicon's releases", () => {
+    const named = [{ name: "X_FLOOR", file: "lexicons/terraform/src/chant-floors.ts", version: "0.125.2", lexicon: "terraform" }];
+    const allowed = (lexicon?: string) => releasedVersions(tags, undefined, lexicon);
+    expect(unreleasedFloors(named, allowed, false)).toEqual([]);
+    // 0.126.0 is core's release, not terraform's.
+    const problems = unreleasedFloors([{ ...named[0], version: "0.126.0" }], allowed, false);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("@intentius/chant-lexicon-terraform");
+  });
+});
+
 describe("release floors --freeze (#4501)", () => {
   const SRC = [
     'import { other } from "./other";',

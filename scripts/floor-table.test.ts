@@ -120,6 +120,7 @@ describe("scripts/floor-table.ts (#4792)", () => {
     const pkg = { src: "lexicons/x/src/", name: "@intentius/chant-lexicon-x", exports: { "./*": { development: "./src/*.ts", default: "./dist/*.js" }, "./thing": { development: "./src/thing/index.ts", default: "./dist/thing/index.js" } } };
     const rows = floorRows(Object.keys(lex), (f) => lex[f]!, { "./*": "./src/*.ts" }, [pkg]);
     const x = rows.find((r) => r.name === "X_THING_FLOOR")!;
+    expect(x.package).toBe("@intentius/chant-lexicon-x");
     expect([x.version, x.issue, x.file, x.modules]).toEqual(["0.124.55", "#4599", "lexicons/x/src/chant-floors.ts", ["@intentius/chant-lexicon-x/chant-floors", "@intentius/chant-lexicon-x/thing", "@intentius/chant-lexicon-x/thing/index"]]);
     expect(rows.find((r) => r.name === "TOOL_FLOOR")).toBeUndefined();
     expect(renderTable([x])).toContain('file: "lexicons/x/src/chant-floors.ts"');

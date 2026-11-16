@@ -18,8 +18,9 @@
  *
  * A lexicon declares the chant floors of its parts in one file,
  * `lexicons/<name>/src/chant-floors.ts` (#4916), and the entries that serve
- * those parts re-export them by name. Lexicons release with chant at the
- * same version, so a lexicon floor names a chant release. Only that file is
+ * those parts re-export them by name. Packages have their own versions
+ * (#5138), so a lexicon floor names a release of that lexicon, and its row
+ * carries the lexicon's package name. Only that file is
  * read in a lexicon: other `_FLOOR` constants there name versions of other
  * tools (the terraform lexicon's `NEXUS_HOSTED_FLOOR` is a Nexus version).
  *
@@ -40,6 +41,8 @@ const DECL_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_RE
 export interface FloorRow {
   name: string;
   version: string;
+  /** The npm package the version belongs to; absent for chant core. */
+  package?: string;
   gates: string;
   issue?: string;
   file: string;
@@ -200,7 +203,7 @@ export function floorRows(files: string[], readFile: (file: string) => string, e
       const issue = issueOf(doc);
       const entries = [...(reach.get(file) ?? new Map()).entries()].filter(([, names]) => names === "all" || names.has(m[1])).map(([e]) => e);
       const modules = [...new Set([ownModule(file, pkg), ...entries])].sort();
-      raw.push({ name: m[1], version: m[2] ?? (m[3] ? "NEXT_RELEASE" : ""), alias: m[4], gates: firstSentence(doc), ...(issue ? { issue } : {}), file, modules });
+      raw.push({ name: m[1], version: m[2] ?? (m[3] ? "NEXT_RELEASE" : ""), ...(pkg.src === SRC ? {} : { package: pkg.name }), alias: m[4], gates: firstSentence(doc), ...(issue ? { issue } : {}), file, modules });
     }
   }
   // #4916: one declaration per name, so a check names one version.
@@ -223,7 +226,8 @@ export function renderTable(rows: FloorRow[]): string {
   const lines = rows.map((r) => {
     const version = r.version === "NEXT_RELEASE" ? "NEXT_RELEASE" : JSON.stringify(r.version);
     const issue = r.issue ? `, issue: ${JSON.stringify(r.issue)}` : "";
-    return `  { name: ${JSON.stringify(r.name)}, version: ${version}, gates: ${JSON.stringify(r.gates)}${issue}, file: ${JSON.stringify(r.file.startsWith(SRC) ? r.file.slice(SRC.length) : r.file)}, modules: ${JSON.stringify(r.modules)} },`;
+    const pkg = r.package ? `, package: ${JSON.stringify(r.package)}` : "";
+    return `  { name: ${JSON.stringify(r.name)}, version: ${version}${pkg}, gates: ${JSON.stringify(r.gates)}${issue}, file: ${JSON.stringify(r.file.startsWith(SRC) ? r.file.slice(SRC.length) : r.file)}, modules: ${JSON.stringify(r.modules)} },`;
   });
   return [
     "// Written by scripts/floor-table.ts (#4792) from the floor constants under",

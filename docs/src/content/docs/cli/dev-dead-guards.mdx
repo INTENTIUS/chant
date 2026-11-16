@@ -16,7 +16,7 @@ With no directory it checks the current one. Exit 0 when no check is dead, 1 whe
 
 ## The pin
 
-Each source file is checked against the `@intentius/chant` version of the nearest `package.json` above it that names chant in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. A range counts as the lowest version it admits, so `^0.124.78` is 0.124.78. A `workspace:` or `file:` range has no version, and the files under it are not checked. `--chant-version <version>` checks every file against that version.
+Each source file is checked against the `@intentius/chant` version of the nearest `package.json` above it that names chant in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. A range counts as the lowest version it admits, so `^0.124.78` is 0.124.78. A `workspace:` or `file:` range has no version, and the files under it are not checked. `--chant-version <version>` checks every file against that version for floors of chant core; a lexicon floor is checked against the pin on that lexicon.
 
 The scan reads `.ts`, `.tsx`, `.js`, `.mjs`, `.cjs`, `.mts` and `.cts` files. It skips declaration files, `*.test.*` and `*.spec.*` files, hidden directories, `node_modules`, `dist`, `build`, `out`, `coverage`, `test`, `tests`, `__tests__`, `fixtures` and `__fixtures__`.
 
@@ -36,20 +36,21 @@ To keep a check on purpose, for example for a chant a user installs beside the p
 
 The scan does not see a check on an export that has no floor, such as `typeof m.writeCiHook === "function"` on its own. When chant adds a floor for a part, a product can check that floor instead.
 
-Lexicons release with chant at the same version, so a lazy load of a lexicon subpath such as `@intentius/chant-lexicon-terraform/registry` is checked against the `@intentius/chant` pin as well.
+Each package has its own version. A lazy load of a lexicon subpath such as `@intentius/chant-lexicon-terraform/registry` is checked against the product's pin on that lexicon (`@intentius/chant-lexicon-terraform`), found the same way as the chant pin. A lexicon check in a file with no pin on that lexicon is not checked.
 
 ## The floor table
 
 `@intentius/chant/floor-table` lists every floor constant in chant core, and every floor a lexicon declares, as `FLOOR_TABLE`. Each name is declared once. Each row has:
 
 - `name`, the constant, such as `CI_IMAGE_FLOOR`;
-- `version`, the first chant release with the part. A floor added since the last release has the number of the next one (`NEXT_RELEASE`);
+- `version`, the first release with the part, of the package named by `package`. A floor added since the last release has the number of the next one (`NEXT_RELEASE`);
 - `gates`, the first sentence of the constant's doc comment;
+- `package`, the npm package `version` belongs to: a lexicon's package for its floors, absent for chant core (`@intentius/chant`);
 - `issue`, the issue that added it;
 - `file`, the file under `packages/core/src` that declares it, or for a lexicon's floor `lexicons/<name>/src/chant-floors.ts`;
 - `modules`, the subpaths a product can import the constant from, `@intentius/chant/...` or the lexicon's own.
 
-`floorVersion(name)` returns a floor's version, and `chantMeets(version, name)` says whether a chant version has the part:
+`floorVersion(name)` returns a floor's version, and `chantMeets(version, name)` says whether a version has the part. Pass a version of the row's `package`: chant's for a core floor, the lexicon's own for a lexicon floor:
 
 ```ts
 import { chantMeets } from "@intentius/chant/floor-table";
@@ -59,7 +60,7 @@ if (chantMeets(installedChant, "DRIFT_ISSUE_FLOOR")) {
 }
 ```
 
-A lexicon declares the floors of its parts in `src/chant-floors.ts`, each the first chant release whose lexicon has the part, and the entries that serve a part re-export its floor by name. Only that file is read in a lexicon, since other `_FLOOR` constants there can name versions of other tools. The terraform lexicon's are `MODULE_CONSUMERS_FLOOR` and `USED_SOURCES_FLOOR` on `@intentius/chant-lexicon-terraform/registry` and `MODULE_CATALOG_FLOOR` on `@intentius/chant-lexicon-terraform/module-catalog`.
+A lexicon declares the floors of its parts in `src/chant-floors.ts`, each the first release of that lexicon that has the part (a version of the lexicon, not of chant), and the entries that serve a part re-export its floor by name. Only that file is read in a lexicon, since other `_FLOOR` constants there can name versions of other tools. The terraform lexicon's are `MODULE_CONSUMERS_FLOOR` and `USED_SOURCES_FLOOR` on `@intentius/chant-lexicon-terraform/registry` and `MODULE_CATALOG_FLOOR` on `@intentius/chant-lexicon-terraform/module-catalog`.
 
 `scripts/floor-table.ts` writes the table from the constants, and fails when two files declare the same name. chant's release check (`just release-floors`) fails while the table is missing a floor or names an old version, and `just release-floors --freeze` writes it again when a release's floors become literals.
 

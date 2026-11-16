@@ -23,9 +23,10 @@
  *   (`@intentius/chant-lexicon-terraform/registry`, #4916), loaded with
  *   `import()` where a `catch` is near (`try { await import(specifier) }
  *   catch { return undefined }`, or `.catch(`), the shape of a chant-next.ts
- *   loader. Its floor is the lowest floor the subpath serves: a chant with
- *   that floor has the subpath. Lexicons release with chant at the same
- *   version, so a lexicon subpath is checked against the chant pin too.
+ *   loader. Its floor is the lowest floor the subpath serves: a package at
+ *   that floor has the subpath. Each package has its own version (#5138), so
+ *   a lexicon subpath is checked against the pin on that lexicon's package,
+ *   and a chant subpath against the `@intentius/chant` pin.
  * - `product-floor`: a product's own constant for the chant it needs,
  *   `const CHANT_CI_FLOOR = "0.124.67"`, whose checks the pin meets.
  *
@@ -50,8 +51,10 @@ export interface DeadGuard {
   floor: string;
   /** The floor's version. */
   version: string;
-  /** The chant pin that meets it. */
+  /** The pin that meets it: the product's range on `package`, or on `@intentius/chant` when there is none. */
   pin: string;
+  /** The lexicon package the floor's version belongs to, when it is not `@intentius/chant`. */
+  package?: string;
   /** The line's text, trimmed. */
   text: string;
 }
@@ -92,12 +95,12 @@ export function pinOf(range: string): string | undefined {
   return /(\d+\.\d+\.\d+)/.exec(r)?.[1];
 }
 
-/** The `@intentius/chant` range a package.json names, if any. */
-function chantRange(file: string): string | undefined {
+/** The range a package.json names for `name` (`@intentius/chant` by default), if any. */
+function chantRange(file: string, name = "@intentius/chant"): string | undefined {
   try {
     const pkg = JSON.parse(readFileSync(file, "utf8")) as Record<string, Record<string, string> | undefined>;
     for (const k of CHANT_DEPS) {
-      const v = pkg[k]?.["@intentius/chant"];
+      const v = pkg[k]?.[name];
       if (typeof v === "string") return v;
     }
   } catch {
@@ -290,6 +293,13 @@ export interface Guard {
   kind: DeadGuard["kind"];
   floor: string;
   version: string;
+  /** The lexicon package the version belongs to; absent for chant core. */
+  package?: string;
+}
+
+/** The lexicon package a subpath belongs to (`@intentius/chant-lexicon-terraform/registry`), if it is one. */
+function lexiconPackageOf(spec: string): string | undefined {
+  return /^(@intentius\/chant-lexicon-[a-z0-9-]+)(?:\/|$)/.exec(spec)?.[1];
 }
 
 /**
@@ -297,10 +307,10 @@ export interface Guard {
  * floor's version; a name two files declare takes the higher one.
  */
 export function guardsIn(src: string, table: readonly FloorRow[] = FLOOR_TABLE): Guard[] {
-  const floors = new Map<string, string>();
+  const floors = new Map<string, { version: string; package?: string }>();
   for (const r of table) {
     const had = floors.get(r.name);
-    if (had === undefined || compareChantVersions(r.version, had) > 0) floors.set(r.name, r.version);
+    if (had === undefined || compareChantVersions(r.version, had.version) > 0) floors.set(r.name, { version: r.version, package: r.package });
   }
   // The lowest floor each subpath serves.
   const modules = new Map<string, string>();
@@ -316,13 +326,13 @@ export function guardsIn(src: string, table: readonly FloorRow[] = FLOOR_TABLE):
   const lines = src.split("\n");
   const out: Guard[] = [];
   const seen = new Set<string>();
-  const push = (offset: number, kind: Guard["kind"], floor: string, version: string) => {
+  const push = (offset: number, kind: Guard["kind"], floor: string, version: string, pkg?: string) => {
     const line = lineAt(starts, offset);
     const key = `${line}|${kind}|${floor}`;
     if (seen.has(key)) return;
     if (lines[line - 1]?.includes(KEEP) || /^\s*(?:\/\/|\/?\*).*chant-dead-guards: keep/.test(lines[line - 2] ?? "")) return;
     seen.add(key);
-    out.push({ line, kind, floor, version });
+    out.push({ line, kind, floor, version, ...(pkg ? { package: pkg } : {}) });
   };
 
   // Names bound by a static import or re-export, from anywhere: using one is
@@ -346,22 +356,23 @@ export function guardsIn(src: string, table: readonly FloorRow[] = FLOOR_TABLE):
   for (const m of code.matchAll(/\b[A-Z][A-Z0-9_]*_FLOOR\b/g)) {
     const at = m.index!;
     const name = m[0];
-    const version = floors.get(name);
-    if (version === undefined || inStatement(at)) continue;
+    const found = floors.get(name);
+    if (found === undefined || inStatement(at)) continue;
+    const { version, package: pkg } = found;
     if (inString[at]) {
       // A name in a string is a check when the line asks a module for it:
       // names a chant subpath or an import(), `"X_FLOOR" in m`, `m["X_FLOOR"]`.
       const text = codeLines[lineAt(starts, at) - 1] ?? "";
-      if (/@intentius\/chant|\bimport\(|["'`]\s+in\s+[A-Za-z_$]/.test(text) || /[\w$\])]\s*\[\s*$/.test(code.slice(Math.max(0, at - 24), at - 1))) push(at, "floor", name, version);
+      if (/@intentius\/chant|\bimport\(|["'`]\s+in\s+[A-Za-z_$]/.test(text) || /[\w$\])]\s*\[\s*$/.test(code.slice(Math.max(0, at - 24), at - 1))) push(at, "floor", name, version, pkg);
       continue;
     }
     const owner = /([A-Za-z_$][\w$]*)\s*\??\.\s*$/.exec(code.slice(Math.max(0, at - 64), at));
     if (owner || /\.\s*$/.test(code.slice(Math.max(0, at - 2), at))) {
-      if (!owner || !namespaces.has(owner[1])) push(at, "floor", name, version);
+      if (!owner || !namespaces.has(owner[1])) push(at, "floor", name, version, pkg);
       continue;
     }
     if (imported.has(name) || declared.has(name)) continue;
-    push(at, "floor", name, version);
+    push(at, "floor", name, version, pkg);
   }
 
   // module: a chant or lexicon subpath loaded with import() inside a try, or with .catch( on the load.
@@ -385,7 +396,7 @@ export function guardsIn(src: string, table: readonly FloorRow[] = FLOOR_TABLE):
     }
     const after = code.slice(site, site + 400);
     const caught = /^[^;\n]*?\)\s*\.catch\(/.test(after) || insideTry(code, site);
-    if (caught) push(at, "module", spec, version);
+    if (caught) push(at, "module", spec, version, lexiconPackageOf(spec));
   }
 
   // product-floor: the product's own constant for the chant it needs.
@@ -398,13 +409,14 @@ export function guardsIn(src: string, table: readonly FloorRow[] = FLOOR_TABLE):
 }
 
 /** The chant pin over `file` (relative to `productDir`): the nearest package.json with one, up to the product's root. */
-function pinFor(productDir: string, file: string, cache: Map<string, string | undefined | null>): { pin?: string; manifest?: string } {
+function pinFor(productDir: string, file: string, cache: Map<string, string | undefined | null>, name = "@intentius/chant"): { pin?: string; manifest?: string } {
   for (let dir = dirname(join(productDir, file)); ; dir = dirname(dir)) {
     const manifest = join(dir, "package.json");
-    let range = cache.get(manifest);
+    const key = `${name}|${manifest}`;
+    let range = cache.get(key);
     if (range === undefined) {
-      range = existsSync(manifest) ? (chantRange(manifest) ?? null) : null;
-      cache.set(manifest, range);
+      range = existsSync(manifest) ? (chantRange(manifest, name) ?? null) : null;
+      cache.set(key, range);
     }
     if (range !== null) return { pin: pinOf(range), manifest };
     if (relative(productDir, dir) === "" || dir === dirname(dir)) return {};
@@ -435,8 +447,11 @@ export function findDeadGuards(options: DeadGuardsOptions): DeadGuardsResult {
     const src = readFileSync(join(productDir, file), "utf8");
     const lines = src.split("\n");
     for (const g of guardsIn(src, table)) {
-      const row: DeadGuard = { file, ...g, pin, text: (lines[g.line - 1] ?? "").trim() };
-      (compareChantVersions(pin, g.version) >= 0 ? dead : live).push(row);
+      // #5138: a lexicon's floor is a version of that lexicon, so its pin is the product's range on it.
+      const own = g.package ? pinFor(productDir, file, cache, g.package).pin : pin;
+      if (own === undefined) continue;
+      const row: DeadGuard = { file, ...g, pin: own, text: (lines[g.line - 1] ?? "").trim() };
+      (compareChantVersions(own, g.version) >= 0 ? dead : live).push(row);
     }
   }
   return { ok: dead.length === 0, dead, live, pins: [...pins].map(([file, pin]) => ({ file, pin })).sort((a, b) => a.file.localeCompare(b.file)), files: files.length, unpinned };
@@ -445,5 +460,5 @@ export function findDeadGuards(options: DeadGuardsOptions): DeadGuardsResult {
 /** One dead guard as a line: `file:line: ...`. */
 export function deadGuardLine(g: DeadGuard): string {
   const what = g.kind === "module" ? `loads ${g.floor} behind a catch` : g.kind === "product-floor" ? `declares ${g.floor}` : `checks ${g.floor}`;
-  return `${g.file}:${g.line}: ${what}, which chant ${g.version} has; the pin ${g.pin} meets it`;
+  return `${g.file}:${g.line}: ${what}, which ${g.package ?? "chant"} ${g.version} has; the pin ${g.pin} meets it`;
 }

@@ -120,6 +120,32 @@ describe("guardsIn (#4792)", () => {
   });
 });
 
+describe("a lexicon floor is checked against the pin on that lexicon (#5138)", () => {
+  const LEX: FloorRow[] = [
+    { name: "REGISTRY_FLOOR", version: "0.20.5", package: "@intentius/chant-lexicon-x", gates: "", file: "lexicons/x/src/chant-floors.ts", modules: ["@intentius/chant-lexicon-x/registry"] },
+  ];
+  const SRC = 'export const registry = () => import("@intentius/chant-lexicon-x/registry").catch(() => undefined);\n';
+  const deps = (chant: string, lexicon?: string) => JSON.stringify({ dependencies: { "@intentius/chant": chant, ...(lexicon ? { "@intentius/chant-lexicon-x": lexicon } : {}) } });
+
+  it("tags the guard with the lexicon package", () => {
+    expect(guardsIn(SRC, LEX).map((g) => g.package)).toEqual(["@intentius/chant-lexicon-x"]);
+  });
+
+  it("does not meet a lexicon floor with chant's higher pin", () => {
+    const dir = product({ "package.json": deps("^0.124.60", "^0.20.1"), "src/a.ts": SRC });
+    const r = findDeadGuards({ productDir: dir, table: LEX });
+    expect(r.dead).toEqual([]);
+    expect(r.live.map((g) => g.pin)).toEqual(["0.20.1"]);
+  });
+
+  it("meets it with the lexicon's own pin", () => {
+    const dir = product({ "package.json": deps("^0.100.0", "^0.20.5"), "src/a.ts": SRC });
+    const r = findDeadGuards({ productDir: dir, table: LEX });
+    expect(r.dead.map((g) => g.pin)).toEqual(["0.20.5"]);
+    expect(deadGuardLine(r.dead[0]!)).toContain("which @intentius/chant-lexicon-x 0.20.5 has");
+  });
+});
+
 describe("findDeadGuards (#4792)", () => {
   it("fails naming each guard the package.json pin meets, and skips tests, node_modules and builds", () => {
     const dir = product({

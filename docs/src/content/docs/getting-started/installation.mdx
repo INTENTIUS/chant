@@ -17,6 +17,8 @@ A **lexicon** is the plugin that generates output for one platform, such as AWS 
 npm install --save-dev @intentius/chant-lexicon-aws tsx
 ```
 
+Each chant package has its own version. A lexicon's version need not equal the version of `@intentius/chant`; the lexicon's `peerDependencies` range says which chant versions it works with, and `chant init` and `chant carve` write each package at its own version.
+
 See the [AWS lexicon reference](/chant/lexicons/aws/) for intrinsic functions, composites, and examples.
 
 ### tsx and esbuild

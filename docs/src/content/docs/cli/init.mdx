@@ -36,7 +36,7 @@ chant init <path> --from <dir>[#<member>] [--param <name>=<value>]... [--force]
 | `src/` sample resources | Starter resource definitions |
 | `chant.config.ts` | Project configuration (lexicons, strict lint preset) |
 | `tsconfig.json` | TypeScript compiler options |
-| `package.json` | Dependencies |
+| `package.json` | Dependencies: `@intentius/chant` at its own version, and the lexicon at the lexicon's own version (the installed package's, else the registry's latest), since each package has its own version |
 | `.gitignore` | Ignores generated files |
 
 With `--force` into a directory that already has a `chant.config.ts` or `chant.config.json`, init reads that config's `lexicons` to check whether the lexicon is declared by path. If it is, `package.json` gets no dependency for it and the summary says where it loads from. The config is read without running it; when its `lexicons` cannot be read that way, init prints a note and treats the lexicon as a package. See [Commands that read `chant.config.ts` without running it](/chant/architecture/sandbox/#commands-that-read-chantconfigts-without-running-it).

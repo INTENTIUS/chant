@@ -22,7 +22,7 @@ import { resolveEmitProvider } from "../../terraform/carve-provider";
 import { readStateResource, type StateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { adoptFromState, type DeferredParam, type FoldedContribution } from "../../terraform/adopt-state";
-import { generateTsConfig, getChantVersion, SCAFFOLD_DEV_DEPENDENCIES } from "./init";
+import { generateTsConfig, getChantVersion, lexiconDependencyRange, SCAFFOLD_DEV_DEPENDENCIES } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
 
@@ -261,7 +261,7 @@ function scaffoldProject(outDir: string, lexicon: string, params: DeferredParam[
     },
     dependencies: {
       "@intentius/chant": `^${ver}`,
-      [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
+      [`@intentius/chant-lexicon-${lexicon}`]: lexiconDependencyRange(lexicon),
     },
     devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES },
   };
