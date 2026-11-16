@@ -589,6 +589,12 @@ Releases:
                         The tag release.tag gives a release of this member
                         (default release/<label>), found by its label, its
                         digest or the tag itself, with its floating tag.
+  release init [--yes] [--force] [--forge github|gitlab|forgejo] [--json]
+                        Set up chant release in a project: detect its packages,
+                        images and tags, write release in chant.config.ts and
+                        the release workflow, and list the registry steps to
+                        take by hand. A dry run unless --yes; --force replaces
+                        an existing release block.
   release workflow [--forge github|gitlab|forgejo] [--install <command>]
               [--build <command>] [--chant <command>] [--output <file>]
                         Write the publish workflow, run on the tags
@@ -2102,6 +2108,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release stamp", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStamp(ctx) },
   // #5150: the tag release.tag gives a release, found by label, digest or the tag itself.
   { name: "release tag", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseTag(ctx) },
+  // #5160: the first setup of chant release in a project.
+  { name: "release init", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release-init")).runReleaseInit(ctx) },
   { name: "release workflow", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-workflow")).runReleaseWorkflow(ctx) },
   // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
   { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },

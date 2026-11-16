@@ -20,6 +20,7 @@ chant release verify <label|digest> [--sigstore [--assets <dir>]] [--json]
 chant release stamp <label> [--json]
 chant release tag <label|digest|tag> [--json]
 chant release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
+chant release init [--yes] [--force] [--forge github|gitlab|forgejo] [--json]
 chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]
 chant release list [--json]
 chant release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -28,6 +29,40 @@ chant release export <label|digest> --env <env> [-o <dir>] [--json]
 A release is the compiled output of one green commit of one member ([#4026](https://github.com/INTENTIUS/chant/issues/4026), [ws-104](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-104-the-release-model.md)). The commit is the source, and the release is what moves through the environments. A release holds the commit, the artifacts built once from it, and one target per environment. A target lists the templates compiled for that environment and the build parameters they were compiled with.
 
 This is a separate object from a deploy record. A deploy record is a line of `<env>/releases.jsonl` that `chant run --components` and `chant components promote` append when they deploy a component. [`chant components promote --release`](/chant/cli/components/#components-promote) deploys one target and names its digest on the deploy record it writes.
+
+## release init
+
+Sets up `chant release` in a project that has never used chant. It reads the project, writes a `release` block into `chant.config.ts`, writes the release workflow with [`release workflow`](#release-workflow), and lists what has to be set up by hand on the registries.
+
+```bash
+chant release init          # a dry run: prints the block and why
+chant release init --yes    # writes it
+```
+
+| Flag | Description |
+|---|---|
+| `--yes` | Write the config, the workflow and the goreleaser change. Without it nothing is written |
+| `--force` | Replace an existing `release` block, and a release workflow file chant did not write |
+| `--forge <forge>` | The forge the workflow is written for. Default: the repository's workflow directory (`.github/workflows`, `.forgejo/workflows`, `.gitlab-ci.yml`), else the forge `origin` names, else `github` |
+| `--json` | Print the plan as JSON: `release`, `reasons`, `notes`, `registry`, `workflow`, `goreleaser` and `next` |
+
+What it reads, from the directory it runs in, and what each sets:
+
+| Found | Sets |
+|---|---|
+| The repository's tags | `release.tag`: the prefix most version tags share, such as `v{version}` for `v1.2.0` or `cli-v{version}` for `cli-v0.4.1`; `v{version}` when no tag names a version, or `{path}/v{version}` for a Go module in a subdirectory. A release of more than one package keeps `v{version}` unless its tags are `v<version>` already. `release.legacyTags` lists the prefixes the existing tags use, so [`release changed`](#release-changed) reads them as earlier releases |
+| `ci.green` in `chant.workspace.json`, or `ci/green/` tags | `release.green: "chant"`; otherwise `"forge-checks"`. A repository with no CI workflow is told that a cut refuses a commit with no checks |
+| `package.json`, with npm `workspaces` (a list or `{ packages }`) or `pnpm-workspace.yaml` | An `npm` target for every package not marked `private`, in dependency order, with `access: "public"` when a scoped package has no `publishConfig.access`. `release.version` stamps the same packages, with `ranges: "exact"` when one depends on another |
+| `engines.vscode` in a `package.json` | `marketplace` targets for the VS Code Marketplace and Open VSX (trusted publishing) from `dist/<name>.vsix`, and `VSCE_PAT` from the repository's secrets in `release.workflow.env` |
+| `Dockerfile` or `Containerfile`, at the root or up to two directories down | A `release.images` entry each, and an `oci` target on the registry of the forge `origin` names: `ghcr.io/<owner>/<repo>`, `registry.gitlab.com/<path>`, or the Forgejo host |
+| `.goreleaser.yaml` (or `.yml`, or without the dot) | A [`release.artifacts`](#files-the-release-builds) entry `{ name: "goreleaser", goreleaser: {} }`, so the cut runs `goreleaser release --snapshot` once and records the files it writes, and a `forge` release of the `origin` repository with generated notes that uploads them (`assets: ["artifact:goreleaser"]`). The release workflow installs the goreleaser version chant pins. With `--yes`, a config with no `snapshot` section gets `snapshot.version_template: "{{ .Env.CHANT_RELEASE_LABEL }}"`, so its snapshot build carries the release's label; a config with its own `snapshot` section is told to set it. A goreleaser config that builds images (`dockers`, `kos`) leaves the Dockerfiles out of `release.images` |
+| `go.mod`, `Cargo.toml`, `pyproject.toml` | Nothing to publish: the release's tag is what the Go module proxy reads, and chant release has no crates.io or PyPI target, which the output says |
+
+`release.workflow` is `trigger: "dispatch"`, so a release is one run started by hand with its label. With pnpm or yarn it installs with `corepack enable` and the lockfile's tool, and builds with that tool when the root `package.json` has a `build` script; with npm and no `package-lock.json` it installs with `npm install`. A `package.json` that does not depend on `@intentius/chant` runs chant in the jobs as `npx --yes @intentius/chant@<version>`, the version that wrote the config.
+
+A project with no `chant.config.ts` gets one holding the block alone. One that has a config gets the block added to the object its default export names: `export default { ... }`, `export default defineConfig({ ... })`, or `export default config` with `const config = { ... }`. A `chant.config.json` is rewritten with the block added. A config that already has a `release` block is refused with `release-init-release-exists` unless `--force`, and one whose default export is not an object literal with `release-init-config-unreadable`; both print the block to add by hand. A release workflow file that chant did not generate is refused with `release-init-workflow-exists` unless `--force`.
+
+The output ends with the steps to take by hand, such as an npm trusted publisher that names the workflow file (`chant-release.yml`) with npm dist-tag allowed, the Open VSX trusted publisher, `VSCE_PAT`, a GHCR package's visibility, and on GitLab the include and `CHANT_RELEASE_TOKEN`. Then it prints the commands to commit and push, to run [`release doctor`](#release-doctor) once those steps are done, and to start the first release with a label: a patch after the newest version tag, or `0.1.0`. Each later release can be started with the label `auto` (`gh workflow run chant-release.yml -f label=auto`), which takes the label from the commits since the previous release with [`release next`](#release-next); the first release has no previous chant release to bump from. The dispatched workflow runs `release doctor` in its cut job too, before the cut.
 
 ## release cut
 
@@ -494,6 +529,8 @@ export default {
   },
 };
 ```
+
+[`chant release init`](#release-init) writes such a block from what it finds in the project.
 
 With no `environments`, the cut compiles nothing. It records the release as the commit, the artifacts the cut built or was handed (`release.images`, `release.artifacts`, `--image`), and `publishes`: each `release.publish` target's key, type and destination, in the declared order. `targets` is empty. The release digest covers `publishes`, so a release with them is read by chant `RELEASE_PUBLISHES_FLOOR` and newer. A `--build` command runs once the gate has passed and the images are built, with `CHANT_RELEASE_LABEL` set, and a build that fails cuts nothing. No `sourceDir` and no `chant.workspace.json` are needed; without `ci.green`, the [green gate](#the-green-gate) is the forge's checks.
 
