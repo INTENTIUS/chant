@@ -43,10 +43,9 @@ import { relative } from "node:path";
 import { classifyCommit } from "./release-changelog";
 import { consumedIntents, maxBump, pendingIntents, readIntents, type ReleaseBumpLevel } from "./release-intents";
 import type { ReleaseCutIntent } from "./release-store";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant with `chant release next` and `chant release cut auto`, the label from the conventional commits and the `.chant/release/*.md` intent files since the member's previous release; a cut records the intent files it consumed (`intents` on its cut line), `release changed` computes each member's bump from them (`bumpFrom`, `intents`, `intent-pending`), notes generated from commits lead with their summaries, and a dispatched release workflow takes the label `auto` (#5159); with no release in the ledger the previous one is the newest version tag `release.tag` or `release.legacyTags` matches (#5200), and on 0.x a breaking commit bumps minor unless `release.breakingOnZero` is `major` (#5191). */
-export const RELEASE_NEXT_FLOOR = NEXT_RELEASE;
+export const RELEASE_NEXT_FLOOR = "0.124.101";
 
 export type ReleaseNextCode =
   | "not-a-git-repository"
