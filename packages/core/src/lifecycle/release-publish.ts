@@ -123,6 +123,12 @@ export interface PublishCut {
   green?: import("./release-store").ReleaseCutGreen;
   /** The override the cut ran under (#4693), absent on a cut of a green commit. */
   override?: import("./release-store").ReleaseCutOverride;
+  /** The green lane the cut checked (#4692), absent for the full green tag. */
+  lane?: string;
+  /** The payload version the signature signs (#5177): 2 when it covers the gate; absent otherwise. */
+  sealVersion?: 2;
+  /** Whether the gate above is covered by a signature that verifies (#5177). */
+  gate?: "signed" | "unsigned";
 }
 
 /**
@@ -460,12 +466,18 @@ export interface PublishPlan {
   release: Release;
   label: string | null;
   /** The verified cut's signature when one verifies, else the newest cut's. */
-  signature: { status: "verified" | "unsigned" | "unverified"; actor: string | null; key: string | null; reason: string };
+  signature: { status: "verified" | "unsigned" | "unverified"; actor: string | null; key: string | null; reason: string; gate: "signed" | "unsigned" };
   provenance: ProvenanceCheck;
   /** The warning printed before publishing, when the run has no OIDC token and the workspace opts into `supply-chain` (#4168). */
   warning: string | null;
   /** The warning printed before publishing a release with no verified signature under `--allow-unsigned` (#4049). */
   signatureWarning: string | null;
+  /**
+   * The warning printed when `verified-releases` or a release gate is on and
+   * the verified cut was signed before chant signed the green gate (#5177),
+   * so its signature does not cover the gate the cut line records.
+   */
+  gateWarning: string | null;
   /** The cut whose signature the provenance statement carries: the verified one, else the newest. */
   cut: PublishCut | null;
   /** The tag the cut made, or null for a release with no label. */
@@ -536,9 +548,10 @@ export async function preparePublish(req: {
   const cuts = (await readCuts({ cwd })).cuts.filter((c) => c.releaseDigest === release.releaseDigest);
   const checks = cuts.map((c) => ({
     cut: c,
-    check: checkReleaseSignature(rule.rule, { releaseDigest: c.releaseDigest, label: c.label, actor: c.actor, timestamp: c.timestamp, signature: c.signature }),
+    check: checkReleaseSignature(rule.rule, c),
   }));
-  const verified = checks.find((c) => c.check.status === "verified");
+  // #5177: a verified cut whose signature covers its gate is preferred, so the statement carries a gate that is signed.
+  const verified = checks.find((c) => c.check.status === "verified" && c.check.gate === "signed") ?? checks.find((c) => c.check.status === "verified");
   const unsigned = checks.every((c) => c.check.status === "unsigned");
   if (rule.requirement && !verified) {
     return {
@@ -568,10 +581,15 @@ export async function preparePublish(req: {
     }
     signatureWarning = `${why}; publishing it anyway under --allow-unsigned, so chant release verify ${label ?? release.releaseDigest} will fail for it`;
   }
+  // #5177: where the signature is required, say when it does not cover the gate the cut claims.
+  const gateWarning =
+    verified && verified.check.gate === "unsigned" && (rule.requirement || groups.has("verified-releases"))
+      ? `the cut of ${name} by ${verified.cut.actor} was signed before chant signed the green gate, so the gate its cut line records is not covered by the signature; cut the release again with --sign for a signed gate`
+      : null;
   const shown = verified ?? checks.at(-1);
   const signature: PublishPlan["signature"] = shown
-    ? { status: shown.check.status, actor: shown.cut.actor, key: shown.check.key, reason: shown.check.reason }
-    : { status: "unsigned", actor: null, key: null, reason: "no cut names the release" };
+    ? { status: shown.check.status, actor: shown.cut.actor, key: shown.check.key, reason: shown.check.reason, gate: shown.check.gate }
+    : { status: "unsigned", actor: null, key: null, reason: "no cut names the release", gate: "unsigned" };
   const cut: PublishCut | null = shown
     ? {
         actor: shown.cut.actor,
@@ -581,6 +599,9 @@ export async function preparePublish(req: {
         signature: shown.cut.signature ?? null,
         ...(shown.cut.green ? { green: shown.cut.green } : {}),
         ...(shown.cut.override ? { override: shown.cut.override } : {}),
+        ...(shown.cut.lane ? { lane: shown.cut.lane } : {}),
+        ...(shown.cut.sealVersion ? { sealVersion: shown.cut.sealVersion } : {}),
+        gate: shown.check.gate,
       }
     : null;
 
@@ -676,7 +697,7 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
+  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
 }
 
 /**

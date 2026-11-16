@@ -89,6 +89,8 @@ export const SLOW_UNIT_TEST_FILES: readonly string[] = [
     "release-cut-signed",
     "release-cut",
     "release-flag",
+    // #5177: cuts, signs, rewrites the cut line and verifies again in a temp repo, as release-verify does.
+    "release-gate-seal",
     "release-join",
     "release-ledger",
     "release-publish",

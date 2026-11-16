@@ -12,6 +12,13 @@
  * time (`releaseSealPayload`), and, when the declaration at that commit has an
  * `identity.gates.release` entry naming a class, the actor is in it.
  *
+ * The gate a cut claims (#5177): a cut signed by chant 0.124.101 or newer
+ * signs its green-gate record (`green`, `override`, `lane`) with the digest
+ * (`releaseGateSealPayload`, `sealVersion: 2`), so a verified signature
+ * vouches for the gate too, and `gate` reads `signed`. An older signature
+ * still verifies over its four lines, and its gate reads `unsigned`: the
+ * cut line's gate could have been changed after it was signed.
+ *
  * Reading the signers at the release's commit means a key added later does
  * not make an old release verify, and one removed later does not unmake it.
  */
@@ -34,6 +41,12 @@ export interface ReleaseVerification {
   /** The cut whose signature verified, or null. */
   verifiedBy: { actor: string; key: string | null } | null;
   reason: string;
+  /**
+   * Whether the gate the verified cut records is covered by its signature
+   * (#5177): `signed`, or `unsigned` for a cut signed before chant signed the
+   * gate, and for a release with no verified cut. `reason` says which.
+   */
+  gate: { status: "signed" | "unsigned"; reason: string };
   /** Each cut, with the green gate it passed or the override it ran under (#5149, #4693) when it recorded one. */
   cuts: Array<Pick<ReleaseCut, "label" | "actor" | "timestamp" | "runId" | "green" | "override"> & { signatureCheck: ReleaseSignatureCheck }>;
 }
@@ -95,9 +108,10 @@ export async function verifyRelease(req: { cwd: string; ref: string }): Promise<
     runId: c.runId ?? null,
     ...(c.green ? { green: c.green } : {}),
     ...(c.override ? { override: c.override } : {}),
-    signatureCheck: atCommit(checkReleaseSignature(rule, { releaseDigest: c.releaseDigest, label: c.label, actor: c.actor, timestamp: c.timestamp, signature: c.signature })),
+    signatureCheck: atCommit(checkReleaseSignature(rule, c)),
   }));
-  const verified = cuts.find((c) => c.signatureCheck.status === "verified");
+  // #5177: a verified cut whose signature covers its gate is the one to show, else any verified cut.
+  const verified = cuts.find((c) => c.signatureCheck.status === "verified" && c.signatureCheck.gate === "signed") ?? cuts.find((c) => c.signatureCheck.status === "verified");
   const digestMatches = verifyReleaseDigest(release);
   const status: ReleaseVerification["status"] = verified ? "verified" : cuts.every((c) => c.signatureCheck.status === "unsigned") ? "unsigned" : "unverified";
   const where = `${rule.signers.signersPath} at ${at.slice(0, 12)}`;
@@ -118,8 +132,16 @@ export async function verifyRelease(req: { cwd: string; ref: string }): Promise<
     status: digestMatches ? status : "unverified",
     verifiedBy: digestMatches && verified ? { actor: verified.actor, key: verified.signatureCheck.key } : null,
     reason,
+    gate: gateOf(digestMatches ? verified : undefined),
     cuts,
   };
+}
+
+/** How the gate of `verified`, the cut whose signature verified, reads (#5177). */
+function gateOf(verified: { actor: string; signatureCheck: ReleaseSignatureCheck } | undefined): ReleaseVerification["gate"] {
+  if (!verified) return { status: "unsigned", reason: "no cut's signature verifies, so nothing vouches for the gate a cut records" };
+  if (verified.signatureCheck.gate === "signed") return { status: "signed", reason: `the green gate the cut by ${verified.actor} records is covered by its signature` };
+  return { status: "unsigned", reason: `the cut by ${verified.actor} was signed before chant signed the green gate, so its signature does not cover the gate the cut line records` };
 }
 
 /** One Sigstore bundle a publish recorded, and how its check went (#5164). */

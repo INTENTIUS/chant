@@ -31,7 +31,7 @@ import { type TrustPolicy } from "./policy";
 import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
 import { checkGateSignature, GATE_SEAL_NAMESPACE, gateSealPayload, sshSignatureKey, verifySshSignatureWith, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
-import { RELEASE_SEAL_NAMESPACE, releaseSealPayload, releaseStatusSealPayload } from "../identity-gate-rule";
+import { RELEASE_SEAL_NAMESPACE, releaseGateSealPayload, releaseStatusSealPayload, type SignedReleaseCut } from "../identity-gate-rule";
 
 export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "../../lifecycle/gate-seal";
 
@@ -356,11 +356,13 @@ export function sealGateApproval(keyFile: string, a: SealedGateApproval): Verdic
 
 /**
  * Sign a release cut (#4031) with the key in `keyFile`, over
- * `releaseSealPayload` in the `chant-release` namespace. The cut line keeps
- * the armored signature; its actor is the signer. Throws a {@link SealError}.
+ * `releaseGateSealPayload` in the `chant-release` namespace: the release
+ * digest, label, actor and time, and the green-gate record the cut line
+ * carries (#5177). The cut line keeps the armored signature and
+ * `sealVersion: 2`; its actor is the signer. Throws a {@link SealError}.
  */
-export function sealReleaseCut(keyFile: string, cut: { releaseDigest: string; label: string | null; actor: string; timestamp: string }): VerdictSeal {
-  return sign(keyFile, releaseSealPayload(cut), RELEASE_SEAL_NAMESPACE, cut.actor);
+export function sealReleaseCut(keyFile: string, cut: Omit<SignedReleaseCut, "signature" | "sealVersion">): VerdictSeal {
+  return sign(keyFile, releaseGateSealPayload(cut), RELEASE_SEAL_NAMESPACE, cut.actor);
 }
 
 /**

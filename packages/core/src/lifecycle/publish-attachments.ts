@@ -91,6 +91,10 @@ export function releaseProvenance(ctx: PublishContext, subjects: ReadonlyArray<{
             // #5149: the gate that let the commit be cut, as the cut line records it; absent on a cut that recorded none.
             ...(cut.green ? { green: cut.green } : {}),
             ...(cut.override ? { override: { by: cut.override.by, at: cut.override.at, reason: cut.override.reason, tag: cut.override.tag } } : {}),
+            // #5177: whether the signature above covers that gate, and the payload version a verifier rebuilds.
+            ...(cut.lane ? { lane: cut.lane } : {}),
+            ...(cut.sealVersion ? { sealVersion: cut.sealVersion } : {}),
+            ...(cut.gate ? { gate: cut.gate } : {}),
           }
         : null,
       provenance: ctx.provenance.oidc ? { kind: "oidc", ci: ctx.provenance.ci } : { kind: "signature", ci: ctx.provenance.ci },

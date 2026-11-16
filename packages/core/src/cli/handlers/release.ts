@@ -951,7 +951,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   await fetchLifecycle({ cwd }).catch(() => false);
   const prepared = await preparePublish({ cwd, ref, allowUnsigned: args.allowUnsigned === true, requireProvenance: args.requireProvenance === true });
   if ("refusal" in prepared) return fail(prepared.refusal.code, prepared.refusal.message, prepared.refusal.fix);
-  const { release, label, signature, provenance, warning, signatureWarning, signingWarning, targets, redactor } = prepared;
+  const { release, label, signature, provenance, warning, signatureWarning, gateWarning, signingWarning, targets, redactor } = prepared;
   const name = label ?? release.releaseDigest;
   const deploySteps = release.targets.map((t) => t.env);
   const say = (line: string) => console.error(redactor.redact(line));
@@ -961,10 +961,11 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
 
   if (!args.json) {
     say(`${dryRun ? "Dry run: publish" : "Publishing"} ${formatBold(name)} (${release.releaseDigest}) from commit ${release.commit.slice(0, 12)}`);
-    say(`  ${signature.status === "verified" ? `signed by ${signature.actor}` : signature.status === "unsigned" ? "not signed" : `signature unverified: ${signature.reason}`}`);
+    say(`  ${signature.status === "verified" ? `signed by ${signature.actor}, green gate ${signature.gate}` : signature.status === "unsigned" ? "not signed" : `signature unverified: ${signature.reason}`}`);
   }
   // The warnings go to stderr with --json too, before any target runs.
   if (signatureWarning) console.error(formatWarning({ message: signatureWarning }));
+  if (gateWarning) console.error(formatWarning({ message: gateWarning }));
   if (warning) console.error(formatWarning({ message: warning }));
   if (signingWarning) console.error(formatWarning({ message: signingWarning }));
   if (prepared.signing && !args.json) say(`  signing images and forge assets with Sigstore (${prepared.signing.signer.name}) as ${prepared.signing.identity.identity}, issuer ${prepared.signing.identity.issuer}`);
@@ -1006,7 +1007,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     commit: release.commit,
     signature,
     provenance,
-    warnings: [signatureWarning, warning, signingWarning, verifyWarning].filter((w): w is string => w !== null),
+    warnings: [signatureWarning, gateWarning, warning, signingWarning, verifyWarning].filter((w): w is string => w !== null),
     signing: prepared.signing ? { identity: prepared.signing.identity, signer: prepared.signing.signer.name } : null,
     ...(floating ? { floating } : {}),
     ...(verifySteps.length > 0 ? { verify: { steps: verifySteps, unstaged } } : {}),
@@ -1139,8 +1140,8 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
   const name = result.label ? `${formatBold(result.label)} (${result.releaseDigest})` : result.releaseDigest;
   for (const c of result.cuts) {
     console.log(`  cut by ${c.actor} at ${c.timestamp}: ${c.signatureCheck.status}${c.signatureCheck.key ? ` (${c.signatureCheck.key})` : ""}`);
-    // #5149: what let the commit be cut.
-    console.log(`    ${c.override ? `not green: cut under the override by ${c.override.by}: ${c.override.reason}` : describeGreen(c.green)}`);
+    // #5149: what let the commit be cut; #5177: whether the cut's signature covers it.
+    console.log(`    ${c.override ? `not green: cut under the override by ${c.override.by}: ${c.override.reason}` : describeGreen(c.green)} (gate ${c.signatureCheck.status === "verified" ? c.signatureCheck.gate : "unsigned"})`);
   }
   for (const c of sigstore?.checks ?? []) console.log(`  ${c.name} (${c.target}): ${c.status}, ${c.reason}`);
   if (!sigstore && recorded > 0) console.error(`  the publish recorded ${recorded} Sigstore signature(s); check them with: chant release verify ${result.label ?? result.releaseDigest} --sigstore`);
@@ -1159,7 +1160,8 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     );
     return 1;
   }
-  console.error(formatSuccess(`Verified ${name}: ${result.reason}${sigstore ? `; ${sigstore.reason}` : ""}`));
+  console.error(formatSuccess(`Verified ${name}: ${result.reason}; green gate ${result.gate.status}${sigstore ? `; ${sigstore.reason}` : ""}`));
+  if (result.gate.status === "unsigned") console.error(`  ${result.gate.reason}`);
   return 0;
 }
 

@@ -127,7 +127,7 @@ describe.skipIf(!hasSshKeygen)("who may cut a release (#4031)", () => {
         actor: "alice",
         timestamp: "2026-10-16T10:00:00.000Z",
         signature: result.cut!.signature,
-        signatureCheck: { status: "verified", key: entry.cuts[0].signatureCheck.key, reason: "signed by alice, in the class releaser" },
+        signatureCheck: { status: "verified", key: entry.cuts[0].signatureCheck.key, reason: "signed by alice, in the class releaser", gate: "signed" },
       },
     ]);
 

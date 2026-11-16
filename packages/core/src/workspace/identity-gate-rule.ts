@@ -110,7 +110,15 @@ export const RELEASE_GATE = "release";
 /** The ssh signature namespace of a release cut's signature (#4031), so no other signature can stand in for one. */
 export const RELEASE_SEAL_NAMESPACE = "chant-release";
 
-/** A cut line's fields its signature covers (#4031), and the signature. */
+/**
+ * The version of the payload a new cut's signature signs (#5177). Version 1
+ * (#4031) is four lines; version 2 adds the green-gate record. A cut line
+ * written with version 2 says so in `sealVersion`; a line without it was
+ * signed over version 1.
+ */
+export const RELEASE_CUT_SEAL_VERSION = 2;
+
+/** A cut line's fields its signature covers (#4031, #5177), and the signature. */
 export interface SignedReleaseCut {
   releaseDigest: string;
   label: string | null;
@@ -118,20 +126,70 @@ export interface SignedReleaseCut {
   timestamp: string;
   /** The armored ssh signature, or null for an unsigned cut. */
   signature: string | null;
+  /** The payload version the signature signs (#5177): 2 covers the gate record; absent, version 1, which does not. */
+  sealVersion?: number;
+  /** The green gate the cut passed (#5149), as the cut line records it. */
+  green?: unknown;
+  /** The override the cut ran under (#4693), as the cut line records it. */
+  override?: unknown;
+  /** The green lane the cut checked (#4692). */
+  lane?: string;
 }
 
 /**
- * The bytes a release cut's signature signs (#4031): the release digest,
- * the label (empty for none), the actor who cut it and the cut's time,
- * joined by LF with no final newline.
+ * The bytes a release cut's signature signs under version 1 (#4031): the
+ * release digest, the label (empty for none), the actor who cut it and the
+ * cut's time, joined by LF with no final newline.
  */
-export function releaseSealPayload(cut: Omit<SignedReleaseCut, "signature">): Buffer {
+export function releaseSealPayload(cut: Pick<SignedReleaseCut, "releaseDigest" | "label" | "actor" | "timestamp">): Buffer {
   return Buffer.from(`${cut.releaseDigest}\n${cut.label ?? ""}\n${cut.actor}\n${cut.timestamp}`, "utf-8");
 }
 
+/** `v` as JSON with every object's keys sorted, so the same record gives the same bytes. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v);
+}
+
+/**
+ * The green-gate record a version 2 cut signature covers (#5177): the cut
+ * line's `green`, `override` and `lane`, those it holds, as sorted JSON.
+ * `{}` for a cut that records none of them.
+ */
+export function releaseCutGateRecord(cut: Pick<SignedReleaseCut, "green" | "override" | "lane">): string {
+  return canonicalJson({ green: cut.green, override: cut.override, lane: cut.lane });
+}
+
+/**
+ * The bytes a version 2 cut signature signs (#5177): the four lines of
+ * version 1, then `seal:2` and `gate:<record>`. The release digest stays the
+ * digest of the release file, so two cuts of one commit still share it, and
+ * the gate each cut claims is under its own signature. The `seal:2` line keeps
+ * the bytes apart from a version 1 cut's and from a status change's
+ * (`status:<status>`) in the shared `chant-release` namespace.
+ */
+export function releaseGateSealPayload(cut: Omit<SignedReleaseCut, "signature" | "sealVersion">): Buffer {
+  return Buffer.concat([releaseSealPayload(cut), Buffer.from(`\nseal:2\ngate:${releaseCutGateRecord(cut)}`, "utf-8")]);
+}
+
+/** The bytes the cut's signature signs, by the version its line names: version 2 with `sealVersion: 2`, else version 1. */
+export function releaseCutSealPayload(cut: Omit<SignedReleaseCut, "signature">): Buffer {
+  return cut.sealVersion === 2 ? releaseGateSealPayload(cut) : releaseSealPayload(cut);
+}
+
 /** Why the cut's signature does not verify for its actor against the signers at base, or null when it does. */
-function releaseSignatureRefusal(signers: GateAdmissionRule["signers"], cut: SignedReleaseCut, payload: Buffer = releaseSealPayload(cut), what = "cut"): string | null {
+function releaseSignatureRefusal(signers: GateAdmissionRule["signers"], cut: SignedReleaseCut, payload: Buffer = releaseCutSealPayload(cut), what = "cut"): string | null {
   if (cut.signature === null) return `the ${what} by ${cut.actor} is not signed`;
+  // The payloads are LF-joined lines; a field holding a newline could make one kind's bytes another's.
+  if ([cut.releaseDigest, cut.label ?? "", cut.actor, cut.timestamp].some((f) => f.includes("\n"))) return `the ${what} by ${cut.actor} has a signed field with a line break, so its signature can't count`;
   if (!signers.active) return `there is no signers file (${signers.signersPath}) at base to check the ${what}'s signature against`;
   const where = `${signers.signersPath} at base`;
   const listed = signers.signers.filter((s) => normalise(s.principal) === normalise(cut.actor));
@@ -191,16 +249,23 @@ export interface ReleaseSignatureCheck {
   /** The fingerprint of the key in the signature, or null for an unsigned cut or one that can't be read. */
   key: string | null;
   reason: string;
+  /**
+   * Whether the green-gate record on the cut line is covered by a signature
+   * that verifies (#5177): `signed` for a verified version 2 signature,
+   * `unsigned` otherwise, including a verified version 1 signature, made
+   * before chant signed the gate.
+   */
+  gate: "signed" | "unsigned";
 }
 
 /** Judge a stored cut's signature against `rule`, read at base. A rule with no class checks the signature alone. */
 export function checkReleaseSignature(rule: GateAdmissionRule, cut: SignedReleaseCut): ReleaseSignatureCheck {
-  if (cut.signature === null) return { status: "unsigned", key: null, reason: "the cut carries no signature" };
+  if (cut.signature === null) return { status: "unsigned", key: null, reason: "the cut carries no signature", gate: "unsigned" };
   const blob = sshSignatureKey(cut.signature);
   const key = blob ? sshKeyFingerprint(blob) : null;
   const why = unknownClassRefusal(rule, "cut") ?? releaseSignatureRefusal(rule.signers, cut) ?? classRefusal(rule, cut.actor);
-  if (why !== null) return { status: "unverified", key, reason: why };
-  return { status: "verified", key, reason: `signed by ${cut.actor}${rule.class !== null ? `, in the class ${rule.class}` : ""}` };
+  if (why !== null) return { status: "unverified", key, reason: why, gate: "unsigned" };
+  return { status: "verified", key, reason: `signed by ${cut.actor}${rule.class !== null ? `, in the class ${rule.class}` : ""}`, gate: cut.sealVersion === 2 ? "signed" : "unsigned" };
 }
 
 /** The seal step, worded as `checkGateSeal` (`./trust/seal.ts`) words it against an active signers file at base. */
