@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 301 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 303 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -420,6 +420,8 @@ Each row follows, in the order of the table above.
 | reason code | `paths-changed` | chant | release-changed.schema.json | The member has paths changed since its last release, after changes.ignore and generated files, or has no release yet. |
 | reason code | `needed-by` | chant | release-changed.schema.json | A member of the release depends on this one, and this one has changes since its last release. |
 | reason code | `range-broken-by` | chant | release-changed.schema.json | The range this member last published for a dependency does not admit that dependency's next label. |
+| reason code | `intent-pending` | chant | release-changed.schema.json | An intent file under .chant/release names the member, and no cut of it consumed the file (#5159). |
+| reason code | `intent-invalid` | chant | release-changed.schema.json | An intent file under .chant/release can't be read: its front matter is not lines of &lt;member&gt;: major\|minor\|patch, or names a member the declaration does not have (#5159). |
 | reason code | `trust-policy-unreadable` | chant | evidence.schema.json, ref-gate.schema.json, runs-write.schema.json | The trust policy at base can't be read, or its signer history is broken, so no runner key is trusted. |
 | reason code | `evidence-statement-invalid` | chant | evidence.schema.json, ref-gate.schema.json | The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define. |
 | reason code | `envelope-invalid` | chant | evidence.schema.json, ref-gate.schema.json, run-statement.schema.json, runs-write.schema.json, runs.schema.json | The file is not a DSSE envelope: payloadType, payload in canonical base64, and signatures with keyid and sig. |

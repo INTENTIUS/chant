@@ -160,6 +160,31 @@ describe("chant release changed (#5134)", () => {
     });
   });
 
+  test("#5159: the bump comes from the commits over the member's paths and the pending intent files; --bump-member sets it outright", async () => {
+    await withTestDir(async (dir) => {
+      repo(dir);
+      commit(dir, "feat(core): read the config once", { "packages/core/src/index.ts": "export const c = 1;\n" });
+      commit(dir, "fix: an aws fix", { "lexicons/aws/src/index.ts": "export const a = 1;\n" });
+      commit(dir, "chore: plan", { ".chant/release/k8s.md": "---\nlexicon-k8s: patch\n---\nk8s kinds refreshed.\n" });
+      const doc = await releaseChangedDocument({ cwd: join(dir, "release") });
+      expectValid(doc);
+      if (!("members" in doc)) throw new Error(JSON.stringify(doc));
+      expect(doc.members.map((m) => [m.member, m.reason.code, m.reason.member, m.bump, m.bumpFrom, m.next, m.intents])).toEqual([
+        ["core", "needed-by", "lexicon-aws", "minor", "commits", "0.125.0", []],
+        ["lexicon-aws", "paths-changed", null, "patch", "commits", "0.124.45", []],
+        ["lexicon-k8s", "intent-pending", null, "patch", "intents", "0.124.45", [".chant/release/k8s.md"]],
+      ]);
+      const flagged = await releaseChangedDocument({ cwd: join(dir, "release"), bump: ["core=patch"] });
+      if (!("members" in flagged)) throw new Error("no members");
+      expect(flagged.members.find((m) => m.member === "core")).toMatchObject({ bump: "patch", bumpFrom: "flag", next: "0.124.45" });
+
+      commit(dir, "chore: a typo", { ".chant/release/typo.md": "---\nlexicon-gcp: minor\n---\n" });
+      const bad = await releaseChangedDocument({ cwd: join(dir, "release") });
+      expectValid(bad);
+      expect("error" in bad && bad.error.code).toBe("intent-invalid");
+    });
+  });
+
   test("errors are coded", async () => {
     await withTestDir(async (dir) => {
       repo(dir);

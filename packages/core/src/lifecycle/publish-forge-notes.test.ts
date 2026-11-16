@@ -272,6 +272,23 @@ describe("a forge release's generated notes (#5153)", () => {
     expect(forge.calls).toEqual([]);
   });
 
+  test("commits (#5159): the summaries of the intent files the release's cut consumed come before the commits", async () => {
+    const { dir, ctx } = await repo();
+    const fromCommits = FROM_COMMITS(dir);
+    mkdirSync(join(dir, ".chant", "release"), { recursive: true });
+    writeFileSync(join(dir, ".chant", "release", "stream.md"), "---\n'*': minor\n---\nResponses stream.\n");
+    gitIn(dir, "add", ".");
+    gitIn(dir, "commit", "-q", "-m", "chore: plan the release");
+    const head = gitIn(dir, "rev-parse", "HEAD");
+    const release = makeRelease(subject(head));
+    await persistRelease(release, [], { cwd: dir });
+    await appendCut({ releaseDigest: release.releaseDigest, label: "v1.1.0", actor: "ci", timestamp: "2026-11-02T00:00:00.000Z", runOrigin: null, signature: null, intents: [{ path: ".chant/release/stream.md", added: head, bump: "minor" }] }, { cwd: dir });
+    const forge = startFakeForge("github", "https://api.github.test", "acme/api");
+    const [t] = await createPublishTargets([decl({ ...GH, notes: { generate: "commits" } })], { fetch: forge.fetch });
+    const [item] = await t!.plan(ctx({ env: { GITHUB_TOKEN: "ghs_x" }, release }));
+    expect(item!.notes).toBe(`### Highlights\n\n- Responses stream.\n\n${fromCommits}\n`);
+  });
+
   test("commits: types narrows the list, and generated notes alone need no file", async () => {
     const { ctx } = await repo();
     const forge = startFakeForge("github", "https://api.github.test", "acme/api");

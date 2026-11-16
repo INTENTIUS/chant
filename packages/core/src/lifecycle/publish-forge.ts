@@ -385,6 +385,32 @@ export function memberCommits(ctx: Pick<PublishContext, "cwd" | "release">, from
     });
 }
 
+/**
+ * Notes from the intent files the release's cuts consumed (#5159), read at
+ * the release's commit: their summaries, the highest level first. Empty
+ * when the cuts consumed none. A file the commit does not hold, or that
+ * can't be read, is left out.
+ */
+export async function consumedIntentNotes(ctx: Pick<PublishContext, "cwd" | "release">): Promise<string> {
+  const { readCuts } = await import("./release-store");
+  const { parseIntent, intentNotes } = await import("./release-intents");
+  const consumed = (await readCuts({ cwd: ctx.cwd })).cuts.filter((c) => c.releaseDigest === ctx.release.releaseDigest).flatMap((c) => c.intents ?? []);
+  if (consumed.length === 0) return "";
+  const top = git(ctx.cwd, ["rev-parse", "--show-toplevel"])?.trim();
+  if (!top) return "";
+  const read: Array<{ bump: "major" | "minor" | "patch"; summary: string }> = [];
+  for (const i of consumed) {
+    const text = git(top, ["show", `${ctx.release.commit}:${i.path}`]);
+    if (text === null) continue;
+    try {
+      read.push({ bump: i.bump, summary: parseIntent(i.path, text).summary });
+    } catch {
+      // A file that can't be read gives no note; the cut read it when it consumed it.
+    }
+  }
+  return intentNotes(read);
+}
+
 /** A GitLab generic package version: the label with what GitLab refuses replaced. */
 export function gitlabPackageVersion(label: string): string {
   return label.replace(/[^0-9A-Za-z.\-_+]/g, "-");
@@ -479,7 +505,8 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     if (n.generate) {
       const previous = await previousMemberRelease(ctx, decl.forge);
       if (n.generate === "commits") {
-        generated = changelogNotes(memberCommits(ctx, previous?.commit ?? null, decl.forge), n.types);
+        // #5159: the summaries of the intent files the cut consumed come first.
+        generated = [await consumedIntentNotes(ctx), changelogNotes(memberCommits(ctx, previous?.commit ?? null, decl.forge), n.types)].filter((p) => p.length > 0).join("\n\n");
       } else {
         // #5150: the previous release's tag is the one release.tag gives its label, as the cut made it.
         const previousTag = previous && previous.label !== null && !decl.tag ? previousReleaseTag(ctx, previous.label) : null;

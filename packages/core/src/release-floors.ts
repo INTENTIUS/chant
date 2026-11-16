@@ -281,3 +281,6 @@ export const RELEASE_TAG_FLOOR = NEXT_RELEASE;
 
 /** The first chant with `chant release doctor`, which checks each `release.publish` target before a cut, and whose `chant release workflow` runs it in a dispatched release's cut job (`release.workflow.doctor`) (#5161). */
 export const RELEASE_DOCTOR_FLOOR = NEXT_RELEASE;
+
+/** The first chant with `chant release next` and `chant release cut auto`, the label from the conventional commits and the `.chant/release/*.md` intent files since the member's previous release; a cut records the intent files it consumed (`intents` on its cut line), `release changed` computes each member's bump from them (`bumpFrom`, `intents`, `intent-pending`), notes generated from commits lead with their summaries, and a dispatched release workflow takes the label `auto` (#5159). */
+export const RELEASE_NEXT_FLOOR = NEXT_RELEASE;

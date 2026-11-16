@@ -405,6 +405,8 @@ export interface ParsedArgs {
   prs?: number[];
   /** `chant release cut --channel <tag>` (#4168 4.3): the tag a publish of the release moves in place of `latest`. */
   channel?: string;
+  /** `chant release next --pre <id>` and `chant release cut auto --pre <id>` (#5159): the next label is a prerelease of the computed version, `<version>-<id>.<n>`. */
+  pre?: string;
   /** `chant release cut --override-green` (#4693): cut a commit that is not green under a person's override on the override ledger. */
   overrideGreen?: boolean;
   /**

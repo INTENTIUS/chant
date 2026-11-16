@@ -53,7 +53,10 @@ import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--sigstore [--assets <dir>]] [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--sigstore [--assets <dir>]] [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release next [--at <sha>] [--pre <id>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+
+/** The label `release cut` takes for the one `release next` computes (#5159). */
+const AUTO_LABEL = "auto";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -459,7 +462,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `the label is given twice, as "${positional}" and --label "${args.label}"`, hint: USAGE }));
     return 1;
   }
-  const label = positional ?? args.label ?? null;
+  let label = positional ?? args.label ?? null;
+  if (args.pre !== undefined && label !== AUTO_LABEL) {
+    console.error(formatError({ message: "--pre names the prerelease id of a computed label, and the cut is given its label", hint: "Cut auto --pre <id>, or give the prerelease label itself, such as 1.5.0-rc.0." }));
+    return 1;
+  }
   // #4693: the reason is the override's, written by the person who overrides.
   if (args.reason !== undefined) {
     console.error(formatError({
@@ -533,6 +540,26 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const { resolveMemberLedger } = await import("../../lifecycle/member-ledger");
       const ledger = await resolveMemberLedger(cwd);
       member = ledger.members.length > 0 ? ledger.members.join("/") : null;
+    }
+
+    // #5159: `auto` is the label the commits and intent files since the previous release give, and every
+    // labelled cut consumes the intent files that name the member.
+    let computed: import("../../lifecycle/release-next").NextRelease | null = null;
+    let intents: import("../../lifecycle/release-next").NextRelease["intents"] = [];
+    {
+      const rn = await import("../../lifecycle/release-next");
+      try {
+        if (label === AUTO_LABEL) {
+          computed = await rn.nextRelease({ cwd, ...(commit ? { at: commit } : {}), ...(args.pre !== undefined ? { pre: args.pre } : {}) });
+          label = computed.label;
+          intents = computed.intents;
+        } else if (label !== null && top && commit) {
+          intents = await rn.memberPendingIntents(cwd, top, commit);
+        }
+      } catch (err) {
+        if (err instanceof rn.ReleaseNextError) return fail(err.code, `no release was cut: ${err.message}`, err.fix);
+        throw err;
+      }
     }
 
     // The signing key is resolved now, so a dry run shows a key that can't be read.
@@ -663,6 +690,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(greenSource ? { green: greenSource } : {}),
       ...(publishes ? { publishes } : {}),
       ...(build ? { build } : {}),
+      ...(intents.length > 0 ? { intents: intents.map(({ path, added, bump }) => ({ path, added, bump })) } : {}),
     };
 
     if (dryRun) {
@@ -696,6 +724,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         at: args.at !== undefined ? { ref: args.at, commit } : null,
         sign: args.sign !== undefined ? { key: publicKey !== null ? publicKey.split(" ")[0] : null, readable: publicKey !== null } : null,
         tag: tag ? { name: tag.name, exists: tag.state === "present" } : null,
+        computed: computed ? { from: computed.from, bump: computed.bump, alreadyCut: computed.alreadyCut, commits: computed.commits.length } : null,
+        intents: intents.map(({ path, bump }) => ({ path, bump })),
         publish: { targets: Array.isArray(publishTargets) ? publishTargets : [], provenance },
         next: [sameWithYes(process.argv.slice(2))],
       };
@@ -721,6 +751,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${where}`);
       if (args.channel) console.log(`  channel ${args.channel}: a publish moves ${args.channel}, not latest`);
       if (prereleaseOf(plan.label)) console.log(`  prerelease: ${prereleaseNote(plan.label, args.channel)}`);
+      if (computed && !computed.alreadyCut) console.log(`  label from release next: ${computed.bump ?? "the prerelease's version"} from ${computed.from.label}, ${computed.commits.length} commit(s) and ${computed.intents.length} intent file(s) since`);
+      for (const i of intents) console.log(`  consumes ${i.path} (${i.bump})`);
       if (plan.green) console.log(`  gate: ${describeGreen(plan.green)}`);
       if (plan.green?.source === "none") console.error(formatWarning({ message: GREEN_NONE_WARNING }));
       if (plan.publishes) console.log(`  an artifact release: no environment is compiled, and it records ${plan.publishes.length} publish target(s)`);
@@ -815,6 +847,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}${lane !== undefined ? `, green in lane ${lane}` : ""}`);
       if (args.channel) console.error(`  channel ${args.channel}`);
       if (prereleaseOf(result.label)) console.error(`  prerelease: ${prereleaseNote(result.label, args.channel)}`);
+      for (const i of result.cut?.intents ?? []) console.error(`  consumed ${i.path} (${i.bump})`);
       if (result.cut?.override) console.error(`  not green: cut under the override by ${result.cut.override.by}: ${result.cut.override.reason}`);
       if (result.cut?.green) console.error(`  gate: ${describeGreen(result.cut.green)}`);
       if (result.release.publishes) console.error(`  publishes: ${result.release.publishes.map((p) => `${p.kind} to ${p.destination}`).join("; ") || "nothing"}`);
@@ -1152,6 +1185,52 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
 }
 
 /**
+ * `release next [--at <sha>] [--pre <id>] [--json]` (#5159): the label the
+ * next release of this member carries, from the conventional commits and
+ * the intent files since its previous release. The label alone goes to
+ * stdout, so a script can read it; why goes to stderr.
+ */
+export async function runReleaseNext(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const cwd = resolve(".");
+  const rn = await import("../../lifecycle/release-next");
+  const { fetchLifecycle } = await import("../../lifecycle/git");
+  await fetchLifecycle({ cwd }).catch(() => false);
+  let doc: import("../../lifecycle/release-next").NextRelease;
+  try {
+    doc = await rn.nextRelease({ cwd, ...(args.at ? { at: args.at } : {}), ...(args.pre !== undefined ? { pre: args.pre } : {}) });
+  } catch (err) {
+    if (!(err instanceof rn.ReleaseNextError)) throw err;
+    if (args.json) console.log(JSON.stringify({ error: { code: err.code, message: err.message, ...(err.fix ? { fix: err.fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${err.message} [${err.code}]`, ...(err.fix ? { hint: err.fix } : {}) }));
+    return 1;
+  }
+  let tag: string | null = null;
+  try {
+    const t = await import("../../lifecycle/release-tag");
+    const tags = await t.memberTags(cwd);
+    tag = t.renderReleaseTag(tags.template, tags.place, doc.label);
+  } catch {
+    tag = null;
+  }
+  if (args.json) {
+    console.log(JSON.stringify({ ...doc, tag }, null, 2));
+    return 0;
+  }
+  console.log(doc.label);
+  if (doc.alreadyCut) {
+    console.error(`  ${doc.at.slice(0, 12)} is already released as ${doc.label}`);
+    return 0;
+  }
+  const n = doc.commits.length;
+  console.error(`  ${doc.bump ?? "the prerelease's version"} from ${doc.from.label} (${doc.from.commit.slice(0, 12)}): ${n} commit${n === 1 ? "" : "s"}${doc.intents.length > 0 ? `, ${doc.intents.length} intent file${doc.intents.length === 1 ? "" : "s"}` : ""}`);
+  for (const c of doc.commits.filter((c) => c.bump !== "patch")) console.error(`    ${c.bump}  ${c.sha.slice(0, 7)} ${c.subject}`);
+  for (const i of doc.intents) console.error(`    ${i.bump}  ${i.path}`);
+  if (tag) console.error(`  tag ${tag}`);
+  return 0;
+}
+
+/**
  * `release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]`
  * (#5134): the members a release at a commit has to cut, in publish order,
  * each with why. `--json` prints the read contract's `release-changed` document.
@@ -1178,7 +1257,8 @@ export async function runReleaseChanged(ctx: CommandContext): Promise<number> {
   for (const m of doc.members) {
     const why = m.reason.member !== null ? `${m.reason.code} ${m.reason.member}` : m.reason.code;
     const label = m.next !== null ? `${m.last?.label ?? "?"} -> ${m.next}` : "no release yet";
-    console.log(`layer ${m.layer}  ${m.member}  ${label}  (${why})`);
+    const from = m.next !== null && m.bumpFrom !== "flag" ? `; ${m.bump} from ${m.bumpFrom === "default" ? "no feat or breaking commit" : m.bumpFrom}` : "";
+    console.log(`layer ${m.layer}  ${m.member}  ${label}  (${why}${from})`);
   }
   return 0;
 }

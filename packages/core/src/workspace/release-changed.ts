@@ -47,15 +47,16 @@ import { readDeclaration, readerVersion, type Declaration } from "./declaration"
 import { isGeneratedPath } from "./generated-files";
 import { memberHolding } from "./record-assets";
 import { workingTree } from "./tree";
+import { changelogBump } from "../lifecycle/release-changelog";
 
 export const RELEASE_CHANGED_CONTRACT_VERSION = 1;
 export const RELEASE_CHANGED_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/release-changed/v1/release-changed.schema.json";
 
 /** Why the read stopped. Closed; each code is in `reason-codes.ts`. */
-export const RELEASE_CHANGED_ERROR_CODES = ["not-a-git-repository", "declaration-missing", "revision-unknown", "bump-invalid", "ledger-unreadable"] as const;
+export const RELEASE_CHANGED_ERROR_CODES = ["not-a-git-repository", "declaration-missing", "revision-unknown", "bump-invalid", "ledger-unreadable", "intent-invalid"] as const;
 
 /** Why a member is in the release. Closed; each code is in `reason-codes.ts`. */
-export const RELEASE_CHANGED_REASON_CODES = ["paths-changed", "needed-by", "range-broken-by"] as const;
+export const RELEASE_CHANGED_REASON_CODES = ["paths-changed", "needed-by", "range-broken-by", "intent-pending"] as const;
 
 export const RELEASE_BUMPS = ["major", "minor", "patch"] as const;
 export type ReleaseBump = (typeof RELEASE_BUMPS)[number];
@@ -84,6 +85,15 @@ export interface ReleaseChangedMember {
   last: LastRelease | null;
   /** The bump applied to `last.label`. */
   bump: ReleaseBump;
+  /**
+   * Where the bump came from (#5159): `flag` for `--bump-member`, `commits`
+   * or `intents` for the higher of the conventional commits over `paths`
+   * since the last release and the pending intent files (`commits` when
+   * they tie), `default` for a patch when neither gives one.
+   */
+  bumpFrom: "flag" | "commits" | "intents" | "default";
+  /** The intent files under `.chant/release/` that name the member and that no cut of it consumed (#5159), by path. */
+  intents: string[];
   /** The label a release of it would carry, or null when there is no last label to bump. */
   next: string | null;
   /** The changed paths that count, from the outermost workspace root. Empty for a member taken only by the closure. */
@@ -223,6 +233,37 @@ export function rangeAdmits(range: string, label: string): boolean {
   return unread;
 }
 
+/** The higher of two bumps; null is lower than any. */
+function maxBump(a: ReleaseBump | null, b: ReleaseBump | null): ReleaseBump | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const order: ReleaseBump[] = ["patch", "minor", "major"];
+  return order.indexOf(a) >= order.indexOf(b) ? a : b;
+}
+
+/**
+ * The bump the conventional commits in `from..to` that touch `paths` (from
+ * the repository root) give, as `changelogBump` decides it (#5159), or null
+ * when none does. The paths go to git on its standard input, literally.
+ */
+function commitBumpOver(top: string, from: string, to: string, paths: readonly string[]): ReleaseBump | null {
+  let out: string;
+  try {
+    out = execFileSync("git", ["log", "--no-merges", "--format=%B%x1e", `${from}..${to}`, "--stdin"], {
+      cwd: top,
+      encoding: "utf-8",
+      input: `--\n${paths.join("\n")}\n`,
+      env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+      maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+  const messages = out.split("\x1e").map((m) => m.trim()).filter(Boolean);
+  return messages.length > 0 ? changelogBump(messages) : null;
+}
+
 // --- the workspace -----------------------------------------------------------
 
 interface Package {
@@ -261,8 +302,33 @@ function outermostRoot(dir: string): string {
 
 const posix = (p: string): string => (sep === "/" ? p : p.split(sep).join("/"));
 
-/** The member's last release from its ledger, or null. */
-async function ledgerRelease(memberDir: string): Promise<LastRelease | null> {
+/**
+ * The directory whose commits count for the member at `memberDir` (#5159):
+ * as `release changed` maps paths, the directory of the outermost
+ * workspace's member of the same name when there is one (a release member
+ * under `release/<name>` releases the package at `packages/<name>`), else
+ * the member's own directory.
+ */
+export function memberSourcePath(memberDir: string): string {
+  const dir = resolve(memberDir);
+  try {
+    const found = findWorkspaceRoot(dir);
+    if (!found) return dir;
+    const rootDir = realpathSync(found.dir);
+    const real = realpathSync(dir);
+    const own = readDeclaration(workingTree(rootDir)).members.find((m) => m.dir !== "." && realpathSync(join(rootDir, m.dir)) === real);
+    if (!own) return dir;
+    const outerDir = realpathSync(outermostRoot(rootDir));
+    if (outerDir === rootDir) return dir;
+    const outer = readDeclaration(workingTree(outerDir)).members.find((m) => m.name === own.name && m.kind !== "workspace");
+    return outer ? join(outerDir, outer.dir) : dir;
+  } catch {
+    return dir;
+  }
+}
+
+/** The member's last release from its ledger, or null, and its cuts. */
+async function ledgerRelease(memberDir: string): Promise<{ last: LastRelease | null; cuts: import("../lifecycle/release-store").ReleaseCut[] }> {
   const loc = { cwd: memberDir };
   await resolveMemberLedger(memberDir);
   const { releases } = await readAllReleases(loc);
@@ -274,7 +340,7 @@ async function ledgerRelease(memberDir: string): Promise<LastRelease | null> {
     if (commit === undefined) continue;
     if (!best || c.timestamp > best.at) best = { at: c.timestamp, label: c.label, commit };
   }
-  return best ? { label: best.label, commit: best.commit, source: "ledger" } : null;
+  return { last: best ? { label: best.label, commit: best.commit, source: "ledger" } : null, cuts };
 }
 
 /** The newest legacy tag of `prefixes` that names a version, as a release, or null. */
@@ -352,6 +418,21 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     bumps.set(member, level as ReleaseBump);
   }
 
+  // #5159: the intent files at the commit, each naming members of this declaration.
+  const { readIntents, consumedIntents, pendingIntents, ReleaseIntentError } = await import("../lifecycle/release-intents");
+  let intentFiles: import("../lifecycle/release-intents").ReleaseIntent[];
+  try {
+    intentFiles = readIntents(top, at);
+  } catch (err) {
+    if (err instanceof ReleaseIntentError) throw new ReadFailure("intent-invalid", err.message);
+    throw err;
+  }
+  for (const f of intentFiles) {
+    for (const name of f.members.keys()) {
+      if (name !== "*" && !names.has(name)) throw new ReadFailure("intent-invalid", `the intent file ${f.path} names ${name}, which is not a chant member of this declaration (${[...names].sort().join(", ") || "none"})`);
+    }
+  }
+
   // Each member's package, last release and the paths changed since.
   const outerMemberOf = (name: string) => outer.members.find((m) => m.name === name);
   const pkgDir = (name: string): string => {
@@ -369,6 +450,10 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     last: LastRelease | null;
     paths: string[];
     changed: boolean;
+    /** The level the commits over `paths` since the last release give, or null. */
+    commitBump: ReleaseBump | null;
+    /** The pending intent files that name it. */
+    intents: Array<{ path: string; bump: ReleaseBump }>;
     /** The package.json of its last release, for the ranges it published. */
     published: Package | null;
   }
@@ -377,7 +462,8 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     const dir = pkgDir(m.name);
     const memberDir = join(rootDir, m.dir);
     if (!existsSync(memberDir)) throw new ReadFailure("ledger-unreadable", `member ${m.name} has no directory ${m.dir}`);
-    const last = (await ledgerRelease(memberDir)) ?? legacyLast;
+    const ledger = await ledgerRelease(memberDir);
+    const last = ledger.last ?? legacyLast;
     let paths: string[] = [];
     if (last) {
       if (tryGit(top, ["cat-file", "-e", `${last.commit}^{commit}`]) === null) throw new ReadFailure("ledger-unreadable", `the last release of ${m.name} is at ${last.commit.slice(0, 12)}, which this clone does not have`);
@@ -393,13 +479,16 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
       paths = [...new Set(paths)].sort();
     }
     const prefix = outerFromTop === "." || outerFromTop === "" ? "" : `${outerFromTop}/`;
+    const intents = pendingIntents(intentFiles, [m.name], consumedIntents(ledger.cuts)).map((i) => ({ path: i.path, bump: i.bump }));
     info.set(m.name, {
       name: m.name,
       dir,
       pkg: readPackage(top, at, `${prefix}${dir}/package.json`),
       last,
       paths,
-      changed: last === null || paths.length > 0,
+      changed: last === null || paths.length > 0 || intents.length > 0,
+      commitBump: last && paths.length > 0 ? commitBumpOver(top, last.commit, at, paths.map((p) => `${prefix}${p}`)) : null,
+      intents,
       published: last ? readPackage(top, last.commit, `${prefix}${dir}/package.json`) : null,
     });
   }
@@ -410,10 +499,15 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
   const needs = new Map<string, string[]>();
   for (const i of info.values()) needs.set(i.name, [...new Set([...i.pkg.ranges.keys()].map((n) => memberOfPackage.get(n)).filter((n): n is string => n !== undefined && n !== i.name))].sort());
 
-  const nextOf = (name: string): { bump: ReleaseBump; next: string | null } => {
-    const bump = bumps.get(name) ?? "patch";
-    const label = info.get(name)!.last?.label;
-    return { bump, next: label ? bumpLabel(label, bump) : null };
+  const nextOf = (name: string): { bump: ReleaseBump; bumpFrom: ReleaseChangedMember["bumpFrom"]; next: string | null } => {
+    const i = info.get(name)!;
+    const flag = bumps.get(name);
+    const fromIntents = i.intents.reduce<ReleaseBump | null>((b, x) => maxBump(b, x.bump), null);
+    const computed = maxBump(i.commitBump, fromIntents);
+    const bump = flag ?? computed ?? "patch";
+    const bumpFrom = flag ? "flag" : computed === null ? "default" : i.commitBump === computed ? "commits" : "intents";
+    const label = i.last?.label;
+    return { bump, bumpFrom, next: label ? bumpLabel(label, bump) : null };
   };
 
   // The closure.
@@ -421,7 +515,7 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
   const queue: string[] = [];
   for (const i of [...info.values()].sort((a, b) => a.name.localeCompare(b.name))) {
     if (i.changed) {
-      chosen.set(i.name, { code: "paths-changed", member: null });
+      chosen.set(i.name, { code: i.last !== null && i.paths.length === 0 ? "intent-pending" : "paths-changed", member: null });
       queue.push(i.name);
     }
   }
@@ -468,7 +562,7 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
   };
   // A changed member another member of the release depends on is there because that member needs it.
   for (const [name, reason] of chosen) {
-    if (reason.code !== "paths-changed") continue;
+    if (reason.code !== "paths-changed" && reason.code !== "intent-pending") continue;
     const needer = [...chosen.keys()].sort().find((m) => m !== name && chosen.get(m)!.code !== "range-broken-by" && reach(m).has(name));
     if (needer !== undefined) chosen.set(name, { code: "needed-by", member: needer });
   }
@@ -489,8 +583,8 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     .sort((a, b) => layerOf.get(a)! - layerOf.get(b)! || a.localeCompare(b))
     .map((name) => {
       const i = info.get(name)!;
-      const { bump, next } = nextOf(name);
-      return { member: name, layer: layerOf.get(name)!, reason: chosen.get(name)!, last: i.last, bump, next, paths: i.paths };
+      const { bump, bumpFrom, next } = nextOf(name);
+      return { member: name, layer: layerOf.get(name)!, reason: chosen.get(name)!, last: i.last, bump, bumpFrom, next, paths: i.paths, intents: i.intents.map((x) => x.path) };
     });
   return { at, members: out };
 }

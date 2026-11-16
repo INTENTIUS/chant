@@ -825,6 +825,22 @@ function gateScript(o: DispatchInput, dispatched: string): string[] {
   ];
 }
 
+/**
+ * The gate's line that decides the label (#5159): the one dispatched, or for
+ * `auto` the one `chant release next` computes at the gate's commit from the
+ * commits and intent files since the member's previous release. One line,
+ * so GitLab runs it as one command.
+ */
+function labelScript(o: DispatchInput): string {
+  return [
+    'label="$CHANT_RELEASE_LABEL"',
+    `if [ "$label" = auto ]; then ${LEDGER_FETCH_FIRST}`,
+    `next="$(${o.chant} release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }`,
+    `label="$(printf '%s' "$next" | ${field("d.label")})"`,
+    "fi",
+  ].join("; ");
+}
+
 /** The cut's shell: cut the label at the gate's commit, then push the tag the cut made. */
 function cutScript(o: DispatchInput, out: string): string[] {
   return [
@@ -859,6 +875,9 @@ function unpackLine(archive: string, cut: boolean): string {
   return `tar -x${cut ? "k" : ""}f ${archive}`;
 }
 
+/** The label the gate decided (#5159): the dispatched one, or the one `auto` resolved to. */
+const GATE_LABEL = "${{ needs.gate.outputs.label }}";
+
 /** GitHub and Forgejo: the release started by hand with a label (#4656). */
 function renderGithubDispatch(o: DispatchInput): string {
   const defaults = o.root ? ["    defaults:", "      run:", `        working-directory: ${o.root}`] : [];
@@ -885,7 +904,9 @@ function renderGithubDispatch(o: DispatchInput): string {
       "      run:",
       "        shell: bash",
       ...(o.root ? [`        working-directory: ${o.root}`] : []),
-      ...(env.length > 0 ? ["    env:", ...env.map(([k, v]) => `      ${k}: ${q(v)}`)] : []),
+      "    env:",
+      `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`,
+      ...env.map(([k, v]) => `      ${k}: ${q(v)}`),
       "    steps:",
       ...githubSetup(commit, b.setup, false),
       ...(install ? [`      - run: ${install}`] : []),
@@ -914,7 +935,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "  workflow_dispatch:",
     "    inputs:",
     "      label:",
-    "        description: The release's label, such as v1.4.0",
+    "        description: The release's label, such as v1.4.0, or auto for the one chant release next computes",
     "        required: true",
     "        type: string",
     "permissions:",
@@ -932,19 +953,20 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...defaults,
     "    outputs:",
     "      commit: ${{ steps.green.outputs.commit }}",
+    "      label: ${{ steps.green.outputs.label }}",
     "    steps:",
     ...githubSetup(undefined, o.chantSetup),
     ...installLines,
     fetches[0]!,
     "      - id: green",
     "        run: |",
-    ...[...gateScript(o, "$GITHUB_SHA"), 'echo "commit=$commit" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
+    ...[...gateScript(o, "$GITHUB_SHA"), labelScript(o), 'echo "commit=$commit" >> "$GITHUB_OUTPUT"', 'echo "label=$label" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
     ...buildJobs,
     "  cut:",
     `    needs: ${built.length > 0 ? `[gate, ${built.join(", ")}]` : "gate"}`,
     "    runs-on: ubuntu-latest",
     ...defaults,
-    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, ...cutEnvToken(o)]),
+    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...cutEnvToken(o)]),
     "    steps:",
     ...githubSetup(commit, o.fullSetup),
     ...installLines,
@@ -981,7 +1003,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     `    needs: [gate, cut${built.map((b) => `, ${b}`).join("")}]`,
     "    runs-on: ubuntu-latest",
     ...defaults,
-    ...o.extra.githubEnv(o.forgeToken),
+    ...o.extra.githubEnv([`      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...o.forgeToken]),
     "    steps:",
     ...githubSetup(commit, o.fullSetup),
     ...installLines,
@@ -1000,7 +1022,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
   ];
   if (o.after.length > 0) {
-    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...defaults, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
+    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
   }
   return tagComments(`${lines.join("\n")}\n`);
 }
@@ -1031,7 +1053,8 @@ function renderGitlabDispatch(o: DispatchInput): string {
     ...(needs.length > 0 ? [`  needs: [${needs.join(", ")}]`] : []),
     ...extra,
     "  script:",
-    ...script.map((l) => `    - ${JSON.stringify(l)}`),
+    // #5159: a pipeline variable outranks the gate's dotenv, so the label the gate decided comes in as CHANT_RELEASE_NEXT.
+    ...(needs.length > 0 ? ['export CHANT_RELEASE_LABEL="$CHANT_RELEASE_NEXT"'] : []).concat(script).map((l) => `    - ${JSON.stringify(l)}`),
   ];
   const checkout = ['git checkout --detach "$CHANT_RELEASE_COMMIT"'];
   // #5152: a build job per runner (tags), whose archive GitLab hands to the jobs that need it, in the project directory.
@@ -1055,7 +1078,12 @@ function renderGitlabDispatch(o: DispatchInput): string {
   // Unpacked, then moved out of the checkout, so the publish finds the tree as the cut left it.
   const restore = (cut: boolean): string[] => o.builds.flatMap((b) => [unpackLine(releaseBuildArchive(b.name), cut), `mv ${releaseBuildArchive(b.name)} /tmp/`]);
   const lines = [
-    ...job("chant-release-gate", [], [...cd, ...install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
+    ...job(
+      "chant-release-gate",
+      [],
+      [...cd, ...install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), labelScript(o), 'printf \'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n\' "$commit" "$label" > "$CI_PROJECT_DIR/chant-release-gate.env"'],
+      ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"],
+    ),
     ...buildJobs,
     "",
     ...job(

@@ -49,7 +49,7 @@ describe("a dispatched release (#4656)", () => {
       expect(Object.keys(doc.jobs)).toEqual(["gate", "cut", "publish", "after-release"]);
       const { gate, cut, publish } = doc.jobs as Record<string, GhJob>;
 
-      expect(gate!.outputs).toEqual({ commit: "${{ steps.green.outputs.commit }}" });
+      expect(gate!.outputs).toEqual({ commit: "${{ steps.green.outputs.commit }}", label: "${{ steps.green.outputs.label }}" });
       const green = gate!.steps.find((s) => s.id === "green")!.run!;
       expect(green).toContain('npx chant ci last-green --from "$GITHUB_SHA" --json');
       expect(green).toContain('echo "commit=$commit" >> "$GITHUB_OUTPUT"');
@@ -58,7 +58,7 @@ describe("a dispatched release (#4656)", () => {
       expect(runs(gate!).join("\n")).not.toMatch(/release cut|git push|git tag/);
 
       expect(cut!.needs).toBe("gate");
-      expect(cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
+      expect(cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}" });
       expect(cut!.steps[0]!.with).toEqual({ ref: "${{ needs.gate.outputs.commit }}", "fetch-depth": 0 });
       const cutRun = runs(cut!).join("\n");
       expect(cutRun).toContain(`npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"`);
@@ -132,7 +132,7 @@ describe("a dispatched release (#4656)", () => {
     expect(doc["chant-release-gate"]!.artifacts).toEqual({ reports: { dotenv: "chant-release-gate.env" } });
     expect(doc["chant-release-gate"]!.script.join("\n")).toContain('--from "$CI_COMMIT_SHA"');
     expect(doc["chant-release-cut"]!.needs).toEqual(["chant-release-gate"]);
-    expect(doc["chant-release-cut"]!.script[0]).toBe('git checkout --detach "$CHANT_RELEASE_COMMIT"');
+    expect(doc["chant-release-cut"]!.script.slice(0, 2)).toEqual(['export CHANT_RELEASE_LABEL="$CHANT_RELEASE_NEXT"', 'git checkout --detach "$CHANT_RELEASE_COMMIT"']);
     expect(doc["chant-release-cut"]!.script.join("\n")).toContain("CHANT_RELEASE_TOKEN");
     const publish = doc["chant-release-publish"]!;
     expect(publish.id_tokens).toEqual({ SIGSTORE_ID_TOKEN: { aud: "sigstore" } });
@@ -187,8 +187,8 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
   test("github: the scope joins the workflow's, and the cut and publish jobs get the variables and the steps after the install", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, pipeline })) as GhDoc;
     expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
-    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
-    expect(doc.jobs.publish!.env).toEqual({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
+    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
+    expect(doc.jobs.publish!.env).toEqual({ CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
     expect(doc.jobs.gate!.env).toBeUndefined();
     for (const job of [doc.jobs.cut!, doc.jobs.publish!]) {
       const i = job.steps.findIndex((s) => s.run === "npm ci");
@@ -241,13 +241,13 @@ describe("the publish job hands GITHUB_TOKEN to a GitHub forge target (#4767)", 
   test("both triggers: the publish job gets the job's token, and no other job does", () => {
     for (const trigger of ["tag", "dispatch"] as const) {
       const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { trigger } })) as GhDoc;
-      expect(doc.jobs.publish!.env, trigger).toEqual({ GITHUB_TOKEN: "${{ github.token }}" });
+      expect(doc.jobs.publish!.env, trigger).toEqual({ ...(trigger === "dispatch" ? { CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}" } : {}), GITHUB_TOKEN: "${{ github.token }}" });
       if (trigger === "dispatch") {
         // #5161: the cut job's release doctor checks the forge token too.
-        expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+        expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
         expect(doc.jobs.gate!.env).toBeUndefined();
         const off = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghForge], pipeline: { trigger, doctor: false } })) as GhDoc;
-        expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
+        expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}" });
       }
     }
   });
@@ -397,15 +397,21 @@ describe("the gate stops when the green commit's workflow files differ from the 
     };
     const green = commit({ ".github/workflows/chant-release.yml": "v1\n", "src/a.ts": "1\n" }, "green");
     const stub = join(dir, "..", `${dir.split("/").pop()}-chant`);
-    spawnSync("sh", ["-c", `printf '#!/bin/sh\\necho "{\\\\"commit\\\\":{\\\\"sha\\\\":\\\\"%s\\\\"}}"\\n' "$1" > "$2" && chmod +x "$2"`, "sh", green, stub]);
+    // #5159: `release next` answers 1.5.0 at the commit it is given, or refuses one with no release before it.
+    writeFileSync(
+      stub,
+      ["#!/bin/sh", 'if [ "$1 $2" = "release next" ]; then', `  if [ "$4" = "${green}" ]; then echo '{"label":"1.5.0"}'; exit 0; fi`, `  echo '{"error":{"code":"release-next-no-previous"}}'; exit 1`, "fi", `echo '{"commit":{"sha":"${green}"}}'`, ""].join("\n"),
+      { mode: 0o755 },
+    );
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch", chant: stub }, ...over })) as GhDoc;
     const script = doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!;
-    const run = (sha: string) => {
+    const run = (sha: string, label = "1.4.0") => {
       const out = join(dir, ".gh-output");
-      const r = spawnSync("bash", ["-e", "-c", script], { cwd: dir, encoding: "utf-8", env: { ...process.env, GITHUB_SHA: sha, GITHUB_OUTPUT: out } });
+      spawnSync("sh", ["-c", `: > "$1"`, "sh", out]);
+      const r = spawnSync("bash", ["-e", "-c", script], { cwd: dir, encoding: "utf-8", env: { ...process.env, GITHUB_SHA: sha, GITHUB_OUTPUT: out, CHANT_RELEASE_LABEL: label } });
       return { status: r.status, stderr: r.stderr, output: spawnSync("cat", [out], { encoding: "utf-8" }).stdout };
     };
-    return { commit, run, green };
+    return { commit, run, green, dir };
   }
 
   test("a commit after the green one that changed only code: the gate hands on the green commit", () => {
@@ -414,7 +420,20 @@ describe("the gate stops when the green commit's workflow files differ from the 
     const r = run(head);
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
-    expect(r.output).toBe(`commit=${green}\n`);
+    expect(r.output).toBe(`commit=${green}\nlabel=1.4.0\n`);
+  });
+
+  test("auto (#5159): the gate fetches the ledger, takes the label release next computes at the green commit, and passes a label it is given through", () => {
+    const { commit, run, green, dir } = gate();
+    const bare = mkdtempSync(join(tmpdir(), "chant-5159-origin-"));
+    spawnSync("git", ["init", "-q", "--bare", bare]);
+    spawnSync("git", ["remote", "add", "origin", bare], { cwd: dir });
+    const head = commit({ "src/a.ts": "2\n" }, "code");
+    const r = run(head, "auto");
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(r.output).toBe(`commit=${green}\nlabel=1.5.0\n`);
+    expect(run(green, "1.4.0").output).toBe(`commit=${green}\nlabel=1.4.0\n`);
   });
 
   test("a commit after the green one changed .github/workflows: the gate stops and names it", () => {
@@ -579,14 +598,14 @@ describe("release-only adoption (#5149)", () => {
     expect(green).toContain('commit="$GITHUB_SHA"');
     expect(green).not.toContain("ci last-green");
     expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", checks: "read", statuses: "read" });
-    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
   });
 
   test("none: the gate names the dispatched commit and no scope or token is added; the chant gate renders as before", () => {
     const none = parseYAML(dispatch("github", { green: "none" })) as GhDoc;
     expect(none.jobs.gate!.steps.find((s) => s.id === "green")!.run!).not.toContain("ci last-green");
     expect(none.permissions).toEqual({ contents: "write", "id-token": "write" });
-    expect(none.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
+    expect(none.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}" });
     expect(dispatch("github", { green: "chant" })).toBe(dispatch("github"));
   });
 
@@ -694,14 +713,14 @@ describe("toolchains and per-platform builds (#5152)", () => {
     expect(arm["runs-on"]).toBe("ubuntu-24.04-arm");
     expect(arm.permissions).toEqual({ contents: "read" });
     expect(arm.defaults).toEqual({ run: { shell: "bash" } });
-    expect(arm.env).toBeUndefined();
+    expect(arm.env).toEqual({ CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}" });
     expect(steps(arm)).toEqual([
       { uses: "actions/checkout", with: { ref: "${{ needs.gate.outputs.commit }}", "fetch-depth": 0, "persist-credentials": false } },
       { uses: "actions/setup-go", with: { "go-version-file": "go.mod", cache: false } },
       { uses: "actions/upload-artifact", with: { name: "chant-release-build-linux-arm64", path: "chant-release-build-linux-arm64.tar", "if-no-files-found": "error", "retention-days": 1 } },
     ]);
     expect(runs(arm)).toEqual(["npm ci", builds[0]!.build, "tar -cf chant-release-build-linux-arm64.tar -- dist/acme-linux-arm64"]);
-    expect(doc.jobs["build-darwin"]!.env).toEqual({ CGO_ENABLED: "0" });
+    expect(doc.jobs["build-darwin"]!.env).toEqual({ CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", CGO_ENABLED: "0" });
     expect(doc.jobs["build-windows"]!["runs-on"]).toEqual(["windows-latest"]);
     expect(runs(doc.jobs["build-windows"]!)[0]).toBe(builds[2]!.build);
     expect(doc.jobs.cut!.needs).toEqual(["gate", "build-linux-arm64", "build-darwin", "build-windows"]);
@@ -733,7 +752,7 @@ describe("toolchains and per-platform builds (#5152)", () => {
     expect(arm.tags).toEqual(["ubuntu-24.04-arm"]);
     expect(arm.needs).toEqual(["chant-release-gate"]);
     expect(arm.artifacts!.paths).toEqual(["chant-release-build-linux-arm64.tar"]);
-    expect(arm.script).toEqual(['git checkout --detach "$CHANT_RELEASE_COMMIT"', "npm ci", builds[0]!.build, "tar -cf chant-release-build-linux-arm64.tar -- dist/acme-linux-arm64"]);
+    expect(arm.script).toEqual(['export CHANT_RELEASE_LABEL="$CHANT_RELEASE_NEXT"', 'git checkout --detach "$CHANT_RELEASE_COMMIT"', "npm ci", builds[0]!.build, "tar -cf chant-release-build-linux-arm64.tar -- dist/acme-linux-arm64"]);
     expect(doc["chant-release-build-darwin"]!.variables).toEqual({ GIT_DEPTH: "0", CGO_ENABLED: "0" });
     expect(doc["chant-release-cut"]!.needs).toEqual(["chant-release-gate", "chant-release-build-linux-arm64", "chant-release-build-darwin"]);
     const cut = doc["chant-release-cut"]!.script;
@@ -851,14 +870,14 @@ describe("release doctor in the workflow (#5161)", () => {
 
   test("under forge-checks with a GitHub forge target, the cut job gets GITHUB_TOKEN once, and the doctor runs with it", () => {
     const doc = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge })) as GhDoc;
-    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
     expect(doc.permissions).toMatchObject({ checks: "read", statuses: "read" });
     expect(runs(doc.jobs.cut!)).toContain("npx chant release doctor");
     // doctor: false keeps forge-checks' token and drops nothing else.
     const off = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge, pipeline: { trigger: "dispatch", doctor: false } })) as GhDoc;
-    expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+    expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
     const chant = parseYAML(dispatch("github", { publish: ghForge })) as GhDoc;
-    expect(chant.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+    expect(chant.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
   });
 
   test("GitLab forge-checks: the doctor runs after the cut's token for the pipelines is set, and before the cut", () => {

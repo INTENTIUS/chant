@@ -77,6 +77,7 @@ import {
   type ReleaseArtifact,
   type ReleaseCut,
   type ReleaseCutGreen,
+  type ReleaseCutIntent,
   type ReleaseCutOverride,
   type ReleasePublish,
   type ReleaseTarget,
@@ -235,6 +236,8 @@ export interface CutRequest {
    * environments, so a commit that does not build is not cut.
    */
   build?: () => void | Promise<void>;
+  /** The intent files the cut consumes (#5159), recorded on its cut line. */
+  intents?: readonly ReleaseCutIntent[];
 }
 
 export interface CutResult {
@@ -332,19 +335,32 @@ export function differingBuildSteps(targets: readonly CompiledTarget[]): Array<{
   return out.sort((a, b) => (a.component < b.component ? -1 : 1));
 }
 
-/** The earlier release of this member cut from the nearest ancestor of `commit`. */
-export async function previousRelease(top: string, commit: string, cwd: string): Promise<Release | undefined> {
+/**
+ * Every cut release of this member from `commit` or an ancestor of it, the
+ * nearest commit first and the newest cut of one commit first, each with
+ * the label its cuts give it (#5159). Read from the member's ledger only:
+ * no tag is read.
+ */
+export async function ancestorReleases(top: string, commit: string, cwd: string): Promise<Array<{ release: Release; label: string | null }>> {
   const { releases } = await readAllReleases({ cwd });
   const { cuts } = await readCuts({ cwd });
   const cutAt = new Map<string, string>();
   for (const c of cuts) if (!cutAt.has(c.releaseDigest) || c.timestamp > cutAt.get(c.releaseDigest)!) cutAt.set(c.releaseDigest, c.timestamp);
-  const candidates = releases
-    .filter((r) => cutAt.has(r.releaseDigest) && r.commit !== commit)
-    .filter((r) => tryGit(top, ["merge-base", "--is-ancestor", r.commit, commit]) !== null)
-    .map((r) => ({ r, depth: Number(tryGit(top, ["rev-list", "--count", r.commit]) ?? 0), at: cutAt.get(r.releaseDigest)! }))
-    // The nearest ancestor first, then the newest cut of it.
-    .sort((a, b) => b.depth - a.depth || (b.at < a.at ? -1 : b.at > a.at ? 1 : 0));
-  return candidates[0]?.r;
+  const labels = labelsByDigest(cuts);
+  return (
+    releases
+      .filter((r) => cutAt.has(r.releaseDigest))
+      .filter((r) => r.commit === commit || tryGit(top, ["merge-base", "--is-ancestor", r.commit, commit]) !== null)
+      .map((r) => ({ r, depth: Number(tryGit(top, ["rev-list", "--count", r.commit]) ?? 0), at: cutAt.get(r.releaseDigest)! }))
+      // The nearest ancestor first, then the newest cut of it.
+      .sort((a, b) => b.depth - a.depth || (b.at < a.at ? -1 : b.at > a.at ? 1 : 0))
+      .map(({ r }) => ({ release: r, label: labels.get(r.releaseDigest) ?? null }))
+  );
+}
+
+/** The earlier release of this member cut from the nearest ancestor of `commit`. */
+export async function previousRelease(top: string, commit: string, cwd: string): Promise<Release | undefined> {
+  return (await ancestorReleases(top, commit, cwd)).find((a) => a.release.commit !== commit)?.release;
 }
 
 /** What every cut and every dry run reads and compiles before it decides. */
@@ -912,6 +928,7 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       ...(p.lane !== null ? { lane: p.lane } : {}),
       ...(p.override ? { override: p.override } : {}),
       ...(p.green ? { green: p.green } : {}),
+      ...(req.intents && req.intents.length > 0 ? { intents: [...req.intents] } : {}),
     },
     { cwd },
   );

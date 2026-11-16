@@ -219,6 +219,31 @@ export interface ReleaseCut {
    * on a cut under an override, and on every cut written before #5149.
    */
   green?: ReleaseCutGreen;
+  /**
+   * The intent files the cut consumed (#5159): each `.chant/release/*.md`
+   * at the commit that named this member and that no earlier cut of it
+   * had consumed. A later release of the member skips them. Absent when
+   * there were none, and on every cut written before #5159.
+   */
+  intents?: ReleaseCutIntent[];
+}
+
+/** One intent file a cut consumed (#5159). */
+export interface ReleaseCutIntent {
+  /** The file's path from the repository root, such as `.chant/release/fast-sync.md`. */
+  path: string;
+  /** The full sha of the commit that added the file: a file deleted and written again is another intent. */
+  added: string;
+  /** The level it gave this member. */
+  bump: "major" | "minor" | "patch";
+}
+
+/** Whether `v` reads as a list of {@link ReleaseCutIntent}. */
+function isCutIntents(v: unknown): v is ReleaseCutIntent[] {
+  return (
+    Array.isArray(v) &&
+    v.every((i) => i && typeof i === "object" && typeof (i as ReleaseCutIntent).path === "string" && typeof (i as ReleaseCutIntent).added === "string" && ["major", "minor", "patch"].includes((i as ReleaseCutIntent).bump))
+  );
 }
 
 /** The green gate a cut passed (#5149), `release.green`. */
@@ -496,6 +521,7 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         (c.lane === undefined || typeof c.lane === "string") &&
         (c.override === undefined || isCutOverride(c.override)) &&
         (c.green === undefined || isCutGreen(c.green)) &&
+        (c.intents === undefined || isCutIntents(c.intents)) &&
         (c.composed === undefined || (typeof c.composed === "object" && c.composed !== null && typeof c.composed.base === "string" && Array.isArray(c.composed.sources)));
       if (!ok) {
         malformed++;
@@ -581,6 +607,7 @@ export async function appendCut(
       ...(input.lane ? { lane: input.lane } : {}),
       ...(input.override ? { override: input.override } : {}),
       ...(input.green ? { green: input.green } : {}),
+      ...(input.intents && input.intents.length > 0 ? { intents: input.intents } : {}),
     };
     const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${JSON.stringify(cut, sortedJsonReplacer)}\n`;
     try {
