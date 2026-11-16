@@ -64,8 +64,8 @@
  * can't stay symbolic and move with the next `--set`.
  *
  * A floor shipped in <v> when it was already NEXT_RELEASE at <v>'s release
- * commit (#4540): the commit `release/npm/<v>` (or `chant-v<v>`) names, or
- * `--rev`. A floor merged after the cut stays NEXT_RELEASE and moves to the
+ * commit (#4540): the commit `release/npm/<v>`, `chant-v<v>` or core's member
+ * tag `release/npm/core/<v>` names, or `--rev`. A floor merged after the cut stays NEXT_RELEASE and moves to the
  * new number, and so do its NEXT_RELEASE_TEXT entries and the texts they
  * list. With no tag and no `--rev` the freeze refuses rather than guess.
  * It then prints the tests a freeze leaves stale: a test that asserts
@@ -132,8 +132,8 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-function git(args: string[]): string {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
+function git(args: string[], cwd = ROOT): string {
+  return execFileSync("git", args, { cwd, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
 }
 
 function reader(rev: string | undefined): (file: string) => string {
@@ -261,11 +261,16 @@ export function staleFloorTests(tests: readonly { file: string; src: string }[],
   return out;
 }
 
-/** The commit a release was cut from: the one its `release/npm/<v>` or `chant-v<v>` tag names. */
-function releaseCommit(version: string): string | undefined {
-  for (const tag of [`release/npm/${version}`, `chant-v${version}`]) {
+/**
+ * The commit core's release <v> was cut from: the one its lockstep tag
+ * (`release/npm/<v>`, `chant-v<v>`) or core's member tag
+ * (`release/npm/core/<v>`) names. Another member's tag is not a core release
+ * (#5135).
+ */
+export function releaseCommit(version: string, cwd = ROOT): string | undefined {
+  for (const tag of [`release/npm/${version}`, `chant-v${version}`, `release/npm/core/${version}`]) {
     try {
-      return git(["rev-parse", "--verify", "--quiet", `refs/tags/${tag}^{commit}`]).trim() || undefined;
+      return git(["rev-parse", "--verify", "--quiet", `refs/tags/${tag}^{commit}`], cwd).trim() || undefined;
     } catch {
       // not this tag
     }
@@ -300,10 +305,15 @@ export function releasedVersions(tags: string[], npmVersions?: string[], lexicon
   return out;
 }
 
-/** The checkout's release tags, read once. `[0-9]*` keeps a member tag (`release/npm/core/1.0.0`) out of the lockstep labels. */
+/** A checkout's release tags. `[0-9]*` keeps a member tag (`release/npm/core/1.0.0`) out of the lockstep labels. */
+export function listReleaseTags(cwd = ROOT): string[] {
+  return git(["tag", "-l", "release/npm/[0-9]*", "release/npm/core/*", "release/npm/lexicon-*", "chant-v*", "lexicon-*-v*"], cwd).split("\n");
+}
+
+/** The checkout's release tags, read once. */
 let tagCache: string[] | undefined;
 function releaseTags(): string[] {
-  tagCache ??= git(["tag", "-l", "release/npm/[0-9]*", "release/npm/core/*", "release/npm/lexicon-*", "chant-v*", "lexicon-*-v*"]).split("\n");
+  tagCache ??= listReleaseTags();
   return tagCache;
 }
 

@@ -48,7 +48,9 @@ head=$(git rev-parse origin/main)
 sha=$(git rev-parse "${sha:-$head}^{commit}")
 short=$(git rev-parse --short "$sha")
 git merge-base --is-ancestor "$sha" origin/main || die "$short is not on origin/main"
-released=$(git ls-remote origin 'refs/tags/release/npm/*' | awk -v s="$sha" '$1 == s { sub("refs/tags/release/npm/", "", $2); sub("\\^\\{\\}$", "", $2); print $2 }' | head -1)
+# Only a lockstep tag, release/npm/<v>, counts: ls-remote's `*` crosses `/`,
+# and a member's release/npm/<member>/<v> releases one package (#5135).
+released=$(git ls-remote origin 'refs/tags/release/npm/*' | awk -v s="$sha" '$1 == s { sub("refs/tags/release/npm/", "", $2); sub("\\^\\{\\}$", "", $2); if ($2 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) print $2 }' | head -1)
 [ -z "$released" ] || { say "$short is already released as $released"; exit 0; }
 
 # The required phases and the check runs each needs, from the declaration on main.

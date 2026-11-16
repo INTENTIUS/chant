@@ -167,4 +167,25 @@ describe("release-when-green (#4218)", () => {
     expect(log()).not.toContain("workflow run");
     expect(log()).not.toContain("release ");
   });
+
+  it("stops at a commit a lockstep release/npm/<v> tag names", () => {
+    fakes();
+    git(origin, "tag", "release/npm/0.124.50", sha);
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("is already released as 0.124.50");
+    expect(log()).not.toContain("release ");
+  });
+
+  it("a member's release/npm/<member>/<v> tag does not make the commit released (#5135)", () => {
+    fakes();
+    checks("check|completed|success", "suites|completed|success");
+    git(origin, "tag", `ci/green/${sha}`, sha);
+    git(origin, "tag", "release/npm/core/0.125.0", sha);
+    git(origin, "tag", "-a", "-m", "m", "release/npm/lexicon-aws/0.125.1", sha);
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).not.toContain("already released");
+    expect(log()).toContain(`release patch ${sha}`);
+  });
 });

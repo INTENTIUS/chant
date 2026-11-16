@@ -196,24 +196,101 @@ release_apply_version() {
   npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null
 }
 
-# release_lexicon_floor <name> <rev> prints the highest version lexicons/<name>
-# has anywhere (#4040): its package.json at <rev> and on main, its
-# lexicon-<name>-v* tags, the release/npm/* tags (`just release` publishes
-# every package at that label without moving package.json), and npm. So
-# `just release-lexicon` never picks a version at or below one npm has. A
-# package npm has never seen (E404) adds nothing; any other `npm view` failure
-# refuses, since the floor would then be a guess.
-release_lexicon_floor() {
-  local name="$1" rev="$2" file="lexicons/$1/package.json" pkg out t
+# release_legacy_versions prints the version of every lockstep release tag:
+# release/npm/<v> and chant-v<v>, each of which shipped every package (#5132).
+# A member's own tag is release/npm/<member>/<v> and git's `*` crosses `/`, so
+# the pattern is `release/npm/[0-9]*` and each tag is checked for a version
+# directly after the prefix: release/npm/core/0.125.0 is not a lockstep label.
+release_legacy_versions() {
+  local t
+  git tag -l 'release/npm/[0-9]*' 'chant-v*' | while read -r t; do
+    t="${t#release/npm/}"
+    t="${t#chant-v}"
+    [[ "$t" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$t"
+  done
+  return 0
+}
+
+# release_member_dir <member> [<rev>] prints the package directory the outer
+# member <member> owns (`lexicon-aws` -> `lexicons/aws`), from
+# chant.workspace.json at <rev> (the working tree when none). The release
+# members under release/ take these names (scripts/generate-release-members.ts).
+release_member_dir() {
+  local member="$1" rev="${2:-}" decl dir
+  if [ -n "$rev" ]; then decl=$(git show "$rev:chant.workspace.json" 2>/dev/null) || decl=""
+  else decl=$(cat chant.workspace.json 2>/dev/null) || decl=""; fi
+  dir=$(jq -r --arg m "$member" '.members[]? | select(.name == $m) | .dir // empty' <<<"$decl" 2>/dev/null | head -1)
+  if [ -z "$dir" ]; then
+    echo "release: no member $member in chant.workspace.json${rev:+ at $rev}" >&2
+    return 1
+  fi
+  echo "$dir"
+}
+
+# release_member_labels <member> prints the labels in release/<member>'s
+# ledger (`chant release list --json`). A label is spent once cut, even when
+# its publish never reached npm and its tag was deleted (#1481). Nothing when
+# the member directory or the ledger is missing. RELEASE_CHANT overrides the
+# chant command (default: this checkout's CLI through tsx).
+release_member_labels() {
+  local member="$1" top chant
+  top=$(git rev-parse --show-toplevel)
+  [ -d "$top/release/$member" ] || return 0
+  chant="${RELEASE_CHANT:-npx tsx $top/packages/core/src/cli/main.ts}"
+  (cd "$top/release/$member" && $chant release list --json 2>/dev/null) \
+    | jq -r '.releases[]?.label // empty' 2>/dev/null \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true
+}
+
+# release_package_floor <member> <dir> <rev> prints the highest version the
+# package in <dir> has anywhere: its package.json at <rev> and on main, its
+# member tags release/npm/<member>/<v>, a lexicon's lexicon-<n>-v<v> tags, the
+# lockstep tags (release_legacy_versions), the labels in its release member's
+# ledger (unless a fourth argument `no-ledger` is given), and every version
+# npm lists for it. So the next label is always past npm's. A package npm has
+# never seen (E404) adds nothing; any other `npm view` failure refuses, since
+# the floor would then be a guess.
+release_package_floor() {
+  local member="$1" dir="$2" rev="$3" ledger="${4:-}" file="$2/package.json" pkg out t v
   local versions=("$(release_version_at "$rev" "$file")" "$(release_version_at "${RELEASE_MAIN:-origin/main}" "$file")")
-  while read -r t; do [ -n "$t" ] && versions+=("${t#"lexicon-$name-v"}"); done < <(git tag -l "lexicon-$name-v*")
-  while read -r t; do [ -n "$t" ] && versions+=("${t#release/npm/}"); done < <(git tag -l 'release/npm/*')
+  while read -r t; do
+    v="${t#"release/npm/$member/"}"
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && versions+=("$v")
+  done < <(git tag -l "release/npm/$member/*")
+  if [[ "$member" == lexicon-* ]]; then
+    while read -r t; do
+      v="${t#"$member-v"}"
+      [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && versions+=("$v")
+    done < <(git tag -l "$member-v*")
+  fi
+  while read -r v; do [ -n "$v" ] && versions+=("$v"); done < <(release_legacy_versions)
+  if [ "$ledger" != no-ledger ]; then
+    while read -r v; do [ -n "$v" ] && versions+=("$v"); done < <(release_member_labels "$member")
+  fi
   pkg=$(git show "$rev:$file" | jq -r .name)
-  if out=$(npm view "$pkg" version 2>&1); then
-    versions+=("$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')")
+  if out=$(npm view "$pkg" versions --json 2>&1); then
+    # One version prints as a string, several as an array.
+    while read -r v; do [ -n "$v" ] && versions+=("$v"); done < <(printf '%s' "$out" | tr -d '[]",' | tr -s '[:space:]' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
   elif ! printf '%s' "$out" | grep -q 'E404'; then
-    echo "release: npm view $pkg version failed, so the version floor is unknown: $(printf '%s' "$out" | tail -1)" >&2
+    echo "release: npm view $pkg versions failed, so the version floor is unknown: $(printf '%s' "$out" | tail -1)" >&2
     return 1
   fi
   release_max "${versions[@]}"
+}
+
+# release_member_floor <member> <rev> prints the floor of release member
+# <member>'s next label (#5135): release_package_floor over the package its
+# outer member owns. The next label is release_next over it.
+release_member_floor() {
+  local dir
+  dir=$(release_member_dir "$1" "$2") || return 1
+  release_package_floor "$1" "$dir" "$2"
+}
+
+# release_lexicon_floor <name> <rev> is release_member_floor for
+# lexicons/<name> (member lexicon-<name>), for `just release-lexicon` (#4040).
+# It runs in a throwaway worktree with no node_modules, and a lexicon release
+# writes no ledger, so it reads none.
+release_lexicon_floor() {
+  release_package_floor "lexicon-$1" "lexicons/$1" "$2" no-ledger
 }

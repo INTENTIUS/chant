@@ -373,12 +373,11 @@ release bump="patch" *args:
     for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
       versions+=("$(release_version_at "$sha" "$f")")
     done
-    while read -r t; do
-      [ -n "$t" ] && versions+=("${t#chant-v}")
-    done < <(git tag -l 'chant-v*')
-    while read -r t; do
-      [ -n "$t" ] && versions+=("${t#release/npm/}")
-    done < <(git tag -l 'release/npm/*')
+    # release_legacy_versions reads release/npm/<v> and chant-v<v> only, never
+    # a member's release/npm/<member>/<v> (#5135).
+    while read -r v; do
+      [ -n "$v" ] && versions+=("$v")
+    done < <(release_legacy_versions)
     # A label in the release ledger is spent even when its publish never
     # reached npm and its tag was deleted (#1481): labels bind once, so the
     # next cut counts them too (0.124.53 was cut, failed in release-pack
@@ -532,8 +531,9 @@ release-lexicon name bump="patch" *args:
       echo "refusing to release: ${bump_files[0]} does not exist at $(git rev-parse --short "$sha")" >&2
       exit 1
     fi
-    # Floor on main, on this lexicon's tags, on release/npm/* (which moves no
-    # package.json) and on npm, so the version is always past npm's (#4040).
+    # Floor on main, on this lexicon's tags, on the lockstep release/npm/<v>
+    # tags (which move no package.json) and on npm, so the version is always
+    # past npm's (#4040, #5135).
     git fetch --quiet origin 'refs/tags/lexicon-{{name}}-v*:refs/tags/lexicon-{{name}}-v*' 'refs/tags/release/*:refs/tags/release/*'
     current=$(release_lexicon_floor {{name}} "$sha")
     next=$(release_next "$current" "$RELEASE_BUMP")

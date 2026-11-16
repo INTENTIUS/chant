@@ -224,10 +224,14 @@ describe("release wiring: release the newest green commit (#2816)", () => {
     // release-lexicon floors through release_lexicon_floor (#4040), which also reads tags and npm.
     expect(recipeBody("release-lexicon")).toMatch(/release_lexicon_floor \{\{name\}\} "\$sha"/);
     const lib = readFileSync(join(repoRoot, "scripts", "release-lib.sh"), "utf-8");
-    const floor = lib.slice(lib.indexOf("release_lexicon_floor() {"));
+    // #5135: release_lexicon_floor is release_package_floor for lexicons/<name>.
+    expect(lib.slice(lib.indexOf("release_lexicon_floor() {"))).toMatch(/release_package_floor "lexicon-\$1" "lexicons\/\$1" "\$2"/);
+    const floor = lib.slice(lib.indexOf("release_package_floor() {"));
     expect(floor).toMatch(/release_version_at "\$\{RELEASE_MAIN:-origin\/main\}"/);
-    expect(floor).toMatch(/git tag -l 'release\/npm\/\*'/);
-    expect(floor).toMatch(/npm view "\$pkg" version/);
+    expect(floor).toMatch(/release_legacy_versions/);
+    expect(floor).toMatch(/npm view "\$pkg" versions/);
+    // Lockstep tags only: a member's release/npm/<member>/<v> is no lockstep label.
+    expect(lib).toMatch(/git tag -l 'release\/npm\/\[0-9\]\*' 'chant-v\*'/);
   });
 
   it("a push to main does not cancel main's chant run; PR runs still cancel", () => {
@@ -269,7 +273,7 @@ describe("release wiring: just release runs chant release cut (#4040)", () => {
 
   it("floors on package.json at the commit and on every chant-v and release/npm tag", () => {
     expect(body()).toMatch(/release_version_at "\$sha"/);
-    expect(body()).toMatch(/git tag -l 'chant-v\*'/);
-    expect(body()).toMatch(/git tag -l 'release\/npm\/\*'/);
+    // release_legacy_versions: chant-v<v> and release/npm/<v>, never release/npm/<member>/<v> (#5135).
+    expect(body()).toMatch(/done < <\(release_legacy_versions\)/);
   });
 });

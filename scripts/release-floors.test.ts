@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { freezeFloorSource, freezeTextList, nextPatch, releasedVersions, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
+import { freezeFloorSource, freezeTextList, listReleaseTags, nextPatch, releaseCommit, releasedVersions, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
 
 const root = join(import.meta.dirname, "..");
 
@@ -254,6 +254,33 @@ describe("release floors --freeze, scoped to the release commit (#4540)", () => 
       execFileSync("git", ["init", "-q"], { cwd: repo });
       const tsx = join(root, "node_modules", ".bin", "tsx");
       expect(() => execFileSync(tsx, ["scripts/release-floors.ts", "--freeze", "0.124.54"], { cwd: repo, encoding: "utf-8", stdio: "pipe" })).toThrow(/no release\/npm\/0\.124\.54 or chant-v0\.124\.54 tag.*--rev/s);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("release floors read member tags as that member's only (#5135)", () => {
+  it("lists a checkout's tags so a member tag is no lockstep label, and finds core's commit by its member tag", () => {
+    const repo = mkdtempSync(join(tmpdir(), "chant-release-floors-tags-"));
+    try {
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], { cwd: repo, encoding: "utf-8" }).trim();
+      git("init", "-q");
+      git("commit", "-q", "--allow-empty", "-m", "a");
+      const a = git("rev-parse", "HEAD");
+      git("tag", "release/npm/0.124.50");
+      git("commit", "-q", "--allow-empty", "-m", "b");
+      const b = git("rev-parse", "HEAD");
+      for (const t of ["release/npm/core/0.125.0", "release/npm/lexicon-aws/0.126.0", "release/npm/k8s-client/0.127.0", "release-train/npm/1"]) git("tag", t);
+      const tags = listReleaseTags(repo);
+      // Lockstep labels and a lexicon's floors see only release/npm/<v>.
+      expect([...releasedVersions(tags, undefined, "terraform")]).toEqual(["0.124.50"]);
+      expect([...releasedVersions(tags, undefined, "aws")].sort()).toEqual(["0.124.50", "0.126.0"]);
+      expect([...releasedVersions(tags)].sort()).toEqual(["0.124.50", "0.125.0"]);
+      expect(releaseCommit("0.124.50", repo)).toBe(a);
+      expect(releaseCommit("0.125.0", repo)).toBe(b);
+      expect(releaseCommit("0.126.0", repo)).toBeUndefined();
+      expect(releaseCommit("0.127.0", repo)).toBeUndefined();
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
