@@ -386,6 +386,11 @@ export const REASONS = {
   "ref-update-invalid": "The hook's standard input is not the lines git hands a pre-receive or pre-push hook.",
   "ref-evidence-missing": "No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit.",
   "ref-evidence-stale": "Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree.",
+  // The release-changed read (release changed, #5134): why the read stopped, and why a member is in the release.
+  "bump-invalid": "--bump-member is not <member>=major|minor|patch, or names a member the declaration does not have.",
+  "paths-changed": "The member has paths changed since its last release, after changes.ignore and generated files, or has no release yet.",
+  "needed-by": "A member of the release depends on this one, and this one has changes since its last release.",
+  "range-broken-by": "The range this member last published for a dependency does not admit that dependency's next label.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

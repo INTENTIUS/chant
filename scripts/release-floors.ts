@@ -88,6 +88,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/release-changed.schema.json", text: "Contract version 1 of this document is written by chant {v} and newer.", count: 1, floor: "RELEASE_CHANGED_FLOOR" },
+  { file: "docs/src/content/docs/reference/workspace-read-contract.mdx", text: "| `--json`, floor chant {v} | `https://intentius.io/chant/schemas/workspace/release-changed/v1/release-changed.schema.json` |", count: 1, floor: "RELEASE_CHANGED_FLOOR" },
+  { file: "docs/src/content/docs/cli/release.mdx", text: "a read contract at version 1, written by chant {v} and newer.", count: 1, floor: "RELEASE_CHANGED_FLOOR" },
 ];
 
 interface Args {

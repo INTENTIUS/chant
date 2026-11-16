@@ -60,6 +60,7 @@ import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
 import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
 import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
 import { REF_GATE_CHECK_CODES, REF_GATE_ERROR_CODES } from "./trust/ref-gate";
+import { RELEASE_CHANGED_ERROR_CODES, RELEASE_CHANGED_REASON_CODES } from "./release-changed";
 import { METRICS_ERROR_CODES, METRICS_REASON_CODES } from "./delivery-metrics";
 import { SEARCH_ERROR_CODES, SEARCH_MEMBER_REASON_CODES, WORKSPACE_SEARCH_ERROR_CODES } from "./search-contract";
 import { CAPABILITIES_ERROR_CODES, CAPABILITY_SUPPORT_CODES } from "./capabilities-contract";
@@ -145,6 +146,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   EVIDENCE_ERROR_CODES,
   REF_GATE_ERROR_CODES,
   REF_GATE_CHECK_CODES,
+  RELEASE_CHANGED_ERROR_CODES,
+  RELEASE_CHANGED_REASON_CODES,
   METRICS_ERROR_CODES,
   METRICS_REASON_CODES,
   SEARCH_ERROR_CODES,

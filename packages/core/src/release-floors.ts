@@ -19,7 +19,7 @@
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
  */
-export const NEXT_RELEASE = "0.124.99";
+export const NEXT_RELEASE = "0.124.100";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
@@ -272,3 +272,6 @@ export const TERRAFORM_COMMAND_TRACE_FLOOR = "0.124.91";
 
 /** The first chant whose product pipeline limits comment commands to logins and teams on GitHub and Forgejo (INTENTIUS/terragucci#1461): `commentAllow: { allow, tokenSecret? }` in `productPipelineJobs`, where `allow` maps `plan`, `apply`, `lock`, `unlock`, `agent` and `default` to logins and `team:<org>/<team>` entries. The map is written as `CHANT_COMMENT_ALLOW` into the comment job, the product plan's re-plan decision and the agent's jobs (a spec's `agent.commentAllow`), so it is read from the workflow on the default branch. `answerProductComment` takes `allow` and replies to a commenter the list leaves out, `ForgeReads.teamMember` reads a team on GitHub and Forgejo, `CHANT_COMMENT_ALLOW_TOKEN` (`tokenSecret`) carries a token that can read teams, and a team the forge cannot answer for fails closed with a message. */
 export const COMMENT_ALLOW_FLOOR = "0.124.98";
+
+/** The first chant with `chant release changed`, the members to release at a commit with their dependency closure, and `release.legacyTags` in `chant.config.ts` (#5134). */
+export const RELEASE_CHANGED_FLOOR = NEXT_RELEASE;
