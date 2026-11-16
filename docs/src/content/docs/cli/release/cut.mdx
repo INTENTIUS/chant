@@ -430,7 +430,7 @@ The archives sit in the checkout when the publish runs: the cut or `chant releas
 
 ## Files the release builds
 
-`release.artifacts` lists files the cut builds once and records: binaries, archives of them, a checksums file, what goreleaser writes, or files a job on another runner built before the cut. Each entry has a `name` and one of `outputs` (with or without `build`), `goreleaser` and `checksums`, and the cut builds them in order, after the images and before `--build`.
+`release.artifacts` lists files the cut builds once and records: binaries, archives of them, a checksums file, what goreleaser writes, a Helm chart, Linux packages, or files a job on another runner built before the cut. Each entry has a `name` and one of `outputs` (with or without `build`), `goreleaser`, `helm`, `nfpm` and `checksums`, and the cut builds them in order, after the images and before `--build`.
 
 ```ts
 export default {
@@ -482,6 +482,41 @@ snapshot:
 ```
 
 chant reads `metadata.json` in goreleaser's `dist` (`goreleaser.dist`, default `dist`) and refuses a version that is neither the label nor the label from its first digit (`release-artifact-version-mismatch`). It records the files `artifacts.json` lists whose `type` is in `goreleaser.types`: by default `Archive`, `Checksum`, `File`, `Linux Package`, `SBOM`, `Source`, and a `Binary` at the top of `dist`, which are the files goreleaser's own release would upload. chant's targets publish them. A goreleaser entry needs a label (`release-artifact-no-label`), and so does an output or archive name that holds `{label}` or `{version}`.
+
+### Helm charts and Linux packages
+
+A `helm` entry packs the chart in the directory `helm.chart` into `<helm.dir>/<chart name>-<version>.tgz` (`helm.dir` defaults to `dist`), laid out as `helm package` lays it out: the chart's files under a directory named for the chart, less what its `.helmignore` names and helm's own default, hidden files under `templates/`. The packed `Chart.yaml` has `version` set to the label from its first digit, and with `helm.appVersion: true`, `appVersion` set to the label; the rest of the file is as written. chant packs the archive itself, every entry dated `SOURCE_DATE_EPOCH`, so the same chart packs to the same bytes and the cut needs no helm. A chart's dependencies are packed as they sit in its `charts/` directory, so run `helm dependency build` before the cut when the chart has some. A directory with no `Chart.yaml` stops the cut (`release-artifact-no-output`), and so does a `.helmignore` line with `**`, which helm does not read either (`release-artifact-invalid`).
+
+An `nfpm` entry runs nfpm once per packager and platform: `nfpm package --config <config> --packager <packager> --target <file>`. `nfpm.config` defaults to `nfpm.yaml`, `nfpm.packagers` to `["deb", "rpm"]` (also `apk`, `archlinux` and `ipk`), and `nfpm.dir` to `dist`. Each run has `CHANT_RELEASE_VERSION` (the label from its first digit), `CHANT_RELEASE_LABEL` and `SOURCE_DATE_EPOCH` set, and with `nfpm.platforms`, `CHANT_RELEASE_OS` and `CHANT_RELEASE_ARCH` too, for the config to read. The config's `version` must name one of the two, or the cut stops (`release-artifact-version-mismatch`):
+
+```yaml
+name: tool
+arch: "${CHANT_RELEASE_ARCH}"
+version: "${CHANT_RELEASE_VERSION}"
+contents:
+  - src: dist/linux_${CHANT_RELEASE_ARCH}/tool
+    dst: /usr/bin/tool
+```
+
+Each package's file name is `nfpm.fileName` plus the packager's extension; `fileName` may hold `{name}` (the entry's), `{version}`, `{label}`, `{os}`, `{arch}` and `{packager}`, and defaults to `{name}_{version}_{arch}`, or `{name}_{version}` with no platforms. The files nfpm packs come from earlier entries, so declare the build first. The run is `CHANT_NFPM` when set, else `nfpm` on the `PATH`. A `forge` target attaches the packages with `assets: ["artifact:<name>"]`:
+
+```ts
+release: {
+  artifacts: [
+    { name: "tool", build: 'GOOS=linux GOARCH=$CHANT_RELEASE_ARCH go build -trimpath -o "dist/linux_${CHANT_RELEASE_ARCH}/tool" .', outputs: ["dist/linux_{arch}/tool"], platforms: ["linux/amd64", "linux/arm64"] },
+    { name: "tool-pkg", nfpm: { platforms: ["linux/amd64", "linux/arm64"] } },
+    { name: "chart", helm: { chart: "deploy/chart", appVersion: true } },
+  ],
+  publish: [
+    { type: "forge", forge: "github", repo: "acme/tool", assets: ["artifact:tool-pkg", "artifact:chart"] },
+    { type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/charts" } },
+  ],
+},
+```
+
+`RELEASE_ARTIFACTS_PACKAGES_FLOOR` is the first chant with `helm` and `nfpm` entries.
+
+### What the release records
 
 Each file is recorded in the release as an `asset` artifact whose `component` is the entry's name. Two entries, or two platforms, writing one path are refused (`release-artifact-output-taken`), and so is a name that an image or a component also has (`release-artifact-name-taken`). A forge, homebrew or index target names an entry's files with `artifact:<name>` in its `assets`; a name the release records no file for is refused at the publish (`publish-artifact-not-recorded`). Every target that reads a recorded file refuses one whose digest differs (`publish-artifact-digest-mismatch`), and the signing, provenance and SBOM checks of the security groups apply to these files as to any other. `RELEASE_ARTIFACTS_FLOOR` is the first chant with `release.artifacts`.
 

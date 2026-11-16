@@ -33,6 +33,24 @@
  *   targets publish them. The goreleaser run is `CHANT_GORELEASER` when set,
  *   which `chant release workflow` points at the version it pins
  *   (../tool-pins.ts), else `goreleaser` on the PATH.
+ * - `{ name, helm: { chart, dir?, appVersion? } }` (#5233): chant packs the
+ *   Helm chart in the directory `chart` into `<dir>/<chart name>-<version>.tgz`
+ *   itself, as `helm package` lays it out (the chart's files under a
+ *   directory named for it, less what `.helmignore` and helm's own default
+ *   leave out), with `version` in `Chart.yaml` set to the label from its first
+ *   digit and, with `appVersion`, `appVersion` set to the label. Every entry is
+ *   dated `SOURCE_DATE_EPOCH`, so the same chart packs to the same bytes. No
+ *   helm is needed; a chart's dependencies are packed as they sit in its
+ *   `charts/` directory.
+ * - `{ name, nfpm: { config?, packagers?, platforms?, dir?, fileName? } }`
+ *   (#5233): the cut runs nfpm once per packager (`deb` and `rpm` by default)
+ *   and platform, with `CHANT_RELEASE_VERSION` (the label from its first
+ *   digit), `CHANT_RELEASE_LABEL`, `CHANT_RELEASE_OS` and `CHANT_RELEASE_ARCH`
+ *   set for the config to read, and records each package. The config's
+ *   `version` must name `${CHANT_RELEASE_VERSION}` or `${CHANT_RELEASE_LABEL}`
+ *   (`release-artifact-version-mismatch`). The nfpm run is `CHANT_NFPM` when
+ *   set, which `chant release workflow` points at the version it pins
+ *   (../tool-pins.ts), else `nfpm` on the PATH.
  * - `{ name, checksums, of? }`: a file of `<sha256>  <file name>` lines, as
  *   `sha256sum` writes and checks them, over the files of the entries `of`
  *   names (default: every entry before it).
@@ -57,12 +75,21 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { deflateRawSync, gzipSync } from "node:zlib";
 import type { Release, ReleaseArtifact } from "./release-store";
+import { NEXT_RELEASE } from "../release-floors";
+import { stampVersionFile } from "./release-version-formats";
+import { parseYAML } from "../yaml";
 
 /** The first chant with `release.artifacts`, `chant release artifacts` and `artifact:<name>` in a forge or homebrew target's `assets` (#5151). */
 export const RELEASE_ARTIFACTS_FLOOR = "0.124.101";
 
 /** The variable naming the goreleaser binary the cut runs. */
 export const GORELEASER_ENV = "CHANT_GORELEASER";
+
+/** The first chant with `helm` and `nfpm` entries in `release.artifacts` (#5233). */
+export const RELEASE_ARTIFACTS_PACKAGES_FLOOR = NEXT_RELEASE;
+
+/** The variable naming the nfpm binary the cut runs (#5233). */
+export const NFPM_ENV = "CHANT_NFPM";
 
 /** How an archive entry packs a platform's outputs. */
 export interface ReleaseArchiveSpec {
@@ -135,7 +162,44 @@ export interface ReleaseArtifactChecksums {
   of?: string[];
 }
 
-export type ReleaseArtifactDeclaration = ReleaseArtifactBuild | ReleaseArtifactPrebuilt | ReleaseArtifactGoreleaser | ReleaseArtifactChecksums;
+/** A Helm chart chant packs itself (#5233). */
+export interface ReleaseArtifactHelm {
+  name: string;
+  helm: {
+    /** The chart's directory, holding `Chart.yaml`, relative to the member. */
+    chart: string;
+    /** The directory the chart archive is written to, relative to the member. Default `dist`. */
+    dir?: string;
+    /** Set `appVersion` in the packed `Chart.yaml` to the release's label too. Default false. */
+    appVersion?: boolean;
+  };
+}
+
+/** The package formats an nfpm entry builds. */
+export const NFPM_PACKAGERS = ["deb", "rpm", "apk", "archlinux", "ipk"] as const;
+export type NfpmPackager = (typeof NFPM_PACKAGERS)[number];
+
+/** Each packager's file extension. */
+const NFPM_EXTENSIONS: Readonly<Record<NfpmPackager, string>> = { deb: "deb", rpm: "rpm", apk: "apk", archlinux: "pkg.tar.zst", ipk: "ipk" };
+
+/** Linux packages nfpm builds from files the member has, such as an earlier entry's binaries (#5233). */
+export interface ReleaseArtifactNfpm {
+  name: string;
+  nfpm: {
+    /** The nfpm config, relative to the member. Default `nfpm.yaml`. */
+    config?: string;
+    /** The package formats. Default `["deb", "rpm"]`. */
+    packagers?: NfpmPackager[];
+    /** The platforms, `os/arch`, to package for, once each, with `CHANT_RELEASE_OS` and `CHANT_RELEASE_ARCH` set. Default: once, for the config's own `arch`. */
+    platforms?: string[];
+    /** The directory the packages are written to, relative to the member. Default `dist`. */
+    dir?: string;
+    /** Each package's file name without its extension: `{name}`, `{version}`, `{label}`, `{os}`, `{arch}` and `{packager}`. Default `{name}_{version}_{arch}`, or `{name}_{version}` with no platforms. */
+    fileName?: string;
+  };
+}
+
+export type ReleaseArtifactDeclaration = ReleaseArtifactBuild | ReleaseArtifactPrebuilt | ReleaseArtifactGoreleaser | ReleaseArtifactChecksums | ReleaseArtifactHelm | ReleaseArtifactNfpm;
 
 /**
  * The `artifacts.json` types recorded from goreleaser by default: what its
@@ -161,10 +225,13 @@ const PLATFORM = /^[a-z0-9]+\/[a-z0-9_]+(?:\/[a-z0-9]+)?$/;
 const PLACEHOLDER = /\{([a-z]+)\}/g;
 const OUTPUT_KEYS = new Set(["os", "arch", "ext", "label", "version"]);
 const ARCHIVE_KEYS = new Set(["name", "os", "arch", "label", "version"]);
+const NFPM_NAME_KEYS = new Set(["name", "version", "label", "os", "arch", "packager"]);
 
 const outside = (p: string): boolean => isAbsolute(p) || p.split(/[\\/]/).includes("..");
 const isGoreleaser = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactGoreleaser => "goreleaser" in a && a.goreleaser !== undefined;
 const isChecksums = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactChecksums => "checksums" in a && a.checksums !== undefined;
+const isHelm = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactHelm => "helm" in a && a.helm !== undefined;
+const isNfpm = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactNfpm => "nfpm" in a && a.nfpm !== undefined;
 /** An entry of files at `outputs`: built by its command, or (#5183) with no command, built before the cut. */
 const isFiles = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactBuild | ReleaseArtifactPrebuilt =>
   ("build" in a && a.build !== undefined) || ("outputs" in a && a.outputs !== undefined) || ("builtBy" in a && a.builtBy !== undefined);
@@ -211,8 +278,8 @@ export function checkReleaseArtifacts(artifacts: readonly ReleaseArtifactDeclara
     if (!NAME.test(a.name)) throw new ReleaseArtifactError("release-artifact-name-invalid", `release.artifacts: "${a.name}" is not a name of letters, digits, ".", "_" and "-"`);
     if (seen.has(a.name)) throw new ReleaseArtifactError("release-artifact-name-taken", `release.artifacts names "${a.name}" twice`);
     if (o.imageNames?.includes(a.name)) throw new ReleaseArtifactError("release-artifact-name-taken", `release.artifacts names "${a.name}", which release.images names too, and a release records each name once`, "Rename one of them.");
-    const kinds = [isFiles(a), isGoreleaser(a), isChecksums(a)].filter(Boolean).length;
-    if (kinds !== 1) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names ${kinds === 0 ? "none" : "more than one"} of outputs, goreleaser and checksums; name one`);
+    const kinds = [isFiles(a), isGoreleaser(a), isChecksums(a), isHelm(a), isNfpm(a)].filter(Boolean).length;
+    if (kinds !== 1) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names ${kinds === 0 ? "none" : "more than one"} of outputs, goreleaser, helm, nfpm and checksums; name one`);
     if (isFiles(a)) {
       const jobs = builtByOf(a);
       if (jobs.length > 0 && commandOf(a) !== undefined) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names both a build command and builtBy; the cut runs the command, or records what the build jobs wrote`, "Leave out build to record the files the build jobs hand to the cut.");
@@ -257,6 +324,24 @@ export function checkReleaseArtifacts(artifacts: readonly ReleaseArtifactDeclara
       inside(a, "the goreleaser config", a.goreleaser.config);
       inside(a, "the dist directory", a.goreleaser.dist);
       if (a.goreleaser.types !== undefined && a.goreleaser.types.length === 0) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: goreleaser.types is empty, so nothing would be recorded`);
+    } else if (isHelm(a)) {
+      inside(a, "the chart directory", a.helm.chart);
+      inside(a, "the chart archive directory", a.helm.dir);
+    } else if (isNfpm(a)) {
+      inside(a, "the nfpm config", a.nfpm.config);
+      inside(a, "the package directory", a.nfpm.dir);
+      const packagers = a.nfpm.packagers;
+      if (packagers !== undefined && (packagers.length === 0 || !packagers.every((p) => (NFPM_PACKAGERS as readonly string[]).includes(p)) || new Set(packagers).size !== packagers.length)) {
+        throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: nfpm.packagers is a list of distinct ${NFPM_PACKAGERS.join(", ")}, not ${JSON.stringify(packagers)}`);
+      }
+      if (a.nfpm.platforms !== undefined && (a.nfpm.platforms.length === 0 || !a.nfpm.platforms.every((p) => PLATFORM.test(p)) || new Set(a.nfpm.platforms).size !== a.nfpm.platforms.length)) {
+        throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: nfpm.platforms is a list of distinct os/arch such as linux/amd64, not ${JSON.stringify(a.nfpm.platforms)}`);
+      }
+      if (a.nfpm.fileName !== undefined) {
+        const unknown = placeholders(a.nfpm.fileName).filter((k) => !NFPM_NAME_KEYS.has(k));
+        if (unknown.length > 0 || /[\\/]/.test(a.nfpm.fileName)) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: nfpm.fileName ${a.nfpm.fileName} is not a file name holding {name}, {version}, {label}, {os}, {arch} and {packager}`);
+        if (a.nfpm.platforms === undefined && placeholders(a.nfpm.fileName).some((k) => k === "os" || k === "arch")) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: nfpm.fileName ${a.nfpm.fileName} names a platform, and the entry has no platforms`);
+      }
     } else if (isChecksums(a)) {
       inside(a, "the checksums file", a.checksums);
       for (const n of a.of ?? []) {
@@ -433,6 +518,10 @@ export function buildReleaseArtifacts(i: BuildArtifactsInput): ReleaseArtifact[]
       }
     } else if (isGoreleaser(a)) {
       files.push(...goreleaserFiles(a, i, baseEnv(), run).map((abs) => record(a.name, abs)));
+    } else if (isHelm(a)) {
+      files.push(record(a.name, packHelmChart(a, i)));
+    } else if (isNfpm(a)) {
+      files.push(...nfpmFiles(a, i, baseEnv, run).map((abs) => record(a.name, abs)));
     } else if (isChecksums(a)) {
       const names = a.of ?? [...byEntry.keys()];
       const covered = names.flatMap((n) => byEntry.get(n) ?? []);
@@ -494,12 +583,182 @@ function goreleaserFiles(a: ReleaseArtifactGoreleaser, i: BuildArtifactsInput, e
 
 const shellWord = (s: string): string => (/^[A-Za-z0-9_./:=,@+%-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`);
 
+// ── Helm charts and Linux packages (#5233) ─────────────────────────────
+
+/** Helm's ignore rules: a `.helmignore`'s lines and helm's default, `templates/.?*`. */
+interface HelmIgnoreRule {
+  re: RegExp;
+  negate: boolean;
+  dirOnly: boolean;
+  /** No `/` in the pattern: it matches a path's last segment. */
+  base: boolean;
+}
+
+/** A `filepath.Match` pattern as a regular expression: `*` and `?` within a segment, `[...]` a class. */
+function globSegmentRe(pattern: string): RegExp {
+  let out = "";
+  for (let k = 0; k < pattern.length; k++) {
+    const c = pattern[k]!;
+    if (c === "*") out += "[^/]*";
+    else if (c === "?") out += "[^/]";
+    else if (c === "\\" && k + 1 < pattern.length) out += `\\${pattern[++k]}`;
+    else if (c === "[") {
+      const end = pattern.indexOf("]", k + 1);
+      if (end < 0) out += "\\[";
+      else {
+        out += `[${pattern.slice(k + 1, end).replace(/\\/g, "\\\\")}]`;
+        k = end;
+      }
+    } else out += c.replace(/[.+^${}()|\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/** The rules of a `.helmignore`, after helm's default. A `**` is refused, as helm refuses it. */
+export function helmIgnoreRules(text: string | null, where: string): HelmIgnoreRule[] {
+  const rules: HelmIgnoreRule[] = [];
+  for (const raw of ["templates/.?*", ...(text ?? "").split(/\r?\n/)]) {
+    let line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    if (line.includes("**")) throw new ReleaseArtifactError("release-artifact-invalid", `${where}: .helmignore has ${line}, and helm does not read **`, "Name the paths with * and ?, as helm does.");
+    const negate = line.startsWith("!");
+    if (negate) line = line.slice(1);
+    const dirOnly = line.endsWith("/");
+    if (dirOnly) line = line.replace(/\/+$/, "");
+    line = line.replace(/^\//, "");
+    if (line === "") continue;
+    rules.push({ re: globSegmentRe(line), negate, dirOnly, base: !line.includes("/") });
+  }
+  return rules;
+}
+
+/** Whether helm leaves `rel` (a path from the chart's directory) out of the chart, as its ignore package decides. */
+export function helmIgnored(rules: readonly HelmIgnoreRule[], rel: string, dir: boolean): boolean {
+  const name = rel.includes("/") ? rel.slice(rel.lastIndexOf("/") + 1) : rel;
+  for (const r of rules) {
+    if (r.dirOnly && !dir) continue;
+    const hit = r.re.test(r.base ? name : rel);
+    if (r.negate ? !hit : hit) return true;
+  }
+  return false;
+}
+
+/** Every file of the chart at `abs` that helm packs, from the chart's directory, sorted, `Chart.yaml` first. */
+function helmChartFiles(abs: string, rules: readonly HelmIgnoreRule[]): string[] {
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const e of readdirSync(rel ? resolve(abs, rel) : abs).sort()) {
+      const p = rel ? `${rel}/${e}` : e;
+      const st = statSync(resolve(abs, p));
+      if (helmIgnored(rules, p, st.isDirectory())) continue;
+      if (st.isDirectory()) walk(p);
+      else if (st.isFile()) out.push(p);
+    }
+  };
+  walk("");
+  return [...out.filter((p) => p === "Chart.yaml"), ...out.filter((p) => p !== "Chart.yaml")];
+}
+
+/** Pack a `helm` entry's chart into `<dir>/<name>-<version>.tgz`, as `helm package --version` would, every entry dated `SOURCE_DATE_EPOCH`. Returns the archive. */
+function packHelmChart(a: ReleaseArtifactHelm, i: BuildArtifactsInput): string {
+  const where = `release.artifacts "${a.name}"`;
+  const version = labelVersion(i.label);
+  if (i.label === null || version === null) throw new ReleaseArtifactError("release-artifact-no-label", `${where} packs a Helm chart, whose version is the release's label from its first digit, and the cut has ${i.label === null ? "no label" : `the label ${i.label}, which has no digit`}`, "Cut the release with a label such as v1.4.0.");
+  const dir = resolve(i.cwd, a.helm.chart);
+  const chartFile = resolve(dir, "Chart.yaml");
+  if (!existsSync(chartFile)) throw new ReleaseArtifactError("release-artifact-no-output", `${where}: ${posix.join(a.helm.chart, "Chart.yaml")} does not exist, so ${a.helm.chart} is not a Helm chart`, "Set helm.chart to the directory that holds the chart's Chart.yaml.");
+  const text = readFileSync(chartFile, "utf-8");
+  let name: unknown;
+  try {
+    name = (parseYAML(text) as { name?: unknown }).name;
+  } catch (err) {
+    throw new ReleaseArtifactError("release-artifact-invalid", `${where}: ${posix.join(a.helm.chart, "Chart.yaml")} is not YAML chant can read: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (typeof name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new ReleaseArtifactError("release-artifact-invalid", `${where}: ${posix.join(a.helm.chart, "Chart.yaml")} names no chart name helm takes`, "Give the chart a name of letters, digits, '.', '_' and '-'.");
+  let chart: string;
+  try {
+    chart = stampVersionFile({ path: "Chart.yaml", field: "version" }, text, version);
+    if (a.helm.appVersion) chart = stampVersionFile({ path: "Chart.yaml", field: "appVersion" }, chart, i.label);
+  } catch (err) {
+    const e = err as { message?: string; fix?: string };
+    throw new ReleaseArtifactError("release-artifact-invalid", `${where}: ${e.message ?? String(err)}`, e.fix);
+  }
+  const ignore = existsSync(resolve(dir, ".helmignore")) ? readFileSync(resolve(dir, ".helmignore"), "utf-8") : null;
+  const files = helmChartFiles(dir, helmIgnoreRules(ignore, where));
+  const entries: ArchiveEntry[] = files.map((f) => ({ name: `${name}/${f}`, abs: resolve(dir, f), ...(f === "Chart.yaml" ? { bytes: Buffer.from(chart, "utf-8") } : {}) }));
+  const archive = resolve(i.cwd, a.helm.dir ?? "dist", `${name}-${version}.tgz`);
+  mkdirSync(dirname(archive), { recursive: true });
+  writeFileSync(archive, tarGzArchive(entries, i.sourceDateEpoch));
+  return archive;
+}
+
+/** The top-level `version` of an nfpm config, unquoted, or null. */
+export function nfpmConfigVersion(text: string): string | null {
+  const m = /^version:[ \t]*(.*?)[ \t]*(?:#.*)?$/m.exec(text);
+  if (!m) return null;
+  return m[1]!.replace(/^(["'])(.*)\1$/, "$2");
+}
+
+/** Whether an nfpm config's version carries the release's: it names the variable chant sets, or is the label or its version. */
+export function nfpmVersionFollowsLabel(version: string | null, label: string, labelVer: string): boolean {
+  if (version === null) return false;
+  return /\$\{?CHANT_RELEASE_(VERSION|LABEL)\}?/.test(version) || version === label || version === labelVer;
+}
+
+/** Run nfpm for each platform and packager of an `nfpm` entry and list the packages it wrote. */
+function nfpmFiles(a: ReleaseArtifactNfpm, i: BuildArtifactsInput, baseEnv: () => NodeJS.ProcessEnv, run: NonNullable<BuildArtifactsInput["run"]>): string[] {
+  const where = `release.artifacts "${a.name}"`;
+  const version = labelVersion(i.label);
+  if (i.label === null || version === null) throw new ReleaseArtifactError("release-artifact-no-label", `${where} is packaged by nfpm, whose packages carry the release's label as their version, and the cut has ${i.label === null ? "no label" : `the label ${i.label}, which has no digit`}`, "Cut the release with a label such as v1.4.0.");
+  const config = a.nfpm.config ?? "nfpm.yaml";
+  const configAbs = resolve(i.cwd, config);
+  if (!existsSync(configAbs)) throw new ReleaseArtifactError("release-artifact-no-output", `${where}: the nfpm config ${config} does not exist`, "Set nfpm.config to the member's nfpm config.");
+  const declared = nfpmConfigVersion(readFileSync(configAbs, "utf-8"));
+  if (!nfpmVersionFollowsLabel(declared, i.label, version)) {
+    throw new ReleaseArtifactError(
+      "release-artifact-version-mismatch",
+      `${where}: ${config} gives the packages the version ${JSON.stringify(declared)}, and the release is labelled ${i.label}, so they would not carry the release's version`,
+      'Set the version in the nfpm config to the one chant passes: version: "${CHANT_RELEASE_VERSION}".',
+    );
+  }
+  const env0 = baseEnv();
+  const bin = env0[NFPM_ENV] || "nfpm";
+  const files: string[] = [];
+  for (const platform of a.nfpm.platforms ?? [null]) {
+    for (const packager of a.nfpm.packagers ?? (["deb", "rpm"] as NfpmPackager[])) {
+      const env = baseEnv();
+      env.CHANT_RELEASE_VERSION = version;
+      const values: Record<string, string> = { name: a.name, label: i.label, version, packager };
+      if (platform !== null) {
+        const p = platformValues(platform);
+        Object.assign(values, { os: p.os, arch: p.arch });
+        env.CHANT_RELEASE_OS = p.os;
+        env.CHANT_RELEASE_ARCH = p.arch;
+        env.CHANT_RELEASE_EXT = p.ext;
+      }
+      const base = fill(a.nfpm.fileName ?? (platform !== null ? "{name}_{version}_{arch}" : "{name}_{version}"), values, `${where} nfpm.fileName`);
+      const target = posix.join((a.nfpm.dir ?? "dist").replace(/\\/g, "/"), `${base}.${NFPM_EXTENSIONS[packager]}`);
+      mkdirSync(dirname(resolve(i.cwd, target)), { recursive: true });
+      const command = [bin === "nfpm" ? bin : shellWord(bin), "package", "--config", shellWord(config), "--packager", packager, "--target", shellWord(target)].join(" ");
+      const on = `${packager}${platform !== null ? ` for ${platform}` : ""}`;
+      const status = run(command, { cwd: i.cwd, env });
+      if (status !== 0) throw new ReleaseArtifactError("release-artifact-build-failed", `nfpm for artifact "${a.name}" (${on}) exited ${status ?? "with a signal"}: ${command}`);
+      const abs = resolve(i.cwd, target);
+      if (!existsSync(abs) || !statSync(abs).isFile()) throw new ReleaseArtifactError("release-artifact-no-output", `nfpm for artifact "${a.name}" (${on}) wrote no ${target}`);
+      files.push(abs);
+    }
+  }
+  return files;
+}
+
 // ── archives ───────────────────────────────────────────────────────────
 
 interface ArchiveEntry {
   /** The path inside the archive. */
   name: string;
   abs: string;
+  /** The entry's bytes, in place of the file's (its mode is still the file's), such as a chart's `Chart.yaml` with its version set (#5233). */
+  bytes?: Buffer;
 }
 
 const modeOf = (abs: string): number => (statSync(abs).mode & 0o111 ? 0o755 : 0o644);
@@ -536,7 +795,7 @@ function tarHeader(name: string, size: number, mode: number, mtime: number): Buf
 export function tarGzArchive(entries: readonly ArchiveEntry[], mtime: number): Buffer {
   const parts: Buffer[] = [];
   for (const e of entries) {
-    const data = readFileSync(e.abs);
+    const data = e.bytes ?? readFileSync(e.abs);
     parts.push(tarHeader(e.name, data.length, modeOf(e.abs), mtime), data, Buffer.alloc((512 - (data.length % 512)) % 512));
   }
   parts.push(Buffer.alloc(1024));
@@ -578,7 +837,7 @@ export function zipArchive(entries: readonly ArchiveEntry[], mtime: number): Buf
   const central: Buffer[] = [];
   let offset = 0;
   for (const e of entries) {
-    const data = readFileSync(e.abs);
+    const data = e.bytes ?? readFileSync(e.abs);
     const packed = deflateRawSync(data, { level: 9 });
     const name = Buffer.from(e.name, "utf-8");
     const crc = crc32(data);
@@ -657,6 +916,11 @@ export function copyArtifactFiles(files: readonly { path: string }[], from: stri
     mkdirSync(dirname(dest), { recursive: true });
     copyFileSync(src, dest);
   }
+}
+
+/** Whether any entry is packaged by nfpm, for the workflow's install step (#5233). */
+export function usesNfpm(artifacts: readonly ReleaseArtifactDeclaration[]): boolean {
+  return artifacts.some(isNfpm);
 }
 
 /** Whether any entry is built by goreleaser, for the workflow's install step. */

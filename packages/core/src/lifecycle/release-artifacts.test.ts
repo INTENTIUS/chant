@@ -235,7 +235,7 @@ describe("files built before the cut, on other runners (#5183)", () => {
     expect(refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "linux-arm64" }])).message).toMatch(/not a release.workflow.builds job/);
     expect(refusal(() => checkReleaseArtifacts([{ name: "tool", build: "make", builtBy: "linux-arm64", outputs: ["a"] } as ReleaseArtifactDeclaration], { builds: JOBS })).message).toMatch(/both a build command and builtBy/);
     expect(refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "linux-arm64", platforms: ["linux/arm64"] }], { builds: JOBS })).message).toMatch(/platforms and no outputs/);
-    expect(refusal(() => checkReleaseArtifacts([{ name: "tool" } as ReleaseArtifactDeclaration])).message).toMatch(/names none of outputs, goreleaser and checksums/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool" } as ReleaseArtifactDeclaration])).message).toMatch(/names none of outputs, goreleaser, helm, nfpm and checksums/);
     expect(refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "x" }], { builds: [{ name: "x", outputs: ["dist/[ab]"] }] })).message).toMatch(/\[ \] glob/);
     expect(refusal(() => checkReleaseArtifacts([{ name: "tool", outputs: ["../tool"] }])).code).toBe("release-artifact-outside");
   });

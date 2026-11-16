@@ -4,7 +4,8 @@
  *
  * It reads the project ({@link detectProject}): the package.json and its
  * npm, pnpm or yarn workspaces, go.mod, Cargo.toml, pyproject.toml,
- * Dockerfiles, a goreleaser config, the forge `origin` names, and the tags
+ * Dockerfiles, a goreleaser config, Helm charts and an nfpm config (#5233),
+ * the forge `origin` names, and the tags
  * releases were made under so far. From that it plans a `release` block
  * ({@link planRelease}): the tag template, `legacyTags`, the green gate, the
  * version stamping, the publish targets it can infer, and a dispatched
@@ -110,6 +111,10 @@ export interface ProjectFacts {
     /** The config builds images (`dockers:` or `kos:`). */
     images: boolean;
   } | null;
+  /** Helm charts (#5233): each directory holding a `Chart.yaml`, from the project root, and the chart's name. A chart inside another's directory is its subchart and is not listed. */
+  charts?: Array<{ dir: string; name: string | null }>;
+  /** An nfpm config (#5233), and whether its `version` follows the label chant passes. */
+  nfpm?: { file: string; version: boolean } | null;
   /** The tags releases were made under. */
   tags: TagHistory;
   /** `ci.green` is declared or `ci/green/` tags exist. */
@@ -292,6 +297,28 @@ function findDockerfiles(root: string): string[] {
   return out.sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b));
 }
 
+/** Directories holding a `Chart.yaml`, up to three levels down, not looking inside a chart (#5233). */
+function findCharts(root: string): Array<{ dir: string; name: string | null }> {
+  const out: Array<{ dir: string; name: string | null }> = [];
+  const walk = (rel: string, depth: number): void => {
+    const here = join(root, rel);
+    if (existsSync(join(here, "Chart.yaml")) && !isDir(join(here, "Chart.yaml"))) {
+      out.push({ dir: rel || ".", name: /^name:[ \t]*["']?([^"'\s#]+)/m.exec(readText(join(here, "Chart.yaml")) ?? "")?.[1] ?? null });
+      return;
+    }
+    if (depth === 0) return;
+    for (const e of safeReaddir(here)) {
+      const p = rel ? `${rel}/${e}` : e;
+      if (!SKIP_DIRS.has(e) && !e.startsWith(".") && isDir(join(root, p))) walk(p, depth - 1);
+    }
+  };
+  walk("", 3);
+  return out.sort((a, b) => a.dir.localeCompare(b.dir));
+}
+
+/** The nfpm config files `release init` looks for (#5233). */
+const NFPM_FILES = ["nfpm.yaml", "nfpm.yml", ".nfpm.yaml", ".nfpm.yml"];
+
 const GORELEASER_FILES = [".goreleaser.yaml", ".goreleaser.yml", "goreleaser.yaml", "goreleaser.yml"];
 
 /** Whether a goreleaser config sets `snapshot.version_template` to the release label. */
@@ -388,6 +415,9 @@ export function detectProject(root: string): ProjectFacts {
   const grFile = GORELEASER_FILES.find((f) => existsSync(join(root, f)));
   const goreleaser = grFile ? { file: grFile, ...goreleaserFacts(readText(join(root, grFile)) ?? "") } : null;
 
+  const nfpmFile = NFPM_FILES.find((f) => existsSync(join(root, f)));
+  const nfpmVersion = nfpmFile ? /^version:[ \t]*["']?[^\n]*\$\{?CHANT_RELEASE_(VERSION|LABEL)/m.test(readText(join(root, nfpmFile)) ?? "") : false;
+
   const tagList = (git(top, ["tag", "--list"]) ?? "").split("\n").map((t) => t.trim()).filter(Boolean);
   const chantDecl = readJson(join(root, "chant.workspace.json"));
   const ciGreen = !!(chantDecl?.ci && typeof chantDecl.ci === "object" && (chantDecl.ci as { green?: unknown }).green);
@@ -404,6 +434,8 @@ export function detectProject(root: string): ProjectFacts {
     python,
     dockerfiles: findDockerfiles(root),
     goreleaser,
+    charts: findCharts(root),
+    nfpm: nfpmFile ? { file: nfpmFile, version: nfpmVersion } : null,
     tags: readTagHistory(tagList),
     chantCi: ciGreen || tagList.some((t) => t.startsWith("ci/green/") || /^ci\/green-[^/]+\//.test(t)),
     distIgnored: /^\/?dist\/?\s*$/m.test(gitignore) || /^\/?dist\/\*\s*$/m.test(gitignore),
@@ -644,6 +676,38 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
     } else notes.push(`No forge release is declared for ${gr.file}'s files: origin names no GitHub, GitLab or Forgejo repository.`);
   }
 
+  // #5233: Helm charts, packed at the cut and pushed to the registry beside the images.
+  const charts = facts.charts ?? [];
+  if (charts.length > 0) {
+    const entries = charts.map((c, n) => ({ name: charts.length === 1 ? "chart" : `chart-${(c.name ?? `${n + 1}`).toLowerCase().replace(/[^a-z0-9._-]+/g, "-")}`, chart: c.dir }));
+    release.artifacts = [...((release.artifacts as Json[] | undefined) ?? []), ...entries.map((e) => ({ name: e.name, helm: { chart: e.chart } }))];
+    reasons.push(`release.artifacts: ${charts.map((c) => `${c.dir}/Chart.yaml`.replace(/^\.\//, "")).join(", ")} packed once at the cut, with the chart's version set from the label`);
+    const repository = imageRepository(facts.origin, "charts", false);
+    if (repository) {
+      publish.push({ type: "helm", charts: entries.map((e) => `artifact:${e.name}`), oci: { repository } });
+      reasons.push(`helm target: ${charts.length === 1 ? "the chart" : "each chart"} pushed to ${repository}/<chart>, tagged with its version, for helm install oci://${repository}/<chart>`);
+      if (repository.startsWith("ghcr.io/")) registry.push(`${repository}: the workflow pushes the charts with the run's token. The first push makes each package private; make it public in the package's settings if it should be.`);
+      else registry.push(`${repository}: set OCI_USERNAME and OCI_PASSWORD for the release workflow, as ${forge === "gitlab" ? "masked CI/CD variables" : "secrets in release.workflow.env"}, with push access to the registry.`);
+    } else notes.push(`The charts are packed into release.artifacts, and no helm target is declared: origin names no registry chant knows. Add { type: "helm", charts: [${entries.map((e) => `"artifact:${e.name}"`).join(", ")}], oci: { repository: "<registry>/<path>" } }.`);
+  }
+
+  // #5233: Linux packages nfpm builds, attached to the forge release.
+  if (facts.nfpm) {
+    const nf = facts.nfpm;
+    release.artifacts = [...((release.artifacts as Json[] | undefined) ?? []), { name: "packages", nfpm: nf.file === "nfpm.yaml" ? {} : { config: nf.file } }];
+    reasons.push(`release.artifacts: ${nf.file} packages a deb and an rpm once at the cut with nfpm, and the release records each`);
+    notes.push(`${nf.file} packs files the cut must build first: declare the build that writes them in release.artifacts before "packages".`);
+    if (!nf.version) notes.push(`Set version: "\${CHANT_RELEASE_VERSION}" in ${nf.file}: the cut refuses a config whose packages would not carry the release's version.`);
+    const forgeTarget = publish.find((p) => (p as { type?: string }).type === "forge") as { assets: Json[] } | undefined;
+    if (forgeTarget) {
+      forgeTarget.assets = [...forgeTarget.assets, "artifact:packages"];
+      reasons.push(`forge target: the deb and rpm packages are attached beside the other assets`);
+    } else if (facts.origin) {
+      publish.push({ type: "forge", forge: facts.origin.kind, repo: facts.origin.repo, assets: ["artifact:packages"], notes: { generate: "forge" } });
+      reasons.push(`forge target: the deb and rpm packages as assets of the ${facts.origin.kind} release ${facts.origin.repo}, with generated notes`);
+    } else notes.push(`No forge release is declared for ${nf.file}'s packages: origin names no GitHub, GitLab or Forgejo repository.`);
+  }
+
   // Python and Rust packages.
   const versionFiles: string[] = [];
   const trustedRepo = facts.origin?.repo ?? "this repository";
@@ -691,7 +755,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   release.workflow = workflow;
   reasons.push(`release.workflow: a release started by hand with its label from ${workflowFile}, which cuts a green commit and publishes it`);
 
-  if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || publish.some((p) => (p as { type?: string }).type === "pypi") || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
+  if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || charts.length > 0 || facts.nfpm || publish.some((p) => (p as { type?: string }).type === "pypi") || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
 
   const h = facts.tags.prefix;
@@ -747,6 +811,8 @@ export function trainFit(facts: ProjectFacts): { train: true } | { train: false;
   if (ext) return { train: false, why: `${ext.name} is a VS Code extension, and its .vsix is a file the train workflow does not hand from its cut job to its publish job` };
   if (facts.goreleaser) return { train: false, why: `${facts.goreleaser.file} builds files at the cut, which the train workflow does not hand between its jobs` };
   if (facts.dockerfiles.length > 0) return { train: false, why: `${facts.dockerfiles[0]} is an image built at the cut, which the train workflow does not hand between its jobs` };
+  if ((facts.charts?.length ?? 0) > 0) return { train: false, why: `${facts.charts![0]!.dir}/Chart.yaml is a chart packed at the cut, which the train workflow does not hand between its jobs` };
+  if (facts.nfpm) return { train: false, why: `${facts.nfpm.file} packages files at the cut, which the train workflow does not hand between its jobs` };
   if (facts.python?.pyproject && facts.python.name) return { train: false, why: "pyproject.toml is built at the cut, which the train workflow does not hand between its jobs" };
   if (facts.rust && !facts.rust.unpublishable && (facts.rust.name || facts.rust.workspace)) return { train: false, why: "Cargo.toml's crates publish beside the npm packages, and a train releases npm packages" };
   if (facts.workflowForge === "gitlab") return { train: false, why: "the train workflow renders for GitHub and Forgejo, and this repository runs GitLab CI" };

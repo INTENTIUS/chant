@@ -184,6 +184,27 @@ export const ChantConfigSchema = z.object({
             })
             .strict(),
           z.object({ name: z.string().min(1), checksums: z.string().min(1), of: z.array(z.string().min(1)).min(1).optional() }).strict(),
+          // #5233: a Helm chart chant packs, and Linux packages nfpm builds.
+          z
+            .object({
+              name: z.string().min(1),
+              helm: z.object({ chart: z.string().min(1), dir: z.string().min(1).optional(), appVersion: z.boolean().optional() }).strict(),
+            })
+            .strict(),
+          z
+            .object({
+              name: z.string().min(1),
+              nfpm: z
+                .object({
+                  config: z.string().min(1).optional(),
+                  packagers: z.array(z.enum(["deb", "rpm", "apk", "archlinux", "ipk"])).min(1).optional(),
+                  platforms: z.array(z.string().min(1)).min(1).optional(),
+                  dir: z.string().min(1).optional(),
+                  fileName: z.string().min(1).optional(),
+                })
+                .strict(),
+            })
+            .strict(),
         ]),
       )
       .optional(),

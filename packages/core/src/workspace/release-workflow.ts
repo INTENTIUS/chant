@@ -188,6 +188,12 @@ export interface ReleaseWorkflowInput {
    */
   goreleaser?: boolean;
   /**
+   * An entry of `release.artifacts` is packaged by nfpm (#5233): the job that
+   * builds the files installs the nfpm {@link TOOL_PINS} pin, checked by
+   * SHA-256, and names it in `CHANT_NFPM`.
+   */
+  nfpm?: boolean;
+  /**
    * The green gate the cut checks (#5149), `release.green` resolved. Under
    * `forge-checks` or `none` a dispatched release's gate names the
    * dispatched commit, since no `ci/green` tag exists to search, and the cut
@@ -242,8 +248,11 @@ export interface ReleaseWorkflowTarget {
   registry?: string;
   /** A `pypi` target's `auth`, `index` and `uploadUrl`. */
   auth?: string;
-  index?: string;
+  /** A `pypi` target's index name, or a `helm` target's chart repository (#5233). */
+  index?: string | { repo: string };
   uploadUrl?: string;
+  /** A `helm` target's registry (#5233). */
+  oci?: { repository: string; usernameEnv?: string; passwordEnv?: string };
 }
 
 // #5196: each feature's helpers and constants live with its steps in ./release-steps; these keep their names here.
@@ -1133,7 +1142,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     tags,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
-    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}) } : {}),
+    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}), ...((await import("../lifecycle/release-artifacts")).usesNfpm(release!.artifacts!) ? { nfpm: true } : {}) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     green: await (async () => {
       const { resolveGreenSource } = await import("../lifecycle/release-green");

@@ -22,6 +22,7 @@ export default {
       { type: "pypi", files: ["dist"] },
       { type: "cargo", crates: ["acme-core", "acme-cli"] },
       { type: "index", preset: "krew", name: "api", template: "packaging/krew.yaml", assets: ["artifact:api"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
+      { type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/charts" }, index: { repo: "acme/charts" } },
     ],
   },
 };
@@ -461,6 +462,42 @@ A registry has no draft. A crate version is visible as soon as it is published a
 ### Trusted publishing on crates.io
 
 With `auth: "trusted-publishing"`, crates.io hands the run a token for its OIDC ID token: one GitHub Actions issues with the audience `crates.io` (a job with `permissions: id-token: write`), or the value of `CRATES_IO_ID_TOKEN`. The target exchanges it at `POST {api}/api/v1/trusted_publishing/tokens` and revokes the token with a `DELETE` when the step ends. The stage makes the exchange to check that crates.io takes this workflow as a trusted publisher of the crates, and the reveal exchanges again. A refusal is `publish-cargo-trusted-publishing`. Add the repository and workflow once to each crate's trusted publishers on crates.io. A crate's first version can't be published this way. Another registry takes a token only.
+
+## Helm charts
+
+Helm chart archives pushed to an OCI registry, and listed in a chart repository's `index.yaml` on a branch of a GitHub repository, such as the `gh-pages` branch GitHub Pages serves. `PUBLISH_HELM_FLOOR` is the first chant with this target.
+
+```ts
+{ type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/charts" } },
+{ type: "helm", charts: ["artifact:chart"], index: { repo: "acme/charts", url: "https://github.com/acme/api/releases/download/{tag}/{name}" } },
+```
+
+| Field | Meaning |
+|---|---|
+| `charts` | The chart archives, relative to the member: a `.tgz` as `helm package` writes it, or `artifact:<name>` for a [`helm` entry](/chant/cli/release/cut/#helm-charts-and-linux-packages) of `release.artifacts` |
+| `oci.repository` | `<registry host>/<path>`. Each chart goes to `<repository>/<chart name>`, as `helm push` puts it |
+| `oci.usernameEnv` and `oci.passwordEnv` | The registry's credentials, read as the `oci` target reads them. Default `OCI_USERNAME` and `OCI_PASSWORD`, else the docker config |
+| `index.repo` | The GitHub repository the chart repository is served from, `owner/name` |
+| `index.branch` | The branch. Default `gh-pages` |
+| `index.path` | The index's path on the branch. Default `index.yaml` |
+| `index.url` | Where each chart is downloaded from, with `{tag}`, `{label}`, `{version}` and `{name}` (the archive's file name) filled in, such as the asset URL of a `forge` target that attaches the chart. Unset: each archive is committed beside the index, and the index names it by its file name, which helm reads relative to the repository's URL |
+| `index.api` | The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com` |
+| `index.tokenEnv` | The variable holding a token that may push to the branch. Default `GITHUB_TOKEN` |
+
+A target needs `oci`, `index` or both. The name, version and the rest of each chart's `Chart.yaml` are read from the archive; a file that is not a chart archive is refused (`publish-helm-not-a-chart`), and so is a chart whose version is not the release's label from its first digit (`publish-helm-version-mismatch`).
+
+| Step | `oci` | `index` |
+|---|---|---|
+| Stage | Pushes the chart by digest as `helm push` lays it out: a manifest whose config is the chart's metadata (`application/vnd.cncf.helm.config.v1+json`) and whose layer is the archive (`application/vnd.cncf.helm.chart.content.v1.tar+gzip`). The manifest holds no time, so the same chart is the same digest, and a registry that holds it is sent nothing | Reads the index on the branch, adds an entry for each chart (its `Chart.yaml` with `urls`, `created` and `digest`, as `helm repo index` writes them), and commits the index, with the archives when there is no `url`, to `chant-publish/helm-<version>` at the branch's head. An index that lists each chart already is `present` |
+| Reveal | Tags the digest with the chart's version (`+` written `_`, as helm does), which `helm install oci://<repository>/<name> --version <version>` reads | Fast-forwards the branch to the staged commit, or commits onto the branch when it moved since, then deletes the staging branch |
+
+The index is added to, never rewritten: the versions it lists stay. A version it lists with another digest is refused (`publish-helm-version-taken`), since a chart version is never replaced. A branch that does not exist is refused; create it once, such as an empty `gh-pages`. With `index`, the target reveals after every other target, since the index points at files they make downloadable.
+
+On GitHub, a `helm` target whose `oci.repository` is on `ghcr.io` and names no credentials pushes with the job's token, as an `oci` target does: [`chant release workflow`](/chant/cli/release/workflow/) adds `packages: write`. [`chant release doctor`](/chant/cli/release/doctor/) checks the registry's credentials as it does for an `oci` target (`oci-*` checks), and the index's token and whether it sees the repository (`helm-index-credentials`, `helm-index-access`).
+
+## Linux packages
+
+Debian, RPM and other Linux packages are built at the cut by an [`nfpm` entry](/chant/cli/release/cut/#helm-charts-and-linux-packages) of `release.artifacts`, and published by a `forge` target that names them, `assets: ["artifact:<name>"]`. They are attached to the forge release like any other asset. An apt or yum repository is not written.
 
 ## MCP Registry
 

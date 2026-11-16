@@ -216,7 +216,7 @@ class RegistryAnswer extends Error {
  * token. A 401 under a token it already holds, as when the registry's token
  * expires during a long push, is answered once more (#4877).
  */
-class Registry {
+export class Registry {
   private auth: string | null = null;
   constructor(
     private readonly repo: OciRepository,

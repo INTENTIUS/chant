@@ -17,6 +17,7 @@
  *       { type: "pypi", files: ["dist"] },
  *       { type: "cargo", crates: ["acme-core", "acme-cli"] },
  *       { type: "index", preset: "krew", name: "api", template: "packaging/krew.yaml", assets: ["artifact:api"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
+ *       { type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/charts" }, index: { repo: "acme/charts" } },
  *     ],
  *   },
  * };
@@ -438,6 +439,55 @@ export const IndexPublishSchema = z
   .refine((d) => d.path === undefined || d.template !== undefined, { message: "path is where template goes; name a template", path: ["path"] })
   .refine((d) => (d.assets?.length ?? 0) === 0 || d.url !== undefined, { message: "assets need url, the pattern each is downloaded from", path: ["url"] });
 
+/**
+ * Helm charts (#5233): each chart archive pushed to an OCI registry, where
+ * `helm install oci://...` reads it, and listed in a classic chart
+ * repository's `index.yaml` on a branch of a GitHub repository, such as the
+ * `gh-pages` branch GitHub Pages serves (./publish-helm.ts).
+ */
+export const HelmPublishSchema = z
+  .object({
+    type: z.literal("helm"),
+    /** The chart archives, relative to the member: a `.tgz` file, or `artifact:<name>` for the files the release records for that `release.artifacts` entry. */
+    charts: z.array(z.string().min(1)).min(1),
+    /** Push each chart to `<repository>/<chart name>`, tagged with its version, as `helm push` does. */
+    oci: z
+      .object({
+        /** `<registry host>/<path>`, such as `ghcr.io/acme/charts`; a chart goes under it by its name. */
+        repository: z.string().min(1),
+        /** The variable holding the registry user name. Default `OCI_USERNAME`. */
+        usernameEnv: envName.optional(),
+        /** The variable holding the registry password or token. Default `OCI_PASSWORD`. */
+        passwordEnv: envName.optional(),
+      })
+      .strict()
+      .optional(),
+    /** List each chart in an `index.yaml` committed to a branch of a GitHub repository. */
+    index: z
+      .object({
+        /** The repository, `owner/name`. */
+        repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name"),
+        /** The branch the chart repository is served from. Default `gh-pages`. */
+        branch: z.string().min(1).optional(),
+        /** The index's path on the branch. Default `index.yaml`. */
+        path: z.string().min(1).optional(),
+        /**
+         * Where each chart is downloaded from: `{tag}`, `{label}`, `{version}` and `{name}` (the archive's file name) are
+         * filled in, such as a forge release's asset URL. Unset, each archive is committed beside the index, and the
+         * index names it by its file name, which helm reads from the repository's URL.
+         */
+        url: z.string().min(1).optional(),
+        /** The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com`. */
+        api: z.string().url().optional(),
+        /** The variable holding a token that may push to the branch. Default `GITHUB_TOKEN`. */
+        tokenEnv: envName.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine((d) => d.oci !== undefined || d.index !== undefined, { message: "a helm target pushes to oci, lists the charts in an index, or both", path: ["oci"] });
+
 export const PublishDeclarationSchema = z.discriminatedUnion("type", [
   NpmPublishSchema,
   OciPublishSchema,
@@ -449,6 +499,7 @@ export const PublishDeclarationSchema = z.discriminatedUnion("type", [
   CargoPublishSchema,
   McpRegistryPublishSchema,
   IndexPublishSchema,
+  HelmPublishSchema,
 ]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
@@ -461,4 +512,5 @@ export type PypiPublishDeclaration = z.infer<typeof PypiPublishSchema>;
 export type CargoPublishDeclaration = z.infer<typeof CargoPublishSchema>;
 export type McpRegistryPublishDeclaration = z.infer<typeof McpRegistryPublishSchema>;
 export type IndexPublishDeclaration = z.infer<typeof IndexPublishSchema>;
+export type HelmPublishDeclaration = z.infer<typeof HelmPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;

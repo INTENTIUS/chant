@@ -18,8 +18,8 @@ export const NPM_TRUSTED_PUBLISHING_SETUP = `have="$(npm --version)"; if [ "$(pr
  * What a GitHub release workflow needs for its targets, worked out from them
  * (#4786), so no product wires it by hand:
  *
- * - an `oci` target on `ghcr.io` that names no credentials pushes with the
- *   job's token: `packages: write`, and `OCI_USERNAME` and `OCI_PASSWORD`
+ * - an `oci` target, or a `helm` target's `oci` (#5233), on `ghcr.io` that
+ *   names no credentials pushes with the job's token: `packages: write`, and `OCI_USERNAME` and `OCI_PASSWORD`
  *   from `github.actor` and `github.token`;
  * - an `npm` target on npmjs publishes with trusted publishing, which needs
  *   npm {@link NPM_TRUSTED_PUBLISHING_MIN}: the jobs upgrade npm when the
@@ -31,7 +31,9 @@ export const NPM_TRUSTED_PUBLISHING_SETUP = `have="$(npm --version)"; if [ "$(pr
  */
 export function targetExtras(forge: ReleaseWorkflowForge, targets: ReadonlyArray<ReleaseWorkflowTarget>, p: ReleasePipelineConfig): Pick<ReleasePipelineConfig, "permissions" | "env" | "setup"> {
   if (forge !== "github") return {};
-  const ghcr = targets.some((t) => t.type === "oci" && /^ghcr\.io\//.test(t.repository ?? "") && !t.usernameEnv && !t.passwordEnv);
+  const ghcr = targets.some(
+    (t) => (t.type === "oci" && /^ghcr\.io\//.test(t.repository ?? "") && !t.usernameEnv && !t.passwordEnv) || (t.type === "helm" && /^ghcr\.io\//.test(t.oci?.repository ?? "") && !t.oci?.usernameEnv && !t.oci?.passwordEnv),
+  );
   const npm = targets.some((t) => t.type === "npm" && (t.registry === undefined || /^https:\/\/registry\.npmjs\.org\/?$/.test(t.registry)));
   const permissions = ghcr && p.permissions?.packages === undefined ? { packages: "write" as const } : undefined;
   const env = ghcr ? Object.fromEntries((["OCI_USERNAME", "OCI_PASSWORD"] as const).filter((k) => p.env?.[k] === undefined).map((k) => [k, k === "OCI_USERNAME" ? "${{ github.actor }}" : "${{ github.token }}"])) : {};

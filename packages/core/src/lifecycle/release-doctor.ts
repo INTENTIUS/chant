@@ -41,6 +41,7 @@ import type {
   CargoPublishDeclaration,
   ForgePublishDeclaration,
   HomebrewPublishDeclaration,
+  HelmPublishDeclaration,
   IndexPublishDeclaration,
   MarketplacePublishDeclaration,
   McpRegistryPublishDeclaration,
@@ -227,6 +228,8 @@ async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTa
       return [await checkMcpRegistry(decl, ctx)];
     case "index":
       return [await checkIndex(decl, ctx)];
+    case "helm":
+      return checkHelm(decl, ctx);
   }
 }
 
@@ -690,6 +693,32 @@ async function checkHomebrew(decl: HomebrewPublishDeclaration, ctx: Ctx): Promis
  * scopes. A fine-grained or app token's rights on a repository its owner
  * does not own are not shown.
  */
+/**
+ * A helm target (#5233): the registry's credentials as the oci target's
+ * checks read them, for the repository the charts go under, and the token
+ * that pushes the index and whether it sees the repository.
+ */
+async function checkHelm(decl: HelmPublishDeclaration, ctx: Ctx): Promise<DoctorTarget[]> {
+  const out: DoctorTarget[] = [];
+  if (decl.oci) {
+    const oci = await checkOci({ type: "oci", image: "", repository: decl.oci.repository, ...(decl.oci.usernameEnv ? { usernameEnv: decl.oci.usernameEnv } : {}), ...(decl.oci.passwordEnv ? { passwordEnv: decl.oci.passwordEnv } : {}) }, ctx);
+    out.push({ ...oci, kind: "helm", name: `helm oci ${decl.oci.repository}` });
+  }
+  if (decl.index) {
+    const checks: DoctorCheck[] = [];
+    const tokenEnv = decl.index.tokenEnv ?? "GITHUB_TOKEN";
+    const branch = decl.index.branch ?? "gh-pages";
+    out.push({ kind: "helm", name: `helm index ${decl.index.repo}@${branch}`, checks });
+    const token = readCredential(ctx.env, [tokenEnv], ctx.redactor);
+    if (!token) checks.push(missing(ctx, "helm-index-credentials", `${tokenEnv} is not set`, `Set ${tokenEnv} to a token that may push to ${branch} of ${decl.index.repo}.`));
+    else {
+      const { githubApi } = await import("./publish-github");
+      checks.push(await repoAccess(ctx, { forge: "github", api: githubApi(decl.index.api, ctx.env), repo: decl.index.repo, token: token.value, check: "helm-index-access", tokenFrom: token.from }));
+    }
+  }
+  return out;
+}
+
 async function checkIndex(decl: IndexPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
   const { indexSettings } = await import("./publish-index");
   const { githubApi } = await import("./publish-github");
