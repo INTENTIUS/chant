@@ -139,7 +139,14 @@ const resolveProjectLexicons: typeof import("./plugins").resolveProjectLexicons 
  * alongside core's own commands.
  */
 function printHelp(groups: CommandGroup[] = []): void {
-  console.log(`
+  console.log(helpText());
+  const groupsHelp = formatCommandGroupsHelp(groups);
+  if (groupsHelp) console.log(groupsHelp);
+}
+
+/** Core's own `--help` text, without the lexicon command groups. */
+export function helpText(): string {
+  return `
 chant - Declarative infrastructure specification toolkit
 
 Usage:
@@ -1824,9 +1831,7 @@ Examples:
   chant list ./infra/ --format json
   chant describe myComponent src/
   chant describe myComponent src/ --format json
-`);
-  const groupsHelp = formatCommandGroupsHelp(groups);
-  if (groupsHelp) console.log(groupsHelp);
+`;
 }
 
 /**

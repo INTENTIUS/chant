@@ -1,0 +1,2617 @@
+# ==== minimal ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== no install, no build ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== member root ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== supply-chain ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes
+
+# ==== verified-releases ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release verify "$CHANT_RELEASE_LABEL"
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== doctor on ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== doctor off ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== version ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npx chant release stamp "$CHANT_RELEASE_LABEL"
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== images ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npx chant release images "$CHANT_RELEASE_LABEL" -o "$RUNNER_TEMP/chant-release-digests.json"
+      - run: echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== images with archives and platforms ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: "arm64"
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-images
+          path: |
+            dist/app.tar
+            dist/web.tar
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: "arm64"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-images
+          path: dist
+      - run: npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-digests.json"
+      - run: echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== artifacts ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+      - run: npx chant release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+      - run: npm run build
+      - run: npx chant release artifacts "$CHANT_RELEASE_LABEL" --from "$RUNNER_TEMP/chant-release-artifacts"
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== artifacts with goreleaser ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: goreleaser v2.19.0
+        run: "mkdir -p \"$RUNNER_TEMP/goreleaser\" && curl -fsSL -o \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  $RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" -C \"$RUNNER_TEMP/goreleaser\" goreleaser && echo \"CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+      - run: npx chant release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+      - run: npm run build
+      - run: npx chant release artifacts "$CHANT_RELEASE_LABEL" --from "$RUNNER_TEMP/chant-release-artifacts"
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== signing ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== signing with doctor off ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== lane ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --lane fast --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --lane fast --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== gate head ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if [ "$commit" != "$GITHUB_SHA" ]; then echo "$GITHUB_SHA is not green (the newest green commit below it is $commit), so no release is cut" >&2; exit 1; fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== green forge-checks ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+  checks: read
+  statuses: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$GITHUB_SHA"
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== green none ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$GITHUB_SHA"
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== after ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+  after-release:
+    needs: [gate, publish]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run announce
+      - run: echo done
+
+# ==== env and setup ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      OCI_USERNAME: "bot"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: "echo setup"
+      - name: "named"
+        run: "echo named"
+        env:
+          A: "1"
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      OCI_USERNAME: "bot"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: "echo setup"
+      - name: "named"
+        run: "echo named"
+        env:
+          A: "1"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== permissions ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== targets ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      GITHUB_TOKEN: ${{ github.token }}
+      OCI_USERNAME: "${{ github.actor }}"
+      OCI_PASSWORD: "${{ github.token }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      GITHUB_TOKEN: ${{ github.token }}
+      OCI_USERNAME: "${{ github.actor }}"
+      OCI_PASSWORD: "${{ github.token }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== toolchains ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.23"
+          cache: false
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.23"
+          cache: false
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== toolchains off ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== builds ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  build-arm:
+    needs: gate
+    runs-on: "ubuntu-24.04-arm"
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      GOARCH: "arm64"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: "make"
+      - run: "tar -cf chant-release-build-arm.tar -- dist/arm"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-build-arm
+          path: chant-release-build-arm.tar
+          if-no-files-found: error
+          retention-days: 1
+  build-mac:
+    needs: gate
+    runs-on: ["macos-14"]
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: "make mac"
+      - run: "tar -cf chant-release-build-mac.tar -- dist/mac"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-build-mac
+          path: chant-release-build-mac.tar
+          if-no-files-found: error
+          retention-days: 1
+  cut:
+    needs: [gate, build-arm, build-mac]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npx chant release doctor
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-build-arm
+          path: ${{ runner.temp }}/chant-release-builds
+      - run: tar -xkf "$RUNNER_TEMP/chant-release-builds/chant-release-build-arm.tar"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-build-mac
+          path: ${{ runner.temp }}/chant-release-builds
+      - run: tar -xkf "$RUNNER_TEMP/chant-release-builds/chant-release-build-mac.tar"
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut, build-arm, build-mac]
+    runs-on: ubuntu-latest
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-build-arm
+          path: ${{ runner.temp }}/chant-release-builds
+      - run: tar -xf "$RUNNER_TEMP/chant-release-builds/chant-release-build-arm.tar"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-build-mac
+          path: ${{ runner.temp }}/chant-release-builds
+      - run: tar -xf "$RUNNER_TEMP/chant-release-builds/chant-release-build-mac.tar"
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
+# ==== everything ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: write
+  id-token: write
+  checks: read
+  statuses: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$GITHUB_SHA"
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  build-arm:
+    needs: gate
+    runs-on: "arm64"
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: packages/app
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: "make"
+      - run: "tar -cf chant-release-build-arm.tar -- dist/arm"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-build-arm
+          path: packages/app/chant-release-build-arm.tar
+          if-no-files-found: error
+          retention-days: 1
+  cut:
+    needs: [gate, build-arm]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      GITHUB_TOKEN: ${{ github.token }}
+      EXTRA: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: "arm64"
+      - run: "echo setup"
+      - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: npx chant release doctor
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/app/go.mod
+      - name: goreleaser v2.19.0
+        run: "mkdir -p \"$RUNNER_TEMP/goreleaser\" && curl -fsSL -o \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  $RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" -C \"$RUNNER_TEMP/goreleaser\" goreleaser && echo \"CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-build-arm
+          path: ${{ runner.temp }}/chant-release-builds
+      - run: tar -xkf "$RUNNER_TEMP/chant-release-builds/chant-release-build-arm.tar"
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --lane fast --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+      - run: npx chant release artifacts "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-images
+          path: |
+            packages/app/dist/app.tar
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [gate, cut, build-arm]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+      GITHUB_TOKEN: ${{ github.token }}
+      EXTRA: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: "arm64"
+      - run: "echo setup"
+      - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-images
+          path: packages/app/dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-build-arm
+          path: ${{ runner.temp }}/chant-release-builds
+      - run: tar -xf "$RUNNER_TEMP/chant-release-builds/chant-release-build-arm.tar"
+      - run: npx chant release stamp "$CHANT_RELEASE_LABEL"
+      - run: npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-digests.json"
+      - run: echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+      - run: npm run build
+      - run: npx chant release artifacts "$CHANT_RELEASE_LABEL" --from "$RUNNER_TEMP/chant-release-artifacts"
+      - run: npx chant release verify "$CHANT_RELEASE_LABEL"
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes
+  after-release:
+    needs: [gate, publish]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/app
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: echo after

@@ -1,0 +1,1719 @@
+# ==== minimal ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== no install, no build ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== member root ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "cd packages/app"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "cd packages/app"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "cd packages/app"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== supply-chain ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --require-provenance --yes"
+
+# ==== verified-releases ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release verify \"$CHANT_RELEASE_LABEL\""
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== doctor on ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== doctor off ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== version ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant release stamp \"$CHANT_RELEASE_LABEL\""
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== images ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant release images \"$CHANT_RELEASE_LABEL\" -o \"/tmp/chant-release-digests.json\""
+    - "export CHANT_RELEASE_DIGESTS=\"/tmp/chant-release-digests.json\""
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== images with archives and platforms ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    paths:
+      - "dist/app.tar"
+      - "dist/web.tar"
+    expire_in: 1 day
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant release images \"$CHANT_RELEASE_LABEL\" --no-build -o \"/tmp/chant-release-digests.json\""
+    - "export CHANT_RELEASE_DIGESTS=\"/tmp/chant-release-digests.json\""
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== artifacts ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    paths:
+      - ".chant-release-artifacts/"
+    expire_in: 1 day
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+    - "npx chant release artifacts \"$CHANT_RELEASE_LABEL\" --no-build -o \"$CI_PROJECT_DIR/.chant-release-artifacts\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "mv \"$CI_PROJECT_DIR/.chant-release-artifacts\" /tmp/chant-release-artifacts"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release artifacts \"$CHANT_RELEASE_LABEL\" --from /tmp/chant-release-artifacts"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== artifacts with goreleaser ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    paths:
+      - ".chant-release-artifacts/"
+    expire_in: 1 day
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+    - "npx chant release artifacts \"$CHANT_RELEASE_LABEL\" --no-build -o \"$CI_PROJECT_DIR/.chant-release-artifacts\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "mv \"$CI_PROJECT_DIR/.chant-release-artifacts\" /tmp/chant-release-artifacts"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release artifacts \"$CHANT_RELEASE_LABEL\" --from /tmp/chant-release-artifacts"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== signing ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== signing with doctor off ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== lane ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --lane fast --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --lane fast --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== gate head ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "if [ \"$commit\" != \"$CI_COMMIT_SHA\" ]; then echo \"$CI_COMMIT_SHA is not green (the newest green commit below it is $commit), so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== green forge-checks ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$CI_COMMIT_SHA\""
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "export CHANT_GITLAB_TOKEN=\"${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}\""
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== green none ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$CI_COMMIT_SHA\""
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== after ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+chant-release-after:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-publish]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "npm run announce"
+    - "echo done"
+
+# ==== env and setup ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    OCI_USERNAME: "bot"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "echo setup"
+    - "export A=\"1\""
+    - "echo named"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    OCI_USERNAME: "bot"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "echo setup"
+    - "export A=\"1\""
+    - "echo named"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== permissions ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== targets ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== toolchains ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== toolchains off ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== builds ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-build-arm:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    GOARCH: "arm64"
+  needs: [chant-release-gate]
+  tags: ["arm64"]
+  artifacts:
+    paths:
+      - "chant-release-build-arm.tar"
+    expire_in: 1 day
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "make"
+    - "tar -cf chant-release-build-arm.tar -- dist/arm"
+
+chant-release-build-mac:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  tags: ["macos-14"]
+  artifacts:
+    paths:
+      - "chant-release-build-mac.tar"
+    expire_in: 1 day
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "make mac"
+    - "tar -cf chant-release-build-mac.tar -- dist/mac"
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-build-arm, chant-release-build-mac]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "tar -xkf chant-release-build-arm.tar"
+    - "mv chant-release-build-arm.tar /tmp/"
+    - "tar -xkf chant-release-build-mac.tar"
+    - "mv chant-release-build-mac.tar /tmp/"
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-cut, chant-release-build-arm, chant-release-build-mac]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "tar -xf chant-release-build-arm.tar"
+    - "mv chant-release-build-arm.tar /tmp/"
+    - "tar -xf chant-release-build-mac.tar"
+    - "mv chant-release-build-mac.tar /tmp/"
+    - "npm run build"
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --yes"
+
+# ==== everything ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "cd packages/app"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$CI_COMMIT_SHA\""
+    - "label=\"$CHANT_RELEASE_LABEL\"; if [ \"$label\" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi; next=\"$(npx chant release next --at \"$commit\" --json)\" || { echo \"release next found no label for $commit, so no release is cut: $next\" >&2; exit 1; }; label=\"$(printf '%s' \"$next\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.label??\"\"))')\"; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\nCHANT_RELEASE_NEXT=%s\\n' \"$commit\" \"$label\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-build-arm:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  tags: ["arm64"]
+  artifacts:
+    paths:
+      - "packages/app/chant-release-build-arm.tar"
+    expire_in: 1 day
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "cd packages/app"
+    - "npm ci"
+    - "make"
+    - "tar -cf chant-release-build-arm.tar -- dist/arm"
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    EXTRA: "1"
+  needs: [chant-release-gate, chant-release-build-arm]
+  artifacts:
+    paths:
+      - "packages/app/dist/app.tar"
+      - ".chant-release-artifacts/"
+    expire_in: 1 day
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "cd packages/app"
+    - "npm ci"
+    - "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64"
+    - "echo setup"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "tar -xkf chant-release-build-arm.tar"
+    - "mv chant-release-build-arm.tar /tmp/"
+    - "export CHANT_GITLAB_TOKEN=\"${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}\""
+    - "npx chant release doctor"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant release cut \"$CHANT_RELEASE_LABEL\" --at \"$CHANT_RELEASE_COMMIT\" --yes --build 'npm run build' --lane fast --json > /tmp/chant-cut.json"
+    - "tag=\"$(node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??\"\"))' /tmp/chant-cut.json)\""
+    - "if [ -n \"$tag\" ]; then git push origin \"refs/tags/$tag\"; fi"
+    - "npx chant release artifacts \"$CHANT_RELEASE_LABEL\" --no-build -o \"$CI_PROJECT_DIR/.chant-release-artifacts\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    EXTRA: "1"
+  needs: [chant-release-gate, chant-release-cut, chant-release-build-arm]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "mv \"$CI_PROJECT_DIR/.chant-release-artifacts\" /tmp/chant-release-artifacts"
+    - "cd packages/app"
+    - "npm ci"
+    - "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64"
+    - "echo setup"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "tar -xf chant-release-build-arm.tar"
+    - "mv chant-release-build-arm.tar /tmp/"
+    - "npx chant release stamp \"$CHANT_RELEASE_LABEL\""
+    - "npx chant release images \"$CHANT_RELEASE_LABEL\" --no-build -o \"/tmp/chant-release-digests.json\""
+    - "export CHANT_RELEASE_DIGESTS=\"/tmp/chant-release-digests.json\""
+    - "npm run build"
+    - "npx chant release artifacts \"$CHANT_RELEASE_LABEL\" --from /tmp/chant-release-artifacts"
+    - "npx chant release verify \"$CHANT_RELEASE_LABEL\""
+    - "npx chant release publish \"$CHANT_RELEASE_LABEL\" --require-provenance --yes"
+
+chant-release-after:
+  rules:
+    - if: $CHANT_RELEASE_LABEL && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate, chant-release-publish]
+  script:
+    - "export CHANT_RELEASE_LABEL=\"$CHANT_RELEASE_NEXT\""
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "cd packages/app"
+    - "npm ci"
+    - "echo after"
