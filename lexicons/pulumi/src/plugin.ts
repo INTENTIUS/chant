@@ -45,7 +45,7 @@ import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types
 import { createSkillsLoader } from "@intentius/chant/lexicon-plugin-helpers";
 import { pulumiConfigSchema, type PulumiConfig } from "./config";
 import { pulumiSerializer } from "./serializer";
-import { lastMemberReport, readPulumiMember, setLastMemberRead, setLastMemberReport } from "./workspace-member";
+import { lastMemberReport, setLastMemberRead, setLastMemberReport } from "./member-report";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
 import { pulumiAuditCatalog } from "./lint/audit-catalog";
@@ -124,6 +124,7 @@ export const pulumiPlugin: LexiconPlugin = {
     // (#4546), else the checked-in stack-export.json.
     const { readStoredPulumiExport } = await import("./stack-export-snapshot");
     const fromStore = await readStoredPulumiExport({ dir: member.dir, ...(member.stack ? { stack: member.stack } : {}) });
+    const { readPulumiMember } = await import("./workspace-member");
     const read = readPulumiMember({ member, ...(fromStore ? { stored: { doc: fromStore.doc, where: fromStore.where, key: fromStore.key } } : {}) });
     setLastMemberReport(read.report);
     setLastMemberRead({

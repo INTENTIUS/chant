@@ -9,7 +9,7 @@
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { isPulumiNodeless } from "@intentius/chant/pulumi-urn";
-import { PULUMI_EXPORT_FILE } from "../../workspace-member";
+import { PULUMI_EXPORT_FILE } from "../../member-report";
 import { finding, memberExport } from "./member-read-helpers";
 
 export const pul014: PostSynthCheck = {

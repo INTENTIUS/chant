@@ -8,7 +8,7 @@
  * `--stack`. An export like this was merged or edited by hand.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { PULUMI_EXPORT_FILE } from "../../workspace-member";
+import { PULUMI_EXPORT_FILE } from "../../member-report";
 import { finding, memberExport, urnScopes } from "./member-read-helpers";
 
 export const pul008: PostSynthCheck = {

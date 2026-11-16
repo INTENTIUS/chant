@@ -21,7 +21,7 @@ import type { Severity } from "@intentius/chant/lint/rule";
 import { parsePulumiUrn, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 import { parseYAML } from "@intentius/chant/yaml";
 import { isObject, PULUMI_SECRET_SIG, PULUMI_SIG_KEY } from "../../values";
-import { lastMemberRead, type PulumiMemberRead } from "../../workspace-member";
+import { lastMemberRead, type PulumiMemberRead } from "../../member-report";
 
 /** One resource of the export, with the fields the checks read. */
 export interface ExportResource {

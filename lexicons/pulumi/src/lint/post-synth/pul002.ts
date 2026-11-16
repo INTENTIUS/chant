@@ -14,7 +14,7 @@
  * stack owner's, outside chant.
  */
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { lastMemberReport, PULUMI_EXPORT_FILE } from "../../workspace-member";
+import { lastMemberReport, PULUMI_EXPORT_FILE } from "../../member-report";
 
 export const pul002: PostSynthCheck = {
   id: "PUL002",

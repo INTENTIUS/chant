@@ -52,8 +52,7 @@ import { isPulumiNodeless, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 import { PULUMI_ENGINE_GRAPH_FILE, readPlungeEngineGraph } from "./engine-graph";
 import { pulumiMemberEngine } from "./member-engine";
 
-/** The conventional place of the export, in the member's directory. */
-export const PULUMI_EXPORT_FILE = "stack-export.json";
+import { PULUMI_EXPORT_FILE } from "./member-report";
 
 export interface PulumiMemberConfig {
   /** The member's directory, absolute. */
@@ -262,43 +261,4 @@ function readMemberEngineGraph(
   };
 }
 
-/**
- * What the last member read in this process saw, for the post-synth checks
- * PUL003 to PUL015 (`./lint/post-synth/`). It holds the parsed export, so it
- * stays in the process and never reaches the graph's `meta`, which carries
- * only {@link PulumiMemberReport}.
- */
-export interface PulumiMemberRead {
-  /** The member's directory, absolute. */
-  dir: string;
-  /** The label the entities are keyed by. */
-  label: string;
-  /** `pulumi.member.engine`, when the config sets it. */
-  engine?: "pulumi" | "plunge";
-  /** `pulumi.member.stack`, when the config sets it. */
-  stack?: string;
-  /** The parsed export, the index store's or the checked-in `stack-export.json`; undefined when there is none or it is not JSON. */
-  doc?: unknown;
-}
-
-let lastRead: PulumiMemberRead | undefined;
-
-/** Left by the plugin's `buildRoots` beside the report; see {@link PulumiMemberRead}. */
-export function setLastMemberRead(read: PulumiMemberRead | undefined): void {
-  lastRead = read;
-}
-
-export function lastMemberRead(): PulumiMemberRead | undefined {
-  return lastRead;
-}
-
-let lastReport: PulumiMemberReport | undefined;
-
-/** The report of the read in this process, left for `graphMeta` (see the aws member reader). */
-export function setLastMemberReport(report: PulumiMemberReport | undefined): void {
-  lastReport = report;
-}
-
-export function lastMemberReport(): PulumiMemberReport | undefined {
-  return lastReport;
-}
+export { PULUMI_EXPORT_FILE, lastMemberRead, lastMemberReport, setLastMemberRead, setLastMemberReport, type PulumiMemberRead } from "./member-report";
