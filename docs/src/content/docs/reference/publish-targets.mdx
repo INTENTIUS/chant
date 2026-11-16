@@ -309,12 +309,12 @@ The provenance statement is an [in-toto Statement v1](https://github.com/in-toto
   "label": "v1.4.0",
   "member": null,
   "commit": "3f2a9c1d0b7e...",
-  "cut": { "actor": "alice", "label": "v1.4.0", "timestamp": "2026-10-17T10:00:00.000Z", "runId": "local-1760695200000", "namespace": "chant-release", "signature": "-----BEGIN SSH SIGNATURE-----..." },
+  "cut": { "actor": "alice", "label": "v1.4.0", "timestamp": "2026-10-17T10:00:00.000Z", "runId": "local-1760695200000", "namespace": "chant-release", "signature": "-----BEGIN SSH SIGNATURE-----...", "green": { "source": "chant", "tag": "ci/green/3f2a9c1d0b7e..." } },
   "provenance": { "kind": "oidc", "ci": "github" }
 }
 ```
 
-`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/#release-verify), offline, against the signers file at the release's commit. `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token: in CI, npm's provenance is the one a registry records and signs, and for images, an attestation signed with the job's token is the CI's to add, such as `actions/attest-build-provenance`. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
+`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/#release-verify), offline, against the signers file at the release's commit. `cut.green` is the [green gate](/chant/cli/release/#the-green-gate) the cut passed, as its cut line records it: `{ "source": "chant", "tag": ... }`, `{ "source": "forge-checks", "forge": "github", "checks": [...] }` with the checks by name, or `{ "source": "none" }`. A cut that ran under an override carries `cut.override` (who, when, why, and the tag or checks it stood in for) instead. A cut recorded before chant had either has neither field. `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token: in CI, npm's provenance is the one a registry records and signs, and for images, an attestation signed with the job's token is the CI's to add, such as `actions/attest-build-provenance`. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
 
 ### A CI job that checks provenance
 

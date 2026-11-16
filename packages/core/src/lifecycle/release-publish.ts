@@ -103,6 +103,10 @@ export interface PublishCut {
   runId: string | null;
   /** The armored ssh signature in the `chant-release` namespace, or null for an unsigned cut. */
   signature: string | null;
+  /** The green gate the cut passed (#5149), absent on a cut that recorded none. */
+  green?: import("./release-store").ReleaseCutGreen;
+  /** The override the cut ran under (#4693), absent on a cut of a green commit. */
+  override?: import("./release-store").ReleaseCutOverride;
 }
 
 /**
@@ -440,7 +444,15 @@ export async function preparePublish(req: {
     ? { status: shown.check.status, actor: shown.cut.actor, key: shown.check.key, reason: shown.check.reason }
     : { status: "unsigned", actor: null, key: null, reason: "no cut names the release" };
   const cut: PublishCut | null = shown
-    ? { actor: shown.cut.actor, label: shown.cut.label, timestamp: shown.cut.timestamp, runId: shown.cut.runId ?? null, signature: shown.cut.signature ?? null }
+    ? {
+        actor: shown.cut.actor,
+        label: shown.cut.label,
+        timestamp: shown.cut.timestamp,
+        runId: shown.cut.runId ?? null,
+        signature: shown.cut.signature ?? null,
+        ...(shown.cut.green ? { green: shown.cut.green } : {}),
+        ...(shown.cut.override ? { override: shown.cut.override } : {}),
+      }
     : null;
 
   let targets: PublishTarget[];

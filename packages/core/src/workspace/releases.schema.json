@@ -154,6 +154,32 @@
             "$ref": "#/$defs/target"
           }
         },
+        "publishes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "target",
+              "kind",
+              "destination"
+            ],
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "The target's key: its type and the first 16 hex digits of the SHA-256 of its declaration."
+              },
+              "kind": {
+                "type": "string",
+                "description": "The declaration's type, such as npm or forge."
+              },
+              "destination": {
+                "type": "string",
+                "description": "Where it publishes, as release publish prints it."
+              }
+            }
+          },
+          "description": "Added by #5149, written by chant 0.124.101 and newer. An artifact release, cut with no environments: the release.publish targets, in the declared order. targets is then empty. Absent on a release cut from environments."
+        },
         "cuts": {
           "type": "array",
           "description": "Each cut of the release, oldest first.",
@@ -445,6 +471,38 @@
             }
           },
           "description": "Added by #4693, written by chant 0.124.64 and newer. The commit was not green, and release cut --override-green cut it under a person's override, which it spent. Absent on a cut of a green commit."
+        },
+        "green": {
+          "type": "object",
+          "required": [
+            "source"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "chant",
+                "forge-checks",
+                "none"
+              ],
+              "description": "release.green: a chant green tag, the forge's checks, or no gate."
+            },
+            "tag": {
+              "type": "string",
+              "description": "For chant: the green tag the commit carried, ci/green/<sha> or ci/green-<lane>/<sha>."
+            },
+            "forge": {
+              "type": "string",
+              "description": "For forge-checks: github, gitlab or forgejo."
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "For forge-checks: the checks that passed, by name, sorted."
+            }
+          },
+          "description": "Added by #5149, written by chant 0.124.101 and newer. The green gate the commit passed. Absent on a cut under an override and on a cut written before."
         }
       }
     },

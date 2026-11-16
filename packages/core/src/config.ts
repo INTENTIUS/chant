@@ -131,6 +131,8 @@ export const ChantConfigSchema = z.object({
       )
       .optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
+    // #5149: what says a commit may be released.
+    green: z.enum(["chant", "forge-checks", "none"]).optional(),
     // #5134: tag prefixes of releases cut before members had ledgers, read as a last release by `chant release changed`.
     legacyTags: z.array(z.string().min(1)).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
@@ -439,6 +441,15 @@ export interface ChantConfig {
      * rather than `ci/green/<sha>`.
      */
     lane?: string;
+    /**
+     * What says a commit may be released (#5149): `chant`, a `ci/green/<sha>`
+     * tag as `chant ci` writes it; `forge-checks`, the commit's checks on the
+     * forge passed; `none`, nothing, with a warning, refused under the
+     * `supply-chain` and `verified-releases` security groups and a release
+     * gate. Default `chant` when chant.workspace.json declares `ci.green` or
+     * the repository holds `ci/green/` tags, else `forge-checks`. See ./lifecycle/release-green.ts.
+     */
+    green?: import("./lifecycle/release-green").ReleaseGreenSource;
     /**
      * Tag prefixes of releases cut before members had ledgers (#5134), such as
      * `release/npm/` and `chant-v`. `chant release changed` reads the newest

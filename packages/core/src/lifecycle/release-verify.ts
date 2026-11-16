@@ -34,7 +34,8 @@ export interface ReleaseVerification {
   /** The cut whose signature verified, or null. */
   verifiedBy: { actor: string; key: string | null } | null;
   reason: string;
-  cuts: Array<Pick<ReleaseCut, "label" | "actor" | "timestamp" | "runId"> & { signatureCheck: ReleaseSignatureCheck }>;
+  /** Each cut, with the green gate it passed or the override it ran under (#5149, #4693) when it recorded one. */
+  cuts: Array<Pick<ReleaseCut, "label" | "actor" | "timestamp" | "runId" | "green" | "override"> & { signatureCheck: ReleaseSignatureCheck }>;
 }
 
 /** Why a release could not be checked at all. */
@@ -92,6 +93,8 @@ export async function verifyRelease(req: { cwd: string; ref: string }): Promise<
     actor: c.actor,
     timestamp: c.timestamp,
     runId: c.runId ?? null,
+    ...(c.green ? { green: c.green } : {}),
+    ...(c.override ? { override: c.override } : {}),
     signatureCheck: atCommit(checkReleaseSignature(rule, { releaseDigest: c.releaseDigest, label: c.label, actor: c.actor, timestamp: c.timestamp, signature: c.signature })),
   }));
   const verified = cuts.find((c) => c.signatureCheck.status === "verified");

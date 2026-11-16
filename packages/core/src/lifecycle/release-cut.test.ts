@@ -207,6 +207,8 @@ describe("cutRelease", () => {
           runId: `local-${Date.parse("2026-10-16T10:00:00.000Z")}`,
           runOrigin: { forge: "local" },
           signature: null,
+          // #5149: the gate the cut passed.
+          green: { source: "chant", tag: `ci/green/${release.commit}` },
         },
       ]);
       expect(git(dir, "ls-tree", "-r", "--name-only", "chant/lifecycle").split("\n").filter((p) => p.endsWith("releases.jsonl"))).toEqual([]);
@@ -218,7 +220,7 @@ describe("cutRelease", () => {
     await withTestDir(async (dir) => {
       initRepo(dir);
       const compiler = fixtureCompiler();
-      const err = await cut(dir, compiler, "v1").catch((e: unknown) => e);
+      const err = await cutRelease({ cwd: dir, compiler, label: "v1", actor: "alice", env: {}, green: "chant" }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ReleaseCutError);
       expect((err as ReleaseCutError).code).toBe("release-commit-not-green");
       expect(compiler.compiled).toEqual([]);

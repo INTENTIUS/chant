@@ -15,6 +15,7 @@ Under `verified-releases`:
 
 - `chant release publish` refuses a release none of whose cuts carries a signature that verifies against `.chant/allowed_signers` at base (`release-unsigned`, `release-signature-unverified`). `--allow-unsigned` publishes it anyway, with a warning.
 - `chant components promote --release` and `chant components rollback --release` run [`chant release verify`](/chant/cli/release/) first, and refuse a release that does not verify.
+- `chant release cut` refuses `release.green: "none"` (`release-green-none-refused`), so every release passed a [green gate](/chant/cli/release/#the-green-gate).
 
 Without the group, an unsigned release publishes and the plan records `signature: unsigned`.
 

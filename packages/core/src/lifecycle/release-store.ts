@@ -126,6 +126,25 @@ export interface ReleaseTarget {
   trees?: ReleaseTree[];
 }
 
+/**
+ * One `release.publish` target of an artifact release (#5149): a release cut
+ * with no environments, which records what its targets publish in place of
+ * compile targets. The files a target uploads are checked at publish against
+ * the artifacts the release records at their paths (`artifactDigests`), as
+ * for any release.
+ */
+export interface ReleasePublish {
+  /** The target's key (`publishTargetKey`): its type and a digest of its declaration. */
+  target: string;
+  /** The declaration's `type`, such as `npm` or `forge`. */
+  kind: string;
+  /** Where it publishes, as the publish prints it. */
+  destination: string;
+}
+
+/** The first chant that writes and reads a release's `publishes` (#5149). */
+export const RELEASE_PUBLISHES_FLOOR = "0.124.101";
+
 /** The release file, `_releases/<releaseDigest>.json`. */
 export interface Release {
   version: 1;
@@ -135,7 +154,15 @@ export interface Release {
   /** The full sha of the green commit. */
   commit: string;
   artifactDigests: ReleaseArtifact[];
+  /** One per environment; empty for an artifact release (#5149). */
   targets: ReleaseTarget[];
+  /**
+   * An artifact release (#5149), cut with no environments: the targets
+   * `release.publish` declares, in order. In the digest when present, so such
+   * a release is read by chant {@link RELEASE_PUBLISHES_FLOOR} and newer.
+   * Absent on a release cut from environments.
+   */
+  publishes?: ReleasePublish[];
 }
 
 /** One line of `_releases/cuts.jsonl`. */
@@ -186,6 +213,27 @@ export interface ReleaseCut {
    * (#4693). Absent on a cut of a green commit.
    */
   override?: ReleaseCutOverride;
+  /**
+   * What the cut took as the commit being green (#5149): a chant green tag,
+   * the forge's checks by name, or nothing (`release.green: "none"`). Absent
+   * on a cut under an override, and on every cut written before #5149.
+   */
+  green?: ReleaseCutGreen;
+}
+
+/** The green gate a cut passed (#5149), `release.green`. */
+export type ReleaseCutGreen =
+  | { source: "chant"; tag: string }
+  | { source: "forge-checks"; forge: string; checks: string[] }
+  | { source: "none" };
+
+/** Whether `v` reads as a {@link ReleaseCutGreen}. */
+export function isCutGreen(v: unknown): v is ReleaseCutGreen {
+  if (!v || typeof v !== "object") return false;
+  const g = v as Record<string, unknown>;
+  if (g.source === "chant") return typeof g.tag === "string";
+  if (g.source === "forge-checks") return typeof g.forge === "string" && Array.isArray(g.checks) && g.checks.every((c) => typeof c === "string");
+  return g.source === "none";
 }
 
 /**
@@ -218,7 +266,7 @@ function isCutOverride(v: unknown): v is ReleaseCutOverride {
 }
 
 /** The parts of a release a digest is computed from. */
-export type ReleaseSubject = Pick<Release, "member" | "commit" | "artifactDigests" | "targets">;
+export type ReleaseSubject = Pick<Release, "member" | "commit" | "artifactDigests" | "targets" | "publishes">;
 
 const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -241,6 +289,8 @@ export function normalizeRelease<T extends ReleaseSubject>(release: T): T {
           : {}),
       }))
       .sort((a, b) => byString(a.env, b.env)),
+    // #5149: the declared order is the publish order, so it is kept.
+    ...(release.publishes ? { publishes: release.publishes.map(({ target, kind, destination }) => ({ target, kind, destination })) } : {}),
   };
 }
 
@@ -257,6 +307,7 @@ export function releaseHashInput(release: ReleaseSubject): unknown {
       params: t.params.map(({ name, value }) => ({ name, value })),
       ...(t.trees ? { trees: t.trees } : {}),
     })),
+    ...(n.publishes ? { publishes: n.publishes } : {}),
   };
 }
 
@@ -395,7 +446,9 @@ export function parseRelease(text: string): Release | null {
         (t.trees === undefined || (Array.isArray(t.trees) && t.trees.every((x) => x && (x.component === null || typeof x.component === "string") && typeof x.path === "string"))) &&
         Array.isArray(t.params) &&
         t.params.every((p) => p && typeof p.name === "string" && ["string", "number", "boolean"].includes(typeof p.value) && typeof p.source === "string"),
-    );
+    ) &&
+    (r.publishes === undefined ||
+      (Array.isArray(r.publishes) && r.publishes.every((p) => p && typeof p.target === "string" && typeof p.kind === "string" && typeof p.destination === "string")));
   return ok ? (r as Release) : null;
 }
 
@@ -442,6 +495,7 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         (c.channel === undefined || typeof c.channel === "string") &&
         (c.lane === undefined || typeof c.lane === "string") &&
         (c.override === undefined || isCutOverride(c.override)) &&
+        (c.green === undefined || isCutGreen(c.green)) &&
         (c.composed === undefined || (typeof c.composed === "object" && c.composed !== null && typeof c.composed.base === "string" && Array.isArray(c.composed.sources)));
       if (!ok) {
         malformed++;
@@ -526,6 +580,7 @@ export async function appendCut(
       ...(input.channel ? { channel: input.channel } : {}),
       ...(input.lane ? { lane: input.lane } : {}),
       ...(input.override ? { override: input.override } : {}),
+      ...(input.green ? { green: input.green } : {}),
     };
     const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${JSON.stringify(cut, sortedJsonReplacer)}\n`;
     try {

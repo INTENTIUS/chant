@@ -566,3 +566,49 @@ describe("chant release workflow under chant dev generated-check (#4950)", () =>
     }
   });
 });
+
+describe("release-only adoption (#5149)", () => {
+  test("forge-checks: the gate names the dispatched commit, and the cut gets the run's token and checks: read and statuses: read", () => {
+    const doc = parseYAML(dispatch("github", { green: "forge-checks" })) as GhDoc;
+    const green = doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!;
+    expect(green).toContain('commit="$GITHUB_SHA"');
+    expect(green).not.toContain("ci last-green");
+    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", checks: "read", statuses: "read" });
+    expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", GITHUB_TOKEN: "${{ github.token }}" });
+  });
+
+  test("none: the gate names the dispatched commit and no scope or token is added; the chant gate renders as before", () => {
+    const none = parseYAML(dispatch("github", { green: "none" })) as GhDoc;
+    expect(none.jobs.gate!.steps.find((s) => s.id === "green")!.run!).not.toContain("ci last-green");
+    expect(none.permissions).toEqual({ contents: "write", "id-token": "write" });
+    expect(none.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}" });
+    expect(dispatch("github", { green: "chant" })).toBe(dispatch("github"));
+  });
+
+  test("GitLab forge-checks: the cut reads the pipelines with the release token", () => {
+    const doc = parseYAML(dispatch("gitlab", { green: "forge-checks" })) as Record<string, { script: string[] }>;
+    expect(doc["chant-release-gate"]!.script).toContain('commit="$CI_COMMIT_SHA"');
+    expect(doc["chant-release-cut"]!.script).toContain('export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"');
+  });
+
+  test("a project with only package.json and chant.config.ts renders its workflow with no chant.workspace.json, gated on the forge's checks", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-5149-release-")));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "acme-cli", version: "0.0.0" }));
+    writeFileSync(join(root, "chant.config.ts"), `export default { release: { workflow: { trigger: "dispatch" }, publish: [{ type: "npm", packages: ["."] }] } };\n`);
+    expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await runReleaseWorkflow({ args: { forge: "github", output: join(root, "release.yml") } } as unknown as CommandContext)).toBe(0);
+      const doc = parseYAML(readFileSync(join(root, "release.yml"), "utf-8")) as GhDoc;
+      expect(doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!).toContain('commit="$GITHUB_SHA"');
+      expect(doc.permissions?.checks).toBe("read");
+      expect(runs(doc.jobs.publish!)).toContain('npx chant release publish "$CHANT_RELEASE_LABEL" --yes');
+      // No build script in package.json, so no build step that would fail.
+      expect(runs(doc.jobs.publish!)).not.toContain("npm run build");
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+    }
+  });
+});

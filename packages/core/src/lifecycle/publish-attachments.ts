@@ -5,7 +5,8 @@
  * The provenance statement is an in-toto Statement v1 whose predicate
  * (`https://intentius.io/chant/release/v1`) names the release, its commit,
  * and the cut that signed it, with the cut's ssh signature in the
- * `chant-release` namespace. Anyone holding the repository checks that
+ * `chant-release` namespace, and the green gate the cut passed: a chant
+ * green tag, the forge checks by name, or none (#5149). Anyone holding the repository checks that
  * signature offline with `chant release verify`, against
  * `.chant/allowed_signers` at the release's commit. The predicate also says
  * whether the run had an OIDC token: in CI, the provenance a registry records
@@ -79,7 +80,19 @@ export function releaseProvenance(ctx: PublishContext, subjects: ReadonlyArray<{
       label: ctx.label,
       member: ctx.release.member,
       commit: ctx.release.commit,
-      cut: cut ? { actor: cut.actor, label: cut.label, timestamp: cut.timestamp, runId: cut.runId, signature: cut.signature, namespace: RELEASE_SEAL_NAMESPACE } : null,
+      cut: cut
+        ? {
+            actor: cut.actor,
+            label: cut.label,
+            timestamp: cut.timestamp,
+            runId: cut.runId,
+            signature: cut.signature,
+            namespace: RELEASE_SEAL_NAMESPACE,
+            // #5149: the gate that let the commit be cut, as the cut line records it; absent on a cut that recorded none.
+            ...(cut.green ? { green: cut.green } : {}),
+            ...(cut.override ? { override: { by: cut.override.by, at: cut.override.at, reason: cut.override.reason, tag: cut.override.tag } } : {}),
+          }
+        : null,
       provenance: ctx.provenance.oidc ? { kind: "oidc", ci: ctx.provenance.ci } : { kind: "signature", ci: ctx.provenance.ci },
     },
   };
