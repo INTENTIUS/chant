@@ -14,7 +14,9 @@ import {
   insertReleaseBlock,
   newConfigSource,
   planRelease,
+  planTrain,
   readTagHistory,
+  trainFit,
   ReleaseInitError,
   tagTemplateOf,
   type InitPackage,
@@ -308,5 +310,146 @@ describe("chant release init (#5160)", () => {
     const other = repo({ "package.json": JSON.stringify({ name: "acme" }), "package-lock.json": "{}" }, { tags: ["acme@1.4.0"] });
     const plain = JSON.parse((await run(other, { json: true })).out) as { next: string[] };
     expect(plain.next.at(-2)).toMatch(/-f label=1\.4\.1$/);
+  });
+});
+
+describe("a workspace released as a train (#5154)", () => {
+  const mono = (extra: Record<string, string> = {}, opts: { origin?: string; tags?: string[] } = {}) =>
+    repo({
+      "package.json": JSON.stringify({ name: "acme-mono", private: true, workspaces: ["packages/*"] }),
+      "package-lock.json": "{}",
+      ".github/workflows/ci.yml": "on: push\n",
+      "packages/core/package.json": JSON.stringify({ name: "@acme/core", version: "0.0.0", files: ["dist"] }),
+      "packages/web/package.json": JSON.stringify({ name: "@acme/web", version: "0.0.0", dependencies: { "@acme/core": "*" } }),
+      "packages/internal/package.json": JSON.stringify({ name: "@acme/internal", private: true }),
+      ...extra,
+    }, { origin: "git@github.com:acme/mono.git", ...opts });
+
+  test("a member per publishable package, in dependency order, and the train at the root", () => {
+    const facts = detectProject(mono());
+    expect(trainFit(facts)).toEqual({ train: true });
+    const plan = planTrain(facts, PLAN);
+    expect(plan.workspaceName).toBe("mono");
+    expect(plan.members.map((m) => [m.name, m.dir, m.package])).toEqual([
+      ["core", "packages/core", "@acme/core"],
+      ["web", "packages/web", "@acme/web"],
+    ]);
+    expect(plan.members[0]!.release).toEqual({ tag: "{member}/v{version}", green: "forge-checks", version: { packages: ["."] }, publish: [{ type: "npm", packages: ["."], access: "public" }] });
+    // web depends on core, so its range names the version the train gives core.
+    expect(plan.members[1]!.release.version).toEqual({ packages: ["."], ranges: "train" });
+    expect(plan.release).toEqual({ train: { env: "npm" }, green: "forge-checks", workflow: { trigger: "dispatch", chant: "npx --yes @intentius/chant@0.124.101" } });
+    expect(plan.notes.join("\n")).toContain("@acme/internal");
+    // core lists its files; web packs everything, chant.config.ts too.
+    expect(plan.notes.join("\n")).toMatch(/chant\.config\.ts with it .*: @acme\/web has neither/);
+    expect(plan.registry).toHaveLength(2);
+    expect(plan.registry[0]).toContain("naming acme/mono and the workflow file chant-release.yml");
+    expect(plan.registry[0]).toContain("publish its first version by hand from packages/core");
+  });
+
+  test("shared tags make the first train together; a package's own tags stay its own", () => {
+    const facts = detectProject(mono({}, { tags: ["v1.0.0", "v1.1.0", "web-v0.3.0", "@acme/core@1.2.0"] }));
+    const plan = planTrain(facts, PLAN);
+    expect(plan.release.train).toEqual({ env: "npm", first: "together" });
+    expect(plan.release.legacyTags).toEqual(["v"]);
+    const [core, web] = plan.members;
+    // @ can't be in a release.tag template, so core's old tags are only read.
+    expect(core!.release.tag).toBe("{member}/v{version}");
+    expect(core!.release.legacyTags).toEqual(["@acme/core@"]);
+    expect(web!.release.tag).toBe("web-v{version}");
+    expect(web!.release.legacyTags).toBeUndefined();
+  });
+
+  test("a workspace with something the train can't carry gets one release, and says why", () => {
+    expect(trainFit(detectProject(mono({ Dockerfile: "FROM scratch\n" })))).toMatchObject({ train: false, why: expect.stringContaining("Dockerfile") });
+    expect(trainFit(detectProject(mono({ "package.json": JSON.stringify({ name: "acme-mono", workspaces: ["packages/*"] }) })))).toMatchObject({ train: false, why: expect.stringContaining("root package acme-mono") });
+    const gitlab = detectProject(mono());
+    gitlab.workflowForge = "gitlab";
+    expect(trainFit(gitlab)).toMatchObject({ train: false, why: expect.stringContaining("GitLab") });
+    // One publishable package is no train, and nothing to explain.
+    expect(trainFit(detectProject(repo({ "package.json": JSON.stringify({ name: "solo" }) })))).toEqual({ train: false, why: null });
+  });
+});
+
+describe("chant release init on a workspace (#5154)", () => {
+  async function run(root: string, args: Record<string, unknown>): Promise<{ code: number; out: string }> {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void lines.push(a.join(" ")));
+    const err = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void lines.push(a.join(" ")));
+    try {
+      return { code: await runReleaseInit({ args } as unknown as CommandContext), out: lines.join("\n") };
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      err.mockRestore();
+    }
+  }
+  const mono = (extra: Record<string, string> = {}) =>
+    repo({
+      "package.json": JSON.stringify({ name: "acme-mono", private: true, workspaces: ["packages/*"] }),
+      "package-lock.json": "{}",
+      ".github/workflows/ci.yml": "on: push\n",
+      "packages/core/package.json": JSON.stringify({ name: "@acme/core", version: "0.0.0" }),
+      "packages/web/package.json": JSON.stringify({ name: "@acme/web", version: "0.0.0", dependencies: { "@acme/core": "*" } }),
+      ...extra,
+    }, { origin: "https://github.com/acme/mono.git" });
+
+  test("a dry run writes nothing; --yes writes the workspace, each member's config, the root's and the train workflow", async () => {
+    const root = mono();
+    const dry = await run(root, {});
+    expect(dry.code).toBe(0);
+    expect(dry.out).toContain("Dry run: a release train of 2 packages");
+    expect(dry.out).toContain("--one-release");
+    for (const f of ["chant.workspace.json", "chant.config.ts", "packages/core/chant.config.ts", ".github/workflows/chant-release.yml"]) expect(existsSync(join(root, f))).toBe(false);
+
+    const wrote = await run(root, { yes: true });
+    expect(wrote.code).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf-8"))).toEqual({
+      name: "mono",
+      schema: 1,
+      members: [
+        { name: "core", dir: "packages/core", kind: "chant" },
+        { name: "web", dir: "packages/web", kind: "chant" },
+      ],
+    });
+    expect((await loadChantConfig(root)).config.release).toMatchObject({ train: { env: "npm" }, workflow: { trigger: "dispatch" } });
+    expect((await loadChantConfig(join(root, "packages/web"))).config.release).toMatchObject({ tag: "{member}/v{version}", version: { packages: ["."], ranges: "train" }, publish: [{ type: "npm", packages: ["."] }] });
+    const workflowText = readFileSync(join(root, ".github/workflows/chant-release.yml"), "utf-8");
+    expect(workflowText).toContain("name: chant release train");
+    expect(workflowText).toContain("workspace train cut npm");
+    expect(wrote.out).toContain("git add chant.workspace.json chant.config.ts packages/core/chant.config.ts packages/web/chant.config.ts .github/workflows/chant-release.yml");
+    expect(wrote.out).toContain("gh workflow run chant-release.yml -f levels=auto");
+
+    // Run again: every config has its release block, so nothing is replaced until --force.
+    const again = await run(root, { yes: true });
+    expect(again.code).toBe(1);
+    expect(again.out).toContain("release-init-release-exists");
+    expect((await run(root, { yes: true, force: true })).code).toBe(0);
+  });
+
+  test("an existing chant.workspace.json gets the members added; a member in the way is refused until --force", async () => {
+    const root = mono({ "chant.workspace.json": JSON.stringify({ name: "acme", schema: 1, members: [{ name: "web", dir: "packages/web", kind: "other", because: "a package" }] }) });
+    const r = await run(root, { yes: true });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("release-init-member-exists");
+    expect(existsSync(join(root, "packages/core/chant.config.ts"))).toBe(false);
+    expect((await run(root, { yes: true, force: true })).code).toBe(0);
+    const ws = JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf-8")) as { name: string; members: unknown[] };
+    expect(ws.name).toBe("acme");
+    expect(ws.members).toEqual([
+      { name: "web", dir: "packages/web", kind: "chant" },
+      { name: "core", dir: "packages/core", kind: "chant" },
+    ]);
+  });
+
+  test("--one-release keeps every package in one release", async () => {
+    const root = mono();
+    const doc = JSON.parse((await run(root, { json: true, oneRelease: true })).out) as { layout: string; release: { publish: unknown[] }; reasons: string[] };
+    expect(doc.layout).toBe("one-release");
+    expect(doc.release.publish).toEqual([{ type: "npm", packages: ["packages/core", "packages/web"], access: "public" }]);
+    expect(doc.reasons[0]).toContain("--one-release");
+    const train = JSON.parse((await run(root, { json: true })).out) as { layout: string; members: Array<{ name: string; config: string }> };
+    expect(train.layout).toBe("train");
+    expect(train.members.map((m) => m.config)).toEqual(["packages/core/chant.config.ts", "packages/web/chant.config.ts"]);
   });
 });

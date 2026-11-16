@@ -119,6 +119,7 @@ const BOOLEAN_FLAGS = new Set([
   "--push",
   "--only",
   "--reset",
+  "--one-release",
 ]);
 
 /**
@@ -1276,6 +1277,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant ci runner-start sign --job <json|@file>` (#4147): the CI job a runner was started for.
       result.ciJob = args[++i];
       if (!result.ciJob || result.ciJob.startsWith("-")) throw new Error("--job needs the job as JSON or @<file>: --job @job.json");
+    } else if (arg === "--one-release") {
+      // `chant release init --one-release` (#5154): a workspace's packages released together, not as a train.
+      result.oneRelease = true;
     } else if (arg === "--no-push") {
       // `chant ci run --no-push` (#4156): keep the run record on the local chant/lifecycle.
       result.noPush = true;
