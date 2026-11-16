@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {},
+    "moduleResolution": "bundler",
+    "customConditions": [
+      "@intentius/chant-source"
+    ]
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "src/testdata/**",
+    "**/fixtures/**",
+    "node_modules",
+    "dist",
+    "docs"
+  ],
+  "tsc-alias": {
+    "resolveFullPaths": true
+  }
+}

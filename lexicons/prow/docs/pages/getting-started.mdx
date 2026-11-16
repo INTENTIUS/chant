@@ -1,0 +1,114 @@
+---
+title: Getting Started
+description: Declare a repository's Prow jobs, build the job config Prow loads, and import an existing one
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/lexicons/prow/getting-started/.
+  Install `@intentius/chant-lexicon-prow`, import this repository's Prow job config with `npx chant import <file> -o src`, then run `npx chant build src --lexicon prow` and show me the diff against the file imported.
+  Run `npx chant lint src` and report each PROW finding with the job it names.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Install the lexicon beside chant:
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-prow
+```
+
+## Declare the jobs
+
+Each job is a `Presubmit`, a `Postsubmit` or a `Periodic`, with Prow's own
+field names. A presubmit or postsubmit names its repository with `repo`, as
+`owner/name`. That is the key the job config lists the job under, so the built
+job does not carry it. A periodic has no repository of its own; name the
+repositories it clones with `extra_refs`.
+
+```ts
+// src/jobs.ts
+import { JobConfig, Periodic, PodSpec, Postsubmit, Presubmit, Refs } from "@intentius/chant-lexicon-prow";
+
+const image = "golang:1.26";
+
+export const jobs = [
+  new JobConfig({ header: "# Written by chant build from src/jobs.ts." }),
+  new Presubmit({
+    repo: "acme/app",
+    name: "pull-app-unit",
+    cluster: "untrusted",
+    always_run: true,
+    decorate: true,
+    branches: ["^main$"],
+    spec: new PodSpec({
+      automountServiceAccountToken: false,
+      containers: [{ name: "test", image, command: ["go"], args: ["test", "./..."] }],
+    }),
+  }),
+  new Postsubmit({
+    repo: "acme/app",
+    name: "post-app-publish",
+    cluster: "trusted",
+    decorate: true,
+    max_concurrency: 1,
+    branches: ["^main$"],
+    spec: new PodSpec({
+      serviceAccountName: "publisher",
+      containers: [{ name: "publish", image, command: ["make"], args: ["publish"] }],
+    }),
+  }),
+  new Periodic({
+    name: "periodic-app-e2e",
+    cluster: "trusted",
+    cron: "0 3 * * *",
+    decorate: true,
+    extra_refs: [new Refs({ org: "acme", repo: "app", base_ref: "main", workdir: true })],
+    spec: new PodSpec({
+      serviceAccountName: "e2e",
+      containers: [{ name: "e2e", image, command: ["make"], args: ["e2e"] }],
+    }),
+  }),
+];
+```
+
+chant reads a module's exports in name order, and an exported array's
+elements in their order. Export the jobs in one array when their order in the
+file matters to you, as above. A job with no `name` takes its export's name.
+
+## Build the job config
+
+```bash
+npx chant build src --lexicon prow -o prow/jobs.yaml
+```
+
+The file starts with the `JobConfig` header as comment lines. Below it,
+`presubmits` and `postsubmits` are keyed by repository, and `periodics` is a
+list. Point
+Prow's `job_config_path` at it, or copy it into the repository that holds your
+installation's job config.
+
+## Import an existing job config
+
+```bash
+npx chant import prow/jobs.yaml -o src
+```
+
+The import writes one `main.ts` with a declaration per job. Each keeps its
+fields in the order the file has them, and one exported array keeps the jobs
+in file order. The comment
+lines the file starts with become a `JobConfig` header. Building the import
+writes a job config with the same data, and the same bytes for a file chant
+wrote.
+
+## Check it
+
+```bash
+npx chant lint src
+```
+
+Four rules flag what Prow's config loader refuses. PROW101 is a duplicated job
+name and PROW102 a periodic without exactly one schedule. PROW103 is a
+kubernetes job without a pod spec, and PROW106 is `always_run` beside a change
+filter. PROW104 and
+PROW105 are warnings about credentials and pull request code: a presubmit
+whose pod reads a Secret, and a presubmit on a build cluster where other jobs
+hold a Secret or a cloud identity. PROW001 flags a credential written into a
+job's environment in source.

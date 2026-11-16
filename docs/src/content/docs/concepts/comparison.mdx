@@ -56,6 +56,6 @@ A generated pull-request pipeline's jobs are typed values that each forge's gene
 
 - Static evaluation means no runtime lookups at build time. You can't call an API during synthesis to get a VPC ID or read a secret. Cross-resource references within a project work through attribute references. For a value resolved at deploy time, the lexicon has an intrinsic. For a value needed before synthesis, an agent or script can write it into a source file.
 
-- Twenty-three lexicons ship today, and [Lexicons](/chant/lexicons/overview/) lists them. The terraform and pulumi lexicons read estates you already have, on the stock binaries or on choudoufu and plunge. [Lexicon Authoring](/chant/lexicon-authoring/overview/) covers adding one.
+- Twenty-four lexicons ship today, and [Lexicons](/chant/lexicons/overview/) lists them. The terraform and pulumi lexicons read estates you already have, on the stock binaries or on choudoufu and plunge. [Lexicon Authoring](/chant/lexicon-authoring/overview/) covers adding one.
 
 - The static subset of TypeScript has no function calls, no control flow around resources and no dynamic property access. That keeps synthesis deterministic. [TypeScript as Data](/chant/concepts/typescript-as-data/) lists what is supported.

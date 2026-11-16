@@ -1,0 +1,18 @@
+# Two presubmits named pull-app-unit in acme/app, on every branch.
+presubmits:
+  acme/app:
+    - name: pull-app-unit
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go
+    - name: pull-app-unit
+      context: ci/unit-again
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go

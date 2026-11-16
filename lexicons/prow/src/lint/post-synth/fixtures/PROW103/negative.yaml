@@ -1,0 +1,11 @@
+# A pod spec with a container.
+presubmits:
+  acme/app:
+    - name: pull-app-unit
+      always_run: true
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go

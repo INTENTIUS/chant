@@ -1,0 +1,12 @@
+# always_run beside a change filter.
+presubmits:
+  acme/app:
+    - name: pull-app-unit
+      always_run: true
+      skip_if_only_changed: ^docs/
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go

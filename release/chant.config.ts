@@ -38,6 +38,7 @@ export default {
           "../.release/packs/lexicons_k3d.tgz",
           "../.release/packs/lexicons_k3s.tgz",
           "../.release/packs/lexicons_otel.tgz",
+          "../.release/packs/lexicons_prow.tgz",
           "../.release/packs/lexicons_pulumi.tgz",
           "../.release/packs/lexicons_render.tgz",
           "../.release/packs/lexicons_sql.tgz",

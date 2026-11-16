@@ -1,0 +1,19 @@
+# One way each of saying when the job runs.
+presubmits:
+  acme/app:
+    - name: pull-app-unit
+      always_run: true
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go
+    - name: pull-app-docs
+      run_if_changed: ^docs/
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go

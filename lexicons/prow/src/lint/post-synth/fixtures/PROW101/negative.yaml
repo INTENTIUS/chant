@@ -1,0 +1,39 @@
+# One name in two repositories, on disjoint branches of one repository, and
+# as a presubmit beside a postsubmit: Prow's loader takes each.
+presubmits:
+  acme/app:
+    - name: pull-unit
+      branches:
+        - main
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go
+    - name: pull-unit
+      branches:
+        - release
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go
+  acme/web:
+    - name: pull-unit
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go
+postsubmits:
+  acme/app:
+    - name: pull-unit
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go

@@ -18,6 +18,7 @@ A **lexicon** is a collection of types and semantic lint rules for an operationa
 | GitHub Actions | `@intentius/chant-lexicon-github` | 3 resources, 14 composites | [Reference](/chant/lexicons/github/) |
 | GitLab CI/CD | `@intentius/chant-lexicon-gitlab` | 3 resources, 16 properties | [Reference](/chant/lexicons/gitlab/) — also ships [GitHub Actions migration](/chant/lexicons/gitlab/migration/) |
 | Forgejo Actions (Codeberg / Gitea) | `@intentius/chant-lexicon-forgejo` | thin github dialect (reuses github entities) | [Reference](/chant/lexicons/forgejo/) — ships GitHub Actions migration + `forgejo:compare` |
+| Prow | `@intentius/chant-lexicon-prow` | 3 job kinds (Presubmit, Postsubmit, Periodic) + pod spec property types, pinned to sigs.k8s.io/prow | [Reference](/chant/lexicons/prow/): writes the job config Prow loads and imports an existing one |
 | Docker | `@intentius/chant-lexicon-docker` | 6 resources (Compose + Dockerfile) | [Reference](/chant/lexicons/docker/) |
 | Fly Machines | `@intentius/chant-lexicon-fly` | 6 resources (Machines API) | [Reference](/chant/lexicons/fly/) — ships the mudflaps emulator for offline round-trips |
 | Fountain | `@intentius/chant-lexicon-fountain` | 3 resources (Environment, Vault, Agent) | [Reference](/chant/lexicons/fountain/) — sandboxed agent workloads and the steward that operates them; conversations are ops, not resources |

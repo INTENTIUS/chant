@@ -1,0 +1,9 @@
+# A periodic with no interval, cron or minimum_interval.
+periodics:
+  - name: periodic-app-e2e
+    spec:
+      containers:
+        - name: test
+          image: golang:1.26
+          command:
+            - go

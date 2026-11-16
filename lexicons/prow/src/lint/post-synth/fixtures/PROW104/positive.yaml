@@ -1,0 +1,33 @@
+# A presubmit whose container reads a token from a Secret, and one that
+# mounts a Secret as a volume.
+presubmits:
+  acme/app:
+    - name: pull-app-e2e
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - make
+              - e2e
+            env:
+              - name: GITHUB_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: github-token
+                    key: token
+    - name: pull-app-deploy-preview
+      spec:
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - make
+              - preview
+            volumeMounts:
+              - name: kubeconfig
+                mountPath: /etc/kubeconfig
+        volumes:
+          - name: kubeconfig
+            secret:
+              secretName: preview-kubeconfig

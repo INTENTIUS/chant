@@ -1,0 +1,66 @@
+{
+  "name": "@intentius/chant-lexicon-prow",
+  "version": "0.124.34",
+  "type": "module",
+  "files": [
+    "dist/"
+  ],
+  "exports": {
+    ".": {
+      "@intentius/chant-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./*": {
+      "@intentius/chant-source": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    },
+    "./lint/post-synth": {
+      "@intentius/chant-source": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./dist/lint/post-synth/index.js"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "vendor": "npx tsx src/spec/vendor.ts",
+    "generate": "npx tsx src/codegen/generate-cli.ts",
+    "validate": "npx tsx src/validate-cli.ts",
+    "docs": "npx tsx src/codegen/docs-cli.ts",
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node ../../scripts/copy-lexicon-assets.mjs",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "bundle": "tsx src/package-cli.ts"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "ajv": "^8.20.0",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.124.34"
+  },
+  "description": "Prow lexicon for chant: presubmits, postsubmits and periodics as declarable data",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/INTENTIUS/chant#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/prow"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "chant",
+    "prow",
+    "kubernetes",
+    "ci"
+  ]
+}

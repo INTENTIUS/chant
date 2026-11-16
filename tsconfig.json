@@ -153,6 +153,12 @@
       "@intentius/chant-lexicon-prometheus/*": [
         "./lexicons/prometheus/src/*"
       ],
+      "@intentius/chant-lexicon-prow": [
+        "./lexicons/prow/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-prow/*": [
+        "./lexicons/prow/src/*"
+      ],
       "@intentius/chant-lexicon-pulumi": [
         "./lexicons/pulumi/src/index.ts"
       ],
