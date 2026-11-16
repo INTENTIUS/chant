@@ -16,6 +16,7 @@ chant release init --yes    # writes it
 | Flag | Description |
 |---|---|
 | `--yes` | Write the config, the workflow and the goreleaser change. Without it nothing is written |
+| `--dry-run` | Write nothing, as without `--yes`. With `--yes` too, nothing is written. |
 | `--force` | Replace an existing `release` block, a release workflow file chant did not write, and a `chant.workspace.json` member in the way of a train's |
 | `--one-release` | Release every package of a workspace together, at one label under one tag, rather than as a train |
 | `--forge <forge>` | The forge the workflow is written for. Default: the repository's workflow directory (`.github/workflows`, `.forgejo/workflows`, `.gitlab-ci.yml`), else the forge `origin` names, else `github` |

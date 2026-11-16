@@ -532,7 +532,7 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
       env,
       ...(args.at ? { at: args.at } : {}),
       levels: parseTrainLevels(args.levels),
-      yes: args.yes === true,
+      yes: args.yes === true && args.dryRun !== true,
       noPush: args.noPush === true,
       ...(args.actor ? { actor: args.actor } : {}),
       say: (line) => (json ? undefined : console.error(line)),
@@ -550,7 +550,7 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
     throw err;
   }
   if (json) {
-    console.log(JSON.stringify({ dryRun: args.yes !== true, ...outcome }, null, 2));
+    console.log(JSON.stringify({ dryRun: args.yes !== true || args.dryRun === true, ...outcome }, null, 2));
     return 0;
   }
   const short = outcome.commit.slice(0, 12);
@@ -564,7 +564,7 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
   }
   console.log(`Release train for ${env} from ${short}${outcome.first ? " (the first: every member at one label)" : ""}:`);
   for (const m of outcome.members) console.log(`  ${m.member.padEnd(24)} ${m.label.padEnd(12)} ${m.why}${m.bump ? `; ${m.bump} from ${m.bumpFrom}` : ""}${m.floor ? `; floor ${m.floor}` : ""}`);
-  if (args.yes !== true) {
+  if (args.yes !== true || args.dryRun === true) {
     console.error("Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cut the train.");
     return 0;
   }

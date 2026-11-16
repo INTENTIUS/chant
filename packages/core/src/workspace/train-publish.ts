@@ -613,7 +613,7 @@ export async function runTrainPublish(ctx: import("../cli/registry").CommandCont
       cwd,
       env,
       ...(ref !== undefined ? { train: ref } : {}),
-      yes: args.yes === true,
+      yes: args.yes === true && args.dryRun !== true,
       allowUnsigned: args.allowUnsigned === true,
       requireProvenance: args.requireProvenance === true,
       say: (line) => (json ? undefined : console.error(line)),

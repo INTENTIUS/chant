@@ -66,6 +66,7 @@ The status record is the one [`chant query`](/chant/cli/query/) loads into the `
 | Flag | Meaning |
 |---|---|
 | `--yes` | Change the status. Without it the command is a dry run. |
+| `--dry-run` | A dry run, as without `--yes`. With `--yes` too, the status is not changed. |
 | `--reason <text>` | Why. It goes in the record and in npm's deprecation message. |
 | `--replacement <label>` | The release to use instead. It goes in the record, and npm's message says `use <label>`. |
 | `--forge-release prerelease\|draft\|delete` | How `yank` leaves a forge release. Default `prerelease`. |
