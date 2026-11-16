@@ -117,12 +117,19 @@ async function laneOf(ctx: CommandContext, cwd: string): Promise<string | undefi
   }
 }
 
-/** The member's `release.images` (#4657), or none when the config declares none. A Dockerfile entry (#4819) keeps its form, so its prepare command runs. */
+/** The member's `release.artifacts` (#5151), or none when the config declares none. */
 async function releaseArtifactsOf(cwd: string): Promise<import("../../lifecycle/release-artifacts").ReleaseArtifactDeclaration[]> {
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.artifacts ?? [];
 }
 
+/** The member's `release.workflow.builds` (#5152), which a `release.artifacts` entry's `builtBy` names (#5183). */
+async function releaseBuildJobsOf(cwd: string): Promise<import("../../lifecycle/release-artifacts").ReleaseBuildJobRef[]> {
+  const { loadChantConfig } = await import("../../config");
+  return (await loadChantConfig(cwd)).config.release?.workflow?.builds ?? [];
+}
+
+/** The member's `release.images` (#4657), or none when the config declares none. A Dockerfile entry (#4819) keeps its form, so its prepare command runs. */
 async function releaseImagesOf(cwd: string): Promise<import("../../lifecycle/release-images").ReleaseImageDeclaration[]> {
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.images ?? [];
@@ -293,7 +300,7 @@ export async function runReleaseArtifacts(ctx: CommandContext): Promise<number> 
     if (from !== undefined) copyArtifactFiles(files, resolve(from), cwd);
     else if (!args.noBuild) {
       const images = await releaseImagesOf(cwd);
-      const built = buildReleaseArtifacts({ artifacts: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, imageNames: images.map((i) => i.name) });
+      const built = buildReleaseArtifacts({ artifacts: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, imageNames: images.map((i) => i.name), builds: await releaseBuildJobsOf(cwd) });
       const recorded = new Set(files.map((f) => f.path));
       const extra = built.filter((b) => !recorded.has(b.path)).map((b) => b.path);
       if (extra.length > 0) return fail("release-artifact-digest-mismatch", `the build wrote ${extra.join(", ")}, which release ${release.releaseDigest} does not record`, "A build of the release's commit must write the files the cut wrote. Cut a new release.");
@@ -604,12 +611,25 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       : undefined;
     // #5151: the files release.artifacts declares, built after the images and recorded as assets.
     const declaredArtifacts = await releaseArtifactsOf(cutCwd);
+    const buildJobs = await releaseBuildJobsOf(cutCwd);
     const buildArtifacts =
       declaredArtifacts.length > 0
         ? async (at: string) => {
-            const { buildReleaseArtifacts, ReleaseArtifactError } = await import("../../lifecycle/release-artifacts");
+            const { buildReleaseArtifacts, isPrebuilt, ReleaseArtifactError } = await import("../../lifecycle/release-artifacts");
+            // #5183: under --at, files built before the cut are read from this checkout, which must hold the commit cut.
+            const prebuilt = declaredArtifacts.filter(isPrebuilt);
+            if (checkout && prebuilt.length > 0) {
+              const here = await getHeadCommit({ cwd });
+              if (here !== at) {
+                throw new ReleaseCutError(
+                  "release-artifact-wrong-commit",
+                  `no release was cut: release.artifacts ${prebuilt.map((a) => `"${a.name}"`).join(", ")} ${prebuilt.length === 1 ? "is" : "are"} read from this checkout, which is at ${here.slice(0, 12)}, and the cut is of ${at.slice(0, 12)}, so the files might not be that commit's`,
+                  `Check out the commit being cut and build the files there: git checkout ${at}`,
+                );
+              }
+            }
             try {
-              return buildReleaseArtifacts({ artifacts: declaredArtifacts, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, imageNames: declaredImages.map((d) => d.name) });
+              return buildReleaseArtifacts({ artifacts: declaredArtifacts, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, imageNames: declaredImages.map((d) => d.name), builds: buildJobs, ...(checkout ? { prebuiltFrom: cwd } : {}) });
             } catch (err) {
               if (!(err instanceof ReleaseArtifactError)) throw err;
               throw new ReleaseCutError(err.code as import("../../lifecycle/release-cut").ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
@@ -761,10 +781,13 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // release records are put where release.images names them here, so the job's next step (the hand-off to the
     // publish job) finds them.
     if (checkout && declaredImages.length > 0) copyImageArchives((await import("../../lifecycle/release-images")).resolveReleaseImages(declaredImages), cutCwd, cwd);
-    // #5151: the files too, so `release artifacts -o` in the same job stages them for the publish job.
+    // #5151: the files too, so `release artifacts -o` in the same job stages them for the publish job. The files
+    // built before the cut (#5183) came from here; only what the cut packed from them is copied back.
     if (checkout && declaredArtifacts.length > 0) {
-      const { copyArtifactFiles, releaseArtifactFiles } = await import("../../lifecycle/release-artifacts");
-      copyArtifactFiles(releaseArtifactFiles(result.release, declaredArtifacts.map((a) => a.name)), cutCwd, cwd, { missingOk: true });
+      const { copyArtifactFiles, isPrebuilt, releaseArtifactFiles } = await import("../../lifecycle/release-artifacts");
+      const asFound = declaredArtifacts.filter((a) => isPrebuilt(a) && a.archive === undefined).map((a) => a.name);
+      const copied = declaredArtifacts.map((a) => a.name).filter((n) => !asFound.includes(n));
+      copyArtifactFiles(releaseArtifactFiles(result.release, copied), cutCwd, cwd, { missingOk: true });
     }
     // #4965: the record must be on the remote before the release is tagged. The release workflow pushes the tag
     // right after the cut, and a tag whose record never landed spends the label: the publish job finds no release.

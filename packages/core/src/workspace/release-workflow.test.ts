@@ -753,6 +753,49 @@ describe("toolchains and per-platform builds (#5152)", () => {
   });
 });
 
+describe("release.artifacts built on other runners (#5183)", () => {
+  const config = (builtBy: string) =>
+    `export default { release: { workflow: { trigger: "dispatch", builds: [{ name: "linux-arm64", runner: "ubuntu-24.04-arm", build: "go build -o dist/acme-linux-arm64 .", outputs: ["dist/acme-linux-arm64"] }] }, artifacts: [{ name: "acme", builtBy: ${JSON.stringify(builtBy)} }, { name: "sums", checksums: "dist/SHA256SUMS" }], publish: [{ type: "forge", forge: "github", repo: "acme/acme", assets: ["artifact:acme", "artifact:sums"] }] } };\n`;
+  const render = async (text: string): Promise<{ code: number; root: string; errors: string[] }> => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-5183-")));
+    writeFileSync(join(root, "go.mod"), "module example.com/acme\n\ngo 1.24\n");
+    writeFileSync(join(root, "chant.config.ts"), text);
+    expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await runReleaseWorkflow({ args: { forge: "github", output: join(root, "release.yml") } } as unknown as CommandContext);
+      return { code, root, errors: err.mock.calls.map((c) => String(c[0])) };
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      err.mockRestore();
+    }
+  };
+
+  test("the build job builds, the cut job unpacks and records without building it again, and the publish job checks the staged files", async () => {
+    const { code, root } = await render(config("linux-arm64"));
+    expect(code).toBe(0);
+    const doc = parseYAML(readFileSync(join(root, "release.yml"), "utf-8")) as GhDoc;
+    const cut = runs(doc.jobs.cut!);
+    expect(runs(doc.jobs["build-linux-arm64"]!)).toContain("go build -o dist/acme-linux-arm64 .");
+    expect(cut.some((l) => l.includes("go build"))).toBe(false);
+    const unpack = cut.indexOf('tar -xkf "$RUNNER_TEMP/chant-release-builds/chant-release-build-linux-arm64.tar"');
+    const cutAt = cut.findIndex((l) => l.includes(" release cut "));
+    expect(unpack).toBeGreaterThan(-1);
+    expect(unpack).toBeLessThan(cutAt);
+    expect(cut.findIndex((l) => l.includes(" release artifacts ") && l.includes("--no-build"))).toBeGreaterThan(cutAt);
+    expect(runs(doc.jobs.publish!).some((l) => l.includes(" release artifacts ") && l.includes("--from"))).toBe(true);
+  });
+
+  test("builtBy naming no build job is refused when the workflow is written", async () => {
+    const { code, errors } = await render(config("windows"));
+    expect(code).toBe(1);
+    expect(errors.join("\n")).toMatch(/builtBy names "windows", which is not a release.workflow.builds job \(they are linux-arm64\) \[release-artifact-invalid\]/);
+  });
+});
+
 describe("release.tag templates in the workflow (#5150)", () => {
   const tagsOf = (tag: Parameters<typeof resolveTagTemplate>[0], member: string | null = null, path: string | null = null): MemberTags => ({ place: { member, path }, template: resolveTagTemplate(tag, member) });
 
