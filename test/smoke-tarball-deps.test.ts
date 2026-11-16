@@ -30,6 +30,7 @@ interface Manifest {
   name: string;
   dependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 }
 
 /** Workspace package directory (relative to the repo root) to its package.json. */
@@ -178,7 +179,9 @@ describe("smoke images pack every workspace dependency of what they pack", () =>
     for (const dir of packed) {
       const manifest = manifests.get(dir);
       if (!manifest) throw new Error(`${dockerfilePath} packs ${dir}, which is not a workspace package`);
-      for (const dep of Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies })) {
+      // An optional peer is installed only by whoever wants it, so the image need not pack it.
+      const optionalPeers = new Set(Object.entries(manifest.peerDependenciesMeta ?? {}).filter(([, m]) => m?.optional).map(([d]) => d));
+      for (const dep of Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies }).filter((d) => !optionalPeers.has(d))) {
         const depDir = dirByName.get(dep);
         if (depDir && !packed.includes(depDir)) found.push({ pkg: manifest.name, dep });
       }
