@@ -47,6 +47,8 @@ The stage runs, for each package, `npm view <name>@<version> version` to ask whe
 
 The reveal runs `npm dist-tag add <name>@<version> latest` for each package in the declared order, with the declared `--registry`. The first package declared is the set's core, and its `latest` moves first, so a consumer that resolves a new package also finds its new core. Order the list core first, then each package after the packages it depends on. This is the order chant's own releases use ([#3903](https://github.com/INTENTIUS/chant/issues/3903)).
 
+A release whose label is a semver prerelease, such as `1.4.0-rc.1`, reveals under a dist-tag named for its id: `rc` for `1.4.0-rc.1`, `beta` for `2.0.0-beta.3`, and `next` when the id is a number or `latest`. `latest` does not move. A `--channel` on the cut decides the tag instead. See [Prereleases](#prereleases).
+
 A new package is the exception: npm makes its first version `latest` whatever tag it is published under, so that version is visible as soon as it stages. Moving a dist-tag needs credentials that may change dist-tags. Over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record, which is separate from publishing.
 
 With an OIDC token, the reveal then checks what it published. A registry accepts a publish before it serves it, so the reveal first runs `npm view <name>@<version> version` for each package every 10 seconds until all of them answer ([#4244](https://github.com/INTENTIUS/chant/issues/4244)), and prints the packages still missing about once a minute. A 404 means not yet. Any other failure of `npm view` is the registry's error, and the publish stops with `publish-npm-registry-failed` and npm's message ([#4271](https://github.com/INTENTIUS/chant/issues/4271)). With `registryWait` declared, it stops with `publish-npm-not-served` naming the packages still missing once that many seconds pass. In an empty temporary directory it then runs `npm install --ignore-scripts --no-audit --no-fund` for every package at its version, then `npm audit signatures`, both with the declared `--registry`. An install that fails with `ETARGET` or `ERESOLVE` waits once more and installs again. npm fails the audit when a package's registry signature or provenance attestation does not verify, and the publish stops with `publish-npm-audit-failed`. By then `latest` has moved, so the error says the packages were published. Run again, the publish moves no tag that moved and audits again. A workstation has no token and so no npm provenance to audit, and there the step does not run.
@@ -59,7 +61,7 @@ For both steps npm authenticates with its own config. chant reads no npm token a
 |---|---|
 | `image` | An OCI image layout as a directory or as the tar file `docker save` writes. Its `index.json` names one image manifest or one index |
 | `repository` | `<registry host>/<name>` like `ghcr.io/acme/api` |
-| `tags` | Tags to point at the pushed digest. `{label}` is the release's label. The default is `["{label}"]` when the release has a label |
+| `tags` | Tags to point at the pushed digest. `{label}` is the release's label. The default is `["{label}"]` when the release has a label. A release whose label is a semver prerelease drops a `latest` tag and keeps the rest, or the label tag when nothing else is left |
 | `usernameEnv` and `passwordEnv` | The variables holding the registry user and its password or token. The defaults are `OCI_USERNAME` and `OCI_PASSWORD` |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: one written from the member's lockfile. `false` attaches none |
 
@@ -123,6 +125,8 @@ The file is read when the publish plans its targets, so a missing file or sectio
 The previous release is the one the cut finds: the member's release cut from the nearest ancestor of this release's commit. A member's first release lists every commit in its directory. The commits come from the checkout's git history, so the publish needs the full history (`fetch-depth: 0` on `actions/checkout`, `GIT_DEPTH: 0` on GitLab, as the generated release workflow sets); a shallow checkout, or a directory outside a git checkout, is refused with `publish-forge-notes-history`.
 
 The stage decides the notes. GitHub and Forgejo get them on the draft, which is created with them or, when an earlier stage left it, edited to them, so the draft shows the notes before the reveal. They are kept in the publish record, and the reveal publishes those, so a resumed publish asks the forge nothing again and the release's notes are the ones its draft showed. The dry run prints the notes from commits in full; the forge's own are fetched only when the stage runs, so the dry run names them instead. A release already published when the stage ran keeps the notes it has.
+
+A GitHub or Forgejo release whose label is a semver prerelease is published with `prerelease: true`. On GitHub it is also published with `make_latest` `false`, whatever `latest` says. GitLab's release API has no prerelease setting, so a GitLab release is created as usual.
 
 ## Homebrew tap
 
@@ -301,6 +305,21 @@ The manifest is Tauri's static JSON. `version` is the release's label from its f
 GitHub can't replace what a release holds in one request, so the stage builds a new release as a draft and the reveal swaps it in. The stage makes a draft for the rolling tag named `<tag> <version>` at the release's commit, or finds the one an earlier stage made, and uploads each bundle, each asset and the manifest to it. A file already on the draft with the same digest is not sent again, and one that differs is refused (`publish-tauri-asset-exists`). The published rolling release is untouched, so the updater sees nothing new. A rolling release that already holds every file with the same digests is what an earlier reveal left, and the stage then does nothing.
 
 The reveal deletes the published rolling release and its tag, then publishes the draft with `make_latest`. GitHub makes the tag again at the release's commit when it publishes. Between the delete and the publish, a few requests apart, the rolling release's URLs answer 404. The updater treats that as no update, and the site's download links fail for that moment. A reveal run again after the draft was published finds it published and does nothing.
+
+## Prereleases
+
+A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is a prerelease on every target, with no `--channel`. The label is read as `MAJOR.MINOR.PATCH-PRERELEASE`, with an optional leading `v` and an optional `+build` suffix. A label that is not of this form, such as a date or `v1`, is not a prerelease.
+
+| Target | A prerelease label |
+|---|---|
+| `npm` | Reveals under the dist-tag named by the first identifier of the prerelease, lowercased: `rc` for `1.4.0-rc.1`, `beta` for `2.0.0-beta.3`. A number (`1.0.0-3`) or `latest` gives `next`. `latest` does not move |
+| `oci` | Pushes the declared tags without `latest`. The label tag stays |
+| `forge` | GitHub and Forgejo mark the release a prerelease, and GitHub does not make it latest. GitLab has no such setting |
+| `homebrew` | Skipped. The formula is what `brew upgrade` installs, so the target changes nothing and the dry run says it is skipped |
+| `tauri-updater` | Skipped, as the updater feed is what installed apps update from |
+| `marketplace` | Unchanged. A pre-release is a property of the packaged `.vsix` |
+
+A `channel` recorded on the cut wins for the tags it names: npm moves the channel, and OCI pushes only the channel. The forge release is still marked a prerelease, since the label is one. [`release cut`](/chant/cli/release/#release-cut) and [`release publish`](/chant/cli/release/#release-publish) print `prerelease` in their dry run and in `--json`.
 
 ## SBOMs and provenance
 

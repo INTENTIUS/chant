@@ -56,6 +56,7 @@ import { SshGitRepo } from "./publish-git-ssh";
 import { GitHubRepo, githubApi } from "./publish-github";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
+import { prereleaseOf } from "./release-prerelease";
 
 /** The first chant that publishes a `homebrew` target (#4676). */
 export const PUBLISH_HOMEBREW_FLOOR = "0.124.63";
@@ -137,6 +138,7 @@ export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDe
     const bytes = new Uint8Array(Buffer.from(renderFormula(template, { version, label: ctx.label, tag: ctx.releaseTag }, assets), "utf-8"));
     return { version, token, assets, bytes, digest: bytesDigest(bytes) };
   };
+  const skipNote = (ctx: PublishContext) => `skipped: ${ctx.label} is a prerelease, and the formula is what \`brew upgrade\` installs`;
   const where = (branch: string) => `${decl.tap}@${branch}:${decl.formula}`;
   const target: PublishTarget = {
     kind: "homebrew",
@@ -145,10 +147,15 @@ export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDe
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
     async plan(ctx) {
+      if (prereleaseOf(ctx.label)) return [{ name: decl.formula, destination: where(decl.branch ?? "the default branch"), notes: skipNote(ctx) }];
       const { digest } = setup(ctx);
       return [{ name: decl.formula, destination: where(decl.branch ?? "the default branch"), digest }];
     },
     async stage(ctx) {
+      if (prereleaseOf(ctx.label)) {
+        ctx.log(skipNote(ctx));
+        return { target: target.name, destination: target.destination, items: [], state: { prerelease: "true" } };
+      }
       const { version, token, assets, bytes, digest } = setup(ctx);
       ctx.log(`using the ${ssh ? "SSH key" : "token"} from ${token.from}`);
       for (const [name, a] of assets) ctx.log(`${name}: ${a.url} sha256 ${a.sha256}`);
@@ -182,6 +189,7 @@ export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDe
       return done({ staging, commit }, false);
     },
     async reveal(ctx, staged) {
+      if (staged.state.prerelease === "true") return { target: target.name, destination: target.destination, items: [] };
       const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}) }));
       const published = { target: target.name, destination: target.destination, items };
       if (staged.state.present === "true") return { ...published, items: items.map((i) => ({ ...i, present: true })) };

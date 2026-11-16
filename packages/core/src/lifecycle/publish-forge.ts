@@ -63,6 +63,7 @@ import type { ForgePublishDeclaration } from "./publish-declaration";
 import { changelogNotes, type ChangelogCommit } from "./release-changelog";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
+import { prereleaseOf } from "./release-prerelease";
 
 /** The first chant that reads `latest` on a forge target and sends it as GitHub's `make_latest` (#4676). */
 export const PUBLISH_FORGE_LATEST_FLOOR = "0.124.63";
@@ -240,14 +241,17 @@ class ForgeClient {
   /**
    * GitHub and Forgejo: publish the draft `id` with its notes. GitHub gets
    * `make_latest`: the declared `latest`, else `false` for a release cut to a
-   * channel and `true` for any other (#4658). Forgejo has no such setting and
-   * takes the newest release that is not a prerelease, so a channel's release
-   * is marked a prerelease there.
+   * channel and `true` for any other (#4658). A release whose label is a
+   * semver prerelease is marked a prerelease, on GitHub too, and is never
+   * latest. Forgejo has no latest setting and takes the newest release that
+   * is not a prerelease, so a channel's release is marked a prerelease there.
    */
-  async publishDraft(id: string, tag: string, o: { notes?: string; channel: boolean }): Promise<void> {
+  async publishDraft(id: string, tag: string, o: { notes?: string; channel: boolean; prerelease?: boolean }): Promise<void> {
     const body: Record<string, unknown> = { draft: false, ...(o.notes !== undefined ? { body: o.notes } : {}) };
-    if (this.decl.forge === "github") body.make_latest = String(this.decl.latest ?? !o.channel);
-    else if (o.channel) body.prerelease = true;
+    if (this.decl.forge === "github") {
+      body.make_latest = o.prerelease ? "false" : String(this.decl.latest ?? !o.channel);
+      if (o.prerelease) body.prerelease = true;
+    } else if (o.channel || o.prerelease) body.prerelease = true;
     const res = await this.call("PATCH", `${this.repoPath}/releases/${id}`, JSON.stringify(body));
     if (res.status !== 200) this.fail(`publishing the draft release ${tag}`, res.status, res.text);
   }
@@ -540,9 +544,19 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         const id = staged.state.releaseId;
         if (!id) throw new PublishTargetError("publish-forge-failed", `the staged ${decl.forge} release for ${tag} has no draft id to publish`);
         const channel = ctx.tag !== null;
-        const latest = decl.forge === "github" ? ` with make_latest ${String(decl.latest ?? !channel)}` : channel ? " as a prerelease, since it was cut to a channel" : "";
+        const prerelease = prereleaseOf(ctx.label) !== null;
+        const latest =
+          decl.forge === "github"
+            ? prerelease
+              ? " as a prerelease, since its label is one, with make_latest false"
+              : ` with make_latest ${String(decl.latest ?? !channel)}`
+            : prerelease
+              ? " as a prerelease, since its label is one"
+              : channel
+                ? " as a prerelease, since it was cut to a channel"
+                : "";
         ctx.log(`publishing the draft ${decl.forge} release ${tag}${notes !== undefined ? " with its notes" : ""}${latest}`);
-        await client.publishDraft(id, tag, { ...(notes !== undefined ? { notes } : {}), channel });
+        await client.publishDraft(id, tag, { ...(notes !== undefined ? { notes } : {}), channel, prerelease });
       }
       return { target: this.name, destination: this.destination, items };
     },

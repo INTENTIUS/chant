@@ -45,6 +45,7 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
+import { prereleaseOf } from "./release-prerelease";
 
 const INDEX_TYPES = new Set(["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"]);
 
@@ -353,11 +354,15 @@ export function referrerManifest(a: Attachment, subject: { mediaType: string; di
   return new Uint8Array(Buffer.from(JSON.stringify(manifest)));
 }
 
-/** The tags to point at the digest: the context's tag when set, else the declared ones with `{label}` filled in. */
+/** The tags to point at the digest: the context's tag when set, else the declared ones with `{label}` filled in, without `latest` for a prerelease label. */
 export function ociTags(decl: OciPublishDeclaration, ctx: Pick<PublishContext, "tag" | "label">): string[] {
   if (ctx.tag) return [ctx.tag];
   const declared = decl.tags ?? (ctx.label ? ["{label}"] : []);
-  return declared.filter((t) => ctx.label !== null || !t.includes("{label}")).map((t) => t.split("{label}").join(ctx.label ?? ""));
+  const tags = declared.filter((t) => ctx.label !== null || !t.includes("{label}")).map((t) => t.split("{label}").join(ctx.label ?? ""));
+  // A prerelease label moves no `latest`; what is left is its own label tag.
+  if (prereleaseOf(ctx.label) === null) return tags;
+  const kept = tags.filter((t) => t !== "latest");
+  return kept.length > 0 || ctx.label === null ? kept : [ctx.label];
 }
 
 /** The digest an OCI archive (a layout directory or a tar file of one) is pushed under: its top manifest's (#4657). */

@@ -77,7 +77,7 @@ The worktree shares the repository's refs, so the release and the cut go to the 
 
 A commit of a pushed `chant/compose/<name>` branch, as [`release compose`](#release-compose) makes it, is cut like a trunk commit ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The branch is read as this clone last fetched it from `origin`. Green and revoked tags decide as they do on trunk. With [signed tags](/chant/cli/ci/#signed-tags) the tag's statement names the compose branch the tick walked.
 
-The cut line's `composed` field names the branch and the base it was composed on. It also lists the trunk commits its `Chant-Composed-From` trailers name, oldest first. The walk goes back along first parents to the first commit on trunk, past any commit made on the branch by hand. `--channel <tag>` records `channel` on the cut line, and [`release publish`](#release-publish) then moves that tag in place of `latest`. The dry run and `--json` print both as `composed` and `channel`.
+The cut line's `composed` field names the branch and the base it was composed on. It also lists the trunk commits its `Chant-Composed-From` trailers name, oldest first. The walk goes back along first parents to the first commit on trunk, past any commit made on the branch by hand. `--channel <tag>` records `channel` on the cut line, and [`release publish`](#release-publish) then moves that tag in place of `latest`. The dry run and `--json` print both as `composed` and `channel`, and print `prerelease` too: true when the label is a semver prerelease such as `1.4.0-rc.1`, which a publish treats as one without a channel.
 
 ```bash
 git fetch origin --tags
@@ -512,6 +512,8 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. Under `release.version`, a file it names that is exactly the commit's stamped with this release's label is not a change ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). |
 
 A release whose cut names a `channel` moves that tag instead of `latest`: the npm target's dist-tag and the OCI target's image tag. The newest cut that names one decides.
+
+A release whose label is a semver prerelease (`1.4.0-rc.1`) needs no channel. npm reveals under a dist-tag named for the prerelease id (`rc`, `beta`, or `next` when there is none) and never moves `latest`, GitHub and Forgejo mark the release a prerelease, and OCI keeps no `latest` tag. A channel on the cut still wins for npm and OCI. The publish prints `prerelease` and, with `--json`, `prerelease: true` and `distTag`. See [Prereleases](/chant/reference/publish-targets/#prereleases).
 
 The last two hold because a target uploads files from the checkout it runs in, which are the release's only at its commit. A CI job on the release's tag passes both. A publish with no target reads nothing and checks neither.
 

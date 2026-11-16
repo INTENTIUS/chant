@@ -170,6 +170,18 @@ describe("npm", () => {
     expect(readFakeNpmRegistry(log).packages["@acme/kit"]!.distTags).toEqual({ latest: "1.3.0", next: "1.4.0", beta: "1.4.0" });
   });
 
+  test("a prerelease label reveals under the dist-tag its id names, a channel wins, and latest does not move", async () => {
+    for (const [tag, label, want] of [[null, "1.4.0-rc.1", "rc"], [null, "2.0.0-beta.3", "beta"], [null, "1.4.0-3", "next"], ["hotfix", "1.4.0-rc.1", "hotfix"]] as const) {
+      const { dir, npm, log } = setup();
+      const [target] = await createPublishTargets([decl({ type: "npm", packages: ["kit.tgz"] })], { npm });
+      const ctx = context(dir, { env: { PATH: process.env.PATH }, tag, label });
+      const done = await publish(target!, ctx);
+      expect(done.items[0]!.destination).toBe(`the registry npm's config names, dist-tag ${want}`);
+      expect(calls(log).filter((c) => c.args[0] === "dist-tag").map((c) => c.args[3])).toEqual([want]);
+      expect(readFakeNpmRegistry(log).packages["@acme/kit"]!.distTags.latest).toBe("1.3.0");
+    }
+  });
+
   test("stage: false publishes each package straight to latest in the order declared and moves no dist-tag (#4040)", async () => {
     const { dir, npm, log } = setup();
     const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "kit.tgz"], access: "public", stage: false })], { npm });
