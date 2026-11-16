@@ -521,8 +521,17 @@
     {
       "name": "npm",
       "dir": "release",
-      "kind": "chant",
-      "because": "chant's own npm release, cut by just release and published by publish.yml (#4040)"
+      "kind": "workspace",
+      "because": "chant's own npm release: one release member per published package (#5132), and the lockstep root member that just release cuts and publish.yml publishes (#4040)",
+      "generated": [
+        {
+          "path": "chant.workspace.json",
+          "generator": "npx tsx ../scripts/generate-release-members.ts --file chant.workspace.json -o chant.workspace.json",
+          "sources": [
+            "scripts/generate-release-members.ts"
+          ]
+        }
+      ]
     },
     {
       "name": "reference-workspace",

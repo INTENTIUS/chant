@@ -11,6 +11,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import config from "../release/chant.config";
+import { releaseMemberFiles, releasePackages } from "./generate-release-members";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -66,5 +67,53 @@ describe("release/chant.config.ts (#4040)", () => {
       }
     }
     expect(late).toEqual([]);
+  });
+});
+
+/**
+ * One release member per npm package (#5133, #5132 decision 1): every file
+ * scripts/generate-release-members.ts writes is committed as it writes it,
+ * and no directory under release/ is a member the generator no longer makes.
+ */
+describe("release/<member>/ (#5133)", () => {
+  it("is what the generator writes; run `npx tsx scripts/generate-release-members.ts` after adding or removing a package", () => {
+    const stale: string[] = [];
+    for (const [path, content] of releaseMemberFiles(ROOT)) {
+      const file = join(ROOT, "release", path);
+      if (!existsSync(file)) stale.push(`release/${path} is missing`);
+      else if (readFileSync(file, "utf-8") !== content) stale.push(`release/${path} differs`);
+    }
+    expect(stale).toEqual([]);
+  });
+
+  it("has a member for every package npm would publish and none for anything else", () => {
+    const members = releasePackages(ROOT).map((p) => p.member);
+    const dirs = readdirSync(join(ROOT, "release"), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && existsSync(join(ROOT, "release", e.name, "chant.config.ts")))
+      .map((e) => e.name);
+    expect([...dirs].sort()).toEqual([...members].sort());
+    expect(releasePackages(ROOT).map((p) => p.dir).sort()).toEqual(publishable().map((p) => p.dir).sort());
+  });
+
+  it("declares the members core first, each after the workspace packages it depends on", () => {
+    const pkgs = releasePackages(ROOT);
+    expect(pkgs[0]?.dir).toBe("packages/core");
+    const at = new Map(pkgs.map((p, i) => [p.dir, i]));
+    expect(pkgs.flatMap((p, i) => p.needs.filter((n) => (at.get(n) ?? -1) > i).map((n) => `${p.dir} before ${n}`))).toEqual([]);
+    const nested = JSON.parse(readFileSync(join(ROOT, "release", "chant.workspace.json"), "utf-8")) as { members: { name: string }[] };
+    expect(nested.members.map((m) => m.name)).toEqual(pkgs.map((p) => p.member));
+  });
+
+  it("repeats chant's ci.green, so a member's cut reads the root's green rule", () => {
+    const outer = JSON.parse(readFileSync(join(ROOT, "chant.workspace.json"), "utf-8")) as { ci: { green: unknown } };
+    const nested = JSON.parse(readFileSync(join(ROOT, "release", "chant.workspace.json"), "utf-8")) as { ci: { green: unknown } };
+    expect(nested.ci.green).toEqual(outer.ci.green);
+  });
+
+  it("publishes one tarball per member, straight to latest, with NPM_TOKEN as the fallback", async () => {
+    const { default: member } = await import("../release/lexicon-aws/chant.config");
+    expect(member.release.publish).toEqual([
+      { type: "npm", access: "public", stage: false, tokenEnv: "NPM_TOKEN", packages: ["../../.release/packs/lexicons_aws.tgz"] },
+    ]);
   });
 });
