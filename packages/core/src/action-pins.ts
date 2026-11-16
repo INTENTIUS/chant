@@ -46,6 +46,9 @@ export const ACTION_PINS = {
   downloadArtifact8: pin("actions/download-artifact", "v8", "9000827ccba6bdab643e8b6fd33ac0654aef8333", "v8.0.2"),
   setupGo7: pin("actions/setup-go", "v7", "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "v7.0.0"),
   setupPython7: pin("actions/setup-python", "v7", "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0", "v7.1.0"),
+  // #5152: the release workflow's Java and Rust toolchains.
+  setupJava6: pin("actions/setup-java", "v6", "d1374f8ac74474200d16ef8ecee22c7ae7a51880", "v6.3.0"),
+  setupRustToolchain2: pin("actions-rust-lang/setup-rust-toolchain", "v2", "a188e68d0fd2bd36ad51dccb2b07ba6e75105f30", "v2.0.1"),
   setupBun2: pin("oven-sh/setup-bun", "v2", "0c5077e51419868618aeaa5fe8019c62421857d6", "v2.2.0"),
   golangciLint9: pin("golangci/golangci-lint-action", "v9", "ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a", "v9.3.0"),
   dockerLogin4: pin("docker/login-action", "v4", "81c6f93d4bc991e510b342a00b419b3bb4efc5c6", "v4.7.0"),

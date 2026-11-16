@@ -34,6 +34,7 @@ import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/releas
 import { GENERATED_MARKER } from "../discovery/files";
 import type { SecurityGroup } from "./security";
 import type { OpSetupStep } from "../lexicon";
+import { checkBuilds, releaseBuildArchive, releaseBuildArtifact, resolveToolchains, toolchainLines, type ReleaseBuildConfig, type ReleaseToolchainDecl } from "./release-toolchains";
 
 export const RELEASE_WORKFLOW_FORGES = ["github", "forgejo", "gitlab"] as const;
 export type ReleaseWorkflowForge = (typeof RELEASE_WORKFLOW_FORGES)[number];
@@ -52,8 +53,8 @@ export interface ReleasePipelineConfig {
   trigger?: "tag" | "dispatch";
   /** For `dispatch`: the commit to cut. `last-green` (default) is the newest green commit at or below the dispatched one; `head` is the dispatched commit, which must be green. */
   gate?: "last-green" | "head";
-  /** The command that installs what the build needs. Default `npm ci`. */
-  install?: string;
+  /** The command that installs what the build needs. Default `npm ci` for a project with a package.json, none otherwise. `false` for none. */
+  install?: string | false;
   /** The command that builds what the targets upload, run by the cut (as its `--build`) and the publish job. `false` for none. Default `npm run build`. */
   build?: string | false;
   /** What runs chant. Default `npx chant`. */
@@ -81,6 +82,23 @@ export interface ReleasePipelineConfig {
    * the platforms `release.images` builds is set up without one (#4876).
    */
   setup?: OpSetupStep[];
+  /**
+   * The toolchains the jobs set up (#5152): `node`, `go`, `python`, `rust`,
+   * `java`, each by name or as `{ name, version }`. Default: those the
+   * project's root files name (`package.json`, `go.mod`, `pyproject.toml`,
+   * `Cargo.toml`, `pom.xml`, ...). Jobs that run chant get Node as well.
+   * `false` sets up nothing; the runner brings its own. GitHub and Forgejo;
+   * GitLab jobs take theirs from the runner's image and refuse it by name.
+   */
+  toolchains?: ReleaseToolchainDecl[] | false;
+  /**
+   * Per-platform build jobs (#5152), each on its own runner (a native arm64
+   * runner, macOS, Windows), run after the gate and before the cut. Each
+   * hands its `outputs` to the cut and publish jobs, where they land at the
+   * same paths in the checkout before `chant release cut` runs. `dispatch`
+   * only: with the tag trigger the release was cut before the workflow ran.
+   */
+  builds?: ReleaseBuildConfig[];
   /** Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` for an npm trusted publisher that names that file. Default {@link RELEASE_WORKFLOW_FILES}. */
   file?: string;
 }
@@ -89,8 +107,14 @@ export interface ReleaseWorkflowInput {
   forge: ReleaseWorkflowForge;
   /** The security groups the workspace opts into at its root. */
   groups: ReadonlySet<SecurityGroup>;
-  /** The command that installs what the build needs. Default `npm ci`. */
-  install?: string;
+  /** The command that installs what the build needs, or none. Default `npm ci`. */
+  install?: string | null;
+  /**
+   * The toolchain files at the project's root (#5152), from
+   * `TOOLCHAIN_MARKERS`: what the jobs set up when `release.workflow.toolchains`
+   * names none. Absent, the jobs set up Node alone, as they always did.
+   */
+  projectFiles?: readonly string[];
   /** The command that builds what the targets upload, or none. Default `npm run build`. */
   build?: string | null;
   /** What runs chant. Default `npx chant`. */
@@ -250,7 +274,7 @@ function sq(s: string): string {
 export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const p = input.pipeline ?? {};
   const chant = input.chant ?? p.chant ?? "npx chant";
-  const install = input.install ?? p.install ?? "npm ci";
+  const install = input.install !== undefined ? input.install : p.install === false ? null : (p.install ?? "npm ci");
   const build = input.build !== undefined ? input.build : p.build === false ? null : (p.build ?? "npm run build");
   const root = input.workspaceRoot && input.workspaceRoot !== "." ? input.workspaceRoot : null;
   const verify = input.groups.has("verified-releases");
@@ -258,6 +282,18 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const after = p.after ?? [];
   const images = input.images === true;
   const version = input.version === true;
+  // #5152: the toolchains each job sets up, and the per-platform builds.
+  const files = new Set(input.projectFiles ?? (p.toolchains === undefined ? ["package.json"] : []));
+  if (input.forge === "gitlab" && p.toolchains && p.toolchains.some((t) => (typeof t === "string" ? t : t.name) !== "node")) {
+    throw new Error("release.workflow.toolchains: a GitLab job runs in its runner's image, which brings the toolchain; name the image in .gitlab-ci.yml (default: image:) and leave toolchains out");
+  }
+  const chantSetup = toolchainLines(resolveToolchains(p.toolchains === false ? false : (p.toolchains ?? []).filter((t) => (typeof t === "string" ? t : t.name) === "node"), new Set(), root, p.toolchains !== false));
+  const fullSetup = toolchainLines(resolveToolchains(p.toolchains, files, root, true));
+  const builds = p.builds ?? [];
+  if (builds.length > 0) {
+    if (p.trigger !== "dispatch") throw new Error('release.workflow.builds: the tag trigger publishes a release cut before the workflow ran, so nothing built here would be in it; use trigger: "dispatch"');
+    checkBuilds(builds);
+  }
   // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
   const derived = targetExtras(input.forge, input.publish ?? [], p);
   // #5149: the cut asks the forge for the commit's checks with the run's token.
@@ -285,7 +321,9 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   if (p.trigger === "dispatch") {
     const archives = images ? (input.imageArchives ?? []).map((a) => (root ? `${root}/${a.replace(/^\.\//, "")}` : a.replace(/^\.\//, ""))) : [];
     const cutToken = green === "forge-checks" && input.forge !== "gitlab" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [];
-    const o = { chant, install, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const buildJobs = builds.map((b) => ({ ...b, setup: toolchainLines(resolveToolchains(b.toolchains !== undefined ? b.toolchains : p.toolchains, files, root, false)) }));
+    if (input.forge === "gitlab" && builds.some((b) => b.toolchains && b.toolchains.length > 0)) throw new Error("release.workflow.builds: toolchains: a GitLab job runs in its runner's image, which brings the toolchain; leave toolchains out");
+    const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
@@ -304,7 +342,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(extra.gitlabVariables.length > 0 ? ["  variables:", ...extra.gitlabVariables] : []),
       "  script:",
       ...(root ? [`    - cd ${root}`] : []),
-      `    - ${install}`,
+      ...(install ? [`    - ${install}`] : []),
       ...extra.gitlabScript.map((l) => `    - ${l}`),
       ...(version ? [`    - ${chant} release stamp ${label}`] : []),
       ...(images ? [...fetches, ...imageLines(label, `export CHANT_RELEASE_DIGESTS="${digests}"`).map((l) => `    - ${l}`)] : []),
@@ -323,7 +361,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
         "  script:",
         '    - export CHANT_RELEASE_LABEL="${CI_COMMIT_TAG#release/}"',
         ...(root ? [`    - cd ${root}`] : []),
-        `    - ${install}`,
+        ...(install ? [`    - ${install}`] : []),
         ...after.map((l) => `    - ${l}`),
       );
     }
@@ -346,8 +384,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     ...extra.githubEnv(forgeToken),
     "    steps:",
-    ...githubSetup(),
-    `      - run: ${install}`,
+    ...githubSetup(undefined, fullSetup),
+    ...(install ? [`      - run: ${install}`] : []),
     ...extra.githubSteps,
     ...(version ? [`      - run: ${chant} release stamp ${label}`] : []),
     ...(images ? [...fetches, ...imageLines(label, `echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`).map((l) => `      - run: ${l}`)] : []),
@@ -363,9 +401,9 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       "    runs-on: ubuntu-latest",
       ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
       "    steps:",
-      ...githubSetup(),
+      ...githubSetup(undefined, fullSetup),
       '      - run: echo "CHANT_RELEASE_LABEL=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"',
-      `      - run: ${install}`,
+      ...(install ? [`      - run: ${install}`] : []),
       ...after.map((l) => `      - run: ${l}`),
     );
   }
@@ -422,23 +460,26 @@ function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge): JobEx
   };
 }
 
-/** The checkout and node setup a GitHub or Forgejo job starts with; `ref` checks out that commit. */
-function githubSetup(ref?: string): string[] {
+/** The checkout and toolchain setup a GitHub or Forgejo job starts with (#5152); `ref` checks out that commit. */
+function githubSetup(ref: string | undefined, setup: readonly string[], persist = true): string[] {
   return [
     `      - uses: ${usesRef(ACTION_PINS.checkout4)}`,
     "        with:",
     ...(ref ? [`          ref: ${ref}`] : []),
     "          fetch-depth: 0",
-    `      - uses: ${usesRef(ACTION_PINS.setupNode4)}`,
-    "        with:",
-    "          node-version: 24",
-    "          registry-url: https://registry.npmjs.org",
+    ...(persist ? [] : ["          persist-credentials: false"]),
+    ...setup,
   ];
 }
 
 interface DispatchInput {
   chant: string;
-  install: string;
+  install: string | null;
+  /** The toolchain steps of the gate (Node, for chant) and of the jobs that build (#5152). */
+  chantSetup: string[];
+  fullSetup: string[];
+  /** The per-platform builds (#5152), each with its toolchain steps. */
+  builds: Array<ReleaseBuildConfig & { setup: string[] }>;
   build: string | null;
   root: string | null;
   verify: boolean;
@@ -537,12 +578,69 @@ function cutScript(o: DispatchInput, out: string): string[] {
 const LEDGER_FETCH_FIRST =
   'rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi';
 
+/** The shell line that packs a build job's outputs into its archive (#5152): tar keeps each file's path and mode, which an upload of the files would not. */
+function packLine(b: ReleaseBuildConfig): string {
+  return `tar -cf ${releaseBuildArchive(b.name)} -- ${b.outputs.join(" ")}`;
+}
+
+/**
+ * The shell line that unpacks a build's archive into the project root (#5152).
+ * In the cut, `-k` refuses a file that is already there, so a build cannot
+ * replace a file of the commit, and two builds cannot write one path.
+ */
+function unpackLine(archive: string, cut: boolean): string {
+  return `tar -x${cut ? "k" : ""}f ${archive}`;
+}
+
 /** GitHub and Forgejo: the release started by hand with a label (#4656). */
 function renderGithubDispatch(o: DispatchInput): string {
   const defaults = o.root ? ["    defaults:", "      run:", `        working-directory: ${o.root}`] : [];
   const commit = "${{ needs.gate.outputs.commit }}";
   const fetches = ["      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "      - run: git fetch origin chant/lifecycle:chant/lifecycle"];
   const block = (lines: string[]): string[] => ["      - run: |", ...lines.map((l) => `          ${l}`)];
+  const installLines = o.install ? [`      - run: ${o.install}`] : [];
+  const q = (v: string): string => JSON.stringify(v);
+  const upload = usesRef(o.forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4);
+  const download = usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4);
+  // #5152: each build job runs on its own runner with the commit, its toolchains and nothing else: no secrets, and a token that can only read.
+  const buildJobs = o.builds.flatMap((b) => {
+    const install = b.install === false ? null : (b.install ?? o.install);
+    const runner = Array.isArray(b.runner) ? `[${b.runner.map(q).join(", ")}]` : q(b.runner);
+    const env = Object.entries(b.env ?? {});
+    for (const [k] of env) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`release.workflow.builds.${b.name}.env: ${JSON.stringify(k)} is not a variable name`);
+    return [
+      `  build-${b.name}:`,
+      "    needs: gate",
+      `    runs-on: ${runner}`,
+      "    permissions:",
+      "      contents: read",
+      "    defaults:",
+      "      run:",
+      "        shell: bash",
+      ...(o.root ? [`        working-directory: ${o.root}`] : []),
+      ...(env.length > 0 ? ["    env:", ...env.map(([k, v]) => `      ${k}: ${q(v)}`)] : []),
+      "    steps:",
+      ...githubSetup(commit, b.setup, false),
+      ...(install ? [`      - run: ${install}`] : []),
+      `      - run: ${q(b.build)}`,
+      `      - run: ${q(packLine(b))}`,
+      `      - uses: ${upload}`,
+      "        with:",
+      `          name: ${releaseBuildArtifact(b.name)}`,
+      `          path: ${o.root ? `${o.root}/` : ""}${releaseBuildArchive(b.name)}`,
+      "          if-no-files-found: error",
+      "          retention-days: 1",
+    ];
+  });
+  const restore = (cut: boolean): string[] =>
+    o.builds.flatMap((b) => [
+      `      - uses: ${download}`,
+      "        with:",
+      `          name: ${releaseBuildArtifact(b.name)}`,
+      "          path: ${{ runner.temp }}/chant-release-builds",
+      `      - run: ${unpackLine(`"$RUNNER_TEMP/chant-release-builds/${releaseBuildArchive(b.name)}"`, cut)}`,
+    ]);
+  const built = o.builds.map((b) => `build-${b.name}`);
   const lines = [
     "name: chant release",
     "on:",
@@ -568,27 +666,29 @@ function renderGithubDispatch(o: DispatchInput): string {
     "    outputs:",
     "      commit: ${{ steps.green.outputs.commit }}",
     "    steps:",
-    ...githubSetup(),
-    `      - run: ${o.install}`,
+    ...githubSetup(undefined, o.chantSetup),
+    ...installLines,
     fetches[0]!,
     "      - id: green",
     "        run: |",
     ...[...gateScript(o, "$GITHUB_SHA"), 'echo "commit=$commit" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
+    ...buildJobs,
     "  cut:",
-    "    needs: gate",
+    `    needs: ${built.length > 0 ? `[gate, ${built.join(", ")}]` : "gate"}`,
     "    runs-on: ubuntu-latest",
     ...defaults,
     ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, ...o.cutToken]),
     "    steps:",
-    ...githubSetup(commit),
-    `      - run: ${o.install}`,
+    ...githubSetup(commit, o.fullSetup),
+    ...installLines,
     ...o.extra.githubSteps,
     fetches[0]!,
     `      - run: ${LEDGER_FETCH_FIRST}`,
+    ...restore(true),
     ...block(cutScript(o, '"$RUNNER_TEMP/chant-cut.json"')),
     ...(o.archives.length > 0
       ? [
-          `      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4)}`,
+          `      - uses: ${upload}`,
           "        with:",
           `          name: ${RELEASE_IMAGES_ARTIFACT}`,
           "          path: |",
@@ -598,18 +698,17 @@ function renderGithubDispatch(o: DispatchInput): string {
         ]
       : []),
     "  publish:",
-    "    needs: [gate, cut]",
+    `    needs: [gate, cut${built.map((b) => `, ${b}`).join("")}]`,
     "    runs-on: ubuntu-latest",
     ...defaults,
     ...o.extra.githubEnv(o.forgeToken),
     "    steps:",
-    ...githubSetup(commit),
-    `      - run: ${o.install}`,
+    ...githubSetup(commit, o.fullSetup),
+    ...installLines,
     ...o.extra.githubSteps,
     ...fetches,
-    ...(o.archives.length > 0
-      ? [`      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4)}`, "        with:", `          name: ${RELEASE_IMAGES_ARTIFACT}`, `          path: ${commonDir(o.archives)}`]
-      : []),
+    ...(o.archives.length > 0 ? [`      - uses: ${download}`, "        with:", `          name: ${RELEASE_IMAGES_ARTIFACT}`, `          path: ${commonDir(o.archives)}`] : []),
+    ...restore(false),
     ...(o.version ? [`      - run: ${stampLine(o)}`] : []),
     ...(o.images ? [`      - run: ${imagesLine(o)}`, `      - run: echo "CHANT_RELEASE_DIGESTS=${RELEASE_DIGESTS_PATHS[o.forge]}" >> "$GITHUB_ENV"`] : []),
     ...(o.build ? [`      - run: ${o.build}`] : []),
@@ -617,7 +716,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
   ];
   if (o.after.length > 0) {
-    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...defaults, "    steps:", ...githubSetup(commit), `      - run: ${o.install}`, ...o.after.map((l) => `      - run: ${l}`));
+    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...defaults, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
   }
   return tagComments(`${lines.join("\n")}\n`);
 }
@@ -631,6 +730,7 @@ function renderGithubDispatch(o: DispatchInput): string {
  */
 function renderGitlabDispatch(o: DispatchInput): string {
   const cd = o.root ? [`cd ${o.root}`] : [];
+  const install = o.install ? [o.install] : [];
   const fetches = ["git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'", "git fetch origin chant/lifecycle:chant/lifecycle"];
   const auth = [
     `chant_auth="$(printf 'oauth2:%s' "$CHANT_RELEASE_TOKEN" | base64 | tr -d '\\n')"`,
@@ -650,21 +750,49 @@ function renderGitlabDispatch(o: DispatchInput): string {
     ...script.map((l) => `    - ${JSON.stringify(l)}`),
   ];
   const checkout = ['git checkout --detach "$CHANT_RELEASE_COMMIT"'];
+  // #5152: a build job per runner (tags), whose archive GitLab hands to the jobs that need it, in the project directory.
+  const built = o.builds.map((b) => `chant-release-build-${b.name}`);
+  const buildJobs = o.builds.flatMap((b) => {
+    const binstall = b.install === false ? [] : b.install ? [b.install] : install;
+    const env = Object.entries(b.env ?? {});
+    for (const [k] of env) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`release.workflow.builds.${b.name}.env: ${JSON.stringify(k)} is not a variable name`);
+    const tags = Array.isArray(b.runner) ? b.runner : [b.runner];
+    return [
+      "",
+      ...job(
+        `chant-release-build-${b.name}`,
+        ["chant-release-gate"],
+        [...checkout, ...cd, ...binstall, b.build, packLine(b)],
+        [`  tags: [${tags.map((t) => JSON.stringify(t)).join(", ")}]`, "  artifacts:", "    paths:", `      - ${JSON.stringify(`${o.root ? `${o.root}/` : ""}${releaseBuildArchive(b.name)}`)}`, "    expire_in: 1 day"],
+        env.map(([k, v]) => `    ${k}: ${JSON.stringify(v)}`),
+      ),
+    ];
+  });
+  // Unpacked, then moved out of the checkout, so the publish finds the tree as the cut left it.
+  const restore = (cut: boolean): string[] => o.builds.flatMap((b) => [unpackLine(releaseBuildArchive(b.name), cut), `mv ${releaseBuildArchive(b.name)} /tmp/`]);
   const lines = [
-    ...job("chant-release-gate", [], [...cd, o.install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
+    ...job("chant-release-gate", [], [...cd, ...install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
+    ...buildJobs,
     "",
-    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []), ...cutScript(o, "/tmp/chant-cut.json")], o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [], o.extra.gitlabVariables),
+    ...job(
+      "chant-release-cut",
+      ["chant-release-gate", ...built],
+      [...checkout, ...cd, ...install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...restore(true), ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []), ...cutScript(o, "/tmp/chant-cut.json")],
+      o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [],
+      o.extra.gitlabVariables,
+    ),
     "",
     ...job(
       "chant-release-publish",
-      ["chant-release-gate", "chant-release-cut"],
+      ["chant-release-gate", "chant-release-cut", ...built],
       [
         ...checkout,
         ...cd,
-        o.install,
+        ...install,
         ...o.extra.gitlabScript,
         ...fetches,
         ...auth,
+        ...restore(false),
         ...(o.version ? [stampLine(o)] : []),
         ...(o.images ? [imagesLine(o), `export CHANT_RELEASE_DIGESTS="${RELEASE_DIGESTS_PATHS.gitlab}"`] : []),
         ...(o.build ? [o.build] : []),
@@ -675,22 +803,22 @@ function renderGitlabDispatch(o: DispatchInput): string {
       o.extra.gitlabVariables,
     ),
   ];
-  if (o.after.length > 0) lines.push("", ...job("chant-release-after", ["chant-release-gate", "chant-release-publish"], [...checkout, ...cd, o.install, ...o.after]));
+  if (o.after.length > 0) lines.push("", ...job("chant-release-after", ["chant-release-gate", "chant-release-publish"], [...checkout, ...cd, ...install, ...o.after]));
   return `${lines.join("\n")}\n`;
 }
 
 /**
  * Whether the default build, `npm run build`, has a script to run at `root`
- * (#5149): a package.json with a `build` script, or no package.json at all,
- * where the default stands as it always did. A package with no build script
- * gets no build step rather than one that fails.
+ * (#5149): a package.json with a `build` script. A package with no build
+ * script, and a project with no package.json (#5152), get no build step
+ * rather than one that fails.
  */
 function hasBuildScript(root: string): boolean {
   let text: string;
   try {
     text = readFileSync(`${root}/package.json`, "utf-8");
   } catch {
-    return true;
+    return false;
   }
   try {
     const pkg = JSON.parse(text) as { scripts?: Record<string, unknown> };
@@ -746,8 +874,18 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     console.error(formatError({ message: `chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
     return 1;
   }
-  const text = renderReleaseWorkflow({
+  // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
+  const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
+  const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
+  const node = projectFiles.includes("package.json");
+  const { readerVersion } = await import("./declaration");
+  let text: string;
+  try {
+  text = renderReleaseWorkflow({
     forge,
+    projectFiles,
+    ...(node || args.ciInstall || release?.workflow?.install !== undefined ? {} : { install: null }),
+    ...(node || args.ciChant || release?.workflow?.chant !== undefined ? {} : { chant: `npx --yes @intentius/chant@${readerVersion()}` }),
     groups,
     workspaceRoot,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
@@ -771,6 +909,10 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
   });
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: "Fix release.workflow in chant.config.ts." }));
+    return 1;
+  }
   // #4909: under `chant dev generated-check` the header names the committed file the render stands for.
   // #4950: with no --output the file goes to the render tree too, so a render needs no `--output {out}/...`.
   const { committedPathOf, isRenderPath, renderPathOf } = await import("../generated-check");
@@ -793,6 +935,8 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const archs = (release?.images?.length ?? 0) > 0 ? qemuArchitectures(releaseImagePlatforms(release!.images!)) : [];
   if (forge === "gitlab" && archs.length > 0 && text.includes(`${RELEASE_BINFMT_IMAGE} --install`))
     console.log(`The cut and publish jobs install QEMU's binfmt handlers for ${archs.join(", ")} with docker run --privileged ${RELEASE_BINFMT_IMAGE}: the runner's executor must run privileged containers, or have the handlers installed on its host.`);
+  const others = detectToolchains(new Set(projectFiles)).filter((t) => t !== "node");
+  if (forge === "gitlab" && others.length > 0 && release?.workflow?.toolchains === undefined) console.log(`The jobs build with ${others.join(", ")}: a GitLab job takes its toolchain from the runner's image, so name an image that has it, and Node for chant, in .gitlab-ci.yml.`);
   if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
   return 0;
 }
