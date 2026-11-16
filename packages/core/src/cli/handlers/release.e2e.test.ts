@@ -61,7 +61,7 @@ function project(root: string): { dir: string; sha: string; remote: string } {
   git(root, "init", "-q", "-b", "main", dir);
   git(dir, "config", "user.email", "t@chant.dev");
   git(dir, "config", "user.name", "T");
-  writeFileSync(join(dir, "chant.config.ts"), `export default { environments: ["dev", "prod", "pr-*"] };\n`);
+  writeFileSync(join(dir, "chant.config.ts"), `export default { environments: ["dev", "prod", "pr-*"], release: { green: "chant" } };\n`);
   writeFileSync(
     join(dir, "api.component.ts"),
     `export const api = { name: "api", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "cfn-deploy", template: "dist/api.template.json" }] }] };\n`,
@@ -89,7 +89,7 @@ describe("chant release cut, publish and list", () => {
         writeFileSync(join(dir, "extra.component.ts"), "export const extra = {};\n");
         expect(cut().stderr).toMatch(/1 untracked file\(s\) such as extra\.component\.ts.*\[release-worktree-dirty\]/);
         unlinkSync(join(dir, "extra.component.ts"));
-        writeFileSync(join(dir, "chant.config.ts"), `export default { environments: ["dev"] };\n`);
+        writeFileSync(join(dir, "chant.config.ts"), `export default { environments: ["dev"], release: { green: "chant" } };\n`);
         expect(cut().stderr).toMatch(/1 tracked file\(s\) with uncommitted changes.*\[release-worktree-dirty\]/);
         git(dir, "checkout", "--", "chant.config.ts");
 
