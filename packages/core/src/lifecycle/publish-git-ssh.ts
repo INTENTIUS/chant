@@ -160,6 +160,12 @@ export class SshGitRepo {
     return (await this.must(`reading ${branch}`, ["rev-parse", `refs/remotes/tap/${branch}`])).trim();
   }
 
+  /** The fetched commits of `branch` that touch `path`, newest first (#5163). Fetch the branch deep enough first. */
+  async history(branch: string, path: string): Promise<string[]> {
+    const out = await this.must(`reading the history of ${path}`, ["log", "--format=%H", `refs/remotes/tap/${branch}`, "--", path]);
+    return out.split("\n").map((l) => l.trim()).filter(Boolean);
+  }
+
   /** The bytes of `path` at a fetched commit, or null when it holds no such file. */
   async file(commit: string, path: string): Promise<Buffer | null> {
     const spec = `${commit}:${path}`;

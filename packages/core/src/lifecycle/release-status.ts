@@ -8,6 +8,11 @@
  * publish may append one (ruling C, 2026-10-27): there is no approval gate,
  * and the record carries the actor and the reason instead.
  *
+ * `chant release deprecate|yank|restore` (#5163) writes the record of a
+ * release `chant release cut` made to `_releases/release-status.jsonl`,
+ * beside the release's `cuts.jsonl`, with `env` `_releases` and the member as
+ * `component` (./release-status-change.ts).
+ *
  * Writes go through `appendLedgerLine` (./git.ts), so they land under the
  * member prefix of `cwd` and honour `--no-record` (`CHANT_NO_RECORD`), as the
  * writers of #4551 do. Nothing here pushes: the caller runs
@@ -53,6 +58,12 @@ export interface ReleaseStatusRecord {
   actor: string;
   /** ISO-8601 time it was set, given by the caller. */
   timestamp: string;
+  /**
+   * The actor's ssh signature over `releaseStatusSealPayload` in the
+   * `chant-release` namespace (#5163), which an `identity.gates.release`
+   * entry requires of `chant release deprecate|yank|restore`.
+   */
+  signature?: string;
 }
 
 /** The fields a caller gives; `version` is filled in. */
@@ -67,7 +78,7 @@ export class ReleaseStatusError extends Error {
 }
 
 const REQUIRED = ["component", "env", "digest", "actor", "timestamp"] as const;
-const OPTIONAL = ["releaseVersion", "reason", "replacement"] as const;
+const OPTIONAL = ["releaseVersion", "reason", "replacement", "signature"] as const;
 
 /** Why `value` is not a status record, one line per problem; empty when it is one. */
 export function releaseStatusProblems(value: unknown): string[] {

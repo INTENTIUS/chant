@@ -641,6 +641,15 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--override-green") {
       // `chant release cut --override-green` (#4693): cut a commit that is not green under a person's override.
       result.overrideGreen = true;
+    } else if (arg === "--replacement") {
+      // `chant release deprecate|yank --replacement <label>` (#5163).
+      result.replacement = args[++i];
+      if (!result.replacement || result.replacement.startsWith("-")) throw new Error("--replacement needs the release to use instead: --replacement <label>");
+    } else if (arg === "--forge-release") {
+      // `chant release yank --forge-release prerelease|draft|delete` (#5163).
+      const value = args[++i];
+      if (value !== "prerelease" && value !== "draft" && value !== "delete") throw new Error(`--forge-release takes prerelease, draft or delete: got "${value ?? ""}"`);
+      result.forgeRelease = value;
     } else if (arg === "--allow-unsigned") {
       // `chant release publish --allow-unsigned` (#4049).
       result.allowUnsigned = true;

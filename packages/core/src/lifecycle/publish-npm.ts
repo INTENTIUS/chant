@@ -60,7 +60,7 @@ import { packageSbom } from "./publish-attachments";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { readPins, unknownPins } from "./release-images";
-import { NPM_STAGE_TAG, PublishTargetError, type PublishContext, type PublishDeps, type PublishItem, type PublishTarget } from "./release-publish";
+import { NPM_STAGE_TAG, PublishTargetError, statusMessage, type PublishContext, type PublishContextBase, type PublishDeps, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
 /** npm's output when a publish could not authenticate, as publish-packages.sh matches it. */
@@ -160,7 +160,7 @@ export function npmAuditSignaturesArgs(decl: Pick<NpmPublishDeclaration, "regist
   return ["audit", "signatures", ...(decl.registry ? ["--registry", decl.registry] : [])];
 }
 
-function run(bin: string, args: string[], ctx: PublishContext, cwd: string = ctx.cwd, env: NodeJS.ProcessEnv = ctx.env): Promise<{ code: number; output: string[] }> {
+function run(bin: string, args: string[], ctx: PublishContextBase, cwd: string = ctx.cwd, env: NodeJS.ProcessEnv = ctx.env): Promise<{ code: number; output: string[] }> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     const output: string[] = [];
@@ -297,11 +297,11 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
   const now = deps.now ?? Date.now;
   const registry = decl.registry ?? "the registry npm's config names";
   const shown = (tag: string) => `${registry}, dist-tag ${tag}`;
-  const revealTag = (ctx: PublishContext) => ctx.tag ?? prereleaseOf(ctx.label)?.distTag ?? "latest";
+  const revealTag = (ctx: Pick<PublishContext, "tag" | "label">) => ctx.tag ?? prereleaseOf(ctx.label)?.distTag ?? "latest";
   // Under `stage: false` a package goes straight to the reveal tag, and the reveal moves no tag (#4040).
   const staging = decl.stage !== false;
   const stageTag = (ctx: PublishContext) => (staging ? NPM_STAGE_TAG : revealTag(ctx));
-  const npm = async (ctx: PublishContext, args: string[], cwd?: string, env?: NodeJS.ProcessEnv): Promise<{ code: number; output: string[] }> => {
+  const npm = async (ctx: PublishContextBase, args: string[], cwd?: string, env?: NodeJS.ProcessEnv): Promise<{ code: number; output: string[] }> => {
     try {
       return await run(bin, args, ctx, cwd, env);
     } catch (err) {
@@ -503,6 +503,74 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
         }
         await sleep(NPM_REGISTRY_POLL_MS);
       }
+    },
+    /**
+     * #5163: deprecate marks each version with `npm deprecate`; yank does
+     * that and moves the dist-tag off it to the head release's version;
+     * restore clears the message and moves the tag back when this release is
+     * the head. npm never unpublishes here: its policy allows that only for
+     * 72 hours and with no dependents, and a name and version can never be
+     * published again after it.
+     */
+    async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
+      const reg = decl.registry ? ["--registry", decl.registry] : [];
+      // The tag the publish moved: the channel, else a prerelease's dist-tag (#5166), else latest.
+      const tag = revealTag(ctx);
+      const pkgs = ctx.revealed.filter((i) => i.attachment === undefined && !i.refused).map((i) => splitSpec(i.name));
+      const actions: StatusAction[] = [];
+      const fail = (what: string, r: { code: number; output: string[] }, fix?: string): never => {
+        throw new PublishTargetError("release-status-npm-failed", `${what} exited ${r.code}: ${r.output.filter((l) => /^npm (error|ERR!)/.test(l)).at(-1) ?? r.output.at(-1) ?? "npm printed nothing"}`, fix);
+      };
+      const message = ctx.status === "active" ? "" : statusMessage(ctx);
+      for (const [name, version] of pkgs) {
+        const what = ctx.status === "active" ? `npm deprecate ${name}@${version} "" (clears the deprecation)` : `npm deprecate ${name}@${version} "${message}"`;
+        if (ctx.apply) {
+          const r = await npm(ctx, ["deprecate", `${name}@${version}`, message, ...reg]);
+          for (const line of r.output) ctx.log(`  ${line}`);
+          if (r.code !== 0) fail(`npm deprecate ${name}@${version}`, r, "Deprecating needs npm credentials that may publish the package.");
+        }
+        actions.push({ what });
+      }
+      if (ctx.status === "yanked" && pkgs.length > 0) {
+        // npm's unpublish rules: within 72 hours and with no dependents, and the version can never be published again.
+        actions.push({ what: `not unpublished: ${pkgs.map(([n, v]) => `${n}@${v}`).join(", ")} stay on the registry, deprecated, since npm allows an unpublish only within 72 hours and with no dependents` });
+      }
+      if (ctx.status === "deprecated") return actions;
+      // The dist-tag: off this release on a yank, back onto it on a restore when it is the head.
+      const headPkgs = new Map((ctx.head?.items ?? []).filter((i) => i.attachment === undefined && !i.refused).map((i) => splitSpec(i.name)));
+      const toHead = ctx.head !== null && ctx.head.releaseDigest !== ctx.release.releaseDigest;
+      if (ctx.status === "active" && !(ctx.head && ctx.head.releaseDigest === ctx.release.releaseDigest)) return actions;
+      for (const [name, version] of pkgs) {
+        const target = ctx.status === "active" ? version : headPkgs.get(name);
+        if (target === undefined) {
+          actions.push({
+            what: `${tag} of ${name} stays where it is`,
+            refused: {
+              code: "release-status-no-previous",
+              message: `no earlier active release published ${name} under ${tag}, and npm keeps ${tag} on some version, so it can't move off ${version}`,
+              fix: toHead ? undefined : "Cut and publish a release to move it to, or restore an earlier one.",
+            },
+          });
+          continue;
+        }
+        const what = ctx.status === "active" ? `npm dist-tag add ${name}@${version} ${tag}` : `npm dist-tag add ${name}@${target} ${tag}, if ${tag} is ${version}`;
+        if (!ctx.apply) {
+          actions.push({ what });
+          continue;
+        }
+        const view = await npm(ctx, ["view", name, `dist-tags.${tag}`, ...reg]);
+        if (view.code !== 0) fail(`npm view ${name} dist-tags.${tag}`, view);
+        const now = view.output.map((l) => l.trim().replace(/^"|"$/g, "")).find((l) => l.length > 0 && !/^npm\s/.test(l)) ?? "";
+        if (now === target || (ctx.status === "yanked" && now !== version)) {
+          actions.push({ what: `${tag} of ${name} is ${now || "unset"}; not moved`, already: true });
+          continue;
+        }
+        const r = await npm(ctx, ["dist-tag", "add", `${name}@${target}`, tag, ...reg]);
+        for (const line of r.output) ctx.log(`  ${line}`);
+        if (r.code !== 0) fail(`npm dist-tag add ${name}@${target} ${tag}`, r, `Moving a dist-tag needs npm credentials that may change dist-tags; over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record.`);
+        actions.push({ what: `npm dist-tag add ${name}@${target} ${tag}` });
+      }
+      return actions;
     },
     name: `npm (${decl.packages.length} package${decl.packages.length === 1 ? "" : "s"})`,
     destination: `npm ${registry}`,

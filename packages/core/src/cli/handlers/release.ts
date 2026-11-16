@@ -34,6 +34,9 @@
  *       `--json` prints the read contract's `releases` document
  *   release export <label|digest> --env <env> [-o <dir>] [--json]
  *       write the files the release recorded for <env>, checked against their digests (#4046)
+ *   release deprecate|yank|restore <label|digest> [--yes] [--reason <text>] [--replacement <label>] [--forge-release prerelease|draft|delete] [--actor <name>] [--sign [<key file>]] [--json]
+ *       set a published release's status and act on each target that can
+ *       (#5163, ../../lifecycle/release-status-change.ts): a dry run unless --yes
  *   release compile --env <env> [--build <command>] [--artifacts --component <a,b>] --json
  *       internal: what the cut runs in a child process per environment
  *
@@ -53,7 +56,7 @@ import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--sigstore [--assets <dir>]] [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release next [--at <sha>] [--pre <id>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release init [--yes] [--force] [--forge github|gitlab|forgejo] [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--sigstore [--assets <dir>]] [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release next [--at <sha>] [--pre <id>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release init [--yes] [--force] [--forge github|gitlab|forgejo] [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json] | release deprecate|yank|restore <label|digest> [--yes] [--reason <text>] [--replacement <label>] [--forge-release prerelease|draft|delete] [--actor <name>] [--sign [<key file>]] [--json]";
 
 /** The label `release cut` takes for the one `release next` computes (#5159). */
 const AUTO_LABEL = "auto";
@@ -1302,8 +1305,12 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
     console.error("No releases. Cut one from a green commit: chant release cut <label>");
     return 0;
   }
+  // #5163: a deprecated or yanked release says so at the end of its line.
+  const { readReleaseStatus, latestReleaseStatus } = await import("../../lifecycle/release-status");
+  const statuses = new Map([...latestReleaseStatus((await readReleaseStatus("_releases", { cwd: resolve(".") }).catch(() => ({ records: [] }))).records).values()].map((r) => [r.digest, r]));
   for (const r of doc.releases) {
     const where = r.environments.map((e) => e.env).join(", ") || "not deployed from the release";
+    const status = statuses.get(r.releaseDigest);
     // #4031: the newest cut's signature, as the policy at base judges it.
     const newest = r.cuts.at(-1);
     const signature = newest ? (newest.signatureCheck.status === "verified" ? `signed by ${newest.actor}` : newest.signatureCheck.status) : "-";
@@ -1311,7 +1318,8 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
     // #4692: a release cut from a lane's green tag names the lane.
     const lane = r.cuts.find((c) => c.lane !== undefined)?.lane;
     const overridden = r.cuts.some((c) => c.override !== undefined);
-    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${lane !== undefined ? `  lane ${lane}` : ""}${overridden ? "  not green" : ""}${r.revoked ? "  revoked" : ""}`);
+    console.log(`${(r.label ?? "-").padEnd(16)}  ${r.releaseDigest}  ${r.commit.slice(0, 12)}  ${signature}  ${where}${lane !== undefined ? `  lane ${lane}` : ""}${overridden ? "  not green" : ""}${r.revoked ? "  revoked" : ""}${status && status.status !== "active" ? `  ${status.status}` : ""}`);
+    if (status && status.status !== "active") console.error(`  ${r.label ?? r.releaseDigest}: ${status.status} by ${status.actor} at ${status.timestamp}${status.reason ? `: ${status.reason}` : ""}${status.replacement ? `; use ${status.replacement}` : ""}`);
     if (newest?.signatureCheck.status === "unverified") console.error(`  ${r.label ?? r.releaseDigest}: ${newest.signatureCheck.reason}`);
     // #4693: a release cut under an override says the commit was not green.
     for (const c of r.cuts) if (c.override) console.error(`  ${r.label ?? r.releaseDigest}: not green (no ${c.override.tag}), cut under the override by ${c.override.by}: ${c.override.reason}`);
@@ -1320,6 +1328,136 @@ export async function runReleaseList(ctx: CommandContext): Promise<number> {
       console.error(`  ${r.label ?? r.releaseDigest}: revoked by ${r.revoked.tag}, ${describeRevocation(r.revoked)}`);
     }
   }
+  return 0;
+}
+
+/**
+ * `release deprecate|yank|restore <label|digest> [--yes] ...` (#5163): plan
+ * the status change and what each publish target does about it, print it,
+ * and with `--yes` write the status record and act, resumably. A target that
+ * can't do something says so with a code, as a warning, and the rest go on.
+ */
+export async function runReleaseStatusChange(ctx: CommandContext, verb: import("../../lifecycle/release-status-change").StatusVerb): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional;
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ ref: ref ?? null, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  if (!ref) return fail("release-not-named", `release ${verb} needs a release, by label or digest`, USAGE);
+  if (args.forgeRelease !== undefined && verb !== "yank") return fail("release-status-flag-invalid", `--forge-release says how a yank leaves the forge release, and release ${verb} is not a yank`);
+  if (args.replacement !== undefined && verb === "restore") return fail("release-status-flag-invalid", "--replacement names the release to use instead of a deprecated or yanked one, and a restore sets neither");
+  const cwd = resolve(".");
+  const dryRun = args.yes !== true;
+  const { fetchLifecycle } = await import("../../lifecycle/git");
+  await fetchLifecycle({ cwd }).catch(() => false);
+
+  // The actor, as a cut finds it: --actor, the signer of --sign's key, the CI's actor, git, $USER.
+  const ws = await import("../../lifecycle/release-workstation");
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const { releaseRuleFrom } = await import("../../workspace/identity");
+  let publicKey: string | null = null;
+  if (args.sign !== undefined) {
+    const { resolveSigningKey, SealError } = await import("../../workspace/trust/seal");
+    try {
+      const key = resolveSigningKey(args.sign, cwd);
+      try {
+        if (!existsSync(key.file)) return fail("release-signer-refused", `nothing was changed: the signing key ${key.file} does not exist`);
+        publicKey = ws.publicKeyOf(key.file);
+      } finally {
+        key.cleanup();
+      }
+    } catch (err) {
+      if (!(err instanceof SealError)) throw err;
+      return fail("release-signer-refused", `nothing was changed: ${err.message}`);
+    }
+  }
+  const who = ws.resolveCutActor({ cwd, ...(args.actor ? { explicit: args.actor } : {}), publicKey, signers: releaseRuleFrom(scopeSource(cwd)).rule.signers.signers });
+  if (!who) return fail("release-actor-unknown", "nothing was changed: no actor could be found", "Pass --actor explicitly, or set git's user.email, GITHUB_ACTOR, GITLAB_USER_LOGIN or USER.");
+
+  const { prepareStatusChange, runStatusChange, StatusRunError } = await import("../../lifecycle/release-status-change");
+  const { PublishTargetError } = await import("../../lifecycle/release-publish");
+  let plan: Awaited<ReturnType<typeof prepareStatusChange>>;
+  try {
+    plan = await prepareStatusChange({
+      cwd,
+      ref,
+      verb,
+      actor: who.actor,
+      ...(args.reason !== undefined ? { reason: args.reason } : {}),
+      ...(args.replacement !== undefined ? { replacement: args.replacement } : {}),
+      ...(args.forgeRelease !== undefined ? { forgeYank: args.forgeRelease } : {}),
+      sign: args.sign !== undefined,
+      log: (line) => (args.json ? undefined : console.error(`    ${line}`)),
+    });
+  } catch (err) {
+    if (err instanceof PublishTargetError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  if ("refusal" in plan) return fail(plan.refusal.code, plan.refusal.message, plan.refusal.fix);
+  const name = plan.label ?? plan.release.releaseDigest;
+  const say = (line: string) => console.error(plan.redactor.redact(line));
+  const refusals = (actions: ReadonlyArray<import("../../lifecycle/release-publish").StatusAction>) => actions.filter((a) => a.refused);
+  const describe = (a: import("../../lifecycle/release-publish").StatusAction) => (a.refused ? `refused: ${a.what}: ${a.refused.message} [${a.refused.code}]${a.refused.fix ? ` ${a.refused.fix}` : ""}` : a.already ? `already so: ${a.what}` : a.what);
+  const base = {
+    verb,
+    status: plan.status,
+    releaseDigest: plan.release.releaseDigest,
+    label: plan.label,
+    actor: plan.actor,
+    reason: plan.reason,
+    replacement: plan.replacement,
+    current: plan.current.status,
+    resumes: plan.resumes !== null,
+    undeclared: plan.undeclared,
+  };
+  const targetsDoc = plan.targets.map((t) => ({ kind: t.kind, name: t.name, destination: t.destination, ...(t.skip ? { skip: t.skip } : {}), done: t.done, head: t.head ? { releaseDigest: t.head.releaseDigest, label: t.head.label } : null, actions: t.actions }));
+
+  if (dryRun) {
+    const next = [sameWithYes(process.argv.slice(2))];
+    if (args.json) {
+      console.log(plan.redactor.redact(JSON.stringify({ dryRun: true, ...base, targets: targetsDoc, next }, null, 2)));
+      return 0;
+    }
+    const out = (line: string) => console.log(plan.redactor.redact(line));
+    say(`Dry run: ${verb} ${formatBold(name)} (${plan.release.releaseDigest}), now ${plan.current.status}${plan.resumes ? `; resumes the change ${plan.resumes.actor} recorded at ${plan.resumes.timestamp}` : ""}`);
+    out(`The status record: ${plan.status}${plan.reason ? `, because ${plan.reason}` : ""}${plan.replacement ? `, use ${plan.replacement}` : ""}, by ${plan.actor}${plan.signed ? ", signed" : ""}`);
+    out("What each target would do:");
+    if (plan.targets.length === 0) out("  nothing: this member declares no publish target (release.publish in chant.config.ts)");
+    for (const t of plan.targets) {
+      if (t.skip) {
+        out(`  ${t.name}: nothing, ${t.skip}`);
+        continue;
+      }
+      out(`  ${t.name}${t.done ? " (done by an earlier run; skipped)" : ""}:`);
+      for (const a of t.actions) out(`    ${describe(a)}`);
+    }
+    for (const u of plan.undeclared) say(formatWarning({ message: `${name} was published to ${u}, which release.publish no longer declares, so it is not changed there` }));
+    say(`Dry run: nothing was changed. Run again with --yes: ${next[0]}`);
+    return 0;
+  }
+
+  let run: import("../../lifecycle/release-status-change").StatusRun;
+  try {
+    run = await runStatusChange(plan, { cwd, ...(args.sign !== undefined ? { sign: args.sign } : {}), say: (line) => (args.json ? undefined : say(line)) });
+  } catch (err) {
+    if (err instanceof StatusRunError) {
+      return fail(err.code, `${err.message}; done: ${err.done.length > 0 ? err.done.join(", ") : "none"}`, `${err.fix ? `${err.fix} ` : ""}Run the same command again to resume; a target already done is skipped: ${sameWithYes(process.argv.slice(2))}`);
+    }
+    if (err instanceof PublishTargetError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  if (run.recordWarning) console.error(formatWarning({ message: plan.redactor.redact(run.recordWarning) }));
+  const refused = run.results.flatMap((r) => refusals(r.actions).map((a) => ({ target: r.name, ...a })));
+  if (args.json) {
+    console.log(plan.redactor.redact(JSON.stringify({ dryRun: false, ...base, record: run.record, written: run.written, targets: targetsDoc, results: run.results }, null, 2)));
+    return 0;
+  }
+  for (const r of run.results) for (const a of r.actions) if (!a.refused) say(`  ${r.name}: ${describe(a)}`);
+  for (const a of refused) console.error(formatWarning({ message: plan.redactor.redact(`${a.target}: ${describe(a)}`) }));
+  for (const u of plan.undeclared) console.error(formatWarning({ message: `${name} was published to ${u}, which release.publish no longer declares, so it was not changed there` }));
+  console.error(formatSuccess(`${name} is ${plan.status}${run.written ? "" : " (the change recorded earlier, resumed)"}; ${run.results.length} target(s) acted on${refused.length > 0 ? `, ${refused.length} action(s) refused` : ""}`));
   return 0;
 }
 

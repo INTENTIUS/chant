@@ -349,6 +349,76 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * {@link PublishTargetError}.
    */
   visible?(ctx: C, published: PublishedTarget): Promise<void>;
+  /**
+   * Deprecate, yank or restore what this target published for a release
+   * (#5163), from the publish record's items, never from the checkout. With
+   * `ctx.apply` false it asks nothing and says what it would do. Each
+   * action that is already so comes back `already`; one the destination
+   * can't do comes back `refused`. Run again, it sends nothing that is
+   * already so. Absent: the target refuses every status change.
+   */
+  setStatus?(ctx: StatusContext): Promise<StatusAction[]>;
+}
+
+/** How a yank leaves the forge release (#5163): marked a prerelease, made a draft again, or deleted. */
+export type ForgeYankMode = "prerelease" | "draft" | "delete";
+
+/** One release as a status change sees it on one target: what its publish revealed there. */
+export interface StatusRelease {
+  releaseDigest: string;
+  label: string | null;
+  /** The tag its cut made, or null for a release with no label. */
+  releaseTag: string | null;
+  /** The items the publish record says its reveal published on the target. */
+  items: PublishItem[];
+}
+
+/**
+ * What a target is given to deprecate, yank or restore a published release
+ * (#5163). It reads no file in the checkout: what went out is the publish
+ * record's, so a status change runs from any checkout of the member.
+ */
+export interface StatusContext extends PublishContextBase {
+  release: Release;
+  label: string | null;
+  releaseTag: string | null;
+  /** The status being set: `deprecated`, `yanked`, or `active` to restore. */
+  status: "active" | "deprecated" | "yanked";
+  /** Why, as the person gave it, or null. */
+  reason: string | null;
+  /** The release to move to instead, as the person named it, or null. */
+  replacement: string | null;
+  /** What this release's publish revealed on the target. */
+  revealed: PublishItem[];
+  /**
+   * The release the target's moving tags (npm's dist-tag, OCI tags with no
+   * `{label}`, a tap's formula, GitHub's latest) should point at once the
+   * status is set: the newest release of the same channel whose status is
+   * active, that is not revoked and that was revealed on this target. It is
+   * this release on a restore when nothing newer is active, and null when
+   * there is none.
+   */
+  head: StatusRelease | null;
+  /** How a yank leaves a forge release. */
+  forgeYank: ForgeYankMode;
+  /** False for a dry run: describe what would be done and make no request. */
+  apply: boolean;
+}
+
+/** One thing a status change does, or would do, on a target. */
+export interface StatusAction {
+  /** What, in a line: `npm deprecate @acme/core@1.4.0`. */
+  what: string;
+  /** True when the destination was already so, and nothing was sent. */
+  already?: boolean;
+  /** Set when the target can't do it: why, with a code, and nothing was sent for it. */
+  refused?: { code: string; message: string; fix?: string };
+}
+
+/** The deprecation message a status change gives a version: the reason, and the release to use instead. */
+export function statusMessage(ctx: Pick<StatusContext, "status" | "reason" | "replacement">): string {
+  const lead = ctx.status === "yanked" ? "yanked" : "deprecated";
+  return [ctx.reason ? `${lead}: ${ctx.reason}` : lead, ctx.replacement ? `use ${ctx.replacement}` : null].filter(Boolean).join("; ");
 }
 
 /** The targets the member at `cwd` declares under `release.publish` in its `chant.config.ts`. */

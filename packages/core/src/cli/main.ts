@@ -618,6 +618,15 @@ Releases:
                         Write the files the release recorded for <env>, each
                         checked against its digest, at their recorded paths
                         under <dir> (default: here), for a deploy to read.
+  release deprecate|yank|restore <label|digest> [--yes] [--reason <text>]
+                        [--replacement <label>] [--forge-release prerelease|draft|delete]
+                        [--actor <name>] [--sign [<key file>]] [--json]
+                        Record a status for a published release and act on
+                        each target that can: deprecate warns npm users; yank
+                        also moves npm's dist-tag and the OCI moving tags back
+                        to the previous active release, withdraws the forge
+                        release and reverts a tap's formula; restore undoes
+                        it. A dry run unless --yes; resumes like publish.
 
 Change sets:
   change-set summary <file>  The grouped plan summary of a change-set
@@ -2118,6 +2127,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "release next", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseNext(ctx) },
   { name: "release changed", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseChanged(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
+  // #5163: deprecate, yank and restore a published release on each target that can.
+  { name: "release deprecate", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStatusChange(ctx, "deprecate") },
+  { name: "release yank", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStatusChange(ctx, "yank") },
+  { name: "release restore", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStatusChange(ctx, "restore") },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },
   // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.

@@ -5,7 +5,9 @@
  *
  * The previous release is found in the member's ledger, never from a tag:
  * the nearest release cut from the commit or an ancestor of it whose label
- * is a semver version without a prerelease part. The commits are those
+ * is a semver version without a prerelease part and that is not yanked
+ * (#5163: `chant release yank` sets that status in
+ * `_releases/release-status.jsonl`). The commits are those
  * after it, up to the commit, that touch the member's directory (or, for a
  * release member under a nested workspace, the directory of the outer
  * member of its name). Each is classified as {@link changelogBump} does: a
@@ -19,6 +21,10 @@
  * `2.0.0-rc.1` is followed by `2.0.0` even when only fixes landed since.
  * With `pre`, the label is `<version>-<pre>.<n>`, `n` one past the highest
  * the member's ledger holds for that version and id, else 0.
+ *
+ * A yanked stable release passed over still holds its version, which no
+ * registry takes twice, so a label at or below it becomes its next patch:
+ * `1.1.0` yanked after `1.0.0` is followed by `1.1.1`.
  *
  * A label written with a leading `v` gives labels with one. A commit the
  * member already has a labelled release of answers that label, so a run
@@ -101,7 +107,7 @@ const PRE_ID = /^[A-Za-z][0-9A-Za-z-]*$/;
  * The next label from the previous stable label, the bump, the prerelease
  * labels cut since it, and every label the member's ledger holds. Pure.
  */
-export function nextLabel(input: { stable: string; bump: ReleaseBumpLevel | null; since: readonly string[]; labels: readonly string[]; pre?: string }): string {
+export function nextLabel(input: { stable: string; bump: ReleaseBumpLevel | null; since: readonly string[]; labels: readonly string[]; pre?: string; yanked?: readonly string[] }): string {
   const base = parse(input.stable);
   if (!base || base.pre !== null) throw new Error(`${input.stable} is not a release version`);
   let core: Core = [...base.core];
@@ -111,6 +117,11 @@ export function nextLabel(input: { stable: string; bump: ReleaseBumpLevel | null
   for (const l of input.since) {
     const p = parse(l);
     if (p && p.pre !== null && cmp(p.core, core) > 0) core = p.core;
+  }
+  // #5163: a yanked version can't be published again, so the label goes past it.
+  for (const l of input.yanked ?? []) {
+    const p = parse(l);
+    if (p && p.pre === null && cmp(p.core, core) >= 0) core = [p.core[0], p.core[1], p.core[2] + 1];
   }
   const version = core.join(".");
   if (input.pre === undefined) return `${base.v}${version}`;
@@ -196,8 +207,13 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
   const names = ledger.members.length > 0 ? [ledger.members.at(-1)!, ledger.members.join("/")] : [];
   const { cuts } = await readCuts({ cwd: req.cwd });
   const ancestors = await ancestorReleases(top, at, req.cwd);
+  // #5163: a yanked release is never the previous release.
+  const { readReleaseStatus, statusOf } = await import("./release-status");
+  const statusRecords = (await readReleaseStatus("_releases", { cwd: req.cwd }).catch(() => ({ records: [] }))).records;
+  const component = ledger.members.length > 0 ? ledger.members.join("/") : ".";
+  const yanked = (a: { release: { releaseDigest: string } }) => statusOf(statusRecords, component, a.release.releaseDigest).status === "yanked";
   const here = ancestors.find((a) => a.release.commit === at && a.label !== null);
-  const stableAt = ancestors.findIndex((a) => a.release.commit !== at && a.label !== null && parse(a.label)?.pre === null);
+  const stableAt = ancestors.findIndex((a) => a.release.commit !== at && a.label !== null && parse(a.label)?.pre === null && !yanked(a));
   const stable = stableAt >= 0 ? ancestors[stableAt]! : null;
 
   const intents = await memberPendingIntents(req.cwd, top, at, names, cuts);
@@ -226,6 +242,7 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
     );
   }
   const labels = cuts.map((c) => c.label).filter((l): l is string => l !== null);
-  const label = nextLabel({ stable: stable.label!, bump, since, labels, ...(req.pre !== undefined ? { pre: req.pre } : {}) });
+  const passed = ancestors.slice(0, stableAt).filter((a) => a.label !== null && yanked(a)).map((a) => a.label!);
+  const label = nextLabel({ stable: stable.label!, bump, since, labels, yanked: passed, ...(req.pre !== undefined ? { pre: req.pre } : {}) });
   return { label, at, bump, alreadyCut: false, from: { label: stable.label!, commit: stable.release.commit }, commits, intents };
 }

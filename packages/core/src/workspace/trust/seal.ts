@@ -31,7 +31,7 @@ import { type TrustPolicy } from "./policy";
 import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
 import { checkGateSignature, GATE_SEAL_NAMESPACE, gateSealPayload, sshSignatureKey, verifySshSignatureWith, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
-import { RELEASE_SEAL_NAMESPACE, releaseSealPayload } from "../identity-gate-rule";
+import { RELEASE_SEAL_NAMESPACE, releaseSealPayload, releaseStatusSealPayload } from "../identity-gate-rule";
 
 export { GATE_SEAL_NAMESPACE, gateSealPayload, gateSealVersion, sealedFieldsOf, type SealedGateApproval } from "../../lifecycle/gate-seal";
 
@@ -361,6 +361,15 @@ export function sealGateApproval(keyFile: string, a: SealedGateApproval): Verdic
  */
 export function sealReleaseCut(keyFile: string, cut: { releaseDigest: string; label: string | null; actor: string; timestamp: string }): VerdictSeal {
   return sign(keyFile, releaseSealPayload(cut), RELEASE_SEAL_NAMESPACE, cut.actor);
+}
+
+/**
+ * Sign a release status change (#5163) with the key in `keyFile`, over
+ * `releaseStatusSealPayload` in the `chant-release` namespace. Throws a
+ * {@link SealError}.
+ */
+export function sealReleaseStatus(keyFile: string, s: { releaseDigest: string; label: string | null; actor: string; timestamp: string; status: string }): VerdictSeal {
+  return sign(keyFile, releaseStatusSealPayload(s), RELEASE_SEAL_NAMESPACE, s.actor);
 }
 
 function sign(keyFile: string, payload: Buffer, namespace: string, signer: string): VerdictSeal {

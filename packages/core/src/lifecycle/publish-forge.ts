@@ -69,7 +69,7 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { changelogNotes, type ChangelogCommit } from "./release-changelog";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
-import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
+import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
 /** The first chant that reads `latest` on a forge target and sends it as GitHub's `make_latest` (#4676). */
@@ -160,6 +160,8 @@ interface ForgeRelease {
   id: string;
   /** True for a GitHub or Forgejo draft, which no consumer sees. */
   draft: boolean;
+  /** True for a GitHub or Forgejo prerelease. */
+  prerelease?: boolean;
   /** Asset names on the release, with the digest the forge reports when it reports one. */
   assets: Map<string, string | null>;
   uploadUrl?: string;
@@ -173,7 +175,7 @@ class ForgeClient {
     private readonly api: string,
     private readonly token: Credential,
     private readonly fetch: PublishFetch,
-    private readonly ctx: PublishContext,
+    private readonly ctx: PublishContextBase,
   ) {}
 
   private headers(): Record<string, string> {
@@ -215,6 +217,7 @@ class ForgeClient {
     return {
       id: String(body.id ?? body.tag_name ?? tag),
       draft: body.draft === true,
+      prerelease: body.prerelease === true,
       assets,
       ...(typeof body.upload_url === "string" ? { uploadUrl: body.upload_url } : {}),
       ...(typeof body.body === "string" ? { body: body.body } : {}),
@@ -228,6 +231,27 @@ class ForgeClient {
     if (found.status === 404) return null;
     if (found.status !== 200 || !found.json) this.fail(`reading release ${tag}`, found.status, found.text);
     return this.toRelease(found.json as Record<string, unknown>, tag);
+  }
+
+  /** GitHub and Forgejo: the draft release for `tag`, or null (#5163). */
+  async draftFor(tag: string): Promise<ForgeRelease | null> {
+    const list = await this.call("GET", `${this.repoPath}/releases?per_page=100`);
+    if (list.status !== 200) this.fail("listing releases", list.status, list.text);
+    const found = (Array.isArray(list.json) ? (list.json as Array<Record<string, unknown>>) : []).find((r) => r.draft === true && r.tag_name === tag);
+    return found ? this.toRelease(found, tag) : null;
+  }
+
+  /** GitHub and Forgejo: change the release `id` (#5163): `prerelease`, `draft`, GitHub's `make_latest`. */
+  async edit(id: string, tag: string, body: Record<string, unknown>): Promise<void> {
+    const res = await this.call("PATCH", `${this.repoPath}/releases/${id}`, JSON.stringify(body));
+    if (res.status !== 200) this.fail(`changing release ${tag}`, res.status, res.text);
+  }
+
+  /** Delete the release for `tag` (#5163). Its tag and, on GitLab, its packages stay. */
+  async remove(rel: ForgeRelease, tag: string): Promise<void> {
+    const url = this.decl.forge === "gitlab" ? `${this.repoPath}/releases/${encodeURIComponent(tag)}` : `${this.repoPath}/releases/${rel.id}`;
+    const res = await this.call("DELETE", url);
+    if (res.status !== 200 && res.status !== 204 && res.status !== 404) this.fail(`deleting release ${tag}`, res.status, res.text);
   }
 
   /** GitHub and Forgejo: the draft release for `tag`, made at `commit` when there is none. */
@@ -550,6 +574,98 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     destination: `${decl.forge} ${decl.repo}`,
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
+    /**
+     * #5163: a forge release has no deprecation, so deprecate does nothing
+     * here. A yank marks the release a prerelease, makes it a draft again, or
+     * deletes it (`--forge-release`), and on GitHub makes the head release
+     * the latest again; GitLab has neither prerelease nor draft, so it only
+     * deletes. A restore publishes it again: it clears the prerelease mark
+     * (not on Forgejo for a channel's release, which is a prerelease by
+     * design) or publishes the draft. A deleted release can't be restored.
+     */
+    async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
+      const tag = decl.tag ?? ctx.releaseTag;
+      const forge = `${decl.forge} ${decl.repo}`;
+      if (!tag) return [{ what: `${forge} unchanged: the release has no label, so it has no forge release`, already: true }];
+      if (ctx.status === "deprecated") return [{ what: `${forge} release ${tag} unchanged: a forge release has no deprecation; yank marks it` }];
+      const channel = ctx.tag !== null;
+      // #5166: a prerelease label was published as a prerelease, never the latest, and a restore keeps it one.
+      const prerelease = prereleaseOf(ctx.label) !== null;
+      const isHead = ctx.head?.releaseDigest === ctx.release.releaseDigest;
+      const headTag = ctx.head && !isHead ? (decl.tag ?? ctx.head.releaseTag) : null;
+      const moveLatest = decl.forge === "github" && decl.latest !== false && !channel && !prerelease;
+      if (ctx.status === "yanked" && prerelease && ctx.forgeYank === "prerelease" && decl.forge !== "gitlab") {
+        return [{
+          what: `${forge} release ${tag} stays a prerelease`,
+          refused: { code: "release-status-forge-prerelease", message: `${ctx.label} is a prerelease, so its ${decl.forge} release is marked one already and marking it again withdraws nothing`, fix: "Pass --forge-release draft or --forge-release delete to withdraw it." },
+        }];
+      }
+      if (ctx.status === "yanked" && decl.forge === "gitlab" && ctx.forgeYank !== "delete") {
+        return [{
+          what: `${forge} release ${tag} stays published`,
+          refused: { code: "release-status-forge-unsupported", message: `a GitLab release has no prerelease or draft state to move release ${tag} to`, fix: "Pass --forge-release delete to delete the GitLab release; its tag and packages stay." },
+        }];
+      }
+      const plan: StatusAction[] =
+        ctx.status === "yanked"
+          ? [
+              { what: ctx.forgeYank === "prerelease" ? `mark ${forge} release ${tag} a prerelease` : ctx.forgeYank === "draft" ? `make ${forge} release ${tag} a draft again` : `delete ${forge} release ${tag} (its tag stays)` },
+              ...(moveLatest && headTag && headTag !== tag ? [{ what: `make ${forge} release ${headTag} the latest` }] : []),
+            ]
+          : [{ what: `publish ${forge} release ${tag} again${moveLatest && isHead ? ", as the latest" : ""}` }];
+      if (!ctx.apply) return plan;
+      const api = forgeApi(decl, ctx.env);
+      if (!api) throw new PublishTargetError("publish-forge-no-api", "a Forgejo target needs its API root, and neither api nor GITHUB_API_URL is set", "Set api, such as https://forgejo.example/api/v1.");
+      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      if (!token) throw new PublishTargetError("publish-credentials-missing", `the ${decl.forge} target reads its token from ${tokenNames.join(" or ")}, and none is set`, `Set ${tokenNames[0]} in the job's or the shell's environment.`);
+      const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
+      const rel = await client.published(tag);
+      const actions: StatusAction[] = [];
+      if (ctx.status === "yanked") {
+        if (!rel) {
+          actions.push({ what: `${forge} has no published release ${tag}; nothing to yank there`, already: true });
+        } else if (ctx.forgeYank === "prerelease") {
+          if (rel.prerelease) actions.push({ what: `${forge} release ${tag} is already a prerelease`, already: true });
+          else {
+            await client.edit(rel.id, tag, { prerelease: true, ...(decl.forge === "github" ? { make_latest: "false" } : {}) });
+            actions.push(plan[0]!);
+          }
+        } else if (ctx.forgeYank === "draft") {
+          await client.edit(rel.id, tag, { draft: true });
+          actions.push(plan[0]!);
+        } else {
+          await client.remove(rel, tag);
+          actions.push(plan[0]!);
+        }
+        if (moveLatest && headTag && headTag !== tag) {
+          const head = await client.published(headTag);
+          if (head) {
+            await client.edit(head.id, headTag, { make_latest: "true" });
+            actions.push({ what: `make ${forge} release ${headTag} the latest` });
+          } else {
+            actions.push({ what: `${forge} has no published release ${headTag} to make the latest`, already: true });
+          }
+        }
+        return actions;
+      }
+      const latest = moveLatest && isHead ? { make_latest: "true" } : {};
+      if (rel) {
+        if (rel.prerelease && !prerelease && !(decl.forge === "forgejo" && channel)) {
+          await client.edit(rel.id, tag, { prerelease: false, ...latest });
+          return [{ what: `clear the prerelease mark of ${forge} release ${tag}${moveLatest && isHead ? ", as the latest" : ""}` }];
+        }
+        return [{ what: `${forge} release ${tag} is published`, already: true }];
+      }
+      const draft = decl.forge === "gitlab" ? null : await client.draftFor(tag);
+      if (draft) {
+        await client.edit(draft.id, tag, { draft: false, ...latest });
+        return [{ what: `publish the draft ${forge} release ${tag}${moveLatest && isHead ? ", as the latest" : ""}` }];
+      }
+      return [{
+        what: `${forge} release ${tag} stays deleted`,
+        refused: { code: "release-status-forge-deleted", message: `${forge} has no release ${tag}, published or draft, so a yank deleted it and there is nothing to publish again`, fix: `Make the release again by hand from tag ${tag}, or cut a new release.` },
+      }];
+    },
     async plan(ctx) {
       const { tag, assets, signatures, section } = setup(ctx);
       const notes = await releaseNotes(ctx, tag, section, null);
