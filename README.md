@@ -60,6 +60,7 @@ It separates PR-worthy security findings (with ready-to-apply fix diffs) from hy
 | [@intentius/chant-lexicon-k8s](lexicons/k8s) | Kubernetes lexicon — Deployments, Services, ConfigMaps + YAML import |
 | [@intentius/chant-lexicon-otel](lexicons/otel) | OpenTelemetry Collector lexicon — typed receivers, processors, exporters, connectors and pipelines, emitted as collector YAML |
 | [@intentius/chant-lexicon-prometheus](lexicons/prometheus) | Prometheus lexicon — typed recording and alerting rule groups and Alertmanager routing, emitted as a rule file and alertmanager.yml |
+| [@intentius/chant-lexicon-prow](lexicons/prow) | Prow lexicon: presubmits, postsubmits and periodics as declarables, built to the job config Prow loads and imported from one |
 | [@intentius/chant-lexicon-pulumi](lexicons/pulumi) | Pulumi lexicon — the `pulumi` workspace member kind: a Pulumi program's graph from its checked-in stack export, its change set from `pulumi preview --json`, its drift from `pulumi refresh --preview-only --json`; declares no resource types and never changes a stack |
 | [@intentius/chant-lexicon-render](lexicons/render) | Render lexicon — services, datastores, env groups, projects; applied straight to the Public API |
 | [@intentius/chant-lexicon-sql](lexicons/sql) | SQL lexicon — database schema as typed declarations, one dialect at a time; ClickHouse and Postgres, with ClickHouse types from a pinned server's catalog |

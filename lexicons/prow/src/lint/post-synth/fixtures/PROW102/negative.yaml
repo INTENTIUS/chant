@@ -1,0 +1,26 @@
+# One schedule each: an interval, a cron and a minimum interval.
+periodics:
+  - name: periodic-app-e2e
+    interval: 24h
+    spec:
+      containers:
+        - name: test
+          image: golang:1.26
+          command:
+            - go
+  - name: periodic-app-nightly
+    cron: 0 3 * * *
+    spec:
+      containers:
+        - name: test
+          image: golang:1.26
+          command:
+            - go
+  - name: periodic-app-soak
+    minimum_interval: 6h
+    spec:
+      containers:
+        - name: test
+          image: golang:1.26
+          command:
+            - go

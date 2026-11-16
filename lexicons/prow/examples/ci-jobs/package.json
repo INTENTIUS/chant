@@ -1,0 +1,17 @@
+{
+  "name": "prow-ci-jobs-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon prow -o prow/jobs.yaml",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-prow": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

@@ -1,0 +1,25 @@
+# The presubmit holds nothing itself, but runs on build cluster trusted,
+# where the postsubmit runs with a cloud identity.
+presubmits:
+  acme/infra:
+    - name: pull-infra-check
+      cluster: trusted
+      spec:
+        containers:
+          - name: check
+            image: hashicorp/terraform:1.14
+            command:
+              - terraform
+              - validate
+postsubmits:
+  acme/infra:
+    - name: post-infra-apply
+      cluster: trusted
+      spec:
+        serviceAccountName: tf-apply
+        containers:
+          - name: apply
+            image: hashicorp/terraform:1.14
+            command:
+              - terraform
+              - apply

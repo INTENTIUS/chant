@@ -1,0 +1,24 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Generate types and metadata from upstream schemas
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Validate generated artifacts
+validate:
+    npx tsx src/validate-cli.ts
+
+# Generate this lexicon's docs into the main site (docs/src/content/docs/lexicons/), then start its dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix ../../docs
+    npm run --prefix ../../docs dev
+
+# Build the whole docs site, every lexicon's section included
+docs-build:
+    cd ../.. && bash scripts/build-docs.sh
+
+# Package the lexicon (generate + validate)
+package: generate validate

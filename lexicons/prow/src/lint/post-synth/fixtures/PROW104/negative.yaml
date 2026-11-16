@@ -1,0 +1,31 @@
+# The presubmit reads no Secret; the postsubmit, which runs merged code, does.
+presubmits:
+  acme/app:
+    - name: pull-app-unit
+      spec:
+        automountServiceAccountToken: false
+        containers:
+          - name: test
+            image: golang:1.26
+            command:
+              - go
+              - test
+            env:
+              - name: GOFLAGS
+                value: -mod=mod
+postsubmits:
+  acme/app:
+    - name: post-app-publish
+      spec:
+        containers:
+          - name: publish
+            image: golang:1.26
+            command:
+              - make
+              - publish
+            env:
+              - name: REGISTRY_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: registry-token
+                    key: token

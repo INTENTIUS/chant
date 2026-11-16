@@ -1,0 +1,5 @@
+# A kubernetes job (the default agent) with no pod spec.
+presubmits:
+  acme/app:
+    - name: pull-app-unit
+      always_run: true

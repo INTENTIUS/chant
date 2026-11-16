@@ -444,6 +444,23 @@
       ]
     },
     {
+      "name": "lexicon-prow",
+      "dir": "lexicons/prow",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/prow/src/lint/post-synth"
+          ]
+        }
+      ]
+    },
+    {
       "name": "lexicon-pulumi",
       "dir": "lexicons/pulumi",
       "kind": "other",

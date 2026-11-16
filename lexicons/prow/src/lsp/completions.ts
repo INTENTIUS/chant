@@ -1,0 +1,22 @@
+import { createRequire } from "module";
+import { moduleSourceUrl } from "@intentius/chant/module-source";
+import type { CompletionContext, CompletionItem } from "@intentius/chant/lsp/types";
+import { LexiconIndex, lexiconCompletions, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
+const require = createRequire(moduleSourceUrl(import.meta.url));
+
+let cachedIndex: LexiconIndex | null = null;
+
+function getIndex(): LexiconIndex {
+  if (cachedIndex) return cachedIndex;
+  const data = require("../generated/lexicon-prow.json") as Record<string, LexiconEntry>;
+  cachedIndex = new LexiconIndex(data);
+  return cachedIndex;
+}
+
+/**
+ * Provide prow completions based on context: the job kinds and their
+ * property entities, from the generated registry.
+ */
+export function completions(ctx: CompletionContext): CompletionItem[] {
+  return lexiconCompletions(ctx, getIndex(), "prow entity");
+}

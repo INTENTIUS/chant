@@ -225,6 +225,21 @@
       ]
     },
     {
+      "name": "lexicon-prow",
+      "dir": "lexicon-prow",
+      "kind": "chant",
+      "generated": [
+        {
+          "path": "chant.config.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-prow/chant.config.ts -o chant.config.ts"
+        },
+        {
+          "path": "packages.component.ts",
+          "generator": "npx tsx ../../scripts/generate-release-members.ts --file lexicon-prow/packages.component.ts -o packages.component.ts"
+        }
+      ]
+    },
+    {
       "name": "lexicon-pulumi",
       "dir": "lexicon-pulumi",
       "kind": "chant",
