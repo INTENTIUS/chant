@@ -15,6 +15,7 @@ Under `supply-chain`:
 
 - A publish target with no SBOM source is refused (`publish-sbom-missing`). Without the group it publishes without one.
 - A publish with no OIDC token warns that what it publishes carries no provenance. Without the group, provenance is only a field in the plan. `--require-provenance` refuses instead, with or without the group.
+- `chant release cut` refuses `release.green: "none"` (`release-green-none-refused`), so every release passed a [green gate](/chant/cli/release/#the-green-gate).
 
 An SBOM comes from the file a target's `sbom` names, else from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first.
 

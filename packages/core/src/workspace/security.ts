@@ -10,8 +10,10 @@
  * - `verified-releases`: `chant release publish` refuses a release with no
  *   verified signature, as the `release` gate in `identity.gates` does, and
  *   `chant components promote --release` verifies the release first.
+ *   `chant release cut` refuses `release.green: "none"` (#5149).
  * - `supply-chain`: a publish without OIDC provenance warns, and a target
- *   with no SBOM source is refused (`publish-sbom-missing`).
+ *   with no SBOM source is refused (`publish-sbom-missing`). `chant release
+ *   cut` refuses `release.green: "none"` (#5149).
  * - `who-ran-it`: `chant ci tick` refuses to tag without a runner key.
  * - `review-rules`: `chant components pr-apply` counts an approval only from
  *   someone who approved the pull request on the forge, as
@@ -97,8 +99,11 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Publish refuses an unsigned release", byDefault: "off: publishes and records `signature: unsigned`", setting: "`identity.gates.release`", group: "verified-releases", codes: ["security-signers-missing", "security-publish-allows-unsigned"] },
   { feature: "Signed cut in the release gate's class", byDefault: "off", setting: "`identity.gates.release` with a `class`", group: "verified-releases", codes: ["security-release-gate-missing"] },
   { feature: "Promote verifies the release", byDefault: "off: `chant release verify` on demand", setting: "`chant release verify`", group: "verified-releases", codes: [] },
+  // #5149: a cut with no green gate.
+  { feature: "Cut refuses `release.green: \"none\"`", byDefault: "off: cuts with a warning and records `green: none`", setting: "`identity.gates.release`", group: "verified-releases", codes: [] },
   { feature: "SBOM on every target", byDefault: "off: a target with no SBOM source publishes without one", setting: "`sbom` on the target", group: "supply-chain", codes: ["security-sbom-disabled", "security-sbom-unsourced"] },
   { feature: "OIDC provenance", byDefault: "off: a plan field", setting: "`--require-provenance`", group: "supply-chain", codes: ["security-publish-no-provenance"] },
+  { feature: "Cut needs a green gate", byDefault: "off: `release.green: \"none\"` cuts with a warning", setting: "`release.green` other than `none`", group: "supply-chain", codes: [] },
   { feature: "SBOM and verify steps on components", byDefault: "off", setting: "a `generate-sbom` or `verify` step", group: "supply-chain", codes: ["security-component-no-sbom", "security-component-no-verify"] },
   { feature: "Signed green tags and runs", byDefault: "off: every tag counts", setting: "`ci.green.signedSince`", group: "who-ran-it", codes: ["security-signed-since-unset"] },
   { feature: "Trusted runner keys", byDefault: "off", setting: "`.chant/trust.json` with a runner role", group: "who-ran-it", codes: ["security-runner-untrusted"] },

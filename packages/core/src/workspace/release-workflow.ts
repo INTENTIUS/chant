@@ -27,6 +27,7 @@
  * `chant release images` before the build. A config with only `publish`
  * renders the tag-triggered file it always did.
  */
+import { readFileSync } from "node:fs";
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { IMAGE_PINS, imageRef } from "../image-pins";
 import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
@@ -116,6 +117,14 @@ export interface ReleaseWorkflowInput {
   imagePlatforms?: string[];
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
+  /**
+   * The green gate the cut checks (#5149), `release.green` resolved. Under
+   * `forge-checks` or `none` a dispatched release's gate names the
+   * dispatched commit, since no `ci/green` tag exists to search, and the cut
+   * checks it; under `forge-checks` the cut job gets the run's token and,
+   * on GitHub, `checks: read` and `statuses: read`. Default `chant`.
+   */
+  green?: import("../lifecycle/release-green").ReleaseGreenSource;
   /**
    * The config declares `release.version` (#4840): the publish job runs
    * `chant release stamp <label>` before the images and the build, so what
@@ -251,6 +260,12 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   const version = input.version === true;
   // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
   const derived = targetExtras(input.forge, input.publish ?? [], p);
+  // #5149: the cut asks the forge for the commit's checks with the run's token.
+  const green = input.green ?? "chant";
+  if (green === "forge-checks" && p.trigger === "dispatch" && input.forge === "github") {
+    const reads = Object.fromEntries((["checks", "statuses"] as const).filter((k) => p.permissions?.[k] === undefined).map((k) => [k, "read" as const]));
+    if (Object.keys(reads).length > 0) derived.permissions = { ...derived.permissions, ...reads };
+  }
   // #4876: QEMU before the config's setup, where the products named it.
   const qemu = images ? qemuSetup(input.forge, input.imagePlatforms ?? [], p) : [];
   const extra = jobExtras(
@@ -269,7 +284,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       : [];
   if (p.trigger === "dispatch") {
     const archives = images ? (input.imageArchives ?? []).map((a) => (root ? `${root}/${a.replace(/^\.\//, "")}` : a.replace(/^\.\//, ""))) : [];
-    const o = { chant, install, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
+    const cutToken = green === "forge-checks" && input.forge !== "gitlab" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [];
+    const o = { chant, install, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
@@ -439,6 +455,10 @@ interface DispatchInput {
   extra: JobExtras;
   /** The publish job's `GITHUB_TOKEN` line for a GitHub forge target (#4767), or nothing. */
   forgeToken: string[];
+  /** The cut job's `GITHUB_TOKEN` line under `forge-checks` (#5149), or nothing. */
+  cutToken: string[];
+  /** The green gate the cut checks (#5149). */
+  green: import("../lifecycle/release-green").ReleaseGreenSource;
 }
 
 /** The workflow artifact the cut job hands its image archives on in. */
@@ -487,6 +507,8 @@ function workflowFilesCheck(dispatched: string): string[] {
 
 /** The gate's shell: the commit to cut, from `ci last-green`, refused when there is none or, under `head`, when it is not the dispatched one. */
 function gateScript(o: DispatchInput, dispatched: string): string[] {
+  // #5149: with no ci/green tags to search, the gate names the dispatched commit and the cut checks it.
+  if (o.green !== "chant") return [`commit="${dispatched}"`];
   return [
     `commit="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json | ${field("d.commit?.sha")})"`,
     `if [ -z "$commit" ]; then echo "no green commit at or below ${dispatched}, so no release is cut" >&2; exit 1; fi`,
@@ -556,7 +578,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "    needs: gate",
     "    runs-on: ubuntu-latest",
     ...defaults,
-    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`]),
+    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, ...o.cutToken]),
     "    steps:",
     ...githubSetup(commit),
     `      - run: ${o.install}`,
@@ -631,7 +653,7 @@ function renderGitlabDispatch(o: DispatchInput): string {
   const lines = [
     ...job("chant-release-gate", [], [...cd, o.install, fetches[0]!, ...gateScript(o, "$CI_COMMIT_SHA"), 'echo "CHANT_RELEASE_COMMIT=$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'], ["  artifacts:", "    reports:", "      dotenv: chant-release-gate.env"]),
     "",
-    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...cutScript(o, "/tmp/chant-cut.json")], o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [], o.extra.gitlabVariables),
+    ...job("chant-release-cut", ["chant-release-gate"], [...checkout, ...cd, o.install, ...o.extra.gitlabScript, fetches[0]!, ...auth, LEDGER_FETCH_FIRST, ...(o.green === "forge-checks" ? ['export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'] : []), ...cutScript(o, "/tmp/chant-cut.json")], o.archives.length > 0 ? ["  artifacts:", "    paths:", ...o.archives.map((a) => `      - ${JSON.stringify(a)}`), "    expire_in: 1 day"] : [], o.extra.gitlabVariables),
     "",
     ...job(
       "chant-release-publish",
@@ -657,6 +679,27 @@ function renderGitlabDispatch(o: DispatchInput): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * Whether the default build, `npm run build`, has a script to run at `root`
+ * (#5149): a package.json with a `build` script, or no package.json at all,
+ * where the default stands as it always did. A package with no build script
+ * gets no build step rather than one that fails.
+ */
+function hasBuildScript(root: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(`${root}/package.json`, "utf-8");
+  } catch {
+    return true;
+  }
+  try {
+    const pkg = JSON.parse(text) as { scripts?: Record<string, unknown> };
+    return typeof pkg.scripts?.build === "string";
+  } catch {
+    return true;
+  }
+}
+
 /** The header that marks the file generated, naming the command that regenerates it. */
 export function releaseWorkflowHeader(command: string): string {
   return `# ${GENERATED_MARKER}. Regenerate with: ${command} (in the workspace root)\n`;
@@ -677,12 +720,14 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const { shellArg } = await import("./member-pipeline");
   const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>]";
   const { args } = ctx;
+  // #5149: a project with only a chant.config.ts, and no chant.workspace.json, renders its release workflow too.
   const found = findWorkspaceRoot(process.cwd());
-  if (!found) {
-    console.error(formatError({ message: "no chant.workspace.json between this directory and the git root", hint: usage }));
+  const projectDir = found?.dir ?? (["chant.config.ts", "chant.config.json"].some((f) => existsSync(join(process.cwd(), f))) ? process.cwd() : null);
+  if (!projectDir) {
+    console.error(formatError({ message: "no chant.workspace.json between this directory and the git root, and no chant.config.ts or chant.config.json here", hint: usage }));
     return 1;
   }
-  const root = realpathSync(found.dir);
+  const root = realpathSync(projectDir);
   const repoRoot = gitTop(root) ?? root;
   const forge = (args.forge ??
     (existsSync(join(repoRoot, ".github", "workflows")) ? "github" : existsSync(join(repoRoot, ".forgejo", "workflows")) ? "forgejo" : existsSync(join(repoRoot, ".gitlab-ci.yml")) ? "gitlab" : "github")) as ReleaseWorkflowForge;
@@ -708,10 +753,22 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
+    green: await (async () => {
+      const { resolveGreenSource } = await import("../lifecycle/release-green");
+      const { scopeSource } = await import("./write-scope");
+      const { execFileSync } = await import("node:child_process");
+      let tags = "";
+      try {
+        tags = execFileSync("git", ["tag", "--list", "ci/green/*", "ci/green-*/*"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      } catch {
+        tags = "";
+      }
+      return resolveGreenSource(release?.green, (scopeSource(root).declaration?.ci?.green ?? null) !== null, release?.green === undefined && tags !== "");
+    })(),
     ...(release?.version ? { version: true } : {}),
     ...(release?.publish ? { publish: release.publish } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
-    ...(args.buildCommand ? { build: args.buildCommand } : {}),
+    ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
   });
   // #4909: under `chant dev generated-check` the header names the committed file the render stands for.

@@ -43,7 +43,7 @@
  * names a `release` gate requires a signed cut by an actor in its class (#4031).
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -121,6 +121,42 @@ async function releaseImagesOf(cwd: string): Promise<import("../../lifecycle/rel
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.images ?? [];
 }
+
+/**
+ * The green gate `release.green` names (#5149), or undefined for the default.
+ * A config that can't be loaded reads as naming none.
+ */
+async function greenOf(cwd: string): Promise<import("../../lifecycle/release-green").ReleaseGreenSource | undefined> {
+  try {
+    const { loadChantConfig } = await import("../../config");
+    return (await loadChantConfig(cwd)).config.release?.green;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `release.publish` targets an artifact release records (#5149): read
+ * only when the member declares no environments, since a release cut from
+ * environments records its compile targets instead.
+ */
+async function artifactPublishesOf(cwd: string): Promise<import("../../lifecycle/release-store").ReleasePublish[] | undefined> {
+  const { readMemberPromotionOrder } = await import("../../workspace/promotion-order");
+  if (((await readMemberPromotionOrder(cwd)) ?? []).length > 0) return undefined;
+  const { releasePublishTargets } = await import("../../lifecycle/release-publish");
+  return (await releasePublishTargets(cwd)).map((t) => ({ target: t.key, kind: t.kind, destination: t.destination }));
+}
+
+/** How a cut's green gate reads in a line (#5149). */
+export function describeGreen(green: import("../../lifecycle/release-store").ReleaseCutGreen | undefined | null): string {
+  if (!green) return "no green gate recorded";
+  if (green.source === "chant") return `green by ${green.tag.slice(0, green.tag.lastIndexOf("/"))} tag`;
+  if (green.source === "forge-checks") return `green by ${green.checks.length} ${green.forge} check(s): ${green.checks.join(", ")}`;
+  return "no green gate (release.green: none)";
+}
+
+/** The warning a cut under `release.green: "none"` prints (#5149). */
+const GREEN_NONE_WARNING = 'release.green is "none": this cut checked no CI result for the commit, and the release records that it had no green gate';
 
 async function releaseVersionOf(cwd: string): Promise<import("../../lifecycle/release-version").ReleaseVersionConfig | undefined> {
   const { loadChantConfig } = await import("../../config");
@@ -296,7 +332,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   }
   const dryRun = args.yes !== true;
   const cwd = resolve(".");
-  const { spawnTargetCompiler, ReleaseCompileError } = await import("../../components/release-compile");
+  const { spawnTargetCompiler, ReleaseCompileError, RELEASE_LABEL_ENV } = await import("../../components/release-compile");
   const { cutRelease, planRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");
   const { ReleaseLabelError } = await import("../../lifecycle/release-store");
   const { pushLifecycleRebasing, getHeadCommit } = await import("../../lifecycle/git");
@@ -437,6 +473,22 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       : undefined;
     // #4692: the lane is the commit's own config's under --at.
     const lane = await laneOf(ctx, cutCwd);
+    // #5149: the green gate, and for a member with no environments what release.publish publishes.
+    const greenSource = await greenOf(cutCwd);
+    const publishes = await artifactPublishesOf(cutCwd);
+    const buildCommand = args.buildCommand;
+    const build =
+      publishes !== undefined && buildCommand
+        ? () => {
+            const env: NodeJS.ProcessEnv = { ...process.env };
+            delete env[RELEASE_LABEL_ENV];
+            delete env.CHANT_RELEASE_DIGESTS;
+            if (label !== null) env[RELEASE_LABEL_ENV] = label;
+            if (digestsFile) env.CHANT_RELEASE_DIGESTS = digestsFile;
+            const run = spawnSync(buildCommand, { cwd: cutCwd, shell: true, stdio: ["ignore", 2, 2], env });
+            if (run.status !== 0) throw new ReleaseCompileError(`the build command exited ${run.status ?? "with a signal"}: ${buildCommand}`);
+          }
+        : undefined;
     const request = {
       cwd: cutCwd,
       compiler,
@@ -450,6 +502,9 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(Object.keys(images).length > 0 ? { images } : {}),
       ...(buildImages ? { buildImages } : {}),
       ...(stamp ? { stamp } : {}),
+      ...(greenSource ? { green: greenSource } : {}),
+      ...(publishes ? { publishes } : {}),
+      ...(build ? { build } : {}),
     };
 
     if (dryRun) {
@@ -491,10 +546,14 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       }
       const name = plan.label ? formatBold(plan.label) : "an unlabelled release";
       const greenIn = plan.override
-        ? `not green: no ${plan.override.tag.slice(0, plan.override.tag.lastIndexOf("/"))} tag`
+        ? `not green: ${plan.override.tag.startsWith("forge-checks/") ? "its forge checks did not pass" : `no ${plan.override.tag.slice(0, plan.override.tag.lastIndexOf("/"))} tag`}`
         : plan.lane !== null
           ? `green in lane ${plan.lane}`
-          : "green";
+          : plan.green?.source === "forge-checks"
+            ? `green by its ${plan.green.forge} checks`
+            : plan.green?.source === "none"
+              ? "no green gate"
+              : "green";
       const where = composed
         ? ` (on ${trunk!.remote}/${composed.branch}, composed on ${composed.base.slice(0, 12)} from ${composed.sources.length} trunk commit(s), ${greenIn})`
         : trunk
@@ -502,6 +561,9 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           : "";
       console.log(`Dry run: cut ${name} from commit ${plan.commit.slice(0, 12)}${where}`);
       if (args.channel) console.log(`  channel ${args.channel}: a publish moves ${args.channel}, not latest`);
+      if (plan.green) console.log(`  gate: ${describeGreen(plan.green)}`);
+      if (plan.green?.source === "none") console.error(formatWarning({ message: GREEN_NONE_WARNING }));
+      if (plan.publishes) console.log(`  an artifact release: no environment is compiled, and it records ${plan.publishes.length} publish target(s)`);
       if (plan.override) console.log(`  under the override by ${plan.override.by} at ${plan.override.at}${plan.override.sealed ? ", sealed" : ""}: ${plan.override.reason}; the cut spends it`);
       if (plan.alreadyCut) console.log(`  already cut as ${plan.alreadyCut}: the cut would record nothing new`);
       console.log(`  actor ${actor} (from ${describeActorSource(who.source)})`);
@@ -521,7 +583,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       for (const h of plan.handed) console.log(`  ${h.component}: image ${h.ref}, handed to the cut, not built`);
       console.log(`  digest ${plan.releaseDigest ?? "decided when the artifacts are built"}`);
       console.log("What will be published where:");
-      if (plan.publishSteps.length === 0) console.log("  no component declares a publish step");
+      if (plan.publishSteps.length === 0 && !plan.publishes) console.log("  no component declares a publish step");
       for (const p of plan.publishSteps) {
         console.log(`  ${p.component}: ${p.kind}${p.to ? ` to ${p.to}` : ""} in ${p.envs.join(", ")}, by that environment's deploy (chant components promote --release ${deployRef})`);
       }
@@ -588,8 +650,12 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       console.error(`  commit ${result.release.commit}${composed ? `, composed on ${composed.base.slice(0, 12)} on ${composed.branch}` : ""}${lane !== undefined ? `, green in lane ${lane}` : ""}`);
       if (args.channel) console.error(`  channel ${args.channel}`);
       if (result.cut?.override) console.error(`  not green: cut under the override by ${result.cut.override.by}: ${result.cut.override.reason}`);
+      if (result.cut?.green) console.error(`  gate: ${describeGreen(result.cut.green)}`);
+      if (result.release.publishes) console.error(`  publishes: ${result.release.publishes.map((p) => `${p.kind} to ${p.destination}`).join("; ") || "nothing"}`);
       if (result.cut) console.error(`  ${result.cut.signature ? `signed by ${result.cut.actor}` : `not signed; actor ${result.cut.actor}`}, run ${result.cut.runId}`);
-      console.error(`  artifacts ${result.release.artifactDigests.length}, targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`);
+      console.error(
+        `  artifacts ${result.release.artifactDigests.length}, ${result.release.publishes ? "no environment (an artifact release)" : `targets ${result.release.targets.map((t) => `${t.env} (${t.templates.length} template${t.templates.length === 1 ? "" : "s"})`).join(", ")}`}`,
+      );
       for (const r of result.reused) console.error(`  ${r.component}: artifacts unchanged, carried from ${r.from}`);
       for (const h of result.handed) console.error(`  ${h.component}: image ${h.ref}, handed to the cut`);
       if (tagged) console.error(`  tag ${tagged.name}${tagged.created ? "" : " (already there)"}, not pushed`);
@@ -599,6 +665,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     }
     if (push.pushWarning) console.error(formatWarning({ message: push.pushWarning }));
     if (tagWarning) console.error(formatWarning({ message: tagWarning }));
+    if (result.cut?.green?.source === "none") console.error(formatWarning({ message: GREEN_NONE_WARNING }));
     return 0;
   } catch (err) {
     if (err instanceof ws.WorkstationCheckError || err instanceof ReleaseCutError || err instanceof at.CutAtError) {
@@ -791,6 +858,8 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
   const name = result.label ? `${formatBold(result.label)} (${result.releaseDigest})` : result.releaseDigest;
   for (const c of result.cuts) {
     console.log(`  cut by ${c.actor} at ${c.timestamp}: ${c.signatureCheck.status}${c.signatureCheck.key ? ` (${c.signatureCheck.key})` : ""}`);
+    // #5149: what let the commit be cut.
+    console.log(`    ${c.override ? `not green: cut under the override by ${c.override.by}: ${c.override.reason}` : describeGreen(c.green)}`);
   }
   if (code) {
     console.error(

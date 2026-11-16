@@ -15,8 +15,10 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Publish refuses an unsigned release | off: publishes and records `signature: unsigned` | `identity.gates.release` | `verified-releases` | `security-signers-missing`, `security-publish-allows-unsigned` |
 | Signed cut in the release gate's class | off | `identity.gates.release` with a `class` | `verified-releases` | `security-release-gate-missing` |
 | Promote verifies the release | off: `chant release verify` on demand | `chant release verify` | `verified-releases` | none |
+| Cut refuses `release.green: "none"` | off: cuts with a warning and records `green: none` | `identity.gates.release` | `verified-releases` | none |
 | SBOM on every target | off: a target with no SBOM source publishes without one | `sbom` on the target | `supply-chain` | `security-sbom-disabled`, `security-sbom-unsourced` |
 | OIDC provenance | off: a plan field | `--require-provenance` | `supply-chain` | `security-publish-no-provenance` |
+| Cut needs a green gate | off: `release.green: "none"` cuts with a warning | `release.green` other than `none` | `supply-chain` | none |
 | SBOM and verify steps on components | off | a `generate-sbom` or `verify` step | `supply-chain` | `security-component-no-sbom`, `security-component-no-verify` |
 | Signed green tags and runs | off: every tag counts | `ci.green.signedSince` | `who-ran-it` | `security-signed-since-unset` |
 | Trusted runner keys | off | `.chant/trust.json` with a runner role | `who-ran-it` | `security-runner-untrusted` |

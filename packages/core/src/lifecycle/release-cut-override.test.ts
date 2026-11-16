@@ -72,6 +72,8 @@ const request = (dir: string, at: string, opts: { label?: string | null; overrid
   label: opts.label === undefined ? "v1.0.1" : opts.label,
   actor: "ci-bot",
   env: {},
+  // #5149: the fixture declares no ci.green, so the gate is named.
+  green: "chant" as const,
   now: () => new Date(at),
   ...(opts.overrideGreen === false ? {} : { overrideGreen: true }),
 });

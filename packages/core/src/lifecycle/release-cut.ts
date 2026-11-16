@@ -76,12 +76,15 @@ import {
   type Release,
   type ReleaseArtifact,
   type ReleaseCut,
+  type ReleaseCutGreen,
   type ReleaseCutOverride,
+  type ReleasePublish,
   type ReleaseTarget,
   templateBytesDigest,
   type TemplateContent,
 } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
+import type { ForgeChecksReader, ReleaseGreenSource } from "./release-green";
 
 /** The first chant that cuts from a lane's green tag and writes `lane` on the cut line (#4692). */
 export const RELEASE_CUT_LANE_FLOOR = "0.124.64";
@@ -106,6 +109,10 @@ export type ReleaseCutCode =
   | "not-a-git-repository"
   | "release-commit-not-green"
   | "release-commit-revoked"
+  /** #5149: `release.green: "none"` under a security group or release gate that needs a green commit. */
+  | "release-green-none-refused"
+  /** #5149: `release.green: "forge-checks"`, and the forge could not be asked. */
+  | "release-forge-checks-unavailable"
   | "release-worktree-dirty"
   | "release-no-environments"
   | "release-no-components"
@@ -147,6 +154,19 @@ export interface CutRequest {
   actor: string;
   /** The environments in promotion order. Read from the member's `chant.config.ts` when absent. */
   environments?: readonly string[];
+  /**
+   * `release.green` (#5149): what says the commit may be released. Absent:
+   * `chant` when the declaration at base has `ci.green`, else `forge-checks`.
+   */
+  green?: ReleaseGreenSource;
+  /** Reads the forge's checks on the commit under `forge-checks` (#5149). Default: the forge the job or the origin remote names. */
+  forgeChecks?: ForgeChecksReader;
+  /**
+   * The `release.publish` targets (#5149). A member with no environments is
+   * cut as an artifact release, which records these in place of compile
+   * targets; with none, and no `release.images`, it has nothing to release.
+   */
+  publishes?: readonly ReleasePublish[];
   now?: () => Date;
   /** The process environment the CI run is read from. */
   env?: NodeJS.ProcessEnv;
@@ -192,6 +212,12 @@ export interface CutRequest {
    * compiled. The caller puts the files back after the cut.
    */
   stamp?: () => void | Promise<void>;
+  /**
+   * Run the build command of an artifact release (#5149), once the images
+   * are built: what a compile runs first for a release cut from
+   * environments, so a commit that does not build is not cut.
+   */
+  build?: () => void | Promise<void>;
 }
 
 export interface CutResult {
@@ -236,6 +262,14 @@ function tryGit(top: string, args: string[]): string | null {
   } catch {
     return null;
   }
+}
+
+/** The branch `origin/HEAD` names, else the checkout's, for the forge's required checks; null when neither is known. */
+function trunkBranch(top: string): string | null {
+  const head = tryGit(top, ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+  if (head) return head.replace(/^origin\//, "");
+  const branch = tryGit(top, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  return branch || null;
 }
 
 /**
@@ -314,6 +348,10 @@ interface Prepared {
   lane: string | null;
   /** The override the commit is cut under when it is not green (#4693), or null. */
   override: ReleaseCutOverride | null;
+  /** The gate the commit passed (#5149), or null under an override. */
+  green: ReleaseCutGreen | null;
+  /** An artifact release's targets (#5149), or undefined for a release cut from environments. */
+  publishes: ReleasePublish[] | undefined;
 }
 
 /**
@@ -427,32 +465,80 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   const { releaseRuleFrom } = await import("../workspace/identity");
   const source = scopeSource(cwd);
   const green = source.declaration?.ci?.green ?? null;
-  const lane = req.lane !== undefined ? await declaredLane(green, req.lane) : null;
-  const { state, ignored } = await greenState(top, commit, green, lane ?? undefined);
+  const { resolveGreenSource } = await import("./release-green");
+  const gate = resolveGreenSource(req.green, green !== null, req.green === undefined && green === null && (tryGit(top, ["tag", "--list", "ci/green/*", "ci/green-*/*"]) ?? "") !== "");
   // Who may cut is the declaration's identity.gates.release, read at base.
   const releaseRule = releaseRuleFrom(source);
+  if (gate !== "chant" && req.lane !== undefined) {
+    throw new ReleaseCutError("declaration-invalid", `the cut asks for lane ${JSON.stringify(req.lane)}, and a lane is a ci.green lane, which release.green ${JSON.stringify(gate)} does not read`, 'Drop --lane and release.lane, or set release.green to "chant".');
+  }
+  const lane = req.lane !== undefined ? await declaredLane(green, req.lane) : null;
   let override: ReleaseCutOverride | null = null;
-  if (state !== "green") {
-    const why = ignored.length > 0 ? `; ignored: ${ignored.map((t) => `${t.tag} (${t.status}): ${t.reason}`).join("; ")}` : "";
+  let passed: ReleaseCutGreen | null = null;
+  /** Why the commit is not green, and the tag (or check) an override stands in for; null when it is. */
+  let notGreen: { message: string; fix: string; tag: string } | null = null;
+  if (gate === "none") {
+    // #5149: a workspace that asks for verified or supply-chain releases, or gates who cuts, needs a green commit.
+    const { securityGroupsIn } = await import("../workspace/security");
+    const groups = securityGroupsIn(source, cwd);
+    const why = [
+      ...(["supply-chain", "verified-releases"] as const).filter((g) => groups.has(g)).map((g) => `the ${g} security group`),
+      ...(releaseRule.requirement ? ["the release gate in identity.gates"] : []),
+    ];
+    if (why.length > 0) {
+      throw new ReleaseCutError(
+        "release-green-none-refused",
+        `release.green is "none", and chant.workspace.json at base turns on ${why.join(" and ")}, which releases only a commit a green gate passed`,
+        'Set release.green in chant.config.ts to "forge-checks" (the forge\'s checks on the commit) or "chant" (ci/green tags).',
+      );
+    }
+    passed = { source: "none" };
+  } else if (gate === "forge-checks") {
+    const { forgeChecksReader, forgeChecksTarget, ForgeChecksUnavailableError } = await import("./release-green");
+    let verdict: Awaited<ReturnType<ForgeChecksReader>>;
+    try {
+      const read = req.forgeChecks ?? forgeChecksReader(await forgeChecksTarget(cwd, req.env ?? process.env), req.env ?? process.env);
+      verdict = await read(commit, green?.branch ?? trunkBranch(top));
+    } catch (err) {
+      if (err instanceof ForgeChecksUnavailableError) throw new ReleaseCutError("release-forge-checks-unavailable", `no release was cut: ${err.message}`, err.fix);
+      throw err;
+    }
+    if (verdict.green) passed = { source: "forge-checks", forge: verdict.forge, checks: verdict.checks };
+    else {
+      notGreen = {
+        message: `commit ${commit.slice(0, 12)} is not green: ${verdict.why}, so no release is cut from it`,
+        fix: "Cut once its checks have passed, or check out a commit whose checks passed.",
+        tag: `forge-checks/${commit}`,
+      };
+    }
+  } else {
+    const { state, ignored } = await greenState(top, commit, green, lane ?? undefined);
     // #4692: a lane's tags are ci/green-<lane>/ and ci/revoked-<lane>/.
     const greenTag = lane !== null ? `ci/green-${lane}` : "ci/green";
-    const revokedTag = lane !== null ? `ci/revoked-${lane}` : "ci/revoked";
-    const message =
-      state === "revoked"
-        ? `commit ${commit.slice(0, 12)} has a ${revokedTag} tag: it went red after it was green, so no release is cut from it`
-        : ignored.some((t) => t.tag.startsWith(`${greenTag}/`))
-          ? `commit ${commit.slice(0, 12)} has no ${greenTag} tag that counts, so no release is cut from it${why}`
-          : `commit ${commit.slice(0, 12)} has no ${greenTag} tag, so no release is cut from it`;
-    const fix = `Check out a green commit (\`chant ci last-green${lane !== null ? ` --lane ${lane}` : ""}\` names the newest) after fetching the tags: git fetch origin --tags`;
-    if (state === "revoked") {
-      throw new ReleaseCutError("release-commit-revoked", req.overrideGreen ? `${message}, and an override does not cut a revoked commit` : message, fix);
+    if (state === "green") passed = { source: "chant", tag: `${greenTag}/${commit}` };
+    else {
+      const why = ignored.length > 0 ? `; ignored: ${ignored.map((t) => `${t.tag} (${t.status}): ${t.reason}`).join("; ")}` : "";
+      const revokedTag = lane !== null ? `ci/revoked-${lane}` : "ci/revoked";
+      const message =
+        state === "revoked"
+          ? `commit ${commit.slice(0, 12)} has a ${revokedTag} tag: it went red after it was green, so no release is cut from it`
+          : ignored.some((t) => t.tag.startsWith(`${greenTag}/`))
+            ? `commit ${commit.slice(0, 12)} has no ${greenTag} tag that counts, so no release is cut from it${why}`
+            : `commit ${commit.slice(0, 12)} has no ${greenTag} tag, so no release is cut from it`;
+      const fix = `Check out a green commit (\`chant ci last-green${lane !== null ? ` --lane ${lane}` : ""}\` names the newest) after fetching the tags: git fetch origin --tags`;
+      if (state === "revoked") {
+        throw new ReleaseCutError("release-commit-revoked", req.overrideGreen ? `${message}, and an override does not cut a revoked commit` : message, fix);
+      }
+      notGreen = { message, fix, tag: `${greenTag}/${commit}` };
     }
-    if (!req.overrideGreen) throw new ReleaseCutError("release-commit-not-green", message, fix);
+  }
+  if (notGreen) {
+    if (!req.overrideGreen) throw new ReleaseCutError("release-commit-not-green", notGreen.message, notGreen.fix);
     // #4693: a person's override of this commit lets it through.
     const now = (req.now ?? (() => new Date()))().toISOString();
     const decided = await greenOverride({ top, cwd, commit, lane, sealed: releaseRule.requirement !== null, record, now });
-    if (decided.override === null) throw new ReleaseCutError("release-commit-not-green", `${message}; ${decided.why}`, decided.fix, decided.recorded);
-    override = { green: false, tag: `${greenTag}/${commit}`, ...decided.override };
+    if (decided.override === null) throw new ReleaseCutError("release-commit-not-green", `${notGreen.message}; ${decided.why}`, decided.fix, decided.recorded);
+    override = { green: false, tag: notGreen.tag, ...decided.override };
   }
   if (releaseRule.requirement && req.sign === undefined) {
     throw new ReleaseCutError(
@@ -476,26 +562,29 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     const { readMemberPromotionOrder } = await import("../workspace/promotion-order");
     envs = ((await readMemberPromotionOrder(cwd)) ?? []).map((s) => s.name);
   }
-  if (envs.length === 0) {
+  // #5149: with no environments the release is what release.publish publishes and release.images builds, and nothing is compiled.
+  const artifactRelease = envs.length === 0;
+  if (artifactRelease && (req.publishes ?? []).length === 0 && !req.buildImages) {
     throw new ReleaseCutError(
       "release-no-environments",
-      "this member's chant.config.ts declares no environments, so there is nothing to compile a release for",
-      "Declare them in promotion order: environments: [\"dev\", \"staging\", \"prod\"]",
+      "this member's chant.config.ts declares no environments and no release.publish target, so there is nothing to release",
+      "Declare where the release publishes (release.publish: [{ type: \"npm\", packages: [\".\"] }]), or the environments it is compiled for in promotion order (environments: [\"dev\", \"staging\", \"prod\"]).",
     );
   }
 
   // #4657: the images first, so the build command that packs a package can pin their digests.
   const builtImages = req.buildImages ? await req.buildImages(commit) : [];
 
+  if (artifactRelease) await req.build?.();
   const compiled: CompiledTarget[] = [];
   for (const env of envs) compiled.push(await req.compiler.compile(env));
 
   // A project with no components compiles to its build output (#4046), so only a target with neither is empty.
-  if (compiled.every((t) => t.components.length === 0 && t.templates.length === 0)) {
+  if (!artifactRelease && compiled.every((t) => t.components.length === 0 && t.templates.length === 0)) {
     throw new ReleaseCutError(
       "release-no-components",
       "no component is enabled in any environment and nothing was compiled, so there is nothing to release",
-      "Enable a component under one environment's parameters, or remove the component files so the project's build output is released.",
+      "Enable a component under one environment's parameters, or remove the component files so the project's build output is released. A project that only publishes packages or files drops environments from chant.config.ts, and its release records what release.publish publishes.",
     );
   }
   const differing = differingBuildSteps(compiled);
@@ -573,6 +662,8 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     member: ledger.members.length > 0 ? ledger.members.join("/") : null,
     lane,
     override,
+    green: passed,
+    publishes: artifactRelease ? [...(req.publishes ?? [])] : undefined,
   };
 }
 
@@ -627,6 +718,10 @@ export interface CutPlan {
   lane: string | null;
   /** The override the cut would run under and spend (#4693), when the commit is not green; null when it is. */
   override: ReleaseCutOverride | null;
+  /** The green gate the commit passed (#5149), or null under an override. */
+  green: ReleaseCutGreen | null;
+  /** An artifact release's targets (#5149), or null for a release cut from environments. */
+  publishes: ReleasePublish[] | null;
 }
 
 /**
@@ -641,7 +736,7 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
   const { targets } = targetsOf(p.compiled);
   const build: CutPlan["build"] = [];
   for (const env of p.envs) for (const component of p.toBuild.get(env) ?? []) build.push({ component, env });
-  const releaseDigest = build.length === 0 ? makeRelease({ member: p.member, commit: p.commit, artifactDigests: p.carried, targets }).releaseDigest : null;
+  const releaseDigest = build.length === 0 ? makeRelease({ member: p.member, commit: p.commit, artifactDigests: p.carried, targets, ...(p.publishes ? { publishes: p.publishes } : {}) }).releaseDigest : null;
 
   const { cuts } = await readCuts({ cwd: p.cwd });
   const labels = labelsByDigest(cuts);
@@ -698,6 +793,8 @@ export async function planRelease(req: CutRequest): Promise<CutPlan> {
     signatureRequired: p.releaseRule.requirement !== null,
     lane: p.lane,
     override: p.override,
+    green: p.green,
+    publishes: p.publishes ?? null,
   };
 }
 
@@ -724,7 +821,7 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     if (names) artifacts.push(...(await req.compiler.buildArtifacts(env, names)));
   }
   const { targets, templates } = targetsOf(compiled);
-  const release = makeRelease({ member: p.member, commit, artifactDigests: artifacts, targets });
+  const release = makeRelease({ member: p.member, commit, artifactDigests: artifacts, targets, ...(p.publishes ? { publishes: p.publishes } : {}) });
   // #4941: an npm package that would carry an image archive stops the cut here, before anything is recorded or
   // tagged, rather than the publish job once the label is spent. The check is the npm target's own plan check.
   if (release.artifactDigests.some((a) => a.kind === "image" && a.path !== "")) {
@@ -790,6 +887,7 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       ...(req.channel ? { channel: req.channel } : {}),
       ...(p.lane !== null ? { lane: p.lane } : {}),
       ...(p.override ? { override: p.override } : {}),
+      ...(p.green ? { green: p.green } : {}),
     },
     { cwd },
   );

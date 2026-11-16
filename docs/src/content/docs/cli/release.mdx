@@ -45,15 +45,17 @@ The cut refuses before it writes anything when:
 | `release-worktree-dirty` | A tracked file has uncommitted changes, or a file git does not ignore is untracked, so the compile would not be the commit's. A new `*.component.ts` left untracked would otherwise be compiled into the release. |
 | `release-commit-not-on-trunk` | `HEAD` is not reachable from `origin/<trunk>` or from any further branch listed in `ci.green.branch` ([#4325](https://github.com/INTENTIUS/chant/issues/4325)), and is not a first-parent commit of a pushed `chant/compose/<name>` branch (see [Cutting a composed commit](#cutting-a-composed-commit)). Trunk is the branch `ci.green.branch` names in the declaration at base, else the branch `origin/HEAD` names, else `main`. |
 | `release-commit-not-pushed` | `HEAD` is on the local trunk branch but not on `origin/<trunk>`, or this clone has no `origin/<trunk>`. The check reads the remote-tracking branch as this clone last fetched it and fetches nothing, so a commit pushed from elsewhere needs a `git fetch origin <trunk>` first. |
-| `release-commit-not-green` | `HEAD` has no `ci/green/<sha>` tag, or with a lane no `ci/green-<lane>/<sha>` tag (see [Cutting from a lane](#cutting-from-a-lane)). [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. With `--override-green`, an override can let it through (see [Cutting a commit that is not green](#cutting-a-commit-that-is-not-green)). |
+| `release-commit-not-green` | The [green gate](#the-green-gate) does not pass. Under `chant`, `HEAD` has no `ci/green/<sha>` tag, or with a lane no `ci/green-<lane>/<sha>` tag (see [Cutting from a lane](#cutting-from-a-lane)). [`chant ci`](/chant/cli/ci/) makes the tags; only local tags are read, so fetch them first. With [signed tags](/chant/cli/ci/#signed-tags), a tag without a valid statement doesn't count, and the message names it. Under `forge-checks`, a check on the forge failed or has not finished, a check the branch requires is missing, or there is no check at all, and the message names them. With `--override-green`, an override can let it through (see [Cutting a commit that is not green](#cutting-a-commit-that-is-not-green)). |
+| `release-forge-checks-unavailable` | `release.green` is `forge-checks`, and the forge can't be asked: the origin remote names no GitHub, GitLab or Forgejo repository, no token is set, or the forge answered with an error. |
+| `release-green-none-refused` | `release.green` is `none`, and the declaration at base turns on the `supply-chain` or `verified-releases` security group, or names a `release` gate in `identity.gates`. |
 | `release-commit-revoked` | `HEAD` has a `ci/revoked/<sha>` tag, or with a lane a `ci/revoked-<lane>/<sha>` tag. |
 | `release-tag-taken` | The tag the release would get, `release/<label>`, already names another commit. |
 | `release-tag-invalid` | The label makes a tag name git refuses. |
-| `release-no-environments` | The member's `chant.config.ts` declares no `environments`. |
-| `release-no-components` | The member declares components, none is enabled in any environment, and nothing was compiled. A project that declares no component is released from its build output instead, see [a project with no components](#a-project-with-no-components). |
+| `release-no-environments` | The member's `chant.config.ts` declares no `environments` and no `release.publish` target or `release.images`, so there is nothing to release. With targets and no environments the cut is an [artifact release](#a-release-with-no-environments). |
+| `release-no-components` | The member declares environments and components, none is enabled in any environment, and nothing was compiled. A project that declares no component is released from its build output instead, see [a project with no components](#a-project-with-no-components). A project that only publishes packages or files declares no environments. |
 | `release-unsigned` | The declaration at base names a `release` gate in `identity.gates`, and the cut is not signed. See [Who may cut](#who-may-cut). |
 | `release-signer-refused` | The cut's signature does not verify for the actor against the signers file at base, or the actor is not in the `release` gate's class. Nothing is written. |
-| `declaration-invalid` | The cut names a lane, and the declaration at base has no `ci.green` or declares no such lane. The message lists the lanes it declares. |
+| `declaration-invalid` | The cut names a lane, and the declaration at base has no `ci.green` or declares no such lane, or `release.green` is not `chant`, which is the only gate with lanes. The message lists the lanes it declares. |
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
 | `publish-npm-carries-image` | An `npm` target in `release.publish` would pack an image archive the cut just built ([#4941](https://github.com/INTENTIUS/chant/issues/4941)). The cut runs the npm target's own check (see [Images the package pins](#images-the-package-pins)) once the images are built, so the label is not spent on a release the publish would refuse. `publish-npm-pack-failed` when `npm pack --dry-run` can't list the package. |
 
@@ -134,6 +136,37 @@ The cut that counts it writes the applied record to `_gates/policy-override/appl
 Only a cut with `--yes` records the request, and it pushes `chant/lifecycle` so the person who answers it can fetch it. A dry run with `--override-green` decides the same way and writes nothing: it prints the override it would spend, or refuses with the command to run. The request stands for 48 hours. An override written after it lapses still counts for the same commit. `--reason` on the cut is refused, since the reason is the overrider's. A commit with a revoked tag is never cut, with or without an override. Without `--override-green` a standing override is not used.
 
 The dry run prints `not green: no ci/green tag` where it would print `green`, and the override it would spend. `release list` marks such a release `not green`, and prints who overrode it and why on stderr. The [`releases`](/chant/reference/workspace-read-contract/) document carries `override` on the cut. The request, the override and its applied record are ordinary override gate lines, so `chant approve` and the gate audit reader (`lifecycle/gate-audit.ts`) read them as they read any override.
+
+### The green gate
+
+What says a commit may be released is `release.green` in the member's `chant.config.ts`:
+
+```ts
+release: {
+  green: "forge-checks",
+  publish: [{ type: "npm", packages: ["."] }],
+},
+```
+
+| Value | The commit may be released when |
+|---|---|
+| `chant` | It carries a `ci/green/<sha>` tag that counts and no `ci/revoked/<sha>` tag, as [`chant ci`](/chant/cli/ci/) writes them from `ci.green`. The default when `chant.workspace.json` declares `ci.green`, or when the repository holds any `ci/green/` tag. |
+| `forge-checks` | Its checks on the forge passed. The default otherwise. |
+| `none` | Always. The cut prints a warning and records that it had no gate. |
+
+Under `forge-checks` the cut asks the forge the CI job runs on, or, outside CI, the one the `origin` remote names, with the token from `CHANT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` on GitHub, `CHANT_FORGEJO_TOKEN`, `FORGEJO_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` on Forgejo, and `CHANT_GITLAB_TOKEN`, `GITLAB_TOKEN` or `CI_JOB_TOKEN` on GitLab. On a workstation, `GH_TOKEN=$(gh auth token) chant release cut 1.4.0` is enough for GitHub. What counts as a check:
+
+| Forge | Checks | Required |
+|---|---|---|
+| GitHub | Every check run and commit status on the commit, by name. A run that passed, was skipped or was neutral counts as passed. | The checks a branch rule (ruleset) of trunk requires. A required check that is not reported refuses the cut. |
+| Forgejo | Every commit status on the commit. | The status contexts trunk's branch protection requires, when the token can read it. |
+| GitLab | The newest pipeline of each source (`push`, `merge_request_event`, `schedule`, ...) on the commit. | |
+
+A check that failed or has not finished refuses the cut, and so does a commit with no check at all. The release workflow's own runs are left out: on GitHub every run of the workflow file the cut runs in (`GITHUB_WORKFLOW_REF`), on Forgejo the cut's own run, and on GitLab the pipelines started the way the cut's was, from the web or the API. The token needs read access to checks and statuses (`checks: read` and `statuses: read` on GitHub), which a [dispatched release workflow](#the-whole-release-from-the-config) grants its cut job.
+
+`none` is refused with `release-green-none-refused` when the declaration at base turns on the `supply-chain` or `verified-releases` [security group](/chant/reference/security-features/), or names a `release` gate in `identity.gates`: those ask for releases a green gate passed.
+
+The cut line records the gate the commit passed as `green`: `{ "source": "chant", "tag": "ci/green/<sha>" }`, `{ "source": "forge-checks", "forge": "github", "checks": ["build", "test"] }`, or `{ "source": "none" }`. A cut under an override records the override instead. The dry run and the cut print it, [`release verify`](#release-verify) shows it for each cut, and the publish's [provenance statement](/chant/reference/publish-targets/#the-provenance-statement) carries it. `--override-green` works under `forge-checks` as under `chant`: the override's `tag` is then `forge-checks/<sha>`.
 
 ### The label in the build
 
@@ -232,6 +265,8 @@ With `--yes` the cut builds the artifacts and stores the release. It then append
 | `actor` | `--actor`, else the principal the signers file at base lists for the `--sign` key, else git's `user.email`, else `USER` | `--actor`, else the signer, else `GITHUB_ACTOR` or `GITLAB_USER_LOGIN` |
 | `runId` | `local-<epoch ms>`, minted from the cut's time | `GITHUB_RUN_ID` or `CI_PIPELINE_ID` |
 | `runOrigin` | `{ "forge": "local" }` | `github` or `gitlab`, with the repository and a link to the run |
+
+The line also records the [green gate](#the-green-gate) the commit passed, as `green`.
 
 Everything else in the line, and the whole release, is the same wherever the cut runs. A cut of one commit on a workstation and in CI stores byte-identical release files, and cut lines that differ only in `runId`, `runOrigin`, `actor` and `timestamp`, and in `signature` when two keys signed.
 
@@ -350,6 +385,23 @@ A project with no `*.component.ts` file is cut from what `chant build` writes ([
 An Op's IR is written under the build root, so a project with `sourceDir: "src"` and an Op records `src/dist/ops/<op>/op.json` as well. The files are kept in memory and nothing is written to the checkout, so a file an earlier build left there is never recorded.
 
 A build is deterministic. Two cuts of one commit record the same bytes for each environment and get one digest, whichever clone or directory they run in.
+
+### A release with no environments
+
+A project that only publishes packages, binaries or images needs no chant sources and no environments. Its `chant.config.ts` names what the release publishes, and nothing else:
+
+```ts
+export default {
+  release: {
+    version: { packages: ["."] },
+    publish: [{ type: "npm", packages: ["."] }],
+  },
+};
+```
+
+With no `environments`, the cut compiles nothing. It records the release as the commit, the artifacts the cut built or was handed (`release.images`, `--image`), and `publishes`: each `release.publish` target's key, type and destination, in the declared order. `targets` is empty. The release digest covers `publishes`, so a release with them is read by chant `RELEASE_PUBLISHES_FLOOR` and newer. A `--build` command runs once the gate has passed and the images are built, with `CHANT_RELEASE_LABEL` set, and a build that fails cuts nothing. No `sourceDir` and no `chant.workspace.json` are needed; without `ci.green`, the [green gate](#the-green-gate) is the forge's checks.
+
+The publish is the same as for any release. Each target checks the files it uploads against the artifacts the release records at their paths, and the signature, provenance and SBOM checks of the security groups apply unchanged, see [release publish](#release-publish).
 
 ### The release digest and the label
 
@@ -528,7 +580,9 @@ The job checks out the tag and builds what the targets upload. Then it fetches t
 | `--chant <command>` | What runs chant. Default `npx chant`. |
 | `--output <file>` | Write somewhere else. |
 
-A flag wins over the `release.workflow` field it names.
+A flag wins over the `release.workflow` field it names. With no `--build` and no `release.workflow.build`, a project whose `package.json` has no `build` script gets no build step.
+
+A project with no `chant.workspace.json` renders its workflow from the `chant.config.ts` in the current directory, and needs no `chant ci` setup: with no `ci.green` its cut is gated on the forge's checks (see [The green gate](#the-green-gate)).
 
 ### The whole release from the config
 
@@ -565,12 +619,12 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 
 | Job | What it does |
 |---|---|
-| gate | `chant ci last-green --from <dispatched commit>`, honouring `release.lane`, and hands the commit on |
+| gate | `chant ci last-green --from <dispatched commit>`, honouring `release.lane`, and hands the commit on. When `release.green` is `forge-checks` or `none`, it hands on the dispatched commit, which the cut then checks |
 | cut | Checks the commit out, runs `chant release cut <label> --at <commit> --yes`, which pushes `chant/lifecycle`, and pushes the tag the cut made; a cut whose record did not land exits 1 and the tag is not pushed |
 | publish | Checks the commit out, builds, and publishes, with the security groups' `--require-provenance` and `release verify` as above |
 | after-release | Runs `after`, when there is any |
 
-No tag exists until the gate has passed and the cut has run. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
+No tag exists until the gate has passed and the cut has run. Under `forge-checks` the cut job gets the run's token as `GITHUB_TOKEN`, and on GitHub the workflow gets `checks: read` and `statuses: read`; on GitLab the cut reads pipelines with `CHANT_RELEASE_TOKEN` unless `CHANT_GITLAB_TOKEN` is set. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
 
 With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. In a dispatched release the cut job hands the archives it built to the publish job as a workflow artifact (`chant-release-images`; on GitLab, the cut job's `artifacts:`), and the publish job checks them with `chant release images <label> --no-build`, which reads the archives on disk and refuses one whose digest is not the recorded one. The images published are then the ones the cut built, even when the package mirror an image installs from moved between the two jobs. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
 
@@ -603,6 +657,7 @@ It exits 0 when the release verifies and prints the signer on stderr:
 
 ```
   cut by alice at 2026-10-17T10:00:00.000Z: verified (SHA256:...)
+    green by ci/green tag
 Verified v1.4.0 (jcs1-sha256:...): signed by alice, checked against .chant/allowed_signers at 3f2a9c1d0b7e
 ```
 
@@ -617,7 +672,7 @@ It exits 1 with one of these codes:
 | `release-commit-missing` | The release's commit is not in this clone. |
 | `trust-policy-unreadable` | The signers file or its history at the commit can't be read. |
 
-`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason` and each cut with its `signatureCheck`. A release that does not verify adds `error` with its `code` and `message`.
+`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason` and each cut with its `signatureCheck`, and its `green` gate or `override` when the cut recorded one (see [The green gate](#the-green-gate)). A release that does not verify adds `error` with its `code` and `message`.
 
 ## release export
 
