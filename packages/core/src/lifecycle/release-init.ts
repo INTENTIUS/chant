@@ -26,7 +26,8 @@ export type ReleaseInitCode =
   | "release-init-release-exists"
   | "release-init-config-unreadable"
   | "release-init-workflow-exists"
-  | "release-init-not-a-project";
+  | "release-init-not-a-project"
+  | "release-init-member-exists";
 
 /** A refusal of `chant release init`, with its code. */
 export class ReleaseInitError extends Error {
@@ -55,6 +56,8 @@ export interface InitPackage {
   /** Names in `dependencies`, `peerDependencies` and `optionalDependencies`. */
   deps: string[];
   scripts: string[];
+  /** `files` in package.json or an `.npmignore`, so npm packs only what they name. */
+  packList?: boolean;
 }
 
 export type NodeManager = "npm" | "pnpm" | "yarn";
@@ -201,6 +204,7 @@ function readPackage(root: string, dir: string): InitPackage | null {
     publisher: typeof pkg.publisher === "string" ? pkg.publisher : null,
     deps: [...new Set([pkg.dependencies, pkg.peerDependencies, pkg.optionalDependencies].flatMap((d) => Object.keys(obj(d))))],
     scripts: Object.keys(obj(pkg.scripts)),
+    packList: Array.isArray(pkg.files) || existsSync(join(root, dir, ".npmignore")),
   };
 }
 
@@ -510,6 +514,27 @@ export function tagTemplateOf(facts: Pick<ProjectFacts, "tags" | "go" | "path">,
   return { template, legacy, reason: `release.tag "${template}": ${why}${goSub ? ", and a Go module in a subdirectory is tagged <path>/v<version>" : ""}`, note: null };
 }
 
+/** `release.green` for the project, with its reason, and a note when nothing checks its commits. */
+function greenOf(facts: ProjectFacts, reasons: string[], notes: string[]): Json {
+  reasons.push(facts.chantCi ? 'release.green "chant": chant ci writes ci/green tags here' : 'release.green "forge-checks": a commit may be released when its checks on the forge passed');
+  if (!facts.chantCi && facts.ciFiles.length === 0) notes.push("No CI workflow runs on this repository's commits, and a cut refuses a commit with no checks: add CI, or set release.green to \"none\" to release with no gate.");
+  return facts.chantCi ? "chant" : "forge-checks";
+}
+
+/** The workflow's chant, install and build for a Node project, with their reasons. */
+function nodeWorkflow(node: NonNullable<ProjectFacts["node"]>, opts: PlanOptions, workflow: Record<string, Json>, reasons: string[]): void {
+  if (!node.hasChant) {
+    workflow.chant = `npx --yes @intentius/chant@${opts.chantVersion}`;
+    reasons.push(`release.workflow.chant: @intentius/chant is not a dependency here, so the jobs run it from npm at ${opts.chantVersion}`);
+  }
+  const lockless = node.lockfile === null;
+  if (node.manager === "pnpm") workflow.install = "corepack enable && pnpm install --frozen-lockfile";
+  else if (node.manager === "yarn") workflow.install = `corepack enable && yarn install ${node.yarnBerry ? "--immutable" : "--frozen-lockfile"}`;
+  else if (lockless) workflow.install = "npm install";
+  if (workflow.install) reasons.push(`release.workflow.install: ${node.manager === "npm" ? "there is no package-lock.json for npm ci" : `the lockfile is ${node.manager}'s`}`);
+  if (node.manager !== "npm" && node.root.scripts.includes("build")) workflow.build = `${node.manager} run build`;
+}
+
 /** Plan the `release` block for a project. */
 export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInitPlan {
   const release: Record<string, Json> = {};
@@ -535,9 +560,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   const unread = [facts.tags.prefix, ...facts.tags.others.map((o) => o.prefix)].filter((p): p is string => p !== null && p !== "" && !templatePrefix(p));
   if (unread.length > 0) notes.push(`Tags that no release.tag can make are left as they are: ${unread.slice(0, 5).map((p) => `${p}<version>`).join(", ")}.`);
 
-  release.green = facts.chantCi ? "chant" : "forge-checks";
-  reasons.push(facts.chantCi ? 'release.green "chant": chant ci writes ci/green tags here' : 'release.green "forge-checks": a commit may be released when its checks on the forge passed');
-  if (!facts.chantCi && facts.ciFiles.length === 0) notes.push("No CI workflow runs on this repository's commits, and a cut refuses a commit with no checks: add CI, or set release.green to \"none\" to release with no gate.");
+  release.green = greenOf(facts, reasons, notes);
 
   // npm packages, and VS Code extensions.
   const node = facts.node;
@@ -576,16 +599,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
       registry.push(`VS Code Marketplace ${ext.publisher ?? "<publisher>"}.${ext.name}: create a personal access token with Marketplace (Manage) scope and store it as the ${forge === "gitlab" ? "masked CI/CD variable" : "repository secret"} VSCE_PAT.`);
       registry.push(`Open VSX ${ext.publisher ?? "<publisher>"}.${ext.name}: create the namespace ${ext.publisher ?? "<publisher>"} once, and add ${facts.origin?.repo ?? "this repository"} with the workflow file ${workflowName} under the extension's trusted publishers at https://open-vsx.org/user-settings/trusted-publishers.`);
     }
-    if (!node.hasChant) {
-      workflow.chant = `npx --yes @intentius/chant@${opts.chantVersion}`;
-      reasons.push(`release.workflow.chant: @intentius/chant is not a dependency here, so the jobs run it from npm at ${opts.chantVersion}`);
-    }
-    const lockless = node.lockfile === null;
-    if (node.manager === "pnpm") workflow.install = "corepack enable && pnpm install --frozen-lockfile";
-    else if (node.manager === "yarn") workflow.install = `corepack enable && yarn install ${node.yarnBerry ? "--immutable" : "--frozen-lockfile"}`;
-    else if (lockless) workflow.install = "npm install";
-    if (workflow.install) reasons.push(`release.workflow.install: ${node.manager === "npm" ? "there is no package-lock.json for npm ci" : `the lockfile is ${node.manager}'s`}`);
-    if (node.manager !== "npm" && node.root.scripts.includes("build")) workflow.build = `${node.manager} run build`;
+    nodeWorkflow(node, opts, workflow, reasons);
   }
 
   // Images.
@@ -683,6 +697,163 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   const h = facts.tags.prefix;
   const readsHistory = h !== null && (tag.legacy.includes(h) || tag.template === `${h}{version}`);
   return { release, reasons, notes, registry, workflowFile, goreleaserPatch, readsHistory };
+}
+
+/** One member of a planned train: a publishable package, released at its own version from its own `chant.config.ts`. */
+export interface TrainMemberPlan {
+  /** The member's name in `chant.workspace.json`. */
+  name: string;
+  /** The package's directory from the project root. */
+  dir: string;
+  /** The npm package name. */
+  package: string;
+  /** The member's `release` block. */
+  release: Record<string, Json>;
+}
+
+/** What `chant release init` writes for a workspace released as a train (#5154). */
+export interface ReleaseTrainPlan {
+  /** The workspace root's `release` block: `train`, the gate and the workflow. */
+  release: Record<string, Json>;
+  members: TrainMemberPlan[];
+  /** The name for a new `chant.workspace.json`. */
+  workspaceName: string;
+  reasons: string[];
+  notes: string[];
+  registry: string[];
+  workflowFile: string;
+  /** The environment the train is recorded for. */
+  env: string;
+}
+
+/** The environment a planned train is recorded for. */
+export const TRAIN_ENV = "npm";
+
+/**
+ * Whether the project's npm, pnpm or yarn workspaces can release as a train:
+ * one member per publishable package (#5154). `why` says why a project with
+ * several packages gets one release instead, and is null for a project with
+ * fewer than two.
+ */
+export function trainFit(facts: ProjectFacts): { train: true } | { train: false; why: string | null } {
+  const node = facts.node;
+  if (!node?.workspaces) return { train: false, why: null };
+  const published = (p: InitPackage) => p.name !== null && !p.private && !p.vscode;
+  const packages = node.workspaces.filter(published);
+  const rootPublished = published(node.root);
+  if (packages.length + (rootPublished ? 1 : 0) < 2) return { train: false, why: null };
+  if (rootPublished) return { train: false, why: `the root package ${node.root.name} is published too, and a train releases the packages below the root` };
+  const ext = [node.root, ...node.workspaces].find((p) => p.vscode && !p.private && p.name);
+  if (ext) return { train: false, why: `${ext.name} is a VS Code extension, and its .vsix is a file the train workflow does not hand from its cut job to its publish job` };
+  if (facts.goreleaser) return { train: false, why: `${facts.goreleaser.file} builds files at the cut, which the train workflow does not hand between its jobs` };
+  if (facts.dockerfiles.length > 0) return { train: false, why: `${facts.dockerfiles[0]} is an image built at the cut, which the train workflow does not hand between its jobs` };
+  if (facts.python?.pyproject && facts.python.name) return { train: false, why: "pyproject.toml is built at the cut, which the train workflow does not hand between its jobs" };
+  if (facts.rust && !facts.rust.unpublishable && (facts.rust.name || facts.rust.workspace)) return { train: false, why: "Cargo.toml's crates publish beside the npm packages, and a train releases npm packages" };
+  if (facts.workflowForge === "gitlab") return { train: false, why: "the train workflow renders for GitHub and Forgejo, and this repository runs GitLab CI" };
+  return { train: true };
+}
+
+/** A workspace member name (lowercase letters, digits and dashes, at most 40) for a package. */
+export function memberNameOf(pkg: Pick<InitPackage, "name" | "dir">): string {
+  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z0-9]+/, "").replace(/-+$/, "").slice(0, 40).replace(/-+$/, "");
+  return clean(pkg.name?.replace(/^@[^/]+\//, "") ?? "") || clean(posix.basename(pkg.dir)) || "package";
+}
+
+/** The tag prefixes of a history that name one package's releases: `core-v`, `core/v`, `@acme/core@`, `packages/core/v`. */
+function ownPrefixes(h: TagHistory, pkg: InitPackage, member: string): string[] {
+  const names = new Set([pkg.name, pkg.name?.replace(/^@[^/]+\//, ""), member, pkg.dir, posix.basename(pkg.dir)].filter((n): n is string => !!n));
+  return [h.prefix, ...h.others.map((o) => o.prefix)].filter((p): p is string => p !== null && p !== "" && names.has(p.replace(/[/@_-]v?$/, "")));
+}
+
+/**
+ * Plan a train for a project {@link trainFit} accepts: a member per
+ * publishable workspace package, each stamping and publishing its own
+ * package, and the root's `release.train` with a dispatched workflow.
+ */
+export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainPlan {
+  const node = facts.node!;
+  const reasons: string[] = [];
+  const notes: string[] = [];
+  const registry: string[] = [];
+  const forge = facts.workflowForge;
+  const workflowFile = { github: ".github/workflows/chant-release.yml", forgejo: ".forgejo/workflows/chant-release.yml", gitlab: ".gitlab/chant-release.yml" }[forge];
+  const workflowName = posix.basename(workflowFile);
+  const env = TRAIN_ENV;
+
+  const named = node.workspaces!.filter((p) => p.name);
+  const packages = dependencyOrder(named.filter((p) => !p.private && !p.vscode));
+  const skipped = named.filter((p) => p.private);
+  const names = new Set(packages.map((p) => p.name!));
+  const greenReasons: string[] = [];
+  const green = greenOf(facts, greenReasons, notes);
+
+  // Member names, unique.
+  const used = new Set<string>();
+  const memberNames = packages.map((p) => {
+    const base = memberNameOf(p);
+    let name = base;
+    for (let i = 2; used.has(name); i++) name = `${base.slice(0, 38)}-${i}`;
+    used.add(name);
+    return name;
+  });
+
+  // Tags: a package's own history keeps its prefix; tags shared by every package are the root's legacy tags.
+  const h = facts.tags;
+  const claimed = new Set<string>();
+  const members: TrainMemberPlan[] = packages.map((p, i) => {
+    const name = memberNames[i]!;
+    const own = ownPrefixes(h, p, name);
+    for (const o of own) claimed.add(o);
+    const template = own.find(templatePrefix);
+    const release: Record<string, Json> = { tag: template ? `${template}{version}` : "{member}/v{version}" };
+    const legacy = own.filter((o) => o !== template);
+    if (legacy.length > 0) release.legacyTags = legacy;
+    release.green = green;
+    const internal = p.deps.some((d) => names.has(d) && d !== p.name);
+    release.version = internal ? { packages: ["."], ranges: "train" } : { packages: ["."] };
+    const target: Record<string, Json> = { type: "npm", packages: ["."] };
+    if (p.name!.startsWith("@") && p.access === null) target.access = "public";
+    release.publish = [target];
+    return { name, dir: p.dir, package: p.name!, release };
+  });
+  const shared = [h.prefix, ...h.others.map((o) => o.prefix)].filter((p): p is string => p !== null && p !== "" && !claimed.has(p));
+
+  const release: Record<string, Json> = { train: shared.length > 0 ? { env, first: "together" } : { env } };
+  reasons.push(
+    `release.train: ${packages.length} packages, each a workspace member released at its own version; chant workspace train cut ${env} cuts every member that changed since its last release, and the train publishes them in dependency order${shared.length > 0 ? `. first "together": the packages have shared ${shared.map((p) => `${p}<version>`).join(" and ")} releases, so the first train gives every package one label past the highest version any has, and each later train labels each on its own` : ""}`,
+  );
+  if (shared.length > 0) {
+    release.legacyTags = shared;
+    reasons.push(`release.legacyTags ${JSON.stringify(shared)}: chant release changed reads the newest ${shared.map((p) => `${p}<version>`).join(" or ")} tag as every package's last release until the train has cut one`);
+  }
+  release.green = green;
+  reasons.push(...greenReasons);
+  const workflow: Record<string, Json> = { trigger: "dispatch" };
+  nodeWorkflow(node, opts, workflow, reasons);
+  release.workflow = workflow;
+  reasons.push(`release.workflow: ${workflowFile}, started by hand with the levels, cuts the train from a green commit and publishes it`);
+
+  for (const m of members) {
+    const tag = m.release.tag as string;
+    const ranges = (m.release.version as { ranges?: string }).ranges;
+    const access = ((m.release.publish as Json[])[0] as { access?: string }).access;
+    reasons.push(
+      `${m.dir}/chant.config.ts, member ${m.name}: ${m.package} stamped with its label and published to npm${access ? ' with access "public"' : ""}, tagged ${tag}${ranges ? `; ranges "train", so its range on a sibling names the version the train gives it` : ""}${m.release.legacyTags ? `; its ${(m.release.legacyTags as string[]).map((p) => `${p}<version>`).join(" and ")} tags read as earlier releases` : ""}`,
+    );
+  }
+  if (skipped.length > 0) notes.push(`Not published, being private: ${skipped.map((p) => p.name).join(", ")}. The train's publish job builds ${skipped.length === 1 ? "it" : "them"} when a member needs ${skipped.length === 1 ? "it" : "them"}.`);
+  const packed = packages.filter((p) => !p.packList);
+  if (packed.length > 0) notes.push(`npm packs a package's chant.config.ts with it unless package.json files or an .npmignore leaves it out: ${packed.map((p) => p.name).join(", ")} ${packed.length === 1 ? "has" : "have"} neither.`);
+
+  const repo = facts.origin?.repo ?? "this repository";
+  for (const m of members) {
+    registry.push(
+      `npm ${m.package}: on npmjs.com, add a trusted publisher for ${forge === "github" ? "GitHub Actions" : "this forge"} naming ${repo} and the workflow file ${workflowName}, and allow npm dist-tag, since the reveal moves latest. Every package names the same file. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`,
+    );
+  }
+
+  const workspaceName = memberNameOf({ name: facts.origin?.repo.split("/").pop() ?? node.root.name ?? null, dir: facts.path ?? "workspace" }) || "workspace";
+  return { release, members, workspaceName, reasons, notes, registry, workflowFile, env };
 }
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;

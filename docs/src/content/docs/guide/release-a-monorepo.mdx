@@ -11,6 +11,17 @@ prompt: |
 
 A monorepo whose packages ship at their own versions releases each package separately and publishes the ones that changed together. In chant each package is a release member with its own ledger, labels and tags, and one run cuts every member that changed and records them as a [release train](/chant/cli/workspace-train/). The train is what publishes: each package goes out in dependency order, and each range on a sibling names the version the train gives that sibling.
 
+## Set it up with release init
+
+In an npm, pnpm or yarn workspace, [`chant release init`](/chant/cli/release/init/#a-workspace-of-several-packages) writes everything this page describes: `chant.workspace.json` with a member per publishable package, each package's `chant.config.ts`, the root's `release.train`, and the workflow. It is a dry run until `--yes`, and it replaces no `release` block without `--force`:
+
+```bash
+chant release init          # prints the files and why
+chant release init --yes    # writes them, and renders the workflow
+```
+
+The sections below show what it writes, for setting it up by hand or changing it later.
+
 ## One member per package
 
 Give every publishable package a `chant.config.ts` of its own and declare each package directory as a `chant` member of the workspace:
