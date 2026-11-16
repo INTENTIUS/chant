@@ -39,6 +39,8 @@ export const TOKEN_ENV_VARS = [
   "PYPI_ID_TOKEN",
   "CARGO_REGISTRY_TOKEN",
   "CRATES_IO_ID_TOKEN",
+  "MCP_GITHUB_TOKEN",
+  "MCP_REGISTRY_TOKEN",
 ] as const;
 
 /** What a masked value is replaced with. */

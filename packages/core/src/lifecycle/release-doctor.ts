@@ -42,6 +42,7 @@ import type {
   ForgePublishDeclaration,
   HomebrewPublishDeclaration,
   MarketplacePublishDeclaration,
+  McpRegistryPublishDeclaration,
   NpmPublishDeclaration,
   OciPublishDeclaration,
   PublishDeclaration,
@@ -217,6 +218,8 @@ async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTa
       return [await checkPypi(decl, ctx)];
     case "cargo":
       return [await checkCargo(decl, ctx)];
+    case "mcp-registry":
+      return [await checkMcpRegistry(decl, ctx)];
   }
 }
 
@@ -683,6 +686,91 @@ async function checkTauri(decl: TauriUpdaterPublishDeclaration, ctx: Ctx): Promi
     return t;
   }
   checks.push(await repoAccess(ctx, { forge: "github", api: githubApi(decl.api, ctx.env), repo: decl.repo, token: token.value, check: "tauri-access", tokenFrom: token.from }));
+  return t;
+}
+
+// MCP Registry
+
+/**
+ * The `server.json` is read and its name checked against the namespace the
+ * auth can claim, the registry is asked whether it serves and holds the
+ * server, and under GitHub OIDC in CI the exchange for a registry token is
+ * made, which proves the registry takes this run for the name's owner. The
+ * version is not checked: the cut stamps the label into the file.
+ */
+async function checkMcpRegistry(decl: McpRegistryPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { MCP_REGISTRY, MCP_GITHUB_TOKEN_ENV, MCP_REGISTRY_TOKEN_ENV, mcpRegistryAudience } = await import("./publish-mcp-registry");
+  const registry = (decl.registry ?? MCP_REGISTRY).replace(/\/+$/, "");
+  const path = decl.server ?? "server.json";
+  const checks: DoctorCheck[] = [];
+  const t: DoctorTarget = { kind: "mcp-registry", name: `mcp-registry ${path}`, checks };
+  const abs = isAbsolute(path) ? path : resolve(ctx.cwd, path);
+  if (!existsSync(abs)) {
+    checks.push({ check: "mcp-registry-server", status: "fail", message: `${path} does not exist in ${ctx.cwd}`, fix: "Add the server.json, with the name and the packages it publishes." });
+    return t;
+  }
+  let name: string;
+  try {
+    const m = JSON.parse(readFileSync(abs, "utf-8")) as { name?: unknown };
+    if (typeof m.name !== "string" || !m.name) throw new Error("it has no name");
+    name = m.name;
+  } catch (err) {
+    checks.push({ check: "mcp-registry-server", status: "fail", message: `${path} is not a server.json: ${err instanceof Error ? err.message : String(err)}`, fix: "Fix the file." });
+    return t;
+  }
+  t.name = `mcp-registry ${name}`;
+  const auth = decl.auth ?? "github-oidc";
+  const owner = ctx.environment.repository?.split("/")[0]?.toLowerCase() ?? null;
+  const namespace = /^io\.github\.([^/]+)\//i.exec(name)?.[1]?.toLowerCase() ?? null;
+  if (auth === "github-oidc" && namespace === null) {
+    checks.push({ check: "mcp-registry-namespace", status: "fail", message: `${name} is not under io.github.<owner>/, the only namespace a GitHub OIDC login can claim`, fix: `Name the server io.github.${owner ?? "<owner>"}/<name>, or publish with registry-token after a DNS or HTTP login.` });
+  } else if (auth === "github-oidc" && owner !== null && namespace !== owner) {
+    checks.push({ check: "mcp-registry-namespace", status: "fail", message: `${name} is under io.github.${namespace}/, and this repository's owner is ${owner}`, fix: `Name the server io.github.${owner}/<name>.` });
+  } else {
+    checks.push({ check: "mcp-registry-namespace", status: "ok", message: `${name} is a namespace the ${auth} login can claim` });
+  }
+  const held = await answer(ctx, `${registry}/v0.1/servers/${encodeURIComponent(name)}/versions`, { method: "GET", headers: {} });
+  checks.push(
+    held.status === 200
+      ? { check: "mcp-registry-server-listed", status: "ok", message: `${name} is on ${registry}` }
+      : held.status === 404
+        ? { check: "mcp-registry-server-listed", status: "ok", message: `${name} is not on ${registry} yet; the first publish adds it` }
+        : { check: "mcp-registry-server-listed", status: "unknown", message: `${registry} answered ${held.status} for ${name}'s versions` },
+  );
+  if (auth !== "github-oidc") {
+    const names = [decl.tokenEnv ?? (auth === "github-token" ? MCP_GITHUB_TOKEN_ENV : MCP_REGISTRY_TOKEN_ENV)];
+    const token = readCredential(ctx.env, names, ctx.redactor);
+    if (!token) {
+      checks.push(missing(ctx, "mcp-registry-token", `${names[0]} is not set`, `Set ${names[0]}.`));
+    } else if (auth === "github-token") {
+      const ex = await answer(ctx, `${registry}/v0.1/auth/github-at`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ github_token: token.value }) });
+      const value = (ex.json as { registry_token?: unknown } | null)?.registry_token;
+      if (typeof value === "string") ctx.redactor.add(value);
+      checks.push(ex.status === 200 && typeof value === "string" ? { check: "mcp-registry-auth", status: "ok", message: `the registry takes the token from ${token.from}` } : { check: "mcp-registry-auth", status: "fail", message: `the registry gave no token for the one in ${token.from} (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: "Check the GitHub token, and that its owner may publish the server's namespace." });
+    } else {
+      checks.push({ check: "mcp-registry-auth", status: "unknown", message: `the token in ${token.from} is set; a registry token is checked only when it publishes` });
+    }
+    return t;
+  }
+  if (!ctx.environment.ci) {
+    checks.push({ check: "mcp-registry-auth", status: "unknown", message: `whether the registry takes this workflow as the owner of ${name} can only be tested by ${onlyTheWorkflow(ctx)}, with its OIDC token` });
+    return t;
+  }
+  const audience = mcpRegistryAudience(registry);
+  // The target reads only GitHub Actions' token service, so no variable stands in for it.
+  const tok = await idToken(ctx, audience, "");
+  if ("none" in tok) {
+    checks.push({ check: "mcp-registry-auth", status: "fail", message: ctx.environment.ci === "github" ? tok.none : "this publish gets its OIDC token from GitHub Actions, and this run is not one", fix: "Give the job permissions: id-token: write." });
+    return t;
+  }
+  const ex = await answer(ctx, `${registry}/v0.1/auth/github-oidc`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ oidc_token: tok.token }) });
+  const value = (ex.json as { registry_token?: unknown } | null)?.registry_token;
+  if (typeof value === "string") ctx.redactor.add(value);
+  checks.push(
+    ex.status === 200 && typeof value === "string"
+      ? { check: "mcp-registry-auth", status: "ok", message: `the registry takes this run's GitHub OIDC token` }
+      : { check: "mcp-registry-auth", status: "fail", message: `the registry gave no token for this run's OIDC token (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: "Publish from a GitHub Actions job with id-token: write." },
+  );
   return t;
 }
 

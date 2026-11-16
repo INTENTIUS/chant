@@ -331,7 +331,7 @@ Python wheels and sdists on PyPI, TestPyPI, or another index that takes PyPI's u
 
 The project's name and version come from each file's own metadata: `.dist-info/METADATA` in a wheel, `PKG-INFO` in an sdist. The upload sends that metadata in the form fields twine sends. A file that is neither, or whose metadata has no `Metadata-Version`, `Name` and `Version`, is refused in the plan (`publish-pypi-not-a-distribution`), as is a directory with no distribution in it (`publish-pypi-no-files`) and a file name given twice (`publish-pypi-duplicate-file`). A file the release records must match its digest.
 
-An index has no draft. A file is visible as soon as it is uploaded, and a file name can never be uploaded again, even after it is deleted. So the stage uploads nothing, and the reveal uploads, as with a [marketplace](#editor-marketplaces). Nothing of this target is out between the two steps, so a check of what staged can't see it. If another target fails to stage, nothing has reached the index. Declare the target after the targets whose stage can hold a release back.
+An index has no draft. A file is visible as soon as it is uploaded, and a file name can never be uploaded again, even after it is deleted. So the stage uploads nothing, and the reveal uploads, as with a [marketplace](#editor-marketplaces). Nothing of this target is out between the two steps, so a check of what staged can't see it. If another target fails to stage, nothing has reached the index. It reveals after every target whose reveal only moves a tag or publishes a draft, wherever it is declared (see [Staging and resuming](#staging-and-resuming)).
 
 | Step | What it does |
 |---|---|
@@ -382,6 +382,37 @@ A registry has no draft. A crate version is visible as soon as it is published a
 
 With `auth: "trusted-publishing"`, crates.io hands the run a token for its OIDC ID token: one GitHub Actions issues with the audience `crates.io` (a job with `permissions: id-token: write`), or the value of `CRATES_IO_ID_TOKEN`. The target exchanges it at `POST {api}/api/v1/trusted_publishing/tokens` and revokes the token with a `DELETE` when the step ends. The stage makes the exchange to check that crates.io takes this workflow as a trusted publisher of the crates, and the reveal exchanges again. A refusal is `publish-cargo-trusted-publishing`. Add the repository and workflow once to each crate's trusted publishers on crates.io. A crate's first version can't be published this way. Another registry takes a token only.
 
+## MCP Registry
+
+A `server.json` on the official [MCP Registry](https://registry.modelcontextprotocol.io), so MCP clients can find the server. A `server.json` names the npm packages, PyPI packages or OCI images that run the server, and the registry checks that they exist, so this target reveals after every other target, the PyPI, Cargo and marketplace uploads among them, whatever its place in `release.publish`. Two `mcp-registry` targets reveal in the order declared. Read by chant 0.124.101 and newer.
+
+```ts
+{ type: "npm", packages: ["packages/mcp"] },
+{ type: "oci", image: "dist/mcp.oci.tar", repository: "ghcr.io/acme/mcp" },
+{ type: "mcp-registry" },
+```
+
+| Field | Meaning |
+|---|---|
+| `server` | The `server.json`, relative to the member. Default `server.json` |
+| `registry` | The registry's root. Default `https://registry.modelcontextprotocol.io` |
+| `auth` | `github-oidc` (the default), `github-token` or `registry-token` |
+| `tokenEnv` | The variable holding the token under `github-token` (default `MCP_GITHUB_TOKEN`) or `registry-token` (default `MCP_REGISTRY_TOKEN`). Refused beside `github-oidc` (`publish-mcp-registry-auth-invalid`) |
+
+The file must belong to the release. Its `version` must be the release's label from its first digit (`1.4.0` for `v1.4.0`), and so must the `version` of each package, and the tag of each OCI image (a digest is accepted). A file for another version is refused in the plan with `publish-mcp-registry-version-mismatch`, and a package that doesn't match with `publish-mcp-registry-package-mismatch`, so a release can't publish a listing for another version. A file that is not JSON, or has no `name` and `version`, is `publish-mcp-registry-server-invalid`. [`release.version.files`](/chant/cli/release/#other-manifests) stamps the label into `server.json` at the cut.
+
+The registry has no draft, and a version it holds can't be replaced. So the stage sends nothing that changes the registry. It exchanges for a registry token to prove the credentials work, and reads `GET /v0.1/servers/{name}/versions/{version}`. A version already there with the packages the file names is `present`, and one with other packages is refused with `publish-mcp-registry-version-exists`. The reveal exchanges again, since a registry token lasts minutes, sends `POST /v0.1/publish` with the file as the body, and reads the version back (`publish-mcp-registry-not-served` when the registry does not serve it). A registry that refuses the publish fails with its reason (`publish-mcp-registry-failed`), and one that refuses the exchange with `publish-mcp-registry-auth`.
+
+| `auth` | Credential | Exchange |
+|---|---|---|
+| `github-oidc` | The GitHub Actions OIDC token of a job with `permissions: id-token: write`, requested with the registry's origin as its audience. Without it the plan refuses with `publish-credentials-missing` | `POST /v0.1/auth/github-oidc` |
+| `github-token` | A GitHub token in `tokenEnv`. To publish under an organization's namespace the token must let the registry read the user's organization role | `POST /v0.1/auth/github-at` |
+| `registry-token` | A registry token in `tokenEnv`, such as one `mcp-publisher login dns` or `login http` produced for a domain namespace | none |
+
+GitHub authentication grants the namespace `io.github.<owner>/*`, so a server published with `github-oidc` is named `io.github.<owner>/<name>` for the repository's owner. A domain namespace needs a DNS or HTTP login, which `registry-token` carries into the publish.
+
+chant makes these requests itself and runs no `mcp-publisher`. The requests are the ones `mcp-publisher login github-oidc` and `mcp-publisher publish` make, from the registry's [OpenAPI document](https://registry.modelcontextprotocol.io/openapi.yaml), its [GitHub Actions guide](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/github-actions.mdx) and its [authentication guide](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/authentication.mdx).
+
 ## Prereleases
 
 A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is a prerelease on every target, with no `--channel`. The label is read as `MAJOR.MINOR.PATCH-PRERELEASE`, with an optional leading `v` and an optional `+build` suffix. A label that is not of this form, such as a date or `v1`, is not a prerelease.
@@ -396,6 +427,7 @@ A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is 
 | `marketplace` | Unchanged. A pre-release is a property of the packaged `.vsix` |
 | `pypi` | Unchanged. A PEP 440 prerelease version, such as `1.4.0rc1` in the file's metadata, is one pip installs only when asked |
 | `cargo` | Unchanged. A semver prerelease in `Cargo.toml` is one cargo resolves only when a requirement names it |
+| `mcp-registry` | Unchanged. The registry takes a prerelease version as it takes any other |
 
 The member's floating tag (`release.tag.floating`, see [the release's tag](/chant/cli/release/#the-releases-tag)) stays where it is.
 
@@ -500,7 +532,9 @@ steps:
 
 ## Staging and resuming
 
-A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them, in the same order. Between the two it runs the [`release.verify`](/chant/cli/release/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI or Cargo target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package. A failure while revealing leaves the targets before it visible and the rest staged.
+A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them. Between the two it runs the [`release.verify`](/chant/cli/release/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI, Cargo or MCP Registry target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package.
+
+The reveals go in three groups, each in the order declared: first the targets whose reveal moves a tag or publishes a draft (npm, OCI, forge, Homebrew, Tauri updater); then the targets that upload at reveal (marketplace, PyPI, Cargo), since an upload can't be taken back; then the MCP Registry, whose entry names packages the other targets publish. A train publish uses the same order within each member. A failure while revealing leaves the targets before it visible and the rest staged.
 
 Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifecycle`, beside `cuts.jsonl` and under the member's prefix. The file is append-only, and each line is pushed as soon as it is written. This line, `version` 1, is what chant 0.124.29 and newer write after staging an npm target:
 
@@ -547,7 +581,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The redactor masks | Such as |
 |---|---|
 | Each credential a target read, and each token a registry handed back for it | the value of `OCI_PASSWORD`, a GHCR bearer token |
-| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT`, `PYPI_TOKEN`, `TEST_PYPI_TOKEN`, `TWINE_PASSWORD`, `PYPI_ID_TOKEN`, `CARGO_REGISTRY_TOKEN`, `CRATES_IO_ID_TOKEN` |
+| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT`, `PYPI_TOKEN`, `TEST_PYPI_TOKEN`, `TWINE_PASSWORD`, `PYPI_ID_TOKEN`, `CARGO_REGISTRY_TOKEN`, `CRATES_IO_ID_TOKEN`, `MCP_GITHUB_TOKEN`, `MCP_REGISTRY_TOKEN` |
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
@@ -558,7 +592,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo" | "mcp-registry"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
@@ -569,7 +603,8 @@ interface PublishTarget<C extends PublishContextBase = PublishContext, K extends
   reveal(ctx: C, staged: StagedTarget): Promise<PublishedTarget>;
   // Optional, for a train publish:
   stagesVisibly?: boolean; // stage already makes the items visible (npm under stage: false)
-  uploadsAtReveal?: boolean; // stage sends nothing and reveal uploads (marketplace, pypi, cargo)
+  uploadsAtReveal?: boolean; // stage sends nothing and reveal uploads (marketplace, pypi, cargo); reveals after the rest
+  revealsLast?: boolean; // reveals after every other target, uploads included (mcp-registry)
   names?(ctx: C): Promise<{ provides: string[]; needs: string[] }>;
   published?(ctx: C): Promise<boolean | null>;
   visible?(ctx: C, published: PublishedTarget): Promise<void>;

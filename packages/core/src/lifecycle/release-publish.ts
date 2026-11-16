@@ -253,7 +253,7 @@ export class PublishTargetError extends Error {
 }
 
 /** The kinds `release.publish` declares and `createPublishTargets` makes. */
-export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo";
+export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo" | "mcp-registry";
 
 /** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
 export const NPM_STAGE_TAG = "next";
@@ -327,6 +327,13 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * between the two steps, so a check of what staged can't see it.
    */
   uploadsAtReveal?: boolean;
+  /**
+   * True for a target that lists what other targets publish, so it must
+   * reveal after them (an MCP Registry entry names npm packages and images,
+   * #5162). The reveal runs these last, in the order declared, whatever
+   * their place in the list.
+   */
+  revealsLast?: boolean;
   /**
    * The names this target publishes and the names of others' it depends on
    * (npm: the package names, and every `dependencies`, `peerDependencies`
@@ -834,6 +841,22 @@ export class PublishRunError extends PublishTargetError {
 }
 
 /**
+ * The order targets reveal in: every other target in the order declared,
+ * then the targets that upload at reveal (`uploadsAtReveal`: marketplace,
+ * PyPI, Cargo) in the order declared, then the targets that reveal last
+ * (`revealsLast`: the MCP Registry) in the order declared.
+ *
+ * An upload at reveal can't be taken back, so it waits until the reveals
+ * that only move a tag or publish a draft have gone through. A target that
+ * reveals last lists packages other targets publish, PyPI ones among them,
+ * so it goes after the uploads too.
+ */
+export function revealOrder<T extends Pick<PublishTarget, "uploadsAtReveal" | "revealsLast">>(targets: readonly T[]): T[] {
+  const rank = (t: T) => (t.revealsLast ? 2 : t.uploadsAtReveal ? 1 : 0);
+  return [0, 1, 2].flatMap((r) => targets.filter((t) => rank(t) === r));
+}
+
+/**
  * Publish `targets` all or nothing (#4048), from the record of earlier runs:
  *
  * 1. Stage every target in the order declared, skipping one the record says
@@ -844,7 +867,7 @@ export class PublishRunError extends PublishTargetError {
  * 2. Run `verify` (#5157), the `release.verify` commands, with the staged
  *    references, unless the record shows a reveal. A failure is recorded
  *    and stops the publish with nothing visible.
- * 3. Reveal each target in the same order, skipping one the record says
+ * 3. Reveal each target in {@link revealOrder}, skipping one the record says
  *    revealed, and record each reveal.
  *
  * A run of the same publish after a failure resumes: what went out is not
@@ -961,7 +984,7 @@ export async function runPublish(req: {
   }
 
   const published: PublishedTarget[] = [];
-  for (const target of targets) {
+  for (const target of revealOrder(targets)) {
     const done = progress.revealed.get(target.key);
     if (done) {
       published.push({ ...done, target: target.name, destination: target.destination, items: done.items.map((i) => ({ ...i, present: true })) });

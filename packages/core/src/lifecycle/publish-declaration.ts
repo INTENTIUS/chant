@@ -12,6 +12,7 @@
  *       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
  *       { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme.vsix" },
  *       { type: "tauri-updater", repo: "acme/app", tag: "app-latest", platforms: { "darwin-aarch64": "dist/Acme_aarch64.app.tar.gz" } },
+ *       { type: "mcp-registry", server: "server.json" },
  *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *       { type: "pypi", files: ["dist"] },
  *       { type: "cargo", crates: ["acme-core", "acme-cli"] },
@@ -355,7 +356,33 @@ export const CargoPublishSchema = z
   .refine((d) => d.registry === undefined || d.auth !== "trusted-publishing", { message: "trusted publishing is crates.io's; another registry takes a token", path: ["auth"] })
   .refine((d) => d.auth !== "trusted-publishing" || d.tokenEnv === undefined, { message: "auth: trusted-publishing reads no token", path: ["tokenEnv"] });
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema, PypiPublishSchema, CargoPublishSchema]);
+/**
+ * A `server.json` on the official MCP Registry (#5162), published after the
+ * npm packages or images it names have been revealed
+ * (./publish-mcp-registry.ts).
+ */
+export const McpRegistryPublishSchema = z
+  .object({
+    type: z.literal("mcp-registry"),
+    /** The `server.json`, relative to the member. Default `server.json`. Its `version` and each package's version must be the release's label. */
+    server: z.string().min(1).optional(),
+    /** The registry's root. Default `https://registry.modelcontextprotocol.io`. */
+    registry: z.string().url().optional(),
+    /**
+     * How the target gets a registry token. `"github-oidc"` (the default)
+     * exchanges the GitHub Actions OIDC token of a job with `id-token: write`.
+     * `"github-token"` exchanges a GitHub token read from `tokenEnv`, default
+     * `MCP_GITHUB_TOKEN`. `"registry-token"` sends a registry token read from
+     * `tokenEnv`, default `MCP_REGISTRY_TOKEN`, such as one `mcp-publisher`
+     * got by a DNS or HTTP login.
+     */
+    auth: z.enum(["github-oidc", "github-token", "registry-token"]).optional(),
+    /** The variable holding the token, under `github-token` or `registry-token`. */
+    tokenEnv: envName.optional(),
+  })
+  .strict();
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema, PypiPublishSchema, CargoPublishSchema, McpRegistryPublishSchema]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
@@ -365,4 +392,5 @@ export type MarketplacePublishDeclaration = z.infer<typeof MarketplacePublishSch
 export type TauriUpdaterPublishDeclaration = z.infer<typeof TauriUpdaterPublishSchema>;
 export type PypiPublishDeclaration = z.infer<typeof PypiPublishSchema>;
 export type CargoPublishDeclaration = z.infer<typeof CargoPublishSchema>;
+export type McpRegistryPublishDeclaration = z.infer<typeof McpRegistryPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;

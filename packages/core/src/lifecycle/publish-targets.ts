@@ -19,6 +19,8 @@
  *   or another index, with a token or PyPI's trusted publishing (#5167).
  * - `cargo` (./publish-cargo.ts): `cargo publish` per crate of a workspace,
  *   in dependency order, to crates.io or another registry (#5167).
+ * - `mcp-registry` (./publish-mcp-registry.ts): a `server.json` on the
+ *   official MCP Registry, revealed after every other target.
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
@@ -64,6 +66,9 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "cargo":
         out.push((await import("./publish-cargo")).cargoTarget(d, deps));
+        break;
+      case "mcp-registry":
+        out.push((await import("./publish-mcp-registry")).mcpRegistryTarget(d, deps));
         break;
     }
   }
