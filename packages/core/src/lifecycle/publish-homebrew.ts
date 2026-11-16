@@ -46,17 +46,20 @@
  * The asset URLs are the declaration's `url` pattern, so the files must be
  * downloadable there by the time the formula is: declare the `forge` target
  * that attaches them before this one, and its reveal runs first.
+ *
+ * Since #5158 this target is the `index` target's `homebrew-tap` preset
+ * (./publish-index.ts) with the fields, kind, key, error codes and order it
+ * always had: it stages and reveals in the order declared, a refusal fails
+ * the publish, and each SHA-256 is of the file in the checkout.
  */
 
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
-import { readCredential, type Credential } from "./publish-credentials";
 import type { HomebrewPublishDeclaration } from "./publish-declaration";
-import { SshGitRepo } from "./publish-git-ssh";
-import { GitHubRepo, githubApi } from "./publish-github";
-import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
-import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
-import { prereleaseOf } from "./release-prerelease";
+import { fillUrl, indexTargetOf, releaseVersion, renderManifest } from "./publish-index";
+import { publishTargetKey } from "./publish-targets";
+import { PublishTargetError, type PublishDeps, type PublishTarget } from "./release-publish";
+import { basename } from "node:path";
+
+export { fillUrl, releaseVersion };
 
 /** The first chant that publishes a `homebrew` target (#4676). */
 export const PUBLISH_HOMEBREW_FLOOR = "0.124.63";
@@ -67,293 +70,47 @@ export const PUBLISH_HOMEBREW_SSH_KEY_FLOOR = "0.124.64";
 /** The variable the tap token is read from when the declaration names none. */
 export const HOMEBREW_TOKEN_ENV = "HOMEBREW_TAP_TOKEN";
 
-/** A release's version for a package manager: its label from the first digit on, or null when the label has no digit. */
-export function releaseVersion(label: string | null): string | null {
-  const at = label?.search(/\d/) ?? -1;
-  return label && at >= 0 ? label.slice(at) : null;
-}
-
-/** `pattern` with `{tag}`, `{label}`, `{version}` and `{name}` filled in, each URL-encoded except the tag's slashes. */
-export function fillUrl(pattern: string, values: { tag: string; label: string; version: string; name: string }): string {
-  return pattern.replace(/\{(tag|label|version|name)\}/g, (_, k: keyof typeof values) =>
-    k === "tag" ? values.tag.split("/").map(encodeURIComponent).join("/") : encodeURIComponent(values[k]),
-  );
-}
-
 /** Render a formula template, or name what it can't fill. */
 export function renderFormula(
   template: string,
   values: { version: string; label: string; tag: string },
   assets: ReadonlyMap<string, { url: string; sha256: string }>,
 ): string {
-  return template.replace(/\{\{\s*([^}]*?)\s*\}\}/g, (whole, inner: string) => {
-    if (inner === "version" || inner === "label" || inner === "tag") return values[inner];
-    const m = /^(url|sha256):(.+)$/.exec(inner);
-    const asset = m ? assets.get(m[2]!.trim()) : undefined;
-    if (m && asset) return m[1] === "url" ? asset.url : asset.sha256;
-    throw new PublishTargetError(
-      "publish-homebrew-template",
-      m ? `the formula template names ${whole}, and no declared asset is named ${m[2]!.trim()}` : `the formula template has ${whole}, which chant does not fill`,
-      `The placeholders are {{version}}, {{label}}, {{tag}}, and {{url:<name>}} and {{sha256:<name>}} for an asset in assets: ${[...assets.keys()].join(", ")}.`,
-    );
-  });
+  return renderManifest(template, values, assets, "publish-homebrew-template", "the formula template");
 }
 
 export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDeps): PublishTarget {
-  const fetchImpl: PublishFetch = deps.fetch ?? ((url, init) => fetch(url, init as RequestInit));
   if (decl.sshKeyEnv && decl.tokenEnv) {
     throw new PublishTargetError("publish-homebrew-auth-invalid", `the homebrew target for ${decl.tap} names both tokenEnv and sshKeyEnv`, "Keep one: sshKeyEnv pushes with git over SSH, tokenEnv commits through the API.");
   }
-  const ssh = decl.sshKeyEnv !== undefined;
-  const tokenNames = [decl.sshKeyEnv ?? decl.tokenEnv ?? HOMEBREW_TOKEN_ENV];
   const formulaName = basename(decl.formula).replace(/\.rb$/, "");
-  const setup = (ctx: PublishContext) => {
-    const version = releaseVersion(ctx.label);
-    if (!version || !ctx.label || !ctx.releaseTag) {
-      throw new PublishTargetError(
-        "publish-homebrew-no-version",
-        `a formula's version is the release's label from its first digit, and release ${ctx.release.releaseDigest} has ${ctx.label ? `the label ${ctx.label}, which has no digit` : "no label"}`,
-        "Cut the release with a label such as v1.4.0.",
-      );
-    }
-    const token = readCredential(ctx.env, tokenNames, ctx.redactor);
-    if (!token) {
-      throw new PublishTargetError(
-        "publish-credentials-missing",
-        `the homebrew target reads its ${ssh ? "SSH key" : "token"} from ${tokenNames[0]}, and it is not set`,
-        ssh ? `Set ${tokenNames[0]} to a private key that may push to ${decl.tap}, such as a deploy key with write access.` : `Set ${tokenNames[0]} to a token that may push to ${decl.tap}.`,
-      );
-    }
-    const assets = new Map<string, { url: string; sha256: string }>();
-    for (const p of expandArtifactAssets(ctx.release, decl.assets)) {
-      const abs = memberFile(ctx.cwd, p);
-      const digest = bytesDigest(new Uint8Array(readFileSync(abs)));
-      checkReleaseDigest(ctx.release, "asset", ctx.cwd, p, [digest]);
-      const name = basename(p);
-      if (assets.has(name)) throw new PublishTargetError("publish-homebrew-asset-name-taken", `two assets are named ${name}, and the template names an asset by its file name`);
-      const url = fillUrl(decl.url, { tag: ctx.releaseTag, label: ctx.label, version, name });
-      assets.set(name, { url, sha256: digest.slice("sha256:".length) });
-    }
-    const template = readFileSync(memberFile(ctx.cwd, decl.template), "utf-8");
-    const bytes = new Uint8Array(Buffer.from(renderFormula(template, { version, label: ctx.label, tag: ctx.releaseTag }, assets), "utf-8"));
-    return { version, token, assets, bytes, digest: bytesDigest(bytes) };
-  };
-  const skipNote = (ctx: PublishContext) => `skipped: ${ctx.label} is a prerelease, and the formula is what \`brew upgrade\` installs`;
-  const where = (branch: string) => `${decl.tap}@${branch}:${decl.formula}`;
-  const target: PublishTarget = {
-    kind: "homebrew",
-    name: `homebrew formula ${formulaName} in ${decl.tap}`,
-    destination: `github ${decl.tap}`,
-    credentialEnv: tokenNames,
-    key: publishTargetKey(decl),
-    /**
-     * #5163: a formula has no per-version deprecation, so deprecate does
-     * nothing here. A yank puts back the formula the head release published,
-     * found by its digest among the last 100 commits of the tap branch that
-     * touch it, when the branch still holds this release's; a restore puts
-     * this release's back when it is the head. One commit either way.
-     */
-    async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
-      const where = `${decl.tap}:${decl.formula}`;
-      if (ctx.status === "deprecated") return [{ what: `${where} unchanged: a formula has no deprecation; yank reverts it` }];
-      const ours = ctx.revealed.find((i) => i.digest)?.digest;
-      if (!ours) return [{ what: `${where} unchanged: the publish record names no formula digest`, already: true }];
-      const isHead = ctx.head?.releaseDigest === ctx.release.releaseDigest;
-      if (ctx.status === "active" && !isHead) return [{ what: `${where} unchanged: a newer active release holds it`, already: true }];
-      const to = ctx.status === "active" ? ours : ctx.head?.items.find((i) => i.digest)?.digest;
-      const toName = ctx.status === "active" ? (ctx.label ?? ctx.release.releaseDigest) : (ctx.head?.label ?? ctx.head?.releaseDigest);
-      if (!to) {
-        return [{
-          what: `${where} stays at this release's formula`,
-          refused: { code: "release-status-no-previous", message: `no earlier active release published ${where}, so there is no formula to revert it to`, fix: "Cut and publish a release to move it to, or edit the formula in the tap by hand." },
-        }];
-      }
-      const what = ctx.status === "active" ? `put back ${where} as ${toName} published it` : `revert ${where} to the formula ${toName} published, if it holds this release's`;
-      if (!ctx.apply) return [{ what }];
-      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
-      if (!token) throw new PublishTargetError("publish-credentials-missing", `the homebrew target reads its ${ssh ? "SSH key" : "token"} from ${tokenNames[0]}, and it is not set`, `Set ${tokenNames[0]}.`);
-      const lost = (branch: string) =>
-        new PublishTargetError("release-status-homebrew-history", `none of the last 100 commits of ${branch} in ${decl.tap} that touch ${decl.formula} holds the formula ${toName} published (${to})`, "Edit the formula in the tap by hand.");
-      const message = `${formulaName} ${releaseVersion(toName ?? null) ?? toName}`;
-      if (ssh) {
-        return withSsh(ctx, token, async (tap) => {
-          const { defaultBranch } = await tap.heads();
-          const branch = decl.branch ?? defaultBranch;
-          if (!branch) throw new PublishTargetError("publish-homebrew-failed", `${tap.remote} has no default branch`, "Set branch to the branch brew installs from.");
-          const head = await tap.fetch(branch, 100);
-          const now = await tap.file(head, decl.formula);
-          const nowDigest = now ? bytesDigest(new Uint8Array(now)) : null;
-          if (nowDigest === to || (ctx.status === "yanked" && nowDigest !== ours)) return [{ what: `${where} on ${branch} is not this release's formula; not changed`, already: true }];
-          let bytes: Buffer | null = null;
-          for (const c of await tap.history(branch, decl.formula)) {
-            const f = await tap.file(c, decl.formula);
-            if (f && bytesDigest(new Uint8Array(f)) === to) {
-              bytes = f;
-              break;
-            }
-          }
-          if (!bytes) throw lost(branch);
-          const commit = await tap.commitFile(head, decl.formula, bytes, message);
-          if ((await tap.push(commit, branch, false)) === "rejected") throw new PublishTargetError("publish-homebrew-failed", `${branch} of ${tap.remote} moved while the formula was committed onto it`, "Run the same command again.");
-          return [{ what }];
-        });
-      }
-      const tap = new GitHubRepo(githubApi(decl.api, ctx.env), decl.tap, token, fetchImpl, ctx, "publish-homebrew-failed");
-      const branch = decl.branch ?? (await tap.defaultBranch());
-      const now = await tap.file(decl.formula, branch);
-      const nowDigest = now ? bytesDigest(new Uint8Array(now.bytes)) : null;
-      if (nowDigest === to || (ctx.status === "yanked" && nowDigest !== ours)) return [{ what: `${where} on ${branch} is not this release's formula; not changed`, already: true }];
-      let bytes: Buffer | null = null;
-      for (const c of await tap.commitsTouching(decl.formula, branch)) {
-        const f = await tap.file(decl.formula, c);
-        if (f && bytesDigest(new Uint8Array(f.bytes)) === to) {
-          bytes = f.bytes;
-          break;
-        }
-      }
-      if (!bytes) throw lost(branch);
-      await tap.putFile(decl.formula, branch, new Uint8Array(bytes), message, now?.sha ?? null);
-      return [{ what }];
+  return indexTargetOf(
+    {
+      kind: "homebrew",
+      code: "publish-homebrew",
+      key: publishTargetKey(decl),
+      label: `homebrew formula ${formulaName} in ${decl.tap}`,
+      destination: `github ${decl.tap}`,
+      name: formulaName,
+      repo: decl.tap,
+      mode: "commit",
+      files: [{ path: decl.formula, template: decl.template }],
+      zed: false,
+      assets: decl.assets,
+      url: decl.url,
+      branch: decl.branch,
+      fork: undefined,
+      title: "{name} {version}",
+      body: "",
+      api: decl.api,
+      tokenEnv: decl.tokenEnv ?? HOMEBREW_TOKEN_ENV,
+      sshKeyEnv: decl.sshKeyEnv,
+      revealsLast: false,
+      refusalWarns: false,
+      digests: "file",
+      placeholders: ["version", "label", "tag"],
+      branchIs: "the branch brew installs from",
     },
-    async plan(ctx) {
-      if (prereleaseOf(ctx.label)) return [{ name: decl.formula, destination: where(decl.branch ?? "the default branch"), notes: skipNote(ctx) }];
-      const { digest } = setup(ctx);
-      return [{ name: decl.formula, destination: where(decl.branch ?? "the default branch"), digest }];
-    },
-    async stage(ctx) {
-      if (prereleaseOf(ctx.label)) {
-        ctx.log(skipNote(ctx));
-        return { target: target.name, destination: target.destination, items: [], state: { prerelease: "true" } };
-      }
-      const { version, token, assets, bytes, digest } = setup(ctx);
-      ctx.log(`using the ${ssh ? "SSH key" : "token"} from ${token.from}`);
-      for (const [name, a] of assets) ctx.log(`${name}: ${a.url} sha256 ${a.sha256}`);
-      if (ssh) return withSsh(ctx, token, (tap) => stageOverSsh(ctx, tap, version, bytes, digest));
-      const tap = new GitHubRepo(githubApi(decl.api, ctx.env), decl.tap, token, fetchImpl, ctx, "publish-homebrew-failed");
-      const branch = decl.branch ?? (await tap.defaultBranch());
-      const head = await tap.branchHead(branch);
-      if (!head) throw new PublishTargetError("publish-homebrew-failed", `${decl.tap} has no branch ${branch}`, "Set branch to the branch brew installs from.");
-      const item: PublishItem = { name: decl.formula, destination: where(branch), digest };
-      const done = (state: Record<string, string>, present: boolean) => ({ target: target.name, destination: target.destination, items: [{ ...item, ...(present ? { present: true } : {}) }], state: { branch, ...state } });
-
-      const onTap = await tap.file(decl.formula, branch);
-      if (onTap && onTap.bytes.equals(Buffer.from(bytes))) {
-        ctx.log(`${branch} already has ${decl.formula} for ${version}`);
-        return done({ present: "true" }, true);
-      }
-      const staging = `chant-publish/${formulaName}-${version}`;
-      const stagingHead = await tap.branchHead(staging);
-      if (stagingHead) {
-        const onStaging = await tap.file(decl.formula, staging);
-        if (onStaging && onStaging.bytes.equals(Buffer.from(bytes))) {
-          ctx.log(`${staging} already has ${decl.formula} for ${version}`);
-          return done({ staging, commit: stagingHead }, true);
-        }
-        await tap.moveRef(`heads/${staging}`, head, true);
-      } else {
-        await tap.createBranch(staging, head);
-      }
-      ctx.log(`committing ${decl.formula} for ${version} to ${staging}, at ${branch}'s head ${head.slice(0, 12)}`);
-      const commit = await tap.putFile(decl.formula, staging, bytes, `${formulaName} ${version}`, onTap?.sha ?? null);
-      return done({ staging, commit }, false);
-    },
-    async reveal(ctx, staged) {
-      if (staged.state.prerelease === "true") return { target: target.name, destination: target.destination, items: [] };
-      const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}) }));
-      const published = { target: target.name, destination: target.destination, items };
-      if (staged.state.present === "true") return { ...published, items: items.map((i) => ({ ...i, present: true })) };
-      const { version, token, bytes } = setup(ctx);
-      const { branch, staging, commit } = staged.state;
-      if (!branch || !staging || !commit) throw new PublishTargetError("publish-homebrew-failed", `the staged formula for ${decl.tap} has no staging commit to reveal`);
-      if (ssh) {
-        await withSsh(ctx, token, (tap) => revealOverSsh(ctx, tap, { branch, staging, commit }, version, bytes));
-        return published;
-      }
-      const tap = new GitHubRepo(githubApi(decl.api, ctx.env), decl.tap, token, fetchImpl, ctx, "publish-homebrew-failed");
-      ctx.log(`fast-forwarding ${branch} to ${commit.slice(0, 12)}`);
-      if (!(await tap.moveRef(`heads/${branch}`, commit, false))) {
-        // The tap moved since the stage: one commit of the formula onto it, unless it already holds it.
-        const onTap = await tap.file(decl.formula, branch);
-        if (onTap && onTap.bytes.equals(Buffer.from(bytes))) {
-          ctx.log(`${branch} moved since the stage and already has ${decl.formula} for ${version}`);
-        } else {
-          ctx.log(`${branch} moved since the stage; committing ${decl.formula} for ${version} onto it`);
-          await tap.putFile(decl.formula, branch, bytes, `${formulaName} ${version}`, onTap?.sha ?? null);
-        }
-      }
-      await tap.deleteRef(`heads/${staging}`);
-      return published;
-    },
-  };
-
-  async function withSsh<T>(ctx: PublishContextBase, key: Credential, step: (tap: SshGitRepo) => Promise<T>): Promise<T> {
-    const tap = await SshGitRepo.open({ api: githubApi(decl.api, ctx.env), repo: decl.tap, key, ctx, fetch: fetchImpl, code: "publish-homebrew-failed", git: deps.git, ssh: deps.ssh });
-    try {
-      return await step(tap);
-    } finally {
-      tap.close();
-    }
-  }
-
-  async function stageOverSsh(ctx: PublishContext, tap: SshGitRepo, version: string, bytes: Uint8Array, digest: string) {
-    const { defaultBranch, heads } = await tap.heads();
-    const branch = decl.branch ?? defaultBranch;
-    const head = branch ? heads.get(branch) : undefined;
-    if (!branch || !head) throw new PublishTargetError("publish-homebrew-failed", `${tap.remote} has no branch ${branch ?? "HEAD points at"}`, "Set branch to the branch brew installs from.");
-    const item: PublishItem = { name: decl.formula, destination: where(branch), digest };
-    const done = (state: Record<string, string>, present: boolean) => ({ target: target.name, destination: target.destination, items: [{ ...item, ...(present ? { present: true } : {}) }], state: { branch, ...state } });
-    ctx.log(`reading ${branch} of ${tap.remote} over SSH`);
-    await tap.fetch(branch);
-    const onTap = await tap.file(head, decl.formula);
-    if (onTap && onTap.equals(Buffer.from(bytes))) {
-      ctx.log(`${branch} already has ${decl.formula} for ${version}`);
-      return done({ present: "true" }, true);
-    }
-    const staging = `chant-publish/${formulaName}-${version}`;
-    const stagingHead = heads.get(staging);
-    if (stagingHead) {
-      await tap.fetch(staging);
-      const onStaging = await tap.file(stagingHead, decl.formula);
-      if (onStaging && onStaging.equals(Buffer.from(bytes))) {
-        ctx.log(`${staging} already has ${decl.formula} for ${version}`);
-        return done({ staging, commit: stagingHead }, true);
-      }
-    }
-    ctx.log(`committing ${decl.formula} for ${version} to ${staging}, at ${branch}'s head ${head.slice(0, 12)}, and pushing it over SSH`);
-    const commit = await tap.commitFile(head, decl.formula, bytes, `${formulaName} ${version}`);
-    await tap.push(commit, staging, true);
-    return done({ staging, commit }, false);
-  }
-
-  async function revealOverSsh(ctx: PublishContext, tap: SshGitRepo, state: { branch: string; staging: string; commit: string }, version: string, bytes: Uint8Array): Promise<void> {
-    const { branch, staging, commit } = state;
-    const { heads } = await tap.heads();
-    // The staged commit is on the staging branch: fetch it, since this run may be a resume on a fresh clone.
-    // Depth 2: the staged commit and the head it was made on, so git sees the push as a fast-forward.
-    const stagingHead = heads.get(staging) === commit ? await tap.fetch(staging, 2) : null;
-    let moved = true;
-    if (stagingHead === commit) {
-      ctx.log(`fast-forwarding ${branch} to ${commit.slice(0, 12)} over SSH`);
-      moved = (await tap.push(commit, branch, false)) === "rejected";
-    } else {
-      ctx.log(`${staging} is not at the staged commit ${commit.slice(0, 12)} any more`);
-    }
-    if (moved) {
-      // The tap moved since the stage, or the staged commit is gone: one commit of the formula onto it, unless it already holds it.
-      const head = await tap.fetch(branch);
-      const onTap = await tap.file(head, decl.formula);
-      if (onTap && onTap.equals(Buffer.from(bytes))) {
-        ctx.log(`${branch} already has ${decl.formula} for ${version}`);
-      } else {
-        ctx.log(`committing ${decl.formula} for ${version} onto ${branch}'s head ${head.slice(0, 12)}`);
-        const onto = await tap.commitFile(head, decl.formula, bytes, `${formulaName} ${version}`);
-        if ((await tap.push(onto, branch, false)) === "rejected") {
-          throw new PublishTargetError("publish-homebrew-failed", `${branch} of ${tap.remote} moved again while ${decl.formula} was committed onto it`, "Run the same publish again: it commits the formula onto the branch's new head.");
-        }
-      }
-    }
-    await tap.deleteBranch(staging);
-  }
-
-  return target;
+    deps,
+  );
 }

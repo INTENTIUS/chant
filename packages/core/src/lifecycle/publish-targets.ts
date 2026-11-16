@@ -21,12 +21,15 @@
  *   in dependency order, to crates.io or another registry (#5167).
  * - `mcp-registry` (./publish-mcp-registry.ts): a `server.json` on the
  *   official MCP Registry, revealed after every other target.
+ * - `index` (./publish-index.ts): manifests in an index repository such as
+ *   krew-index or winget-pkgs, committed or proposed in a pull request,
+ *   revealed after every other target. `homebrew` is its tap preset.
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
  * refused (`publish-artifact-digest-mismatch`). Other files are the commit's
  * by the checkout check (`checkCheckoutIsRelease` in ./release-publish.ts).
- * A forge or homebrew target's `assets` may name `artifact:<name>`, every
+ * A forge, homebrew or index target's `assets` may name `artifact:<name>`, every
  * file the release records for that `release.artifacts` entry (#5151).
  */
 
@@ -69,6 +72,9 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "mcp-registry":
         out.push((await import("./publish-mcp-registry")).mcpRegistryTarget(d, deps));
+        break;
+      case "index":
+        out.push((await import("./publish-index")).indexTarget(d, deps));
         break;
     }
   }

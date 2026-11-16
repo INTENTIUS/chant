@@ -40,8 +40,8 @@
  * Each file is recorded in the release as an `asset` artifact whose
  * `component` is the entry's name, so a publish target that reads a file at
  * a recorded path refuses one whose digest differs
- * (`publish-artifact-digest-mismatch`, ./publish-targets.ts). A forge or
- * homebrew target names an entry's files with `artifact:<name>` in its
+ * (`publish-artifact-digest-mismatch`, ./publish-targets.ts). A forge,
+ * homebrew or index target names an entry's files with `artifact:<name>` in its
  * `assets`.
  *
  * A dispatched release workflow hands the files from the cut job to the
@@ -664,5 +664,5 @@ export function usesGoreleaser(artifacts: readonly ReleaseArtifactDeclaration[])
   return artifacts.some(isGoreleaser);
 }
 
-/** The `artifact:<name>` prefix a forge or homebrew target's `assets` names an entry's files with. */
+/** The `artifact:<name>` prefix a forge, homebrew or index target's `assets` names an entry's files with. */
 export const ARTIFACT_REF = "artifact:";

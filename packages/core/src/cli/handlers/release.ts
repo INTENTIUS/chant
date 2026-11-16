@@ -974,10 +974,10 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
 
   // Every target is planned before any publishes, so a missing file or credential stops the publish with nothing sent.
   const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
-  const planned: Array<{ kind: string; name: string; destination: string; progress: "none" | "staged" | "revealed"; items: import("../../lifecycle/release-publish").PublishItem[] }> = [];
+  const planned: Array<{ kind: string; name: string; destination: string; progress: "none" | "staged" | "revealed"; revealsLast?: true; items: import("../../lifecycle/release-publish").PublishItem[] }> = [];
   for (const target of targets) {
     try {
-      planned.push({ kind: target.kind, name: target.name, destination: target.destination, progress: progressOf(progress, target), items: await target.plan(pctx) });
+      planned.push({ kind: target.kind, name: target.name, destination: target.destination, progress: progressOf(progress, target), ...(target.revealsLast ? { revealsLast: true as const } : {}), items: await target.plan(pctx) });
     } catch (err) {
       const e = errorOf(err);
       return failed(e.code, `nothing was published: ${target.name}: ${e.message}`, e.fix);
@@ -1027,7 +1027,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     if (floating) out(floatingLine(floating, false));
     for (const p of planned) {
       const earlier = p.progress === "revealed" ? " (published by an earlier run; skipped)" : p.progress === "staged" ? " (staged by an earlier run; only revealed)" : "";
-      out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}${earlier}:`);
+      out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}${p.revealsLast ? ", revealed after every other target" : ""}${earlier}:`);
       for (const i of p.items) out(`    ${describeItem(i)}`);
     }
     if (verifySteps.length > 0) {

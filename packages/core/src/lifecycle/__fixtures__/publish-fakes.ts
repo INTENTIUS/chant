@@ -563,3 +563,212 @@ export function startFakeGitHubRepo(api: string, repo: string, branch: string, f
     },
   };
 }
+
+/** One entry of a fake GitHub tree: a file's text, or a submodule's commit. */
+export type FakeEntry = { text: string } | { gitlink: string };
+
+/** GitHub with several repositories over one object store, as a fork network has (#5158). */
+export interface FakeGitHub {
+  fetch: FakeForge["fetch"];
+  calls: FakeForge["calls"];
+  /** Make `repo` with `branch` holding `files` (a string is a file's text, `{ gitlink }` a submodule). */
+  repo(repo: string, branch: string, files: Record<string, string | { gitlink: string }>): void;
+  /** The head of `branch` of `repo`, or undefined. */
+  head(repo: string, branch: string): string | undefined;
+  /** The file at `path` on `ref` (a branch of `repo`, or a commit), or undefined. */
+  read(repo: string, ref: string, path: string): string | undefined;
+  /** The submodule's commit at `path` on `ref`, or undefined. */
+  gitlink(repo: string, ref: string, path: string): string | undefined;
+  /** The commit's message and parent. */
+  commit(sha: string): { message: string; parent: string | null } | undefined;
+  /** Commit `files` onto `branch` of `repo` as someone else would. */
+  push(repo: string, branch: string, files: Record<string, string>): void;
+  /** Every repository's name. */
+  repos(): string[];
+  pulls: Array<{ number: number; repo: string; head: string; base: string; title: string; body: string; state: "open" | "closed"; merged: boolean }>;
+}
+
+/**
+ * A GitHub fake for the index target (#5158): `GET /user` names `user`; the
+ * repository, refs, contents (files and submodules), git data (blobs, trees,
+ * commits), fork and pull request APIs. A fork made by `POST .../forks`
+ * answers 404 to its first `forkDelay` reads, as GitHub makes forks in the
+ * background.
+ */
+export function startFakeGitHub(api: string, opts: { user: string; forkDelay?: number; scopes?: string | null }): FakeGitHub {
+  const calls: FakeGitHub["calls"] = [];
+  const commits = new Map<string, { parent: string | null; message: string; tree: Map<string, FakeEntry> }>();
+  const trees = new Map<string, Map<string, FakeEntry>>();
+  const blobs = new Map<string, string>();
+  const repos = new Map<string, { defaultBranch: string; branches: Map<string, string>; fork: boolean; hiddenReads: number }>();
+  const pulls: FakeGitHub["pulls"] = [];
+  let n = 0;
+  const id = (what: string) => createHash("sha1").update(`${what} ${n++}`).digest("hex");
+  const commitOf = (parent: string | null, message: string, tree: Map<string, FakeEntry>) => {
+    const sha = id("commit");
+    commits.set(sha, { parent, message, tree });
+    trees.set(`t${sha}`, tree);
+    return sha;
+  };
+  const entries = (files: Record<string, string | { gitlink: string }>) => new Map<string, FakeEntry>(Object.entries(files).map(([p, v]) => [p, typeof v === "string" ? { text: v } : v]));
+  const resolve = (repo: string, ref: string) => repos.get(repo)?.branches.get(ref) ?? (commits.has(ref) ? ref : undefined);
+  const blobSha = (text: string) => createHash("sha1").update(`blob ${text}`).digest("hex");
+  const headers = { get: (name: string) => (name.toLowerCase() === "x-oauth-scopes" && opts.scopes !== undefined && opts.scopes !== null ? opts.scopes : null) };
+  const json = (status: number, body?: unknown) => ({ ok: status < 300, status, headers, text: async () => (body === undefined ? "" : JSON.stringify(body)) });
+  const fetch: FakeGitHub["fetch"] = async (url, init) => {
+    calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
+    const u = new URL(url);
+    const path = url.split("?")[0]!;
+    const body = typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
+    if (path === `${api}/user` && init.method === "GET") return json(200, { login: opts.user });
+    const m = path.slice(api.length).match(/^\/repos\/([^/]+\/[^/]+)(\/.*)?$/);
+    if (!m) return json(404, { message: "Not Found" });
+    const name = m[1]!;
+    const rest = m[2] ?? "";
+    const r = repos.get(name);
+    if (r && r.hiddenReads > 0 && init.method === "GET" && rest === "") {
+      r.hiddenReads--;
+      return json(404, { message: "Not Found" });
+    }
+    if (rest === "/forks" && init.method === "POST") {
+      if (!r) return json(404, { message: "Not Found" });
+      const forkName = `${opts.user}/${name.split("/")[1]}`;
+      if (forkName === name) return json(403, { message: "cannot fork your own repository" });
+      if (!repos.has(forkName)) repos.set(forkName, { defaultBranch: r.defaultBranch, branches: new Map([[r.defaultBranch, r.branches.get(r.defaultBranch)!]]), fork: true, hiddenReads: opts.forkDelay ?? 0 });
+      return json(202, { full_name: forkName });
+    }
+    if (!r) return json(404, { message: "Not Found" });
+    if (rest === "" && init.method === "GET") return json(200, { full_name: name, default_branch: r.defaultBranch, fork: r.fork, permissions: { push: name.startsWith(`${opts.user}/`) } });
+    const ref = rest.match(/^\/git\/refs?\/heads\/(.+)$/);
+    if (ref) {
+      const branch = decodeURIComponent(ref[1]!);
+      const at = r.branches.get(branch);
+      if (init.method === "GET") return at ? json(200, { ref: `refs/heads/${branch}`, object: { sha: at } }) : json(404, { message: "Not Found" });
+      if (!at) return json(422, { message: "Reference does not exist" });
+      if (init.method === "DELETE") return void r.branches.delete(branch), json(204);
+      if (init.method === "PATCH") {
+        const to = String(body.sha);
+        if (!commits.has(to)) return json(422, { message: "Object does not exist" });
+        let ancestor = false;
+        for (let c: string | null = to; c; c = commits.get(c)?.parent ?? null) if (c === at) ancestor = true;
+        if (body.force !== true && !ancestor) return json(422, { message: "Update is not a fast forward" });
+        r.branches.set(branch, to);
+        return json(200, { object: { sha: to } });
+      }
+    }
+    if (rest === "/git/refs" && init.method === "POST") {
+      const branch = String(body.ref).replace(/^refs\/heads\//, "");
+      if (r.branches.has(branch)) return json(422, { message: "Reference already exists" });
+      if (!commits.has(String(body.sha))) return json(422, { message: "Object does not exist" });
+      r.branches.set(branch, String(body.sha));
+      return json(201, { ref: body.ref, object: { sha: body.sha } });
+    }
+    const gc = rest.match(/^\/git\/commits\/([0-9a-f]+)$/);
+    if (gc && init.method === "GET") return commits.has(gc[1]!) ? json(200, { sha: gc[1], tree: { sha: `t${gc[1]}` } }) : json(404, { message: "Not Found" });
+    if (rest === "/git/blobs" && init.method === "POST") {
+      const text = Buffer.from(String(body.content), "base64").toString("utf-8");
+      const sha = blobSha(text);
+      blobs.set(sha, text);
+      return json(201, { sha });
+    }
+    if (rest === "/git/trees" && init.method === "POST") {
+      const base = trees.get(String(body.base_tree));
+      if (!base) return json(422, { message: "base_tree not found" });
+      const tree = new Map(base);
+      for (const e of body.tree as Array<{ path: string; mode: string; sha: string | null }>) {
+        if (e.sha === null) tree.delete(e.path);
+        else if (e.mode === "160000") tree.set(e.path, { gitlink: e.sha });
+        else if (blobs.has(e.sha)) tree.set(e.path, { text: blobs.get(e.sha)! });
+        else return json(422, { message: "blob not found" });
+      }
+      const sha = id("tree");
+      trees.set(sha, tree);
+      return json(201, { sha });
+    }
+    if (rest === "/git/commits" && init.method === "POST") {
+      const tree = trees.get(String(body.tree));
+      const parents = body.parents as string[];
+      if (!tree || parents.length !== 1 || !commits.has(parents[0]!)) return json(422, { message: "bad commit" });
+      const sha = id("commit");
+      commits.set(sha, { parent: parents[0]!, message: String(body.message), tree });
+      trees.set(`t${sha}`, tree);
+      return json(201, { sha });
+    }
+    if (rest === "/commits" && init.method === "GET") {
+      // #5163: the commits of a branch that touch a path, newest first.
+      const file = u.searchParams.get("path") ?? "";
+      const text = (c: string) => {
+        const e = commits.get(c)!.tree.get(file);
+        return e && "text" in e ? e.text : undefined;
+      };
+      const out: Array<{ sha: string }> = [];
+      for (let c: string | null = resolve(name, u.searchParams.get("sha") ?? r.defaultBranch) ?? null; c; c = commits.get(c)!.parent) {
+        const parent = commits.get(c)!.parent;
+        if (text(c) !== (parent ? text(parent) : undefined)) out.push({ sha: c });
+      }
+      return json(200, out);
+    }
+    const contents = rest.startsWith("/contents/") ? rest.slice("/contents/".length).split("/").map(decodeURIComponent).join("/") : null;
+    if (contents !== null && init.method === "GET") {
+      const at = resolve(name, u.searchParams.get("ref") ?? r.defaultBranch);
+      const e = at ? commits.get(at)!.tree.get(contents) : undefined;
+      if (!e) return json(404, { message: "Not Found" });
+      if ("gitlink" in e) return json(200, { type: "submodule", sha: e.gitlink });
+      return json(200, { type: "file", sha: blobSha(e.text), encoding: "base64", content: Buffer.from(e.text).toString("base64") });
+    }
+    if (contents !== null && init.method === "PUT") {
+      const on = String(body.branch);
+      const at = r.branches.get(on);
+      if (!at) return json(404, { message: "Branch not found" });
+      const current = commits.get(at)!.tree.get(contents);
+      if ((current && "text" in current ? blobSha(current.text) : undefined) !== body.sha) return json(409, { message: "sha does not match" });
+      const tree = new Map(commits.get(at)!.tree);
+      tree.set(contents, { text: Buffer.from(String(body.content), "base64").toString("utf-8") });
+      const sha = commitOf(at, String(body.message), tree);
+      r.branches.set(on, sha);
+      return json(current === undefined ? 201 : 200, { commit: { sha } });
+    }
+    if (rest === "/pulls" && init.method === "GET") {
+      const head = u.searchParams.get("head");
+      return json(200, pulls.filter((p) => p.repo === name && (!head || p.head === head)).map((p) => ({ number: p.number, html_url: `https://github.test/${name}/pull/${p.number}`, state: p.state, merged_at: p.merged ? "2026-11-16T00:00:00Z" : null, head: { label: p.head } })));
+    }
+    if (rest === "/pulls" && init.method === "POST") {
+      const head = String(body.head);
+      const [owner, branch] = head.split(":");
+      const from = [...repos.entries()].find(([k]) => k.split("/")[0] === owner && repos.get(k)!.branches.has(branch!));
+      if (!from) return json(422, { message: "head not found" });
+      if (pulls.some((p) => p.repo === name && p.head === head && p.state === "open")) return json(422, { message: "A pull request already exists" });
+      const p = { number: pulls.length + 1, repo: name, head, base: String(body.base), title: String(body.title), body: String(body.body), state: "open" as const, merged: false };
+      pulls.push(p);
+      return json(201, { number: p.number, html_url: `https://github.test/${name}/pull/${p.number}`, state: "open", merged_at: null, head: { label: head } });
+    }
+    return json(404, { message: "Not Found" });
+  };
+  return {
+    fetch,
+    calls,
+    pulls,
+    repo: (repo, branch, files) => void repos.set(repo, { defaultBranch: branch, branches: new Map([[branch, commitOf(null, "init", entries(files))]]), fork: false, hiddenReads: 0 }),
+    head: (repo, branch) => repos.get(repo)?.branches.get(branch),
+    read: (repo, ref, p) => {
+      const at = resolve(repo, ref);
+      const e = at ? commits.get(at)!.tree.get(p) : undefined;
+      return e && "text" in e ? e.text : undefined;
+    },
+    gitlink: (repo, ref, p) => {
+      const at = resolve(repo, ref);
+      const e = at ? commits.get(at)!.tree.get(p) : undefined;
+      return e && "gitlink" in e ? e.gitlink : undefined;
+    },
+    commit: (sha) => {
+      const c = commits.get(sha);
+      return c ? { message: c.message, parent: c.parent } : undefined;
+    },
+    push: (repo, branch, files) => {
+      const r = repos.get(repo)!;
+      const at = r.branches.get(branch)!;
+      r.branches.set(branch, commitOf(at, "someone else", new Map([...commits.get(at)!.tree, ...entries(files)])));
+    },
+    repos: () => [...repos.keys()],
+  };
+}

@@ -259,7 +259,7 @@ export class PublishTargetError extends Error {
 }
 
 /** The kinds `release.publish` declares and `createPublishTargets` makes. */
-export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo" | "mcp-registry";
+export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo" | "mcp-registry" | "index";
 
 /** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
 export const NPM_STAGE_TAG = "next";
@@ -340,6 +340,14 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * their place in the list.
    */
   revealsLast?: boolean;
+  /**
+   * True when a refusal from the target's destination is a warning
+   * (`onRefusal: "warn"` on an index target, #5158): the publish goes on,
+   * the target comes back with a `warning`, and its reveal is not recorded,
+   * so a run of the same publish tries it again. A refusal at the stage
+   * skips the target's reveal; one at the reveal leaves the rest revealing.
+   */
+  refusalWarns?: boolean;
   /**
    * The names this target publishes and the names of others' it depends on
    * (npm: the package names, and every `dependencies`, `peerDependencies`
@@ -891,6 +899,9 @@ export function revealOrder<T extends Pick<PublishTarget, "uploadsAtReveal" | "r
  * 3. Reveal each target in {@link revealOrder}, skipping one the record says
  *    revealed, and record each reveal.
  *
+ * A target whose refusals are warnings (`refusalWarns`) does not stop
+ * either step: it comes back with a `warning` and no reveal is recorded.
+ *
  * A run of the same publish after a failure resumes: what went out is not
  * published again, and a stage that failed part way sends only what its
  * destination does not hold. Throws {@link PublishRunError}.
@@ -945,12 +956,23 @@ export async function runPublish(req: {
   const staged = new Map<string, StagedTarget>();
   const stagedNames: string[] = [];
   const revealedNames: string[] = [];
+  // #5158: a target whose refusals are warnings and whose stage was refused: not revealed, reported with its warning.
+  const refused = new Map<string, PublishedTarget>();
+  const refusal = (target: PublishTarget, err: unknown): PublishedTarget => {
+    const why = ctx.redactor.redact(err instanceof Error ? err.message : String(err));
+    say(`  warning: ${target.name}: ${why}`);
+    return { target: target.name, destination: target.destination, items: [{ name: target.name, destination: target.destination, refused: true }], warning: why };
+  };
   const stageOne = async (target: PublishTarget) => {
     say(`  staging to ${target.destination}`);
     let s: StagedTarget;
     try {
       s = await target.stage(ctx);
     } catch (err) {
+      if (target.refusalWarns) {
+        refused.set(target.key, refusal(target, err));
+        return;
+      }
       return fail(err, target, "stage", stagedNames, revealedNames);
     }
     staged.set(target.key, s);
@@ -1012,12 +1034,21 @@ export async function runPublish(req: {
       revealedNames.push(target.name);
       continue;
     }
-    if (!staged.has(target.key)) await stageOne(target);
+    if (!refused.has(target.key) && !staged.has(target.key)) await stageOne(target);
+    const wasRefused = refused.get(target.key);
+    if (wasRefused) {
+      published.push(wasRefused);
+      continue;
+    }
     say(`  revealing ${target.name}`);
     let p: PublishedTarget;
     try {
       p = await target.reveal(ctx, staged.get(target.key)!);
     } catch (err) {
+      if (target.refusalWarns) {
+        published.push(refusal(target, err));
+        continue;
+      }
       return fail(err, target, "reveal", stagedNames, revealedNames);
     }
     published.push(p);
