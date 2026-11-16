@@ -53,7 +53,7 @@ import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release doctor [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release tag <label|digest|tag> [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -118,6 +118,11 @@ async function laneOf(ctx: CommandContext, cwd: string): Promise<string | undefi
 }
 
 /** The member's `release.images` (#4657), or none when the config declares none. A Dockerfile entry (#4819) keeps its form, so its prepare command runs. */
+async function releaseArtifactsOf(cwd: string): Promise<import("../../lifecycle/release-artifacts").ReleaseArtifactDeclaration[]> {
+  const { loadChantConfig } = await import("../../config");
+  return (await loadChantConfig(cwd)).config.release?.artifacts ?? [];
+}
+
 async function releaseImagesOf(cwd: string): Promise<import("../../lifecycle/release-images").ReleaseImageDeclaration[]> {
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.images ?? [];
@@ -245,6 +250,78 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
     for (const [name, digest] of Object.entries(recorded)) console.error(`  ${name} ${digest}`);
     console.error(formatSuccess(`${args.noBuild ? "Checked" : "Built"} ${built.length} image(s) to the digests release ${label ?? release.releaseDigest} records, and wrote them to ${relative(cwd, file) || file}`));
     console.log(`${RELEASE_DIGESTS_ENV}=${file}`);
+  }
+  return 0;
+}
+
+/**
+ * `release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]`
+ * (#5151): the files `release.artifacts` declares, checked against the
+ * digests the release records, from the release's commit checked out here.
+ * Without a flag it builds them again; `--no-build` checks the files on
+ * disk; `--from <dir>` first copies them from a directory where the cut job
+ * staged them. `-o <dir>` stages the checked files in a directory, at their
+ * paths in the member, for the next job. A file missing or with another
+ * digest is refused.
+ */
+export async function runReleaseArtifacts(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const ref = args.extraPositional;
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ ref: ref ?? null, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  if (!ref) return fail("release-not-named", "release artifacts needs a release, by label or digest", USAGE);
+  const cwd = resolve(".");
+  const { resolveRelease } = await import("../../lifecycle/release-store");
+  const { artifactFileProblems, buildReleaseArtifacts, copyArtifactFiles, releaseArtifactFiles, ReleaseArtifactError } = await import("../../lifecycle/release-artifacts");
+  const { getHeadCommit } = await import("../../lifecycle/git");
+  const found = await resolveRelease(ref, { cwd });
+  if (!found) return fail("release-not-found", `no release is labelled or digested "${ref}" in this member`, "Fetch chant/lifecycle (git fetch origin chant/lifecycle:chant/lifecycle), then list them with: chant release list");
+  const { release, label } = found;
+  const head = await getHeadCommit({ cwd });
+  if (head !== release.commit) return fail("release-artifacts-wrong-commit", `the release was cut from ${release.commit.slice(0, 12)}, and this checkout is at ${head.slice(0, 12)}, so its files would not be the release's`, `Check out the release's commit: git checkout ${release.commit}`);
+  const declared = await releaseArtifactsOf(cwd);
+  if (declared.length === 0) return fail("release-artifacts-not-declared", "this member's chant.config.ts has no release.artifacts, so there is nothing to check", "Declare the files the cut builds: release: { artifacts: [{ name: \"cli\", build: \"make dist\", outputs: [\"dist/cli\"] }] }");
+  const files = releaseArtifactFiles(release, declared.map((d) => d.name));
+  const recordedNames = new Set(files.map((f) => f.component));
+  const missing = declared.filter((d) => !recordedNames.has(d.name)).map((d) => d.name);
+  if (missing.length > 0) return fail("release-artifact-not-recorded", `release.artifacts names ${missing.join(", ")}, which release ${release.releaseDigest} does not record`, "Cut a new release, so its cut builds every file the config declares.");
+  const from = args.migrateFrom;
+  try {
+    if (from !== undefined) copyArtifactFiles(files, resolve(from), cwd);
+    else if (!args.noBuild) {
+      const images = await releaseImagesOf(cwd);
+      const built = buildReleaseArtifacts({ artifacts: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, imageNames: images.map((i) => i.name) });
+      const recorded = new Set(files.map((f) => f.path));
+      const extra = built.filter((b) => !recorded.has(b.path)).map((b) => b.path);
+      if (extra.length > 0) return fail("release-artifact-digest-mismatch", `the build wrote ${extra.join(", ")}, which release ${release.releaseDigest} does not record`, "A build of the release's commit must write the files the cut wrote. Cut a new release.");
+    }
+  } catch (err) {
+    if (err instanceof ReleaseArtifactError) return fail(err.code, err.message, err.fix);
+    throw err;
+  }
+  const problems = artifactFileProblems(cwd, files);
+  const absent = problems.filter((p) => p.problem === "missing");
+  if (absent.length > 0) return fail("release-artifact-missing", `${absent.map((p) => p.path).join(", ")} ${absent.length === 1 ? "is" : "are"} not here`, "Hand this job the files the cut staged (--from <dir>), or run without --no-build to build them again.");
+  if (problems.length > 0) {
+    return fail(
+      "release-artifact-digest-mismatch",
+      problems.map((p) => `${p.path} is ${p.digest}, and the release records ${p.recorded}`).join("; "),
+      args.noBuild || from !== undefined ? "Publish the files the cut built: hand them over unchanged, or cut a new release." : "A build of the same commit must write the same bytes: set every timestamp from SOURCE_DATE_EPOCH and leave out build paths (go build -trimpath).",
+    );
+  }
+  let staged: string | null = null;
+  if (args.output) {
+    staged = resolve(args.output);
+    copyArtifactFiles(files, cwd, staged);
+  }
+  if (args.json) console.log(JSON.stringify({ releaseDigest: release.releaseDigest, label, files: files.map((f) => ({ name: f.component, path: f.path, digest: f.digest })), staged }, null, 2));
+  else {
+    for (const f of files) console.error(`  ${f.component} ${f.path} ${f.digest}`);
+    const how = from !== undefined ? `Copied from ${from} and checked` : args.noBuild ? "Checked" : "Built and checked";
+    console.error(formatSuccess(`${how} ${files.length} file(s) against release ${label ?? release.releaseDigest}${staged ? `, and staged them in ${relative(cwd, staged) || staged}` : ""}`));
   }
   return 0;
 }
@@ -525,6 +602,20 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           }
         }
       : undefined;
+    // #5151: the files release.artifacts declares, built after the images and recorded as assets.
+    const declaredArtifacts = await releaseArtifactsOf(cutCwd);
+    const buildArtifacts =
+      declaredArtifacts.length > 0
+        ? async (at: string) => {
+            const { buildReleaseArtifacts, ReleaseArtifactError } = await import("../../lifecycle/release-artifacts");
+            try {
+              return buildReleaseArtifacts({ artifacts: declaredArtifacts, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, imageNames: declaredImages.map((d) => d.name) });
+            } catch (err) {
+              if (!(err instanceof ReleaseArtifactError)) throw err;
+              throw new ReleaseCutError(err.code as import("../../lifecycle/release-cut").ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
+            }
+          }
+        : undefined;
     // #4840: release.version stamps the label into package.json once the cut has found the tree clean.
     const stamp = versionConfig
       ? async () => {
@@ -567,6 +658,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
       ...(Object.keys(images).length > 0 ? { images } : {}),
       ...(buildImages ? { buildImages } : {}),
+      ...(buildArtifacts ? { buildArtifacts } : {}),
       ...(stamp ? { stamp } : {}),
       ...(greenSource ? { green: greenSource } : {}),
       ...(publishes ? { publishes } : {}),
@@ -669,6 +761,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // release records are put where release.images names them here, so the job's next step (the hand-off to the
     // publish job) finds them.
     if (checkout && declaredImages.length > 0) copyImageArchives((await import("../../lifecycle/release-images")).resolveReleaseImages(declaredImages), cutCwd, cwd);
+    // #5151: the files too, so `release artifacts -o` in the same job stages them for the publish job.
+    if (checkout && declaredArtifacts.length > 0) {
+      const { copyArtifactFiles, releaseArtifactFiles } = await import("../../lifecycle/release-artifacts");
+      copyArtifactFiles(releaseArtifactFiles(result.release, declaredArtifacts.map((a) => a.name)), cutCwd, cwd, { missingOk: true });
+    }
     // #4965: the record must be on the remote before the release is tagged. The release workflow pushes the tag
     // right after the cut, and a tag whose record never landed spends the label: the publish job finds no release.
     // A refused push is tried again; one that never lands stops the cut here, untagged and non-zero.

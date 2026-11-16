@@ -62,7 +62,7 @@ import { releaseVersion } from "./publish-homebrew";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { changelogNotes, type ChangelogCommit } from "./release-changelog";
-import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
+import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
@@ -392,7 +392,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     if (!token) {
       throw new PublishTargetError("publish-credentials-missing", `the ${decl.forge} target reads its token from ${tokenNames.join(" or ")}, and none is set`, `Set ${tokenNames[0]} in the job's or the shell's environment.`);
     }
-    const assets: Asset[] = decl.assets.map((p) => {
+    const assets: Asset[] = expandArtifactAssets(ctx.release, decl.assets).map((p) => {
       const abs = memberFile(ctx.cwd, p);
       const bytes = new Uint8Array(readFileSync(abs));
       const digest = bytesDigest(bytes);

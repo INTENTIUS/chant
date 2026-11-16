@@ -565,6 +565,12 @@ Releases:
                         npm trusted publishers and dist-tags, registry and
                         forge access. Says what it can't observe from here.
                         Exits 1 when a check fails.
+  release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
+                        Build the files release.artifacts declares again from
+                        the release's commit, or check those on disk
+                        (--no-build) or copied from <dir> (--from), and
+                        refuse one whose digest is not the recorded one. -o
+                        stages the checked files in <dir> for the next job.
   release stamp <label> [--train <id|digest>] [--json]
                         Write the label as the version of each package.json
                         release.version names, and the lockfile's entries for
@@ -2077,6 +2083,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
   // #4657: build a release's images again in its publish job, checked against the digests it records.
   { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
+  { name: "release artifacts", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseArtifacts(ctx) },
   // #4840: the label into the package.json files release.version names, in the publish job before its build.
   { name: "release doctor", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release-doctor")).runReleaseDoctor(ctx) },
   { name: "release stamp", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseStamp(ctx) },

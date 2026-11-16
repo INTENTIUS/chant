@@ -54,7 +54,7 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { HomebrewPublishDeclaration } from "./publish-declaration";
 import { SshGitRepo } from "./publish-git-ssh";
 import { GitHubRepo, githubApi } from "./publish-github";
-import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
+import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
@@ -125,7 +125,7 @@ export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDe
       );
     }
     const assets = new Map<string, { url: string; sha256: string }>();
-    for (const p of decl.assets) {
+    for (const p of expandArtifactAssets(ctx.release, decl.assets)) {
       const abs = memberFile(ctx.cwd, p);
       const digest = bytesDigest(new Uint8Array(readFileSync(abs)));
       checkReleaseDigest(ctx.release, "asset", ctx.cwd, p, [digest]);

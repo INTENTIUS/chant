@@ -77,7 +77,7 @@ With neither variable set, the target reads the registry's `auths` entry from th
 |---|---|
 | `forge` | `github`, `gitlab` or `forgejo` |
 | `repo` | `owner/name` on GitHub and Forgejo; the project path or numeric id on GitLab |
-| `assets` | Files to attach. Each is named by its file name, which must be unique. May be empty when `notes` is set |
+| `assets` | Files to attach. Each is named by its file name, which must be unique. `artifact:<name>` names every file the release records for that [`release.artifacts`](/chant/cli/release/#files-the-release-builds) entry. May be empty when `notes` is set |
 | `notes` | The release's notes: `{ file?, heading?, linkBase?, generate?, types?, before?, after? }`, a section of a file in the member, notes generated for the release, or both. See below. Read by chant 0.124.71 and newer; `generate` and `types` by chant 0.124.101 and newer |
 | `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
 | `tag` | The forge release's tag. Default: the tag the cut made, which [`release.tag`](/chant/cli/release/#the-releases-tag) names (`release/<label>` or `release/<member>/<label>` when it is unset) |
@@ -137,7 +137,7 @@ A formula in a tap repository on GitHub, rendered from a template in the member 
 | `tap` | The tap's repository, `owner/name`, such as `acme/homebrew-tap` |
 | `formula` | The formula's path in the tap, such as `Formula/api.rb` |
 | `template` | The formula with placeholders, relative to the member |
-| `assets` | The files the formula downloads, relative to the member. The template names each by its file name, which must be unique |
+| `assets` | The files the formula downloads, relative to the member, or `artifact:<name>` for every file the release records for that [`release.artifacts`](/chant/cli/release/#files-the-release-builds) entry. The template names each by its file name, which must be unique |
 | `url` | Where each asset is downloaded from, with `{tag}` (the tag the cut made), `{label}`, `{version}` and `{name}` (the asset's file name) filled in |
 | `branch` | The tap's branch that brew installs from. Default: the repository's default branch |
 | `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
