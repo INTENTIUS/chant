@@ -522,7 +522,7 @@
       "name": "npm",
       "dir": "release",
       "kind": "workspace",
-      "because": "chant's own npm release: one release member per published package (#5132), and the lockstep root member that just release cuts and publish.yml publishes (#4040)",
+      "because": "chant's own npm release: one release member per published package (#5132), which just release cuts as a release train and publish.yml publishes from its release-train/npm tag (#5137), and the lockstep root member kept for re-running a release/npm/<label> publish (#4040)",
       "generated": [
         {
           "path": "chant.workspace.json",

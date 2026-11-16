@@ -117,10 +117,20 @@ if [ "$#" -ge 2 ]; then
     visit(target);
     console.log(out.join("\n"));
   ' "$dir" "${ws[@]}")
+  # RELEASE_PACK_PREPACKED names a file of the package directories already
+  # prepacked in this checkout, one per line (scripts/release-train-pack.sh,
+  # #5137): a train packs many members that share dependencies, and each is
+  # built once. Every directory this run prepacks or packs is added to it.
+  done_file="${RELEASE_PACK_PREPACKED:-}"
   for d in "${deps[@]}"; do
     [ -n "$d" ] || continue
+    if [ -n "$done_file" ] && grep -qxF "$d" "$done_file" 2>/dev/null; then
+      echo "release-pack: $d is already prepacked in this checkout"
+      continue
+    fi
     echo "release-pack: prepack $d, which $dir builds against"
     (cd "$d" && npm run prepack)
+    [ -z "$done_file" ] || echo "$d" >> "$done_file"
   done
 
   slug="${dir//\//_}"
@@ -130,6 +140,8 @@ if [ "$#" -ge 2 ]; then
   [ -n "$tgz" ] || { echo "release-pack: npm pack wrote no tarball for $dir" >&2; exit 1; }
   mkdir -p .release/packs
   mv -f "$tgz" ".release/packs/$slug.tgz"
+  # npm pack ran the package's own prepack.
+  [ -z "$done_file" ] || echo "$dir" >> "$done_file"
   echo "packed $(jq -r .name "$file")@$label in .release/packs/$slug.tgz"
   exit 0
 fi

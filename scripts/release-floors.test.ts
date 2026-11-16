@@ -53,7 +53,10 @@ describe("release floors (#4503)", () => {
 
   it("release-pack.sh and just release run the check with --npm", () => {
     expect(readFileSync(join(root, "scripts/release-pack.sh"), "utf8")).toMatch(/^npx tsx scripts\/release-floors\.ts --npm\b/m);
-    expect(readFileSync(join(root, "justfile"), "utf8")).toMatch(/npx tsx scripts\/release-floors\.ts --npm --rev "\$sha" --release "\$next"/);
+    // just release runs scripts/release-train.sh (#5137), which checks core's label when core is in the train.
+    const train = readFileSync(join(root, "scripts/release-train.sh"), "utf8");
+    expect(train).toMatch(/floors="\$\{RELEASE_FLOORS:-npx tsx scripts\/release-floors\.ts\}"/);
+    expect(train).toMatch(/\$floors --npm --rev "\$sha" --release "\$core_label"/);
   });
 });
 

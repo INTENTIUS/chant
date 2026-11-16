@@ -61,7 +61,7 @@ case "$1 $2" in
 esac`,
   );
   bin("npm", 'echo "9.9.9"');
-  bin("fake-release", `echo "release $*" >> "${state}/log"; echo "Released 9.9.9: publish.yml runs on release/npm/9.9.9"`);
+  bin("fake-release", `echo "release $*" >> "${state}/log"; echo "Released train t1 (2 member(s)): publish.yml runs on release-train/npm/t1"`);
 }
 
 function run(...args: string[]) {
@@ -112,8 +112,9 @@ describe("release-when-green (#4218)", () => {
     const r = run();
     expect(r.status, r.stderr).toBe(0);
     expect(log()).not.toContain("workflow run");
-    expect(log()).toContain(`release patch ${sha}`);
-    expect(r.stdout).toContain("published 9.9.9; npm latest is 9.9.9");
+    expect(log()).toContain(`release ${sha}`);
+    expect(log()).toContain("--branch release-train/npm/t1");
+    expect(r.stdout).toContain("published release-train/npm/t1; npm latest is 9.9.9");
   });
 
   it("starts the missing suites, then the tick once every phase passed, then cuts", () => {
@@ -173,7 +174,7 @@ describe("release-when-green (#4218)", () => {
     git(origin, "tag", "release/npm/0.124.50", sha);
     const r = run();
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("is already released as 0.124.50");
+    expect(r.stdout).toContain("is already released as release/npm/0.124.50");
     expect(log()).not.toContain("release ");
   });
 
@@ -186,6 +187,35 @@ describe("release-when-green (#4218)", () => {
     const r = run();
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).not.toContain("already released");
-    expect(log()).toContain(`release patch ${sha}`);
+    expect(log()).toContain(`release ${sha}`);
+  });
+
+  it("stops at a commit a release-train/npm/<id> tag names (#5137)", () => {
+    fakes();
+    git(origin, "tag", "release-train/npm/train-1", sha);
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("is already released as release-train/npm/train-1");
+    expect(log()).not.toContain("release ");
+  });
+
+  it("passes each member's bump through to the release (#5137)", () => {
+    fakes();
+    checks("check|completed|success", "suites|completed|success");
+    git(origin, "tag", `ci/green/${sha}`, sha);
+    const r = run("minor", "lexicon-aws=major");
+    expect(r.status, r.stderr).toBe(0);
+    expect(log()).toContain(`release minor lexicon-aws=major ${sha}`);
+  });
+
+  it("stops when the train has nothing to release", () => {
+    fakes();
+    bin("fake-release", `echo "release $*" >> "${state}/log"; echo "Nothing to release at abc: no member changed since its last release."`);
+    checks("check|completed|success", "suites|completed|success");
+    git(origin, "tag", `ci/green/${sha}`, sha);
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("nothing to release at");
+    expect(log()).not.toContain("run list -w publish.yml");
   });
 });

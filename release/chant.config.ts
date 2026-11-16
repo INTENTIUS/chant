@@ -1,8 +1,10 @@
 import type { ChantConfig } from "@intentius/chant";
 
-// chant's own npm release (#4040). `just release` cuts it with
-// `chant release cut --at <green sha>`, and publish.yml publishes it on the
-// release/npm/<label> tag with `chant release publish`.
+// chant's lockstep npm release (#4040), every package at one label. `just
+// release` no longer cuts it: it cuts a train of the per-package members
+// under release/<member>/ (#5137). It stays so a lockstep release cut before
+// that can be published again on its release/npm/<label> tag with `chant
+// release publish`, until two trains have published (#5132).
 //
 // A publish never builds. scripts/release-pack.sh writes the tarballs named
 // here, every package at the release's label, before the publish runs. The
