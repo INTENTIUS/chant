@@ -106,7 +106,7 @@ describe("scripts/floor-table.ts (#4792)", () => {
   });
 
   it("refuses a name two files declare (#4916)", () => {
-    const twice = { ...files, "packages/core/src/b.ts": 'export const A_FLOOR = "0.124.81";\n' };
+    const twice: Record<string, string> = { ...files, "packages/core/src/b.ts": 'export const A_FLOOR = "0.124.81";\n' };
     expect(() => floorRows(Object.keys(twice), (f) => twice[f]!, { "./*": "./src/*.ts" })).toThrow(/A_FLOOR is declared again; packages\/core\/src\/a\.ts declares it/);
   });
 

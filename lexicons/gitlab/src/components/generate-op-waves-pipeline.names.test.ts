@@ -107,7 +107,7 @@ describe("the Op waves pipeline's names on GitLab (#5022)", () => {
     expect(doc["apply-done"]!.script!.join("\n")).toContain("--apply-status terragucci/apply");
     for (const [name, job] of Object.entries(doc)) {
       if (name === "stages") continue;
-      for (const rule of job.rules ?? []) if (rule.when !== "never") expect(rule.if, name).toMatch(/^\(\$CI_PIPELINE_SOURCE != "schedule" && \$TERRAGUCCI_PLAN_NOTES == null\) && \(/);
+      for (const rule of (Array.isArray(job) ? [] : job.rules) ?? []) if (rule.when !== "never") expect(rule.if, name).toMatch(/^\(\$CI_PIPELINE_SOURCE != "schedule" && \$TERRAGUCCI_PLAN_NOTES == null\) && \(/);
     }
     expect(doc["apply-wave-1"]!.rules).toEqual([{ if: `(${RUN_IF}) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main")` }]);
   });
