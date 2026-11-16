@@ -14,11 +14,18 @@
  *   --yes`, which picks the members, labels each past every version it
  *   already has, cuts them, records the train and pushes the member tags
  *   and `release-train/<env>/<id>` in one push. A commit with nothing to
- *   release ends the run here.
+ *   release ends the run here. A cut that recorded a train and whose JSON
+ *   names no train id fails the job, so the publish is never skipped
+ *   silently.
  * - publish: in a checkout of the commit, `chant workspace train prepare`
  *   (stamp each member, build the packages they need), the build, and
  *   `chant workspace train publish <env> <id> --yes`, which stages, runs the
  *   members' `release.verify`, and reveals layer by layer.
+ *
+ * Dispatched with `train`, a recorded train's id, the gate and the cut are
+ * skipped and the publish job publishes that train from its tag's commit,
+ * resuming what an earlier run staged or revealed: the way to finish a
+ * publish that stopped or was skipped, with no new cut and no tag pushed.
  *
  * The publish job also runs on a pushed `release-train/<env>/*` tag, so a
  * train cut from a workstation with `chant workspace train cut <env> --yes`
@@ -28,7 +35,7 @@
  */
 import { tagComments } from "../action-pins";
 import type { ReleaseGreenSource } from "../lifecycle/release-green";
-import { field, gateScript, githubSetup, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
+import { gateScript, githubSetup, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
 
 export interface TrainWorkflowInput {
   forge: Exclude<ReleaseWorkflowForge, "gitlab">;
@@ -59,6 +66,30 @@ export function trainTagFilter(env: string): string {
   return `release-train/${env}/*`;
 }
 
+/**
+ * The cut step's script that reads the train id from the cut's JSON. It exits
+ * 1 when the file is not JSON, or names members cut and no train, so a train
+ * that was cut and recorded is never left unpublished by a skipped job. A
+ * file that is not JSON may still hold the id, and the error names it.
+ */
+export function trainIdScript(file: string): string {
+  const js = [
+    'const t=require("fs").readFileSync(process.argv[1],"utf8");',
+    "let d;",
+    "try{d=JSON.parse(t)}catch(e){",
+    'const m=/"id": *"(train-[^"]+)"/.exec(t);',
+    'console.error("the train cut printed more than its JSON document, so the train id can not be read ("+e.message+")."+(m?" The cut recorded "+m[1]+": dispatch this workflow with train="+m[1]+" to publish it.":" If it recorded a train, dispatch this workflow with train=<id> to publish it."));',
+    "process.exit(1)}",
+    'const id=d.train?.id??"";',
+    'if(!id&&d.released==null&&(d.members??[]).length>0){console.error("the train cut "+d.members.length+" member(s), and its JSON names no train id to publish");process.exit(1)}',
+    "process.stdout.write(id)",
+  ].join("");
+  return `node -e '${js}' "${file}"`;
+}
+
+/** The ref of a train's tag, as an expression: what the publish job checks out for a dispatched `train`. */
+const dispatchedTrainRef = (env: string) => `format('refs/tags/release-train/${env}/{0}', inputs.train)`;
+
 /** GitHub and Forgejo: the train workflow (#5154). */
 export function renderTrainWorkflow(o: TrainWorkflowInput): string {
   const defaults = o.root ? ["    defaults:", "      run:", `        working-directory: ${o.root}`] : [];
@@ -81,6 +112,11 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
           "        required: false",
           "        default: auto",
           "        type: string",
+          "      train:",
+          "        description: a recorded train's id (train-...) to publish instead of cutting one; the gate and cut are skipped, and the publish resumes from its tag",
+          "        required: false",
+          "        default: \"\"",
+          "        type: string",
         ]
       : []),
     "  push:",
@@ -97,7 +133,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
   if (dispatch) {
     lines.push(
       "  gate:",
-      "    if: github.event_name == 'workflow_dispatch'",
+      "    if: github.event_name == 'workflow_dispatch' && inputs.train == ''",
       "    runs-on: ubuntu-latest",
       ...defaults,
       "    outputs:",
@@ -126,20 +162,24 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
         'git config user.name "chant release"',
         'git config user.email "chant-release@localhost"',
         `${o.chant} workspace train cut ${env} --at "$CHANT_RELEASE_COMMIT" --levels "\${CHANT_RELEASE_LEVELS:-auto}" --yes --json > "$RUNNER_TEMP/chant-train.json"`,
-        `echo "train=$(${field("d.train?.id")} "$RUNNER_TEMP/chant-train.json")" >> "$GITHUB_OUTPUT"`,
+        `train="$(${trainIdScript("$RUNNER_TEMP/chant-train.json")})" || exit 1`,
+        'echo "train=$train" >> "$GITHUB_OUTPUT"',
       ]),
     );
   }
-  const publishIf = dispatch ? "    if: ${{ always() && (github.event_name == 'push' || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}" : null;
+  const publishIf = dispatch ? "    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}" : null;
+  // A dispatched `train` names the train itself, and its tag the commit to check out.
+  const dispatchedTrain = "${{ inputs.train || needs.cut.outputs.train }}";
+  const checkoutRef = `\${{ needs.gate.outputs.commit || (inputs.train != '' && ${dispatchedTrainRef(env)}) || github.sha }}`;
   const trainFromRef = `echo "CHANT_RELEASE_TRAIN=\${CHANT_RELEASE_TRAIN:-\${GITHUB_REF_NAME#release-train/${env}/}}" >> "$GITHUB_ENV"`;
   lines.push(
     "  publish:",
     ...(dispatch ? ["    needs: [gate, cut]", publishIf!] : []),
     "    runs-on: ubuntu-latest",
     ...defaults,
-    ...o.extra.githubEnv([...(dispatch ? ["      CHANT_RELEASE_TRAIN: ${{ needs.cut.outputs.train }}"] : []), ...o.forgeToken]),
+    ...o.extra.githubEnv([...(dispatch ? [`      CHANT_RELEASE_TRAIN: ${dispatchedTrain}`] : []), ...o.forgeToken]),
     "    steps:",
-    ...githubSetup(dispatch ? "${{ needs.gate.outputs.commit || github.sha }}" : undefined, o.fullSetup),
+    ...githubSetup(dispatch ? checkoutRef : undefined, o.fullSetup),
     ...installLines,
     ...o.extra.githubSteps,
     ciFetch,
@@ -158,9 +198,9 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       ...(dispatch ? ["    if: ${{ always() && needs.publish.result == 'success' }}"] : []),
       "    runs-on: ubuntu-latest",
       ...defaults,
-      ...(dispatch ? ["    env:", "      CHANT_RELEASE_TRAIN: ${{ needs.cut.outputs.train }}"] : []),
+      ...(dispatch ? ["    env:", `      CHANT_RELEASE_TRAIN: ${dispatchedTrain}`] : []),
       "    steps:",
-      ...githubSetup(dispatch ? "${{ needs.gate.outputs.commit || github.sha }}" : undefined, o.fullSetup),
+      ...githubSetup(dispatch ? checkoutRef : undefined, o.fullSetup),
       run(trainFromRef),
       ...installLines,
       ...o.after.map(run),

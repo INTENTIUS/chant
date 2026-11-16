@@ -12,6 +12,7 @@ import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
 import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
+import { trainIdScript } from "./release-train-workflow";
 import { resolveTagTemplate, type MemberTags } from "../lifecycle/release-tag";
 
 const FIXTURES = join(__dirname, "__fixtures__", "release-workflow");
@@ -1052,5 +1053,46 @@ describe("release.artifacts under a release.tag template (#5151)", () => {
     expect(a).toBeLessThan(runs.indexOf("npm run build"));
     const gl = (parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), tags, artifacts: true, pipeline: { build: "npm run build" } })) as Record<string, { script: string[] }>)["chant-release-publish"]!.script;
     expect(gl.findIndex((l) => l.startsWith("npx chant release artifacts"))).toBeLessThan(gl.indexOf("npm run build"));
+  });
+});
+
+describe("a dispatched train workflow (#5154)", () => {
+  const train = (over: Partial<ReleaseWorkflowInput> = {}) =>
+    parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" }, train: { env: "npm" }, ...over })) as {
+      on: { workflow_dispatch: { inputs: Record<string, { default: string }> } };
+      jobs: Record<string, { if?: string; env?: Record<string, string>; steps: Array<{ id?: string; run?: string; with?: { ref?: string } }> }>;
+    };
+
+  /** The cut step's script that reads the train id, run on `json` as the cut's output. */
+  const readId = (json: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "train-id-"));
+    writeFileSync(join(dir, "chant-train.json"), json);
+    const r = spawnSync("bash", ["-e", "-c", trainIdScript(join(dir, "chant-train.json"))], { encoding: "utf-8" });
+    return { status: r.status, id: r.stdout, error: r.stderr };
+  };
+
+  test("the cut step fails the job when the train id can't be read, so the publish is never skipped silently", () => {
+    const doc = (o: object) => JSON.stringify({ dryRun: false, released: null, members: [{ member: "core" }], ...o }, null, 2);
+    expect(readId(doc({ train: { id: "train-1", trainDigest: "sha256:x" } }))).toMatchObject({ status: 0, id: "train-1" });
+    // The first train's cut job: a check line printed before the document.
+    const stray = readId(`release floors at abc: 287 floors agree\n${doc({ train: { id: "train-2", trainDigest: "sha256:x" } })}`);
+    expect(stray.status).toBe(1);
+    expect(stray.error).toContain("dispatch this workflow with train=train-2");
+    expect(readId(doc({ train: null })).status).toBe(1);
+    // Nothing to release, or a commit already released: no train, and no publish.
+    expect(readId(doc({ members: [], train: null }))).toMatchObject({ status: 0, id: "" });
+    expect(readId(doc({ members: [], released: "release-train/npm/train-0", train: null }))).toMatchObject({ status: 0, id: "" });
+    const cut = train().jobs.cut!.steps.find((s) => s.id === "cut")!.run!;
+    expect(cut).toContain(`train="$(${trainIdScript("$RUNNER_TEMP/chant-train.json")})" || exit 1`);
+  });
+
+  test("a dispatched train id skips the gate and the cut and publishes that train from its tag", () => {
+    const w = train({ pipeline: { trigger: "dispatch", after: ["echo done"] } });
+    expect(w.on.workflow_dispatch.inputs.train!.default).toBe("");
+    expect(w.jobs.gate!.if).toContain("inputs.train == ''");
+    expect(w.jobs.publish!.if).toContain("(github.event_name == 'workflow_dispatch' && inputs.train != '')");
+    expect(w.jobs.publish!.env!.CHANT_RELEASE_TRAIN).toBe("${{ inputs.train || needs.cut.outputs.train }}");
+    expect(w.jobs.publish!.steps[0]!.with!.ref).toBe("${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}");
+    expect(w.jobs["after-release"]!.steps[0]!.with!.ref).toBe(w.jobs.publish!.steps[0]!.with!.ref);
   });
 });

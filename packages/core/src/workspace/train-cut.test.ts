@@ -7,8 +7,9 @@
  * the fake from ../lifecycle/__fixtures__.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cutRelease } from "../lifecycle/release-cut";
 import type { ReleaseArtifact } from "../lifecycle/release-store";
@@ -20,6 +21,7 @@ import { TestRepo } from "./trust/test-repo";
 import { readReleaseTrains } from "./release-train";
 import { cutTrain, highestVersion, npmVersions, parseTrainLevels, planTrainCut, TrainCutError, type MemberCutter } from "./train-cut";
 import { prepareTrain } from "./train-prepare";
+import { runToStderr } from "./train-shell";
 import { publishTrain } from "./train-publish";
 
 const repos: TestRepo[] = [];
@@ -166,7 +168,51 @@ describe("release.train.check", () => {
     await expect(cutTrain({ cwd: x.nested, env: "npm", at: head, registry: npmVersions(x.npm), yes: true, noPush: true, cutter: async () => ({ tag: (cuts++, null) }) })).rejects.toThrow(/release.train.check failed/);
     expect(cuts).toBe(0);
   });
+
+  test("a build that train prepare runs writes its stdout to stderr too", async () => {
+    const { stdout, stderr, result } = await captured(() => runToStderr("echo built; exit 3", { cwd: tmpdir() }));
+    expect(result).toBe(3);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("built");
+  });
 });
+
+describe("release.train.check, printing", () => {
+  let run: { head: string; stdout: string; stderr: string; result: Awaited<ReturnType<typeof cutTrain>> };
+  fixture(async () => {
+    const x = setup();
+    x.r.write("release/chant.config.ts", 'export default { release: { train: { env: "npm", check: ["echo \\"release floors at $CHANT_RELEASE_COMMIT: 287 floors agree\\""] } } };\n');
+    const head = x.r.commit("a check that prints");
+    x.r.git(["tag", `ci/green/${head}`]);
+    run = { head, ...(await captured(() => cutTrain({ cwd: x.nested, env: "npm", at: head, registry: npmVersions(x.npm), yes: true, noPush: true, cutter: cutter(x.r), actor: "alice" }))) };
+    return x;
+  });
+
+  test("a check that prints to stdout leaves --json output one JSON document (the first train's cut job)", () => {
+    const { head, stdout, stderr, result } = run;
+    // What `chant workspace train cut --json` puts on stdout: whatever the cut wrote there, then its document.
+    const doc = JSON.parse(`${stdout}${JSON.stringify({ dryRun: false, ...result }, null, 2)}\n`) as { train: { id: string } | null };
+    expect(doc.train?.id).toMatch(/^train-/);
+    expect(stdout).toBe("");
+    expect(stderr).toContain(`release floors at ${head}: 287 floors agree`);
+  });
+});
+
+/** Runs `f` with what this process writes to stdout and stderr captured, as text. */
+async function captured<T>(f: () => Promise<T>): Promise<{ stdout: string; stderr: string; result: T }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const spy = (into: string[]) => (chunk: string | Uint8Array) => (into.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf-8")), true);
+  const o = vi.spyOn(process.stdout, "write").mockImplementation(spy(out) as typeof process.stdout.write);
+  const e = vi.spyOn(process.stderr, "write").mockImplementation(spy(err) as typeof process.stderr.write);
+  try {
+    const result = await f();
+    return { stdout: out.join(""), stderr: err.join(""), result };
+  } finally {
+    o.mockRestore();
+    e.mockRestore();
+  }
+}
 
 describe("the first train, together", () => {
   const f = fixture(async () => setup({ first: "together" }));

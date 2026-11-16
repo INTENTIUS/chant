@@ -24,7 +24,7 @@
  * `optionalDependencies` that name another such package.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 // @ts-ignore — picomatch has no types declaration
 import picomatch from "picomatch";
@@ -32,6 +32,7 @@ import { resolve } from "node:path";
 import { readDeclaration } from "./declaration";
 import { findTrain, readReleaseTrains, type ReadTrain } from "./release-train";
 import { TrainCutError, trainConfigAt } from "./train-cut";
+import { runToStderr } from "./train-shell";
 import { locateWorkspace } from "./which-chant";
 
 export interface TrainPrepareQuery {
@@ -39,8 +40,8 @@ export interface TrainPrepareQuery {
   env: string;
   /** The train by id or digest; the newest for `env` when absent. */
   train?: string;
-  /** Runs one build command in a package directory and returns its exit code. Default: `sh -c`. */
-  run?: (command: string, cwd: string) => number;
+  /** Runs one build command in a package directory and returns its exit code. Default: `sh -c`, its stdout sent to stderr. */
+  run?: (command: string, cwd: string) => number | Promise<number>;
   say?: (line: string) => void;
 }
 
@@ -59,7 +60,8 @@ interface WorkspacePackage {
   scripts: Record<string, unknown>;
 }
 
-const defaultRun = (command: string, cwd: string): number => spawnSync("sh", ["-c", command], { cwd, stdio: ["ignore", "inherit", "inherit"] }).status ?? 1;
+// A build's stdout goes to stderr: under --json, stdout is the prepare's JSON document alone.
+const defaultRun = (command: string, cwd: string): Promise<number> => runToStderr(command, { cwd });
 
 /** Stamp and build what the train's members cut from this commit need before `train publish` (#5154). */
 export async function prepareTrain(q: TrainPrepareQuery): Promise<TrainPrepareOutcome> {
@@ -160,7 +162,7 @@ export async function prepareTrain(q: TrainPrepareQuery): Promise<TrainPrepareOu
       if (command === null) continue;
       const shown = p.dir.startsWith(`${realpathSync(located.top ?? root)}/`) ? p.dir.slice(realpathSync(located.top ?? root).length + 1) : p.dir;
       say(`build ${name} (${shown}), which ${[...published].filter((x) => dependsOn(packages, x, name)).join(", ")} builds against: ${command}`);
-      const code = (q.run ?? defaultRun)(command, p.dir);
+      const code = await (q.run ?? defaultRun)(command, p.dir);
       if (code !== 0) throw new TrainCutError("train-build-failed", `building ${name} in ${shown} failed (exit ${code}): ${command}`, "Fix the build and run the prepare again in a clean checkout of the train's commit.");
       built.push({ dir: shown, command });
     }

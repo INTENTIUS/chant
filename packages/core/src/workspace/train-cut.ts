@@ -39,6 +39,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { runToStderr } from "./train-shell";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -418,8 +419,8 @@ export interface TrainCutRun extends TrainCutQuery {
   remote?: string;
   actor?: string;
   cutter?: MemberCutter;
-  /** Runs the `release.train.check` lines. Default: `sh -c` each one. */
-  runCheck?: (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }) => number;
+  /** Runs the `release.train.check` lines. Default: `sh -c` each one, its stdout sent to stderr. */
+  runCheck?: (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }) => number | Promise<number>;
   /** A line of progress. */
   say?: (line: string) => void;
   now?: () => Date;
@@ -437,7 +438,8 @@ export interface TrainCutOutcome extends TrainCutPlan {
   pushWarning?: string;
 }
 
-const defaultCheck = (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }): number => spawnSync("sh", ["-c", line], { cwd: o.cwd, env: o.env, stdio: ["ignore", "inherit", "inherit"] }).status ?? 1;
+// A check's stdout goes to stderr: under --json, stdout is the cut's JSON document alone.
+const defaultCheck = (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<number> => runToStderr(line, o);
 
 /** Plan, and with `yes` cut, record, tag and push, a release train (#5154). */
 export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
@@ -455,7 +457,7 @@ export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
     const env = { ...process.env, CHANT_RELEASE_COMMIT: plan.commit, CHANT_TRAIN_ENV: plan.env, CHANT_TRAIN_PLAN: file };
     for (const line of config.check ?? []) {
       say(`check: ${line}`);
-      const code = (q.runCheck ?? defaultCheck)(line, { cwd: root, env });
+      const code = await (q.runCheck ?? defaultCheck)(line, { cwd: root, env });
       if (code !== 0) throw new TrainCutError("train-check-failed", `release.train.check failed (exit ${code}): ${line}`, "Nothing was cut. Fix what the check reports and run the train again.");
     }
   }
