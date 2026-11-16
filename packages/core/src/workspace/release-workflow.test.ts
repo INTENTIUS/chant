@@ -1036,6 +1036,25 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
     expect(gitlab["chant-release-cut"]!.script.some((l) => l.includes(TOOL_PINS.goreleaser.platforms["linux/amd64"]!.url) && l.endsWith("export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"))).toBe(true);
   });
 
+  test("an nfpm entry installs the pinned nfpm, checked by SHA-256, in the job that builds (#5233)", () => {
+    const { cut, publish } = jobs("github", { nfpm: true });
+    const install = cut!.steps.find((s) => s.name?.startsWith("nfpm "))!;
+    expect(install.run).toContain(TOOL_PINS.nfpm.platforms["linux/amd64"]!.sha256);
+    expect(install.run).toContain('CHANT_NFPM=$RUNNER_TEMP/nfpm/nfpm');
+    expect(cut!.steps.indexOf(install)).toBeLessThan(cut!.steps.findIndex((s) => s.run?.includes("release cut")));
+    expect(publish!.steps.some((s) => s.name?.startsWith("nfpm "))).toBe(false);
+    expect(jobs("github", { nfpm: true }, "tag").publish!.steps.some((s) => s.name?.startsWith("nfpm "))).toBe(true);
+    expect(jobs("github", { nfpm: true, pipeline: { trigger: "dispatch", env: { CHANT_NFPM: "/usr/bin/nfpm" } } }).cut!.steps.some((s) => s.name?.startsWith("nfpm "))).toBe(false);
+    const gitlab = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), artifacts: true, nfpm: true, pipeline: { trigger: "dispatch" } })) as Record<string, { script: string[] }>;
+    expect(gitlab["chant-release-cut"]!.script.some((l) => l.includes(TOOL_PINS.nfpm.platforms["linux/amd64"]!.url) && l.endsWith("export CHANT_NFPM=/tmp/nfpm/nfpm"))).toBe(true);
+  });
+
+  test("a helm target on ghcr.io that names no credentials pushes with the job's token (#5233)", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" }, publish: [{ type: "helm", oci: { repository: "ghcr.io/acme/charts" } }] })) as GhDoc;
+    expect(doc.permissions).toMatchObject({ packages: "write" });
+    expect(doc.jobs.publish!.env).toMatchObject({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
+  });
+
   test("without release.artifacts the files render as before", () => {
     const plain = renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { trigger: "dispatch" } });
     expect(plain).not.toContain("chant-release-artifacts");

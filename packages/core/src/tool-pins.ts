@@ -11,6 +11,7 @@
  *
  *   curl -sL https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign_checksums.txt | grep -E 'cosign-linux-(amd64|arm64)$'
  *   gh release download v2.19.0 -R goreleaser/goreleaser -p checksums.txt -O - | grep -E 'goreleaser_Linux_(x86_64|arm64)\.tar\.gz$'
+ *   gh release download v2.48.0 -R goreleaser/nfpm -p checksums.txt -O - | grep -E 'nfpm_2.48.0_Linux_(x86_64|arm64)\.tar\.gz$'
  */
 
 export interface ToolPin {
@@ -37,6 +38,13 @@ const goreleaser = (version: string, sums: Record<string, [string, string]>): To
   platforms: Object.fromEntries(Object.entries(sums).map(([platform, [asset, sha256]]) => [platform, { url: `https://github.com/goreleaser/goreleaser/releases/download/${version}/${asset}`, sha256 }])),
 });
 
+const nfpm = (version: string, sums: Record<string, [string, string]>): ToolPin => ({
+  name: "nfpm",
+  version,
+  archive: true,
+  platforms: Object.fromEntries(Object.entries(sums).map(([platform, [asset, sha256]]) => [platform, { url: `https://github.com/goreleaser/nfpm/releases/download/${version}/${asset}`, sha256 }])),
+});
+
 export const TOOL_PINS = {
   // #5164: Sigstore signing at publish. v3.1.4 was released 2026-10-20; the sums are its cosign_checksums.txt's.
   cosign: cosign("v3.1.4", {
@@ -47,6 +55,11 @@ export const TOOL_PINS = {
   goreleaser: goreleaser("v2.19.0", {
     "linux/amd64": ["goreleaser_Linux_x86_64.tar.gz", "ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b"],
     "linux/arm64": ["goreleaser_Linux_arm64.tar.gz", "ef33741b684c9f62d6a21e7a3c8b051f139ea7b1d301693b67cc819c46226d53"],
+  }),
+  // #5233: release.artifacts entries nfpm packages. v2.48.0 was released 2026-10-12; the sums are its checksums.txt's.
+  nfpm: nfpm("v2.48.0", {
+    "linux/amd64": ["nfpm_2.48.0_Linux_x86_64.tar.gz", "6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750"],
+    "linux/arm64": ["nfpm_2.48.0_Linux_arm64.tar.gz", "a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4"],
   }),
 } as const satisfies Record<string, ToolPin>;
 

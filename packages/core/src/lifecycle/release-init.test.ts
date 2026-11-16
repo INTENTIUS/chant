@@ -125,6 +125,27 @@ describe("detecting the project (#5160)", () => {
     expect(planRelease(detectProject(root), PLAN).goreleaserPatch).toMatchObject({ append: null, manual: expect.stringContaining("CHANT_RELEASE_LABEL") });
   });
 
+  test("Helm charts and an nfpm config: helm and nfpm artifact entries, a helm target on the forge's registry, and the packages on the forge release (#5233)", () => {
+    const root = repo({
+      ".github/workflows/ci.yml": "on: push\n",
+      "go.mod": "module github.com/acme/tool\n\ngo 1.24\n",
+      "deploy/charts/tool/Chart.yaml": "apiVersion: v2\nname: tool\nversion: 0.1.0\n",
+      "deploy/charts/tool/charts/sub/Chart.yaml": "apiVersion: v2\nname: sub\nversion: 0.1.0\n",
+      "nfpm.yaml": "name: tool\nversion: 1.0.0\n",
+      ".gitignore": "dist/\n",
+    }, { origin: "https://github.com/acme/tool.git" });
+    const facts = detectProject(root);
+    expect(facts.charts).toEqual([{ dir: "deploy/charts/tool", name: "tool" }]);
+    expect(facts.nfpm).toEqual({ file: "nfpm.yaml", version: false });
+    const plan = planRelease(facts, PLAN);
+    expect(plan.release.artifacts).toEqual([{ name: "chart", helm: { chart: "deploy/charts/tool" } }, { name: "packages", nfpm: {} }]);
+    expect(plan.release.publish).toEqual([
+      { type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/tool/charts" } },
+      { type: "forge", forge: "github", repo: "acme/tool", assets: ["artifact:packages"], notes: { generate: "forge" } },
+    ]);
+    expect(plan.notes.join("\n")).toContain('version: "${CHANT_RELEASE_VERSION}"');
+  });
+
   test("Dockerfiles become release.images and an oci target on the forge's registry; chant ci's green tags pick the chant gate", () => {
     const root = repo({ Dockerfile: "FROM scratch\n", "worker/Dockerfile": "FROM scratch\n" }, { origin: "https://gitlab.com/acme/Svc.git", tags: ["ci/green/0000000000000000000000000000000000000000"] });
     const plan = planRelease(detectProject(root), PLAN);

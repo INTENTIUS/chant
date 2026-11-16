@@ -24,6 +24,9 @@
  * - `index` (./publish-index.ts): manifests in an index repository such as
  *   krew-index or winget-pkgs, committed or proposed in a pull request,
  *   revealed after every other target. `homebrew` is its tap preset.
+ * - `helm` (./publish-helm.ts): Helm chart archives pushed to an OCI
+ *   registry, and listed in a chart repository's `index.yaml` on a branch of
+ *   a GitHub repository (#5233).
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
@@ -75,6 +78,9 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "index":
         out.push((await import("./publish-index")).indexTarget(d, deps));
+        break;
+      case "helm":
+        out.push((await import("./publish-helm")).helmTarget(d, deps));
         break;
     }
   }
