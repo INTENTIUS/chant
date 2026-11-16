@@ -37,6 +37,8 @@ export { ListerConfigError } from "./credentials";
 export { MutatingCallRefused, READ_OPERATIONS } from "./guard";
 export { OriginRefused } from "./transport";
 export { listedNodeId, parseListedNodeId } from "./ids";
+export { inferK8sComponents, serviceNamesIn, K8S_COMPONENTS_FLOOR } from "./kubernetes-components";
+export type { InferredK8sComponents, K8sBoundary, K8sComponentMember, K8sMemberRole, K8sOutsideName, K8sSharedObject } from "./kubernetes-components";
 
 /** Where and how to reach the scope's substrate. The variant must match `scope.substrate`. */
 export type SubstrateTarget =
