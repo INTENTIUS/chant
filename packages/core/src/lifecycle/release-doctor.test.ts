@@ -134,12 +134,13 @@ describe("npm", () => {
     expect(report.environment.workflow).toBe(".github/workflows/ci.yml");
   });
 
-  test("a package not on the registry fails when nothing here can publish its first version, and warns with a token", async () => {
+  test("a package not on the registry fails, with or without a token, and names the refusal the cut gives", async () => {
     const { fetch } = fakeFetch([(url) => (url.startsWith(`${REGISTRY}/@acme%2fcore`) ? { status: 404, body: { error: "Not found" } } : undefined)]);
     const none = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: {}, releaseWorkflow: WORKFLOW, deps: { fetch, run: fakeRun({}) } });
     expect(statuses(none.targets[0]!.checks)["npm-registry"]).toBe("fail");
     const withToken = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: {}, releaseWorkflow: WORKFLOW, deps: { fetch, run: fakeRun({ whoami: { code: 0, stdout: "alice\n" } }) } });
-    expect(statuses(withToken.targets[0]!.checks)["npm-registry"]).toBe("warn");
+    expect(statuses(withToken.targets[0]!.checks)["npm-registry"]).toBe("fail");
+    expect(withToken.targets[0]!.checks.find((c) => c.check === "npm-registry")!.message).toContain("publish-npm-never-published");
   });
 
   test("a token whose user may write the package can move the dist-tag; read-only fails; stage: false needs no dist-tag", async () => {

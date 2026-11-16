@@ -462,6 +462,24 @@ export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
     }
   }
 
+  // #5230: a member's package npm has never had can't be published by trusted publishing. Refuse before the first member is cut.
+  {
+    const read = q.registry ?? npmVersions();
+    const { loadChantConfig } = await import("../config");
+    const { checkPackagesPublished } = await import("../lifecycle/publish-npm");
+    const { PublishTargetError } = await import("../lifecycle/release-publish");
+    for (const m of plan.members) {
+      if (m.resumed) continue;
+      const dir = resolve(root, m.dir);
+      try {
+        checkPackagesPublished((await loadChantConfig(dir)).config.release?.publish ?? [], dir, (name, registry) => read(name, registry) !== null);
+      } catch (err) {
+        if (err instanceof PublishTargetError) throw new TrainCutError(err.code, `nothing was cut: ${m.member}: ${err.message}`, err.fix);
+        throw err;
+      }
+    }
+  }
+
   const cutter = q.cutter ?? spawnMemberCut;
   const tags: Record<string, string> = {};
   for (const m of plan.members) {

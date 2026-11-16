@@ -103,10 +103,11 @@ The cut, in order:
 1. A commit a `release-train/<env>/*` tag already names is released: it says so and does nothing.
 2. The members are those [`chant release changed`](/chant/cli/release/changed/) lists at the commit, with its dependency closure, in publish order. `--levels` types levels: `auto` (the default: each member's conventional commits and intent files decide), a level for every member (`minor`), `<member>=<level>`, or several separated by spaces or commas (`minor core=major`). A member already cut from this commit, by a run that stopped part way, is taken at its label and is not cut again.
 3. Each member's label is its bumped label, floored past every version it already has: the labels in its ledger, its release tags (as `release.tag` renders them, default `release/<workspace>/<member>/<label>`), the `release.legacyTags` tags, the `version` of each package its `release.version` names at the commit, and every version npm lists for the packages it stamps or publishes (`npm view <name> versions`, at the target's `registry`). A label is never one the registry already holds. A registry that can't answer stops the cut with `train-registry-unreadable`; one that has never heard of a package adds nothing.
-4. `release.train.check` runs.
-5. [`chant release cut <label> --at <commit> --yes`](/chant/cli/release/cut/) runs in each member's directory. Each cut pushes its record and tags the commit locally.
-6. The train is recorded, every member cut here at its new release and every other member at its newest, and `chant/lifecycle` is pushed.
-7. The member tags and `release-train/<env>/<id>` on the commit go to `origin` in one atomic push. A workflow on that tag publishes the train.
+4. Each member the train cuts has its npm packages looked up on the registry, at the target's `registry`. A package that has never been published refuses the train with `publish-npm-never-published` before any member is cut, since npm trusted publishing can't create a package and its first publish would otherwise fail part way through the train. The message names the package. Publish one placeholder version of it by hand (`npm login`, then `npm publish`), add the trusted publisher on npmjs.com under the package's Settings, and cut again. A registry that can't answer refuses with `publish-npm-registry-unreadable`. [`chant release doctor`](/chant/cli/release/doctor/) reports the same package before a cut.
+5. `release.train.check` runs.
+6. [`chant release cut <label> --at <commit> --yes`](/chant/cli/release/cut/) runs in each member's directory. Each cut pushes its record and tags the commit locally.
+7. The train is recorded, every member cut here at its new release and every other member at its newest, and `chant/lifecycle` is pushed.
+8. The member tags and `release-train/<env>/<id>` on the commit go to `origin` in one atomic push. A workflow on that tag publishes the train.
 
 Without `--yes` it prints the members, their labels and why, runs each cut's dry run, and writes nothing. `--no-push` records and tags locally and pushes no tag. `--json` prints the plan, the tags and the train. Under `--json` stdout holds that document and nothing else: what the `release.train.check` lines and the member cuts print goes to stderr.
 
@@ -124,6 +125,8 @@ Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cu
 | `train-env-mismatch` | `<env>` is not the one `release.train.env` names |
 | `train-levels-invalid` | `--levels` has a word that is not a level or `<member>=<level>`, names a member the workspace does not have, or gives per-member levels to a `first: "together"` train |
 | `train-registry-unreadable` | npm could not say which versions a package has |
+| `publish-npm-never-published` | A member's npm target names a package the registry has never published. Nothing was cut |
+| `publish-npm-registry-unreadable` | The registry could not say whether a package of a member's npm target exists. Nothing was cut |
 | `train-check-failed` | A `release.train.check` line failed. Nothing was cut |
 | `train-cut-failed` | A member's cut failed. Run the train again: members already cut from the commit are taken as they are |
 | `train-member-unreleased` | A member the train does not cut has no release to pin |
@@ -156,6 +159,12 @@ Dry run: publish release train train-3c1e… (jcs1-sha256:9f0a…) for npm
     npm (1 package):
       @intentius/chant-lexicon-aws@0.125.1 to the registry npm's config names, dist-tag latest
 ```
+
+### Resuming a train
+
+A train that was cut and recorded and did not publish is finished by dispatching the release workflow with its `train` input, the train's id as `chant workspace train list <env>` prints it (see [release workflow](/chant/cli/release/workflow/)). The gate and the cut are skipped. The publish job checks out the commit `release-train/<env>/<id>` names and runs `train prepare` and `train publish` for that train, and the publish picks up from each member's publish record.
+
+Two things come from different places. The workflow file is the one on the branch the dispatch runs from, the default branch unless you pick another, so a fix to the workflow merged since the cut applies to the resumed run. The chant code a step runs, such as `npx tsx packages/core/src/cli/main.ts`, is the cut commit's. A change to the release tooling merged after the cut does not reach the resumed run, and a step the workflow file now has that the cut commit's chant lacks fails there.
 
 ## Options
 

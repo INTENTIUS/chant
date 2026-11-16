@@ -62,7 +62,7 @@ function setup(opts: { stage?: boolean; extra?: string[]; verify?: Record<string
   return { r, log, npm, nested: join(r.dir, "release") };
 }
 
-const cut = (r: TestRepo, m: string, label: string) => cutRelease({ cwd: join(r.dir, "release", m), compiler, label, actor: "alice", env: {}, now: () => new Date("2026-11-15T10:00:00.000Z") });
+const cut = (r: TestRepo, m: string, label: string) => cutRelease({ cwd: join(r.dir, "release", m), compiler, label, actor: "alice", env: {}, npmPublished: () => true, now: () => new Date("2026-11-15T10:00:00.000Z") });
 
 async function recordTrain(nested: string, pins: Record<string, string> = {}): Promise<ReleaseTrainRecord> {
   const picked = pickTrain(await readMemberReleases(nested), new Map(Object.entries(pins)));

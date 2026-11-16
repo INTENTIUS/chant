@@ -428,9 +428,9 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
     if (packument.status === 404) {
       checks.push({
         check: "npm-registry",
-        status: user ? "warn" : "fail",
-        message: `${name} is not on ${registry} yet. npm makes its first version latest as soon as it stages, and trusted publishing can't publish it, since a trusted publisher is set on a package that exists${user ? `; npm's config here signs in as ${user}, which can publish it` : ""}`,
-        fix: `Publish the first version with a token (npm login, or the npm config the job reads), then add the trusted publisher on ${npmjs ? "npmjs.com under the package's Settings" : "the registry"}.`,
+        status: "fail",
+        message: `${name} is not on ${registry} yet (publish-npm-never-published, which refuses the cut). npm makes its first version latest as soon as it stages, and trusted publishing can't publish it, since a trusted publisher is set on a package that exists${user ? `; npm's config here signs in as ${user}, which can publish it by hand` : ""}`,
+        fix: `Publish one placeholder version by hand (npm login, then npm publish), then add the trusted publisher on ${npmjs ? "npmjs.com under the package's Settings" : "the registry"}.`,
       });
     } else if (!exists) {
       checks.push({ check: "npm-registry", status: "unknown", message: `${registry} answered ${packument.status} for ${name}, so whether it exists can't be told${packument.text ? `: ${short(packument.text)}` : ""}` });
