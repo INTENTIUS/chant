@@ -307,6 +307,8 @@ export interface ParsedArgs {
   crossRoot?: boolean;
   /** `chant workspace train <env> --pin <member>=<label|digest>` (#2554), repeatable: the release a train pins for that member instead of its newest. */
   pins?: string[];
+  /** `chant release stamp <label> --train <id|digest>` (#5155): stamp each workspace dependency's range with the label this train gives its package, under `release.version.ranges: "train"`. */
+  train?: string;
   /**
    * `chant components fan-out --from-affected <file>` (#2420) — read the
    * stack-level change signal from the JSON `chant lifecycle affected --json`

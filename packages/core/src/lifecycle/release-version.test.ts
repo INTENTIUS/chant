@@ -153,3 +153,90 @@ describe("the cut stamps after its clean-tree check and before it builds (#4840)
     expect(called).toBe(false);
   });
 });
+
+describe("ranges of workspace dependencies follow the label (#5155)", () => {
+  const CLI = `{\n  "name": "@acme/cli",\n  "version": "0.4.52",\n  "dependencies": {\n    "@acme/core": "^0.4.0",\n    "@acme/other": "0.1.0",\n    "left-pad": "^1.0.0"\n  },\n  "peerDependencies": {\n    "@acme/core": "*"\n  },\n  "optionalDependencies": {\n    "@acme/sibling": "^0.4.0"\n  },\n  "devDependencies": {\n    "@acme/core": "^0.4.0"\n  }\n}\n`;
+  const CORE = `{\n  "name": "@acme/core",\n  "version": "0.4.52"\n}\n`;
+  const LOCKR = `{\n  "name": "acme",\n  "lockfileVersion": 3,\n  "packages": {\n    "": {\n      "name": "acme"\n    },\n    "packages/cli": {\n      "name": "@acme/cli",\n      "version": "0.4.52",\n      "dependencies": {\n        "@acme/core": "^0.4.0",\n        "left-pad": "^1.0.0"\n      }\n    },\n    "packages/core": {\n      "name": "@acme/core",\n      "version": "0.4.52"\n    }\n  }\n}\n`;
+
+  function two(label: string): TestRepo {
+    const r = new TestRepo(label);
+    repos.push(r);
+    r.write("chant.config.ts", `export default { environments: ["dev"] };\n`);
+    r.write("package-lock.json", LOCKR);
+    r.write("packages/cli/package.json", CLI);
+    r.write("packages/core/package.json", CORE);
+    r.commit("init");
+    return r;
+  }
+  const both = (ranges: ReleaseVersionConfig["ranges"]): ReleaseVersionConfig => ({ packages: ["packages/cli", "packages/core"], ...(ranges ? { ranges } : {}) });
+  const cli = (r: TestRepo) => JSON.parse(readFileSync(join(r.dir, "packages/cli/package.json"), "utf-8"));
+
+  test("without ranges, or with keep, only the version changes", () => {
+    for (const ranges of [undefined, "keep" as const]) {
+      const r = two(`ranges-keep-${ranges ?? "unset"}`);
+      stampReleaseVersion({ cwd: r.dir, config: both(ranges), label: "0.5.0" });
+      expect(readFileSync(join(r.dir, "packages/cli/package.json"), "utf-8")).toBe(CLI.replace("0.4.52", "0.5.0"));
+    }
+  });
+
+  test("exact and caret rewrite dependencies on the packages the release stamps, and nothing else", () => {
+    const exact = two("ranges-exact");
+    stampReleaseVersion({ cwd: exact.dir, config: both("exact"), label: "0.5.0" });
+    expect(cli(exact)).toMatchObject({
+      version: "0.5.0",
+      dependencies: { "@acme/core": "0.5.0", "@acme/other": "0.1.0", "left-pad": "^1.0.0" },
+      peerDependencies: { "@acme/core": "*" },
+      optionalDependencies: { "@acme/sibling": "^0.4.0" },
+      devDependencies: { "@acme/core": "^0.4.0" },
+    });
+    const caret = two("ranges-caret");
+    stampReleaseVersion({ cwd: caret.dir, config: both("caret"), label: "0.5.0" });
+    expect(cli(caret).dependencies["@acme/core"]).toBe("^0.5.0");
+    // The lockfile's entry for the package follows.
+    const lock = JSON.parse(readFileSync(join(caret.dir, "package-lock.json"), "utf-8"));
+    expect(lock.packages["packages/cli"]).toMatchObject({ version: "0.5.0", dependencies: { "@acme/core": "^0.5.0", "left-pad": "^1.0.0" } });
+  });
+
+  test("restore puts the ranges back byte for byte", () => {
+    const r = two("ranges-restore");
+    stampReleaseVersion({ cwd: r.dir, config: both("exact"), label: "0.5.0" }).restore();
+    expect(r.git(["status", "--porcelain"])).toBe("");
+  });
+
+  test("train takes the label the train gives another member's package, caret, and refuses a member with no label", () => {
+    const r = two("ranges-train");
+    const only: ReleaseVersionConfig = { packages: ["packages/cli"], ranges: "train" };
+    stampReleaseVersion({ cwd: r.dir, config: only, label: "0.5.0", train: { "@acme/core": "0.4.60", "@acme/other": "2.0.1", "@acme/sibling": "0.4.9" } });
+    expect(cli(r)).toMatchObject({
+      dependencies: { "@acme/core": "^0.4.60", "@acme/other": "^2.0.1", "left-pad": "^1.0.0" },
+      peerDependencies: { "@acme/core": "*" },
+      optionalDependencies: { "@acme/sibling": "^0.4.9" },
+    });
+    const bare = two("ranges-train-unlabelled");
+    expect(() => stampReleaseVersion({ cwd: bare.dir, config: only, label: "0.5.0", train: { "@acme/core": null } })).toThrow(/pins with no label/);
+    expect(bare.git(["status", "--porcelain"])).toBe("");
+    // With no train, as at a cut, the release's own packages are all it knows.
+    const cut = two("ranges-train-cut");
+    stampReleaseVersion({ cwd: cut.dir, config: both("train"), label: "0.5.0" });
+    expect(cli(cut).dependencies).toEqual({ "@acme/core": "^0.5.0", "@acme/other": "0.1.0", "left-pad": "^1.0.0" });
+  });
+
+  test("the publish takes a tree stamped from a train as the commit's, and no other", () => {
+    const r = two("ranges-publish");
+    const head = r.git(["rev-parse", "HEAD"]).trim();
+    const config: ReleaseVersionConfig = { packages: ["packages/cli"], ranges: "train" };
+    const train = { "@acme/core": "0.4.60" };
+    stampReleaseVersion({ cwd: r.dir, config, label: "0.5.0", train });
+    const status = r.git(["status", "--porcelain"]);
+    expect(stampedChanges({ cwd: r.dir, top: r.dir, commit: head, config, label: "0.5.0", status }).size).toBe(0);
+    expect(stampedChanges({ cwd: r.dir, top: r.dir, commit: head, config, label: "0.5.0", status, trains: [train] }).size).toBe(2);
+    expect(checkCheckoutIsRelease(r.dir, head, "0.5.0", { version: config, label: "0.5.0", trains: [train] })).toBeNull();
+    expect(checkCheckoutIsRelease(r.dir, head, "0.5.0", { version: config, label: "0.5.0", trains: [{ "@acme/core": "0.4.61" }] })?.code).toBe("release-worktree-dirty");
+  });
+
+  test("chant.config.ts takes ranges and refuses another value", () => {
+    expect(ChantConfigSchema.safeParse({ release: { version: { packages: ["."], ranges: "train" } } }).success).toBe(true);
+    expect(ChantConfigSchema.safeParse({ release: { version: { packages: ["."], ranges: "tilde" } } }).success).toBe(false);
+  });
+});

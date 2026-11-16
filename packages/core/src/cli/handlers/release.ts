@@ -226,10 +226,21 @@ export async function runReleaseStamp(ctx: CommandContext): Promise<number> {
   const cwd = resolve(".");
   const config = await releaseVersionOf(cwd);
   if (!config) return fail("release-version-not-declared", "this member's chant.config.ts has no release.version, so there is nothing to stamp", "Name the package directories: release: { version: { packages: [\"packages/cli\"] } }");
-  const { stampReleaseVersion, ReleaseVersionError } = await import("../../lifecycle/release-version");
+  const { stampReleaseVersion, ReleaseVersionError, ownNames } = await import("../../lifecycle/release-version");
+  if (args.train !== undefined && config.ranges !== "train") return fail("release-ranges-not-train", `--train names a train, and this member's release.version.ranges is ${config.ranges ?? "unset"}`, 'Set release.version.ranges to "train", or leave --train out.');
   let files: string[];
   try {
-    files = stampReleaseVersion({ cwd, config, label }).files;
+    let train: import("../../lifecycle/release-version").RangeLabels | undefined;
+    if (args.train !== undefined) {
+      const { trainLabels, TrainLabelsError } = await import("../../workspace/train-range-labels");
+      try {
+        train = await trainLabels(cwd, args.train, ownNames(cwd, config), label);
+      } catch (err) {
+        if (err instanceof TrainLabelsError) return fail(err.code, err.message, err.fix);
+        throw err;
+      }
+    }
+    files = stampReleaseVersion({ cwd, config, label, ...(train ? { train } : {}) }).files;
   } catch (err) {
     if (err instanceof ReleaseVersionError) return fail(err.code, err.message, err.fix);
     throw err;
