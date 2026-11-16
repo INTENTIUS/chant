@@ -130,3 +130,66 @@ describe("an Argo CD cluster Secret on a live read", () => {
     expect(JSON.stringify(out)).not.toContain("s3cr3t-token");
   });
 });
+
+describe("Secret names in a pod spec (chant#5252)", () => {
+  const podSpec = () => ({
+    containers: [
+      {
+        name: "app",
+        env: [{ name: "DB_PASSWORD", valueFrom: { secretKeyRef: { name: "db", key: "password" } } }],
+        envFrom: [{ secretRef: { name: "app-env", optional: true } }],
+      },
+    ],
+    initContainers: [{ name: "init", env: [{ name: "T", valueFrom: { secretKeyRef: { name: "init-token", key: "token" } } }] }],
+    volumes: [
+      { name: "tls", secret: { secretName: "web-tls", items: [{ key: "tls.key", path: "key.pem" }], defaultMode: 256 } },
+      { name: "bundle", projected: { sources: [{ secret: { name: "bundle", items: [{ key: "a", path: "a" }] } }] } },
+    ],
+    imagePullSecrets: [{ name: "regcred" }],
+  });
+  const deployment = { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web", namespace: "app" }, spec: { template: { spec: podSpec() } } };
+  const pod = { apiVersion: "v1", kind: "Pod", metadata: { name: "p", namespace: "app" }, spec: podSpec() };
+  const cron = { apiVersion: "batch/v1", kind: "CronJob", metadata: { name: "c", namespace: "app" }, spec: { jobTemplate: { spec: { template: { spec: podSpec() } } } } };
+
+  const expected = (m: string) => ({
+    containers: [
+      {
+        name: "app",
+        env: [{ name: "DB_PASSWORD", valueFrom: { secretKeyRef: { name: "db", key: m } } }],
+        envFrom: [{ secretRef: { name: "app-env", optional: m } }],
+      },
+    ],
+    initContainers: [{ name: "init", env: [{ name: "T", valueFrom: { secretKeyRef: { name: "init-token", key: m } } }] }],
+    volumes: [
+      { name: "tls", secret: { secretName: "web-tls", items: m, defaultMode: m } },
+      { name: "bundle", projected: { sources: [{ secret: { name: "bundle", items: m } }] } },
+    ],
+    imagePullSecrets: [{ name: "regcred" }],
+  });
+
+  it("keeps the names and masks every other field, in a Pod, a workload's template and a CronJob's", () => {
+    expect((maskKubernetesObject(pod) as { spec: unknown }).spec).toEqual(expected(MASKED));
+    expect((maskKubernetesObject(deployment) as { spec: { template: { spec: unknown } } }).spec.template.spec).toEqual(expected(MASKED));
+    const c = maskKubernetesObject(cron) as { spec: { jobTemplate: { spec: { template: { spec: unknown } } } } };
+    expect(c.spec.jobTemplate.spec.template.spec).toEqual(expected(MASKED));
+  });
+
+  it("is stable on a second pass, and the deep observation's pass agrees on both sides", () => {
+    const once = maskKubernetesObject(deployment);
+    expect(maskValue(once)).toEqual(once);
+    const live = normalizeDeepProperties(once, { entityType: "K8s::Apps::Deployment", side: "live" }) as { spec: { template: { spec: unknown } } };
+    const declared = normalizeDeepProperties(deployment, { entityType: "K8s::Apps::Deployment", side: "declared" }) as { spec: { template: { spec: unknown } } };
+    expect(declared.spec.template.spec).toEqual(expected("[REDACTED]"));
+    const asTyped = (v: unknown): unknown => JSON.parse(JSON.stringify(v).replaceAll(MASKED, "[REDACTED]"));
+    expect(asTyped(live.spec.template.spec)).toEqual(declared.spec.template.spec);
+  });
+
+  it("masks the same keys outside a pod spec, and a Secret's payload, as before", () => {
+    const out = maskKubernetesObject({ kind: "ConfigMap", metadata: { name: "x" }, data: { a: "b" }, spec: { secret: { secretName: "n" }, secretKeyRef: { name: "db", key: "k" } } }) as { spec: Record<string, unknown> };
+    expect(out.spec.secret).toBe(MASKED);
+    expect(out.spec.secretKeyRef).toBe(MASKED);
+    const secret = maskKubernetesObject({ kind: "Secret", metadata: { name: "web-tls" }, data: { "tls.key": "c2VjcmV0" } }) as { data: unknown };
+    expect(secret.data).toEqual({ "tls.key": MASKED });
+    expect(JSON.stringify(maskKubernetesObject(deployment))).not.toContain("tls.key");
+  });
+});

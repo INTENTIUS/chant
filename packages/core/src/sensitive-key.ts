@@ -70,3 +70,53 @@ export function isReferenceField(key: string, value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0 && value.every(isPointer);
   return isPointer(value);
 }
+
+/**
+ * Where a Kubernetes pod spec names a Secret (chant#5252), as an index-erased
+ * pattern: a Pod's `spec`, a workload's `spec.template.spec`, or a CronJob's
+ * `spec.jobTemplate.spec.template.spec`, then one of the four places that
+ * name a Secret. Each maps to the field that holds the name.
+ */
+const POD_SPEC = String.raw`^spec\.(?:(?:jobTemplate\.spec\.)?template\.spec\.)?`;
+const CONTAINERS = String.raw`(?:initContainers|containers|ephemeralContainers)\[\]\.`;
+const SECRET_NAME_HOLDERS: ReadonlyArray<{ re: RegExp; field: string; list?: true }> = [
+  { re: new RegExp(`${POD_SPEC}volumes\\[\\]\\.secret$`), field: "secretName" },
+  { re: new RegExp(`${POD_SPEC}volumes\\[\\]\\.projected\\.sources\\[\\]\\.secret$`), field: "name" },
+  { re: new RegExp(`${POD_SPEC}${CONTAINERS}env\\[\\]\\.valueFrom\\.secretKeyRef$`), field: "name" },
+  { re: new RegExp(`${POD_SPEC}${CONTAINERS}envFrom\\[\\]\\.secretRef$`), field: "name" },
+  { re: new RegExp(`${POD_SPEC}imagePullSecrets$`), field: "name", list: true },
+];
+
+function nameView(value: unknown, field: string, masked: string): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const obj = value as Record<string, unknown>;
+  const name = obj[field];
+  if (typeof name !== "string" || name === "" || name === "<masked>" || name === "[REDACTED]") return undefined;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj)) out[k] = k === field ? name : masked;
+  return out;
+}
+
+/**
+ * The readable view of a Secret reference in a pod spec (chant#5252), or
+ * undefined when `pattern` is not one or `value` names no Secret. The name
+ * stays (`volumes[].secret.secretName`, `secretKeyRef.name`,
+ * `envFrom[].secretRef.name`, `imagePullSecrets[].name`) and every other
+ * field becomes `masked`, so a Secret's key names and options stay hidden
+ * as before. Both masking passes call it (the lister's and the deep
+ * observation's), on the declared and the live side alike, so the two sides
+ * still compare equal. A value that is already `masked` is not a view and
+ * gives undefined.
+ */
+export function podSecretNameView(pattern: string, value: unknown, masked: string): unknown {
+  for (const h of SECRET_NAME_HOLDERS) {
+    if (!h.re.test(pattern)) continue;
+    if (h.list) {
+      if (!Array.isArray(value) || value.length === 0) return undefined;
+      const views = value.map((v) => nameView(v, h.field, masked));
+      return views.every((v) => v !== undefined) ? views : undefined;
+    }
+    return nameView(value, h.field, masked);
+  }
+  return undefined;
+}

@@ -45,7 +45,7 @@
 
 import type { UnobservedEntity } from "./observation";
 import { isHeldElsewhere, isNormalizedHeldElsewhere, normalizeHeldElsewhere } from "./held-elsewhere";
-import { isReferenceField, isSensitiveKey } from "./sensitive-key";
+import { isReferenceField, isSensitiveKey, podSecretNameView } from "./sensitive-key";
 
 /**
  * A live property tree for one declared entity, already normalized by the
@@ -494,7 +494,12 @@ export function normalizeDeepProperties(
     // very identity that makes it a marker rather than authored data.
     if (isHeldElsewhere(value)) return normalizeHeldElsewhere(value);
 
-    if (isSensitiveKey(key) && !isReferenceField(key, value)) return MASKED;
+    if (isSensitiveKey(key)) {
+      // A pod spec's Secret reference keeps its name (chant#5252).
+      const view = podSecretNameView(pattern, value, MASKED);
+      if (view !== undefined) return view;
+      if (!isReferenceField(key, value)) return MASKED;
+    }
     // The lexicon's structural mask — same collapse, path-shaped rather than
     // key-named (a k8s Secret's `data.*` no matter what the key is called).
     if (hooks?.mask?.(nodeOf(path, pattern, key, value))) return MASKED;

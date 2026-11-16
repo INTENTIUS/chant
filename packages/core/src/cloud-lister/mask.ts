@@ -7,6 +7,10 @@
  * one list chant's thin and deep observation paths share. behold carried a
  * copy while the lister lived there; in chant it is the same list.
  *
+ * A Kubernetes pod spec's Secret references keep the Secret's name and mask
+ * every other field (chant#5252, `podSecretNameView` in ../sensitive-key.ts),
+ * so a live read can tell which Secret a workload mounts.
+ *
  * Beyond key names, two things are masked whole because their values are
  * secrets whatever their keys are called:
  *  - a Kubernetes Secret's `data` and `stringData`, and its
@@ -15,7 +19,7 @@
  *  - any tag or label whose key matches the patterns.
  */
 
-import { isReferenceField, isSensitiveKey, SENSITIVE_KEY_PATTERNS } from "../sensitive-key";
+import { isReferenceField, isSensitiveKey, podSecretNameView, SENSITIVE_KEY_PATTERNS } from "../sensitive-key";
 
 export { isSensitiveKey, SENSITIVE_KEY_PATTERNS };
 
@@ -27,19 +31,23 @@ export const MASKED = "<masked>";
  * {@link MASKED}. Arrays of `{Key, Value}` / `{key, value}` pairs (AWS tags,
  * some ARM shapes) are masked by the pair's key as well.
  */
-export function maskValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((v) => maskValue(v));
+export function maskValue(value: unknown, pattern = ""): unknown {
+  if (Array.isArray(value)) return value.map((v) => maskValue(v, `${pattern}[]`));
   if (value === null || typeof value !== "object") return value;
   const obj = value as Record<string, unknown>;
   const pairKey = typeof obj.Key === "string" ? obj.Key : typeof obj.key === "string" ? obj.key : undefined;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (isSensitiveKey(k) && !isReferenceField(k, v)) {
+    const at = pattern ? `${pattern}.${k}` : k;
+    const view = isSensitiveKey(k) ? podSecretNameView(at, v, MASKED) : undefined;
+    if (view !== undefined) {
+      out[k] = view;
+    } else if (isSensitiveKey(k) && !isReferenceField(k, v)) {
       out[k] = MASKED;
     } else if (pairKey !== undefined && isSensitiveKey(pairKey) && (k === "Value" || k === "value")) {
       out[k] = MASKED;
     } else {
-      out[k] = maskValue(v);
+      out[k] = maskValue(v, at);
     }
   }
   return out;
