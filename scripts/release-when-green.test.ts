@@ -19,7 +19,7 @@ let state: string;
 let sha: string;
 
 const git = (cwd: string, ...args: string[]) => {
-  const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
+  const r = spawnSync("git", ["-c", "user.name=T", "-c", "user.email=t@chant.dev", ...args], { cwd, encoding: "utf-8" });
   if (r.status !== 0) throw new Error(r.stderr);
   return r.stdout.trim();
 };

@@ -79,7 +79,7 @@ beforeEach(() => {
     mkdirSync(join(dir, "scripts"), { recursive: true });
     copyFileSync(join(import.meta.dirname, f), join(dir, "scripts", f));
   }
-  write(".gitignore", ".release/\nbin/\n.log\nchant-release-pack.*\n");
+  write(".gitignore", ".release/\nbin/\n.log\nchant-release-pack.*\ntmp.*\n");
   write(
     "chant.workspace.json",
     JSON.stringify({
