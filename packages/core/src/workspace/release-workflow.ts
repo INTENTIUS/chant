@@ -1198,6 +1198,17 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const node = projectFiles.includes("package.json");
   const { readerVersion } = await import("./declaration");
   let text: string;
+  // #5183: an artifact's builtBy names a job of release.workflow.builds, so a workflow without it is refused here, not at the cut.
+  if ((release?.artifacts?.length ?? 0) > 0) {
+    const { checkReleaseArtifacts, ReleaseArtifactError } = await import("../lifecycle/release-artifacts");
+    try {
+      checkReleaseArtifacts(release!.artifacts!, { builds: release?.workflow?.builds ?? [] });
+    } catch (err) {
+      if (!(err instanceof ReleaseArtifactError)) throw err;
+      console.error(formatError({ message: `${err.message} [${err.code}]`, hint: err.fix ?? "Fix release.artifacts in chant.config.ts." }));
+      return 1;
+    }
+  }
   try {
   text = renderReleaseWorkflow({
     forge,

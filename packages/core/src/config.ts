@@ -148,8 +148,10 @@ export const ChantConfigSchema = z.object({
           z
             .object({
               name: z.string().min(1),
-              build: z.string().min(1),
-              outputs: z.array(z.string().min(1)).min(1),
+              // #5183: no build command records the files something else built, such as a release.workflow.builds job.
+              build: z.string().min(1).optional(),
+              builtBy: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+              outputs: z.array(z.string().min(1)).min(1).optional(),
               platforms: z.array(z.string().min(1)).min(1).optional(),
               archive: z
                 .union([
@@ -509,7 +511,8 @@ export interface ChantConfig {
     /**
      * Files the cut builds once (#5151): a command's outputs, per platform
      * and packed into archives when asked, what goreleaser writes in snapshot
-     * mode, and checksums files. The release records each file's digest, and
+     * mode, checksums files, and (#5183) files a build job on another runner
+     * wrote before the cut. The release records each file's digest, and
      * a publish target refuses a file that differs. See
      * ./lifecycle/release-artifacts.ts.
      */

@@ -15,6 +15,7 @@ import {
   checkReleaseArtifacts,
   copyArtifactFiles,
   expandOutput,
+  isPrebuilt,
   releaseArtifactFiles,
   ReleaseArtifactError,
   type ReleaseArtifactDeclaration,
@@ -204,6 +205,143 @@ describe("files the cut builds (#5151)", () => {
     writeFileSync(join(next, files[0]!.path), "tampered");
     expect(artifactFileProblems(next, files)).toEqual([expect.objectContaining({ path: files[0]!.path, problem: "digest", recorded: files[0]!.digest })]);
     expect(refusal(() => copyArtifactFiles([{ path: "dist/none" }], stage, next)).code).toBe("release-artifact-missing");
+  });
+});
+
+describe("files built before the cut, on other runners (#5183)", () => {
+  const JOBS = [
+    { name: "linux-arm64", outputs: ["dist/linux_arm64/tool"] },
+    { name: "darwin-arm64", outputs: ["dist/darwin_arm64/tool"] },
+  ];
+  /** What a build job's archive leaves in the checkout once the cut job unpacks it. */
+  const unpack = (cwd: string, files: Record<string, string>): void => {
+    for (const [path, data] of Object.entries(files)) {
+      mkdirSync(dirname(join(cwd, path)), { recursive: true });
+      writeFileSync(join(cwd, path), data, { mode: 0o755 });
+    }
+  };
+  const noRun = () => {
+    throw new Error("the cut ran a command for an entry with no build");
+  };
+
+  test("an entry with no build, or with builtBy, is checked", () => {
+    expect(() => checkReleaseArtifacts([{ name: "tool", outputs: ["dist/tool"] }])).not.toThrow();
+    expect(() => checkReleaseArtifacts([{ name: "tool", builtBy: ["linux-arm64", "darwin-arm64"] }], { builds: JOBS })).not.toThrow();
+    expect(isPrebuilt({ name: "tool", outputs: ["dist/tool"] })).toBe(true);
+    expect(isPrebuilt({ name: "tool", build: "make", outputs: ["dist/tool"] })).toBe(false);
+    const unknown = refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "windows" }], { builds: JOBS }));
+    expect(unknown.code).toBe("release-artifact-invalid");
+    expect(unknown.message).toMatch(/builtBy names "windows", which is not a release.workflow.builds job \(they are linux-arm64, darwin-arm64\)/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "linux-arm64" }])).message).toMatch(/not a release.workflow.builds job/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool", build: "make", builtBy: "linux-arm64", outputs: ["a"] } as ReleaseArtifactDeclaration], { builds: JOBS })).message).toMatch(/both a build command and builtBy/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "linux-arm64", platforms: ["linux/arm64"] }], { builds: JOBS })).message).toMatch(/platforms and no outputs/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool" } as ReleaseArtifactDeclaration])).message).toMatch(/names none of outputs, goreleaser and checksums/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool", builtBy: "x" }], { builds: [{ name: "x", outputs: ["dist/[ab]"] }] })).message).toMatch(/\[ \] glob/);
+    expect(refusal(() => checkReleaseArtifacts([{ name: "tool", outputs: ["../tool"] }])).code).toBe("release-artifact-outside");
+  });
+
+  test("the cut records the files per platform as they are, runs nothing, and archives and checksums cover them", () => {
+    const cwd = scratch();
+    unpack(cwd, { "dist/linux_arm64/tool": "linux built on arm", "dist/darwin_arm64/tool": "darwin built on a mac" });
+    const raw = buildReleaseArtifacts({
+      artifacts: [{ name: "tool", outputs: ["dist/{os}_{arch}/tool{ext}"], platforms: ["linux/arm64", "darwin/arm64"] }],
+      cwd,
+      sourceDateEpoch: EPOCH,
+      label: "v2.0.0",
+      run: noRun,
+    });
+    expect(raw.map((a) => [a.component, a.path])).toEqual([
+      ["tool", "dist/linux_arm64/tool"],
+      ["tool", "dist/darwin_arm64/tool"],
+    ]);
+    expect(readFileSync(join(cwd, "dist/linux_arm64/tool"), "utf-8")).toBe("linux built on arm");
+    expect(artifactFileProblems(cwd, raw)).toEqual([]);
+
+    const packed = buildReleaseArtifacts({
+      artifacts: [{ name: "tool", outputs: ["dist/{os}_{arch}/tool"], platforms: ["linux/arm64", "darwin/arm64"], archive: true }, { name: "sums", checksums: "dist/SHA256SUMS", of: ["tool"] }],
+      cwd,
+      sourceDateEpoch: EPOCH,
+      label: "v2.0.0",
+      run: noRun,
+    });
+    expect(packed.map((a) => a.path)).toEqual(["dist/tool_linux_arm64.tar.gz", "dist/tool_darwin_arm64.tar.gz", "dist/SHA256SUMS"]);
+    expect(execFileSync("tar", ["-xzOf", join(cwd, "dist/tool_darwin_arm64.tar.gz"), "tool"], { encoding: "utf-8" })).toBe("darwin built on a mac");
+    expect(readFileSync(join(cwd, "dist/SHA256SUMS"), "utf-8").split("\n").filter(Boolean).map((l) => l.split("  ")[1])).toEqual(["tool_darwin_arm64.tar.gz", "tool_linux_arm64.tar.gz"]);
+  });
+
+  test("builtBy takes the build jobs' outputs, and a file missing from them stops the cut", () => {
+    const cwd = scratch();
+    unpack(cwd, { "dist/linux_arm64/tool": "linux" });
+    const err = refusal(() => buildReleaseArtifacts({ artifacts: [{ name: "tool", builtBy: ["linux-arm64", "darwin-arm64"] }], builds: JOBS, cwd, sourceDateEpoch: EPOCH, label: "v1", run: noRun }));
+    expect(err.code).toBe("release-artifact-not-built");
+    expect(err.message).toBe('artifact "tool" has no dist/darwin_arm64/tool: the entry has no build command, so the file must be there before the cut, written by the build jobs linux-arm64, darwin-arm64');
+    unpack(cwd, { "dist/darwin_arm64/tool": "darwin" });
+    const files = buildReleaseArtifacts({ artifacts: [{ name: "tool", builtBy: ["linux-arm64", "darwin-arm64"] }], builds: JOBS, cwd, sourceDateEpoch: EPOCH, label: "v1", run: noRun });
+    expect(files.map((f) => f.path)).toEqual(["dist/linux_arm64/tool", "dist/darwin_arm64/tool"]);
+
+    const perPlatform = refusal(() => buildReleaseArtifacts({ artifacts: [{ name: "w", outputs: ["dist/{os}_{arch}/tool{ext}"], platforms: ["windows/amd64"] }], cwd, sourceDateEpoch: EPOCH, label: "v1", run: noRun }));
+    expect(perPlatform.code).toBe("release-artifact-not-built");
+    expect(perPlatform.message).toMatch(/^artifact "w" for windows\/amd64 has no dist\/windows_amd64\/tool\.exe/);
+  });
+
+  test("under --at the files are read from the checkout the cut runs in and copied to the commit's", () => {
+    const here = scratch();
+    const at = scratch();
+    unpack(here, { "dist/linux_arm64/tool": "runner bytes" });
+    const files = buildReleaseArtifacts({
+      artifacts: [{ name: "tool", outputs: ["dist/*/tool"], archive: { name: "tool" } }],
+      cwd: at,
+      prebuiltFrom: here,
+      sourceDateEpoch: EPOCH,
+      label: "v1",
+      run: noRun,
+    });
+    expect(files.map((f) => f.path)).toEqual(["dist/tool.tar.gz"]);
+    expect(readFileSync(join(at, "dist/linux_arm64/tool"), "utf-8")).toBe("runner bytes");
+    expect(execFileSync("tar", ["-xzOf", join(at, "dist/tool.tar.gz"), "tool"], { encoding: "utf-8" })).toBe("runner bytes");
+  });
+
+  test("the release records them, and the publish side checks them as any other file", async () => {
+    const r = new TestRepo("release-artifacts-prebuilt");
+    repos.push(r);
+    r.write("chant.config.ts", "export default { release: { green: \"none\" } };\n");
+    r.write(".gitignore", "dist/\n");
+    r.commit("init");
+    unpack(r.dir, { "dist/linux_arm64/tool": "linux", "dist/darwin_arm64/tool": "darwin" });
+    const decls: ReleaseArtifactDeclaration[] = [{ name: "tool", builtBy: ["linux-arm64", "darwin-arm64"] }];
+    const noCompile: TargetCompiler = {
+      async compile(env) {
+        throw new Error(`compiled ${env}`);
+      },
+      async buildArtifacts() {
+        throw new Error("built");
+      },
+    };
+    const result = await cutRelease({
+      cwd: r.dir,
+      compiler: noCompile,
+      label: "v1.0.0",
+      actor: "alice",
+      env: {},
+      green: "none",
+      publishes: [{ target: "forge:0123456789abcdef", kind: "forge", destination: "github acme/tool" }],
+      buildArtifacts: () => buildReleaseArtifacts({ artifacts: decls, builds: JOBS, cwd: r.dir, sourceDateEpoch: EPOCH, label: "v1.0.0", run: noRun }),
+    });
+    const release = result.release as Release;
+    const files = releaseArtifactFiles(release, ["tool"]);
+    expect(expandArtifactAssets(release, ["artifact:tool"])).toEqual(["dist/darwin_arm64/tool", "dist/linux_arm64/tool"]);
+    // --from: the staged files are put in place and checked against the record.
+    const stage = scratch();
+    copyArtifactFiles(files, r.dir, stage);
+    const publishJob = scratch();
+    copyArtifactFiles(files, stage, publishJob);
+    expect(artifactFileProblems(publishJob, files)).toEqual([]);
+    // A file another runner changed after the cut is refused.
+    writeFileSync(join(publishJob, "dist/linux_arm64/tool"), "swapped");
+    expect(artifactFileProblems(publishJob, files)).toEqual([expect.objectContaining({ path: "dist/linux_arm64/tool", problem: "digest" })]);
+    const recorded = files.find((f) => f.path === "dist/linux_arm64/tool")!;
+    const swapped = artifactFileProblems(publishJob, files)[0]!.digest!;
+    expect(() => checkReleaseDigest(release, "asset", publishJob, recorded.path, [swapped])).toThrow(PublishTargetError);
   });
 });
 

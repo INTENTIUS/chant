@@ -15,6 +15,15 @@
  *   the outputs. chant writes the archives itself, every entry dated
  *   `SOURCE_DATE_EPOCH` and owned by root, so the same files pack to the
  *   same bytes.
+ * - `{ name, outputs, platforms?, archive?, builtBy? }`, with no `build`
+ *   (#5183): files something else built, such as a `release.workflow.builds`
+ *   job on another runner, whose archive the release workflow unpacks into
+ *   the checkout before the cut. The cut runs nothing and records the files
+ *   at `outputs`, per platform, packing them as above; one that is not there
+ *   stops it (`release-artifact-not-built`). `builtBy` names the build jobs
+ *   that write them, and `outputs` defaults to those jobs' outputs. Under
+ *   `--at` the cut reads them from the checkout it runs in, which must be at
+ *   the commit it cuts.
  * - `{ name, goreleaser: { config?, dist?, types? } }`: the cut runs
  *   `goreleaser release --snapshot --clean --skip=publish`, so goreleaser
  *   builds and publishes nothing, checks that `<dist>/metadata.json` gives
@@ -81,6 +90,29 @@ export interface ReleaseArtifactBuild {
   archive?: ReleaseArchiveSpec | true;
 }
 
+/**
+ * Files built before the cut, by something other than the cut (#5183): a
+ * `release.workflow.builds` job on another runner, or a step before it. The
+ * cut records the files at `outputs` as they are.
+ */
+export interface ReleaseArtifactPrebuilt {
+  name: string;
+  /** The files, relative to the member; the same placeholders and globs as a build's. Default: the outputs of the `builtBy` jobs, with no platforms. */
+  outputs?: string[];
+  /** The `release.workflow.builds` jobs that write the files, by name. */
+  builtBy?: string | string[];
+  /** The platforms, `os/arch`, the outputs are filled in for, once each. */
+  platforms?: string[];
+  /** Pack each platform's outputs into an archive, recorded in their place. */
+  archive?: ReleaseArchiveSpec | true;
+}
+
+/** A `release.workflow.builds` job, as far as `builtBy` reads it. */
+export interface ReleaseBuildJobRef {
+  name: string;
+  outputs: readonly string[];
+}
+
 /** Files goreleaser builds, in snapshot mode. */
 export interface ReleaseArtifactGoreleaser {
   name: string;
@@ -103,7 +135,7 @@ export interface ReleaseArtifactChecksums {
   of?: string[];
 }
 
-export type ReleaseArtifactDeclaration = ReleaseArtifactBuild | ReleaseArtifactGoreleaser | ReleaseArtifactChecksums;
+export type ReleaseArtifactDeclaration = ReleaseArtifactBuild | ReleaseArtifactPrebuilt | ReleaseArtifactGoreleaser | ReleaseArtifactChecksums;
 
 /**
  * The `artifacts.json` types recorded from goreleaser by default: what its
@@ -131,9 +163,27 @@ const OUTPUT_KEYS = new Set(["os", "arch", "ext", "label", "version"]);
 const ARCHIVE_KEYS = new Set(["name", "os", "arch", "label", "version"]);
 
 const outside = (p: string): boolean => isAbsolute(p) || p.split(/[\\/]/).includes("..");
-const isBuild = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactBuild => "build" in a && a.build !== undefined;
 const isGoreleaser = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactGoreleaser => "goreleaser" in a && a.goreleaser !== undefined;
 const isChecksums = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactChecksums => "checksums" in a && a.checksums !== undefined;
+/** An entry of files at `outputs`: built by its command, or (#5183) with no command, built before the cut. */
+const isFiles = (a: ReleaseArtifactDeclaration): a is ReleaseArtifactBuild | ReleaseArtifactPrebuilt =>
+  ("build" in a && a.build !== undefined) || ("outputs" in a && a.outputs !== undefined) || ("builtBy" in a && a.builtBy !== undefined);
+const commandOf = (a: ReleaseArtifactBuild | ReleaseArtifactPrebuilt): string | undefined => ("build" in a ? a.build : undefined);
+const builtByOf = (a: ReleaseArtifactBuild | ReleaseArtifactPrebuilt): string[] => {
+  const b = "builtBy" in a ? a.builtBy : undefined;
+  return b === undefined ? [] : Array.isArray(b) ? b : [b];
+};
+
+/** Whether the cut records an entry's files as something else built them, with no command of its own (#5183). */
+export function isPrebuilt(a: ReleaseArtifactDeclaration): a is ReleaseArtifactPrebuilt {
+  return isFiles(a) && commandOf(a) === undefined;
+}
+
+/** An entry's outputs: its own, or the outputs of the build jobs `builtBy` names. */
+function outputsOf(a: ReleaseArtifactBuild | ReleaseArtifactPrebuilt, builds: readonly ReleaseBuildJobRef[] | undefined): string[] {
+  if (a.outputs !== undefined) return a.outputs;
+  return builtByOf(a).flatMap((n) => builds?.find((b) => b.name === n)?.outputs ?? []);
+}
 
 /** The label from its first digit, as a formula's and goreleaser's version reads it: `v1.4.0` is `1.4.0`. */
 export function labelVersion(label: string | null): string | null {
@@ -151,7 +201,7 @@ function placeholders(text: string): string[] {
  * platforms of the form os/arch, placeholders chant fills, and a checksums
  * entry's `of` naming entries before it.
  */
-export function checkReleaseArtifacts(artifacts: readonly ReleaseArtifactDeclaration[], o: { imageNames?: readonly string[] } = {}): void {
+export function checkReleaseArtifacts(artifacts: readonly ReleaseArtifactDeclaration[], o: { imageNames?: readonly string[]; builds?: readonly ReleaseBuildJobRef[] } = {}): void {
   const seen = new Set<string>();
   const where = (a: { name: string }) => `release.artifacts "${a.name}"`;
   const inside = (a: { name: string }, what: string, p: string | undefined) => {
@@ -161,14 +211,29 @@ export function checkReleaseArtifacts(artifacts: readonly ReleaseArtifactDeclara
     if (!NAME.test(a.name)) throw new ReleaseArtifactError("release-artifact-name-invalid", `release.artifacts: "${a.name}" is not a name of letters, digits, ".", "_" and "-"`);
     if (seen.has(a.name)) throw new ReleaseArtifactError("release-artifact-name-taken", `release.artifacts names "${a.name}" twice`);
     if (o.imageNames?.includes(a.name)) throw new ReleaseArtifactError("release-artifact-name-taken", `release.artifacts names "${a.name}", which release.images names too, and a release records each name once`, "Rename one of them.");
-    const kinds = [isBuild(a), isGoreleaser(a), isChecksums(a)].filter(Boolean).length;
-    if (kinds !== 1) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names ${kinds === 0 ? "none" : "more than one"} of build, goreleaser and checksums; name one`);
-    if (isBuild(a)) {
-      if (a.outputs.length === 0) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names no outputs`);
+    const kinds = [isFiles(a), isGoreleaser(a), isChecksums(a)].filter(Boolean).length;
+    if (kinds !== 1) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names ${kinds === 0 ? "none" : "more than one"} of outputs, goreleaser and checksums; name one`);
+    if (isFiles(a)) {
+      const jobs = builtByOf(a);
+      if (jobs.length > 0 && commandOf(a) !== undefined) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names both a build command and builtBy; the cut runs the command, or records what the build jobs wrote`, "Leave out build to record the files the build jobs hand to the cut.");
+      for (const j of jobs) {
+        if (!o.builds?.some((b) => b.name === j)) {
+          const known = (o.builds ?? []).map((b) => b.name);
+          throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: builtBy names "${j}", which is not a release.workflow.builds job${known.length > 0 ? ` (they are ${known.join(", ")})` : ""}`, "Name a job of release.workflow.builds, or leave out builtBy and name the files in outputs.");
+        }
+      }
+      if (a.outputs === undefined && jobs.length === 0) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names no outputs`);
+      if (a.outputs === undefined && a.platforms !== undefined) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} has platforms and no outputs; a build job's outputs name no platform`, "Name each platform's files in outputs with {os}, {arch} and {ext}.");
+      const outputs = outputsOf(a, o.builds);
+      if (outputs.length === 0) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)} names no outputs`);
+      if (a.outputs === undefined) {
+        const bracket = outputs.find((p) => /[[\]]/.test(p));
+        if (bracket !== undefined) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: the build job's output ${bracket} uses a [ ] glob, which an artifact's outputs do not`, "Name the files in outputs, with * and ?.");
+      }
       if (a.platforms !== undefined && (a.platforms.length === 0 || !a.platforms.every((p) => PLATFORM.test(p)) || new Set(a.platforms).size !== a.platforms.length)) {
         throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: platforms is a list of distinct os/arch such as linux/amd64, not ${JSON.stringify(a.platforms)}`);
       }
-      for (const out of a.outputs) {
+      for (const out of outputs) {
         inside(a, "the output", out);
         const unknown = placeholders(out).filter((k) => !OUTPUT_KEYS.has(k));
         if (unknown.length > 0) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: the output ${out} names {${unknown[0]}}; an output may hold {os}, {arch}, {ext}, {label} and {version}`);
@@ -252,6 +317,15 @@ export interface BuildArtifactsInput {
   env?: NodeJS.ProcessEnv;
   /** Image names, which an entry may not take. */
   imageNames?: readonly string[];
+  /** `release.workflow.builds`, which `builtBy` names (#5183). */
+  builds?: readonly ReleaseBuildJobRef[];
+  /**
+   * Where the files of an entry with no command sit (#5183), when not in
+   * `cwd`: the member's directory in the checkout the cut runs from, when it
+   * builds in a checkout of another commit (`--at`). They are copied to the
+   * same paths in `cwd`.
+   */
+  prebuiltFrom?: string;
   /** Run one command; the default runs it through the shell with its output on stderr. */
   run?: (command: string, o: { cwd: string; env: NodeJS.ProcessEnv }) => number | null;
 }
@@ -273,7 +347,7 @@ function digestOf(abs: string): string {
  * cut.
  */
 export function buildReleaseArtifacts(i: BuildArtifactsInput): ReleaseArtifact[] {
-  checkReleaseArtifacts(i.artifacts, { ...(i.imageNames ? { imageNames: i.imageNames } : {}) });
+  checkReleaseArtifacts(i.artifacts, { ...(i.imageNames ? { imageNames: i.imageNames } : {}), ...(i.builds ? { builds: i.builds } : {}) });
   const run = i.run ?? defaultRun;
   const version = labelVersion(i.label);
   const labelValues: Record<string, string> = { ...(i.label !== null ? { label: i.label } : {}), ...(version !== null ? { version } : {}) };
@@ -296,7 +370,9 @@ export function buildReleaseArtifacts(i: BuildArtifactsInput): ReleaseArtifact[]
   const out: ReleaseArtifact[] = [];
   for (const a of i.artifacts) {
     const files: ReleaseArtifact[] = [];
-    if (isBuild(a)) {
+    if (isFiles(a)) {
+      const command = commandOf(a);
+      const outputs = outputsOf(a, i.builds);
       for (const platform of a.platforms ?? [null]) {
         const env = baseEnv();
         const values: Record<string, string> = { ...labelValues };
@@ -307,14 +383,27 @@ export function buildReleaseArtifacts(i: BuildArtifactsInput): ReleaseArtifact[]
           env.CHANT_RELEASE_ARCH = p.arch;
           env.CHANT_RELEASE_EXT = p.ext;
         }
-        const status = run(a.build, { cwd: i.cwd, env });
         const on = platform !== null ? ` for ${platform}` : "";
-        if (status !== 0) throw new ReleaseArtifactError("release-artifact-build-failed", `the build of artifact "${a.name}"${on} exited ${status ?? "with a signal"}: ${a.build}`);
+        if (command !== undefined) {
+          const status = run(command, { cwd: i.cwd, env });
+          if (status !== 0) throw new ReleaseArtifactError("release-artifact-build-failed", `the build of artifact "${a.name}"${on} exited ${status ?? "with a signal"}: ${command}`);
+        }
+        // #5183: with no command, the files are read where something else left them, copied in first under --at.
+        const from = command === undefined && i.prebuiltFrom !== undefined ? i.prebuiltFrom : i.cwd;
         const written: string[] = [];
-        for (const pattern of a.outputs) {
+        for (const pattern of outputs) {
           const path = fill(pattern, values, `release.artifacts "${a.name}"`);
-          const found = expandOutput(i.cwd, path);
-          if (found.length === 0) throw new ReleaseArtifactError("release-artifact-no-output", `the build of artifact "${a.name}"${on} wrote no ${path}`, "Make the build write every file outputs names, or name the files it writes.");
+          const found = expandOutput(from, path);
+          if (found.length === 0) {
+            if (command !== undefined) throw new ReleaseArtifactError("release-artifact-no-output", `the build of artifact "${a.name}"${on} wrote no ${path}`, "Make the build write every file outputs names, or name the files it writes.");
+            const jobs = builtByOf(a);
+            throw new ReleaseArtifactError(
+              "release-artifact-not-built",
+              `artifact "${a.name}"${on} has no ${path}: the entry has no build command, so the file must be there before the cut${jobs.length > 0 ? `, written by the build job${jobs.length > 1 ? "s" : ""} ${jobs.join(", ")}` : ""}`,
+              jobs.length > 0 ? "Make the build job write every file outputs names, or name the files it writes." : "Build the file before the cut (a release.workflow.builds job, or a step before it), or give the entry a build command.",
+            );
+          }
+          if (from !== i.cwd) copyArtifactFiles(found.map((f) => ({ path: f })), from, i.cwd);
           written.push(...found);
         }
         if (a.archive === undefined) {

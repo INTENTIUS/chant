@@ -132,6 +132,9 @@ export type ReleaseCutCode =
   | "release-artifact-no-label"
   | "release-artifact-version-mismatch"
   | "release-artifact-checksums-name-taken"
+  /** #5183: an entry with no build command whose files are not there, or are read from a checkout of another commit. */
+  | "release-artifact-not-built"
+  | "release-artifact-wrong-commit"
   | "release-version-no-label"
   | "release-version-label-invalid"
   | "release-version-no-package"
