@@ -34,6 +34,20 @@ export const EVIDENCE_SOURCES_ENV = "CHANT_EVIDENCE_SOURCES";
  */
 export const WAVE_EVIDENCE_ENV = "CHANT_WAVE_EVIDENCE";
 
+/**
+ * The variable a generated job hands the runner key in, as PEM (the same one
+ * the tick and `chant ci run` read). Kept here rather than in
+ * ./workspace/trust/ so the wave runner can ask whether it signs without
+ * loading a workspace module (#5219).
+ */
+export const CHECK_EVIDENCE_KEY_ENV = "CHANT_RUNNER_KEY";
+
+/**
+ * The variable a generated job sets to `oidc` when it signs keyless from
+ * its OIDC identity (#4869) instead of with a runner key.
+ */
+export const RUNNER_IDENTITY_ENV = "CHANT_RUNNER_IDENTITY";
+
 /** Where one check's pass is read from (#4926). */
 export interface EvidenceSourceSpec {
   /** The job's name in the run. Default: `--from-job`'s. */

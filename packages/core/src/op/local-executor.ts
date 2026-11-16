@@ -37,7 +37,7 @@ import { stepLabel, withRunConsole, withStepConsole } from "./step-console";
 import { stepTimeoutProblem } from "./activity-profiles";
 import { knownOutputsOf } from "./activity-failure";
 import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateApprovalRule, type GateCheck, type GateLedgerPort, type WorkspaceGateStandIn } from "./gate";
-import { resolveWorkspaceRun, type WorkspaceRunCitation } from "./workspace-run-env";
+import type { WorkspaceRunCitation } from "./workspace-run-env";
 import { gateName } from "./gate-name";
 import { resolveGateAliases } from "./gate-alias";
 import { gatePointOf } from "./gate-point";
@@ -1570,7 +1570,8 @@ async function runOpInTurn(
   // #4020: the CI run this one is in, in the shape a deploy record carries it.
   const ciRun = resolveCiRun();
   // #2554: the workspace run that started this one, which its record cites.
-  const workspaceRun = options.workspaceRun ?? resolveWorkspaceRun();
+  // #5219: read when an Op runs, so a command that only loads the executor loads no workspace module.
+  const workspaceRun = options.workspaceRun ?? (await import("./workspace-run-env")).resolveWorkspaceRun();
   // #4041: the run's events name it the way its run record does: its own id,
   // the commit, and the CI run it is in.
   // #4042: a run that writes to the ledger also keeps its events on this host,

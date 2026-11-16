@@ -80,17 +80,4 @@ export async function readHelmMember(opts: {
   return { entities, warnings, report: { rendered: true, objects: entities.size } };
 }
 
-let lastReport: HelmMemberReport | undefined;
-
-/**
- * The report of the read in this process. `graphMeta` receives only the
- * entities, so the hook that read the member leaves its report here for the
- * hook that publishes it; `chant graph` runs the two in order in one process.
- */
-export function setLastMemberReport(report: HelmMemberReport | undefined): void {
-  lastReport = report;
-}
-
-export function lastMemberReport(): HelmMemberReport | undefined {
-  return lastReport;
-}
+export { lastMemberReport, setLastMemberReport } from "./member-report";

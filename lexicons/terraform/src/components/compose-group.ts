@@ -56,7 +56,7 @@ import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { wiringReferencesAt } from "@intentius/chant/components/driver";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { declaredTargetCloudIdentity, type TargetCloudIdentityLookup } from "@intentius/chant/workspace/ci-cloud-identity";
+import type { TargetCloudIdentityLookup } from "@intentius/chant/workspace/ci-cloud-identity";
 import { COMPOSE_STEP_KIND, composeOff, compositionIfEnabled, identityKey, rootHclReads, type Composition } from "../compose";
 import type { TerraformConfig } from "../config";
 import { terraformBinary, terraformOutputs } from "../op/activities/terraform";
@@ -365,7 +365,9 @@ export function composeGroup(deps: ComposeGroupDeps = {}): ComposeGroupMethods {
   const envOf = (): NodeJS.ProcessEnv => deps.env ?? process.env;
   const log = deps.log ?? ((line: string) => console.error(line));
   const readOutputs = deps.outputs ?? ((root: string) => terraformOutputs({ root }));
-  const identities = deps.identity ?? declaredTargetCloudIdentity;
+  // #5219: the workspace reader loads when a composed group runs, not when the plugin does.
+  const identities =
+    deps.identity ?? (async (root: string, env: string) => (await import("@intentius/chant/workspace/ci-cloud-identity")).declaredTargetCloudIdentity(root, env));
 
   /** The composition of `members` as `groupFallback` judges it, with each member's identity. */
   async function compositionOf(ctx: GroupContext, p: ComposeProject, members: readonly GroupMember<StepInput>[]): Promise<Composition> {

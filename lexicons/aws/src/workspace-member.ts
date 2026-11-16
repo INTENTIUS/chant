@@ -181,17 +181,4 @@ export function readCloudFormationMember(opts: { member: AwsMemberConfig }): {
   };
 }
 
-let lastReport: AwsMemberReport | undefined;
-
-/**
- * The report of the read in this process. `graphMeta` receives only the
- * entities, so the hook that read the member leaves its report here for the
- * hook that publishes it; `chant graph` runs the two in order in one process.
- */
-export function setLastMemberReport(report: AwsMemberReport | undefined): void {
-  lastReport = report;
-}
-
-export function lastMemberReport(): AwsMemberReport | undefined {
-  return lastReport;
-}
+export { lastMemberReport, setLastMemberReport } from "./member-report";

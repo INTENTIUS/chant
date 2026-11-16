@@ -26,8 +26,14 @@
 import { execFileSync } from "node:child_process";
 import type { OpRunPolicyRow } from "./runtime";
 export { opWavesEvidenceProblems, type OpWavesEvidence } from "./op-waves-evidence-spec";
-import { WAVE_EVIDENCE_ENV, writeCheckClaimFile } from "../ci-evidence-claims";
-import { CHECK_EVIDENCE_KEY_ENV, missingCheckEvidence, recordChecks, RUNNER_IDENTITY_ENV, runnerEvidenceSigner, signChecks } from "../workspace/trust/check-evidence";
+import { CHECK_EVIDENCE_KEY_ENV, RUNNER_IDENTITY_ENV, WAVE_EVIDENCE_ENV, writeCheckClaimFile } from "../ci-evidence-claims";
+
+/**
+ * The signer is loaded only when a wave reads or signs evidence. A static
+ * import would put workspace/trust/ and its imports on every command that
+ * reaches the op runner, `chant build` at level 0 among them (#5219).
+ */
+const checkEvidence = () => import("../workspace/trust/check-evidence");
 
 function top(cwd: string): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -36,6 +42,7 @@ function top(cwd: string): string {
 /** Why the wave's commit is refused for want of evidence, or null. */
 export async function opWaveEvidenceRefusal(cwd: string, head: string, base: string, requires: readonly string[] | undefined): Promise<string | null> {
   if (!requires || requires.length === 0) return null;
+  const { missingCheckEvidence } = await checkEvidence();
   return missingCheckEvidence(top(cwd), head, base, requires);
 }
 
@@ -61,6 +68,7 @@ export async function signOpWaveChecks(input: { cwd: string; head: string; base:
   if (mode === "job") return [];
   if (!env[CHECK_EVIDENCE_KEY_ENV] && !env[RUNNER_IDENTITY_ENV]) return [];
   try {
+    const { recordChecks, runnerEvidenceSigner, signChecks } = await checkEvidence();
     const repo = top(input.cwd);
     const signer = (await runnerEvidenceSigner(repo, input.base, { env, ...(input.fetch ? { fetch: input.fetch } : {}) }))!;
     const rows = [...input.policyRows.values()];

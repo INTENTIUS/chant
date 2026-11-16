@@ -60,7 +60,7 @@ export interface OutputsPlugin {
   intrinsics?: () => IntrinsicDef[];
   buildRoots?: (ctx: BuildRootContext) => Promise<BuildRootContribution>;
   workspaceOutputs?: (entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]) => { outputs: LexiconWorkspaceOutput[]; gaps?: string[] } | undefined;
-  workspaceLinks?: (entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]) => LexiconWorkspaceLinks | undefined;
+  workspaceLinks?: (entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]) => LexiconWorkspaceLinks | undefined | Promise<LexiconWorkspaceLinks | undefined>;
 }
 
 /** Loads a lexicon plugin by name; `loadPlugin` from the CLI unless a test swaps it. */
@@ -382,7 +382,7 @@ export async function gatherLexiconLinks(
     for (const { name, plugin } of member.reporting) {
       const read: KindLinkRead = { reader: `lexicon ${name}`, links: [], gaps: member.gaps.map((message) => ({ file: where, line: 1, message })) };
       try {
-        const report = plugin.workspaceLinks!(member.entities, member.unread);
+        const report = await plugin.workspaceLinks!(member.entities, member.unread);
         if (!report) continue;
         for (const l of report.links) {
           const entity = member.entities.get(l.entity);
