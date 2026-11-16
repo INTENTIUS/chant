@@ -108,6 +108,7 @@ The document `--json` gives for a publish holds `dryRun` and the release's diges
 | Flag | Meaning |
 |---|---|
 | `--yes` | Publish. Without it the command is a dry run. |
+| `--dry-run` | A dry run, as without `--yes`. With `--yes` too, nothing is published. |
 | `--allow-unsigned` | Under `verified-releases`, publish a release with no signature that verifies, with a warning. Never overrides a `release` gate. Without either it changes nothing. |
 | `--require-provenance` | Refuse a run with no OIDC token. A CI job that must give npm provenance passes it, so a misconfigured job fails instead of publishing without. |
 | `--json` | Print the document described above. |

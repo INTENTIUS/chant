@@ -18,7 +18,7 @@ export async function runReleaseInit(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const root = resolve(".");
   const json = args.json === true;
-  const write = args.yes === true;
+  const write = args.yes === true && args.dryRun !== true;
   const force = args.force === true;
   const {
     detectProject,
@@ -233,7 +233,7 @@ interface DeclaredMember {
 async function runTrainInit(ctx: CommandContext, root: string, plan: import("../../lifecycle/release-init").ReleaseTrainPlan, fg: string, fail: Fail): Promise<number> {
   const { args } = ctx;
   const json = args.json === true;
-  const write = args.yes === true;
+  const write = args.yes === true && args.dryRun !== true;
   const force = args.force === true;
   const lib = await import("../../lifecycle/release-init");
   const rel = (p: string) => relative(root, p).split(sep).join("/");

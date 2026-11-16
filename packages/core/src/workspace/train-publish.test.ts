@@ -7,7 +7,7 @@
  * outer member's ledger. npm is the fake from ../lifecycle/__fixtures__.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cutRelease } from "../lifecycle/release-cut";
@@ -17,7 +17,8 @@ import { readFakeNpmRegistry, seedFakeNpmRegistry, writeFakeNpm, writeOciLayout 
 import type { PublishFetch } from "../lifecycle/release-publish";
 import { TestRepo } from "./trust/test-repo";
 import { appendReleaseTrain, readMemberReleases, pickTrain, trainDigest, type ReleaseTrainRecord } from "./release-train";
-import { publishTrain, trainDependencies, trainLayers, TrainPublishRunError } from "./train-publish";
+import { publishTrain, runTrainPublish, trainDependencies, trainLayers, TrainPublishRunError } from "./train-publish";
+import type { CommandContext } from "../cli/registry";
 import { workspaceLedgerPrefix } from "./workspace-ledger";
 
 const repos: TestRepo[] = [];
@@ -424,5 +425,36 @@ describe("dependencies", () => {
       { member: "lex", provides: ["npm:@a/lex", "member:lex"], needs: [] },
       { member: "img", provides: ["oci:ghcr.io/a/img", "member:img"], needs: ["member:lex"] },
     ]))).toEqual({ server: ["img", "lex"], lex: [], img: ["lex"] });
+  });
+});
+
+describe("chant workspace train publish --dry-run --yes (#5240)", () => {
+  const f = fixture(async () => {
+    const x = setup();
+    await cut(x.r, "core", "2.0.0");
+    await cut(x.r, "lex", "2.0.0");
+    await recordTrain(x.nested);
+    return x;
+  });
+
+  test("stays a dry run: nothing is staged, revealed or tagged", async () => {
+    const { nested, npm, log } = f();
+    const [prevCwd, prevPath] = [process.cwd(), process.env.PATH];
+    const out: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((s?: unknown) => void out.push(String(s)));
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      process.chdir(nested);
+      process.env.PATH = `${dirname(npm)}:${prevPath}`;
+      const code = await runTrainPublish({ args: { yes: true, dryRun: true, json: true }, plugins: [], serializers: [] } as unknown as CommandContext, ["npm"]);
+      expect(code).toBe(0);
+    } finally {
+      process.chdir(prevCwd);
+      process.env.PATH = prevPath;
+      spy.mockRestore();
+      err.mockRestore();
+    }
+    expect(JSON.parse(out.join("\n"))).toMatchObject({ dryRun: true });
+    expect(npmCalls(log).filter((a) => a[0] === "publish" || a[0] === "dist-tag")).toEqual([]);
   });
 });

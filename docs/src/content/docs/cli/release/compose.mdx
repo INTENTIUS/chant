@@ -15,7 +15,7 @@ chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache --yes  
 
 `--base` takes a release label or digest of the member, or anything git resolves to a commit. `--pr <n>` and `--work <id>` can each be given more than once. A pull request matches a first-parent commit of trunk after the base by its merge record `_merges/<sha>.json` on `chant/lifecycle`, or by `(#n)` at the end of its subject. A work item matches by a `Chant-Record: work:<id>` trailer or a merge record whose source names it. Every matching commit is cherry-picked in trunk order, a merge commit against its first parent, and each gets a `Chant-Composed-From: <sha>` trailer.
 
-The picks are made in a temporary detached worktree, so the checkout is never touched and a dry run finds a conflict too. With `--yes` the local branch moves and is pushed to `origin`, never forced.
+The picks are made in a temporary detached worktree, so the checkout is never touched and a dry run finds a conflict too. With `--yes` the local branch moves and is pushed to `origin`, never forced. `--dry-run` asks for the dry run by name and keeps a compose with `--yes` a dry run.
 
 A branch that exists is only appended to. It keeps the base it has, read by walking back from its tip to the first commit on trunk, and a chosen change it already carries is listed as carried and not picked again. It refuses before any ref moves when:
 

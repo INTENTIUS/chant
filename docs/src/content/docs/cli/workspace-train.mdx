@@ -166,6 +166,7 @@ Dry run: publish release train train-3c1e… (jcs1-sha256:9f0a…) for npm
 | `--continue` | (`promote`) For a train of `repo` members: move the promote in flight on from the answer the control repository recorded, and start nothing new. |
 | `--dry-run` | Pick the releases and print the train without writing it. With `promote`, print the order and run nothing. |
 | `--yes` | (`cut`) Cut, record, tag and push. (`publish`) Publish. Without it each prints its plan and sends nothing. |
+| `--dry-run` | Plan only, as without `--yes`. With `--yes` too, `cut` and `publish` stay a dry run. |
 | `--at <sha>` | (`cut`) The commit to release. Default: the trunk's tip. |
 | `--levels <levels>` | (`cut`) `auto`, a level for every member, `<member>=<level>`, or several of them separated by spaces or commas. |
 | `--no-push` | (`cut`) Record the train and tag locally, and push no tag. |

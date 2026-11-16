@@ -941,7 +941,8 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "release publish needs a release", hint: USAGE }));
     return 1;
   }
-  const dryRun = args.yes !== true;
+  // --dry-run is the default without --yes, and keeps a run with --yes a dry run.
+  const dryRun = args.yes !== true || args.dryRun === true;
   const cwd = resolve(".");
   const fail = (code: string, message: string, fix?: string): number => {
     console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
@@ -1376,7 +1377,8 @@ export async function runReleaseStatusChange(ctx: CommandContext, verb: import("
   if (args.forgeRelease !== undefined && verb !== "yank") return fail("release-status-flag-invalid", `--forge-release says how a yank leaves the forge release, and release ${verb} is not a yank`);
   if (args.replacement !== undefined && verb === "restore") return fail("release-status-flag-invalid", "--replacement names the release to use instead of a deprecated or yanked one, and a restore sets neither");
   const cwd = resolve(".");
-  const dryRun = args.yes !== true;
+  // --dry-run is the default without --yes, and keeps a run with --yes a dry run.
+  const dryRun = args.yes !== true || args.dryRun === true;
   const { fetchLifecycle } = await import("../../lifecycle/git");
   await fetchLifecycle({ cwd }).catch(() => false);
 
@@ -1614,20 +1616,20 @@ export async function runReleaseCompose(ctx: CommandContext): Promise<number> {
       ...(args.base !== undefined ? { base: args.base } : {}),
       prs: args.prs ?? [],
       works: args.works ?? [],
-      yes: args.yes === true,
+      yes: args.yes === true && args.dryRun !== true,
       trunk,
     });
     if (args.json) {
-      console.log(JSON.stringify({ dryRun: args.yes !== true, ...r, next: r.written || r.pushed ? [`chant release cut <label> --at ${r.tip}`] : [sameWithYes(process.argv.slice(2))] }, null, 2));
+      console.log(JSON.stringify({ dryRun: args.yes !== true || args.dryRun === true, ...r, next: r.written || r.pushed ? [`chant release cut <label> --at ${r.tip}`] : [sameWithYes(process.argv.slice(2))] }, null, 2));
       return 0;
     }
-    const verb = args.yes === true ? "Composed" : "Dry run: would compose";
+    const verb = args.yes === true && args.dryRun !== true ? "Composed" : "Dry run: would compose";
     console.log(`${verb} ${formatBold(r.branch)} on ${r.base.slice(0, 12)}${r.from ? `, after ${r.from.slice(0, 12)}` : ""}`);
     for (const s of r.picked) console.log(`  pick ${s.commit.slice(0, 12)}  ${s.subject}  [${s.chosenBy.join(", ")}]`);
     for (const s of r.already) console.log(`  carried already ${s.commit.slice(0, 12)}  ${s.subject}`);
     if (r.picked.length === 0) console.log("  nothing new to pick");
     console.log(`  tip ${r.tip.slice(0, 12)}${r.pushed ? `, pushed to ${trunk.remote}` : ""}`);
-    if (args.yes !== true) console.error(`Dry run: no branch was moved or pushed. Run again with --yes: ${sameWithYes(process.argv.slice(2))}`);
+    if (args.yes !== true || args.dryRun === true) console.error(`Dry run: no branch was moved or pushed. Run again with --yes: ${sameWithYes(process.argv.slice(2))}`);
     else console.error(`Next: once CI tags ${r.tip.slice(0, 12)} green, cut it: chant release cut <label> --at ${r.tip} --channel <channel>`);
     return 0;
   } catch (err) {
