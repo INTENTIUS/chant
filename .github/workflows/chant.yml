@@ -26,6 +26,9 @@ on:
       - main
   pull_request: null
   workflow_dispatch: {}
+  merge_group:
+    types:
+      - checks_requested
 
 # A new push to a PR cancels that PR's superseded run. main's runs are never
 # cancelled (#2816, and ci.green's `build: "every"` since #4169, which

@@ -7,12 +7,10 @@ on:
   workflow_run:
     workflows:
       - "chant"
-      - "release-suites"
     types:
       - completed
     branches:
       - "main"
-      - "ci/build/**"
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch: {}

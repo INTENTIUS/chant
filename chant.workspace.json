@@ -48,7 +48,10 @@
       "require": [
         "check",
         "test"
-      ]
+      ],
+      "mergeQueue": {
+        "retries": 1
+      }
     }
   },
   "members": [

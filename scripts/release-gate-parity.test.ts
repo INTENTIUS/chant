@@ -138,13 +138,13 @@ describe("release gate parity (#1481)", () => {
 });
 
 // Unit tests only on every change (2026-10-23). A pull request and a push to
-// main run the lexicon artifacts, core's typecheck and the unit tests. Every
+// main, and each merge queue group, run the lexicon artifacts, core's typecheck and the unit tests. Every
 // other job and suite runs only when a person starts it. On GitHub that is a
 // workflow_dispatch, locally a person typing `run` at scripts/human-gate.sh.
 describe("pull request and push CI run the unit tests only", () => {
   it("chant.yml runs typecheck and unit tests on a push or pull request, everything else by hand", () => {
     const chant = workflow("chant.yml");
-    expect(Object.keys(chant.on).sort()).toEqual(["pull_request", "push", "workflow_dispatch"]);
+    expect(Object.keys(chant.on).sort()).toEqual(["merge_group", "pull_request", "push", "workflow_dispatch"]);
     const always = ["check", "lexicon-artifacts", "test", "test-shard"];
     for (const [name, job] of Object.entries(chant.jobs)) {
       if (always.includes(name)) expect(job.if ?? "").not.toMatch(/workflow_dispatch/);
