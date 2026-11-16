@@ -257,7 +257,13 @@ describe("chant release init (#5160)", () => {
     expect(doc.dryRun).toBe(true);
     expect(doc.release.tag).toBe("v{version}");
     expect(doc.release.legacyTags).toEqual(["v"]);
-    expect(doc.next.at(-2)).toContain("label=2.0.1");
+    // #5200: release next reads v2.0.0 as the previous release, so the first release takes auto.
+    expect(doc.next.at(-2)).toContain("-f label=auto  # the label from the commits since v2.0.0");
     expect(doc.next.at(-1)).toContain("-f label=auto");
+
+    // Tags no release.tag or legacyTags matches: the first label is a patch after the newest.
+    const other = repo({ "package.json": JSON.stringify({ name: "acme" }), "package-lock.json": "{}" }, { tags: ["acme@1.4.0"] });
+    const plain = JSON.parse((await run(other, { json: true })).out) as { next: string[] };
+    expect(plain.next.at(-2)).toMatch(/-f label=1\.4\.1$/);
   });
 });

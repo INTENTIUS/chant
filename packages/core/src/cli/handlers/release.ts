@@ -1272,7 +1272,7 @@ export async function runReleaseNext(ctx: CommandContext): Promise<number> {
     return 0;
   }
   const n = doc.commits.length;
-  console.error(`  ${doc.bump ?? "the prerelease's version"} from ${doc.from.label} (${doc.from.commit.slice(0, 12)}): ${n} commit${n === 1 ? "" : "s"}${doc.intents.length > 0 ? `, ${doc.intents.length} intent file${doc.intents.length === 1 ? "" : "s"}` : ""}`);
+  console.error(`  ${doc.bump ?? "the prerelease's version"} from ${doc.from.label} (${doc.from.source === "tag" ? `the tag ${doc.from.tag}, ` : ""}${doc.from.commit.slice(0, 12)}): ${n} commit${n === 1 ? "" : "s"}${doc.intents.length > 0 ? `, ${doc.intents.length} intent file${doc.intents.length === 1 ? "" : "s"}` : ""}`);
   for (const c of doc.commits.filter((c) => c.bump !== "patch")) console.error(`    ${c.bump}  ${c.sha.slice(0, 7)} ${c.subject}`);
   for (const i of doc.intents) console.error(`    ${i.bump}  ${i.path}`);
   if (tag) console.error(`  tag ${tag}`);
