@@ -303,7 +303,7 @@ export const REASONS = {
   "work-item-closed": "A claim on a work item in a closed state, such as done or dropped: there is no work left to claim.",
   // Evidence attached to a criterion under the run's work lease (#2772): why it was refused. Nothing is written.
   "work-criterion-unknown": "The work record lists no acceptance criterion with the id the evidence names, or its kind has no acceptance criteria.",
-  // The work lease: why a claim, renew or release was refused (exit 2).
+  // The work lease: why a claim, renew or release was refused (exit 5 when held or raced, 1 when not held or the token is stale).
   "lease-held": "Someone holds a live lease on the work item: another worker, or, for a claim, the same one.",
   "lease-not-held": "Nobody holds a live lease on the work item: it expired, was released or was never claimed.",
   "lease-token-mismatch": "The live lease on the work item carries another fencing token than the one given.",
