@@ -79,3 +79,87 @@ describe("release_lexicon_floor (#4040)", () => {
     expect(r.stderr).toContain("version floor is unknown");
   });
 });
+
+/** A fake chant whose `release list --json` prints `labels` as the member's ledger. */
+function fakeChant(labels: string[]) {
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  const json = JSON.stringify({ releases: labels.map((label) => ({ label })) });
+  writeFileSync(join(bin, "fake-chant"), `#!/usr/bin/env bash\n[ "$1 $2" = "release list" ] || exit 2\necho '${json}'\n`);
+  chmodSync(join(bin, "fake-chant"), 0o755);
+  return join(bin, "fake-chant");
+}
+
+function sh(bin: string, body: string, env: Record<string, string> = {}) {
+  return spawnSync("bash", ["-c", `source "${lib}"; RELEASE_MAIN=HEAD ${body}`], {
+    cwd: dir,
+    encoding: "utf-8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env },
+  });
+}
+
+describe("member tags are not lockstep labels (#5135)", () => {
+  it("release_legacy_versions reads release/npm/<v> and chant-v<v>, not release/npm/<member>/<v>", () => {
+    git("tag", "release/npm/0.7.0");
+    git("tag", "chant-v0.7.1");
+    git("tag", "release/npm/core/0.125.0");
+    git("tag", "release/npm/lexicon-foo/0.126.0");
+    git("tag", "release-train/npm/1");
+    const r = sh(fakeNpm({ version: "0.1.0" }), "release_legacy_versions");
+    expect(r.stdout.trim().split("\n").sort()).toEqual(["0.7.0", "0.7.1"]);
+  });
+
+  it("another member's tag leaves the lexicon floor where it was", () => {
+    git("tag", "release/npm/0.7.0");
+    const bin = fakeNpm({ error: "npm error code E404" });
+    const before = floor(bin).stdout.trim();
+    git("tag", "release/npm/core/0.125.0");
+    git("tag", "release/npm/k8s-client/0.130.0");
+    expect(floor(bin).stdout.trim()).toBe(before);
+    expect(before).toBe("0.7.0");
+  });
+});
+
+describe("release_member_floor (#5135)", () => {
+  beforeEach(() => {
+    writeFileSync(
+      join(dir, "chant.workspace.json"),
+      JSON.stringify({ members: [{ name: "lexicon-foo", dir: "lexicons/foo" }, { name: "core", dir: "packages/core" }] }),
+    );
+    mkdirSync(join(dir, "release", "lexicon-foo"), { recursive: true });
+    writeFileSync(join(dir, "release", "lexicon-foo", "chant.config.ts"), "export default {};\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "members");
+  });
+
+  it("takes the member's own tags over the lockstep labels, and ignores other members' tags", () => {
+    git("tag", "release/npm/0.7.0");
+    git("tag", "release/npm/lexicon-foo/0.8.3");
+    git("tag", "release/npm/core/0.125.0");
+    const r = sh(fakeNpm({ error: "npm error code E404" }), "release_member_floor lexicon-foo HEAD", { RELEASE_CHANT: fakeChant([]) });
+    expect(r.stderr).toBe("");
+    expect(r.stdout.trim()).toBe("0.8.3");
+  });
+
+  it("counts a label spent in the member's ledger", () => {
+    git("tag", "release/npm/lexicon-foo/0.8.3");
+    const r = sh(fakeNpm({ error: "npm error code E404" }), "release_member_floor lexicon-foo HEAD", { RELEASE_CHANT: fakeChant(["0.8.4", "not-a-version"]) });
+    expect(r.stdout.trim()).toBe("0.8.4");
+  });
+
+  it("is never below a version npm lists, under any dist-tag", () => {
+    git("tag", "release/npm/lexicon-foo/0.8.3");
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "npm"), `#!/usr/bin/env bash\n[ "$1 $3 $4" = "view versions --json" ] || exit 2\necho '[\n  "0.8.0",\n  "0.9.2",\n  "0.8.9"\n]'\n`);
+    chmodSync(join(bin, "npm"), 0o755);
+    const r = sh(bin, 'f=$(release_member_floor lexicon-foo HEAD) && echo "$f" && release_next "$f" patch', { RELEASE_CHANT: fakeChant([]) });
+    expect(r.stdout.trim().split("\n")).toEqual(["0.9.2", "0.9.3"]);
+  });
+
+  it("refuses a member the declaration does not name", () => {
+    const r = sh(fakeNpm({ version: "0.1.0" }), "release_member_floor lexicon-bar HEAD");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("no member lexicon-bar in chant.workspace.json");
+  });
+});
