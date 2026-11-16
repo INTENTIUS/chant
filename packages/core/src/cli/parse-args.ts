@@ -643,6 +643,13 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--require-provenance") {
       // `chant release publish --require-provenance` (#4049).
       result.requireProvenance = true;
+    } else if (arg === "--sigstore") {
+      // `chant release verify --sigstore` (#5164): check the Sigstore signatures the publish recorded.
+      result.sigstore = true;
+    } else if (arg === "--assets") {
+      // `chant release verify --sigstore --assets <dir>` (#5164): where the forge release's assets were downloaded.
+      result.assets = args[++i];
+      if (!result.assets || result.assets.startsWith("-")) throw new Error("--assets needs a directory: --assets dist/release");
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
     } else if (arg === "--green") {

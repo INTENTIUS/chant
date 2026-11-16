@@ -22,6 +22,13 @@
  * discover` or `cosign tree` finds them. A referrer the registry already
  * holds is not pushed again.
  *
+ * When the publish signs (#5164, ./publish-signing.ts), the stage also
+ * pushes a cosign signature and SLSA provenance of the image, each a Sigstore
+ * bundle in an artifact manifest whose subject is the image. On a registry
+ * without the referrers API (GHCR, Docker Hub) they are listed under the
+ * referrers tag `sha256-<hex>`, as cosign does. An image that already has a
+ * bundle with the same predicate type is not signed again.
+ *
  * Credentials come from `usernameEnv` and `passwordEnv` (default
  * `OCI_USERNAME`, `OCI_PASSWORD`), or else from the `auths` entry for the
  * registry in the docker config file (`$DOCKER_CONFIG/config.json` or
@@ -41,6 +48,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
+import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE, cosignSignStatement, slsaProvenanceStatement } from "./publish-signing";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
@@ -317,12 +325,83 @@ class Registry {
     return res.status === 200;
   }
 
-  async putManifest(ref: string, mediaType: string, bytes: Uint8Array): Promise<void> {
-    await this.tries(`putting manifest ${ref}`, async () => {
+  /** Put a manifest. True when the registry answered with `OCI-Subject`, so its referrers API lists a manifest with a subject. */
+  async putManifest(ref: string, mediaType: string, bytes: Uint8Array): Promise<boolean> {
+    return this.tries(`putting manifest ${ref}`, async () => {
       const res = await this.request("PUT", `/v2/${this.repo.name}/manifests/${ref}`, { "content-type": mediaType }, bytes);
       if (res.status !== 201) throw new RegistryAnswer(`putting manifest ${ref}`, res.status, await res.text());
+      return res.headers.get("oci-subject") !== null;
     });
   }
+
+  /**
+   * The referrers of `digest` (#5164): the referrers API's index, else, on a
+   * registry without it (GHCR, Docker Hub), the index the referrers tag
+   * schema keeps at the tag `sha256-<hex>`. Empty when there is neither.
+   */
+  async referrers(digest: string): Promise<ReferrerDescriptor[]> {
+    const api = await this.request("GET", `/v2/${this.repo.name}/referrers/${digest}`, { accept: OCI_INDEX });
+    if (api.status === 200) {
+      const body = JSON.parse(await api.text()) as { manifests?: ReferrerDescriptor[] };
+      return body.manifests ?? [];
+    }
+    return (await this.referrersTag(digest))?.manifests ?? [];
+  }
+
+  private async referrersTag(digest: string): Promise<{ manifests: ReferrerDescriptor[] } | null> {
+    const res = await this.request("GET", `/v2/${this.repo.name}/manifests/${referrersTagOf(digest)}`, { accept: OCI_INDEX });
+    if (res.status !== 200) return null;
+    try {
+      const body = JSON.parse(await res.text()) as { manifests?: ReferrerDescriptor[] };
+      return { manifests: body.manifests ?? [] };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Add `descriptor` to the referrers tag of `subject` (the OCI distribution spec's fallback), unless it is listed there. */
+  async addToReferrersTag(subject: string, descriptor: ReferrerDescriptor): Promise<void> {
+    const index = (await this.referrersTag(subject)) ?? { manifests: [] };
+    if (index.manifests.some((m) => m.digest === descriptor.digest)) return;
+    const bytes = new Uint8Array(Buffer.from(JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests: [...index.manifests, descriptor] })));
+    await this.putManifest(referrersTagOf(subject), OCI_INDEX, bytes);
+  }
+}
+
+const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+
+/** One referrer as an index lists it. */
+interface ReferrerDescriptor {
+  mediaType: string;
+  digest: string;
+  size: number;
+  artifactType?: string;
+  annotations?: Record<string, string>;
+}
+
+/** The tag the referrers tag schema keeps the referrers of `digest` under: `sha256-<hex>`. */
+export function referrersTagOf(digest: string): string {
+  return digest.replace(":", "-");
+}
+
+/**
+ * The artifact manifest that attaches a Sigstore bundle to the image
+ * `subject` (#5164), as `cosign sign` and `cosign attest` push one: the
+ * bundle media type as the artifact type and the one layer, and the
+ * statement's predicate type in `dev.sigstore.bundle.predicateType`.
+ */
+export function bundleReferrerManifest(bundle: Attachment, predicateType: string, subject: { mediaType: string; digest: string; size: number }): Uint8Array {
+  const annotations = { "dev.sigstore.bundle.content": "dsse-envelope", [BUNDLE_PREDICATE_ANNOTATION]: predicateType };
+  const manifest = {
+    schemaVersion: 2,
+    mediaType: IMAGE_MANIFEST,
+    artifactType: SIGSTORE_BUNDLE_MEDIA_TYPE,
+    config: { mediaType: EMPTY_CONFIG.mediaType, digest: bytesDigest(EMPTY_CONFIG.bytes), size: EMPTY_CONFIG.bytes.byteLength },
+    layers: [{ mediaType: SIGSTORE_BUNDLE_MEDIA_TYPE, digest: bundle.digest, size: bundle.bytes.byteLength, annotations: { "org.opencontainers.image.title": bundle.name } }],
+    subject,
+    annotations,
+  };
+  return new Uint8Array(Buffer.from(JSON.stringify(manifest)));
 }
 
 /** The media type of the empty config an artifact manifest names. */
@@ -411,6 +490,56 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     });
   };
   const referrerItem = (r: Referrer): PublishItem => ({ name: r.attachment.name, destination: `${decl.repository}@${r.digest}, a referrer of the image`, digest: r.digest, attachment: r.attachment.kind });
+  /** #5164: the cosign signature and SLSA provenance of the image, which a stage signs when the publish signs. */
+  const signatures = [
+    { predicateType: COSIGN_SIGN_PREDICATE, name: "cosign signature", attachment: "signature" as const },
+    { predicateType: SLSA_PROVENANCE_PREDICATE, name: "SLSA provenance", attachment: "attestation" as const },
+  ];
+  const signatureItem = (ctx: PublishContext, s: (typeof signatures)[number], image: string, digest?: string): PublishItem => ({
+    name: s.name,
+    destination: digest ? `${decl.repository}@${digest}, a referrer of the image` : `${decl.repository}, a referrer of the image, signed when staged`,
+    ...(digest ? { digest } : {}),
+    attachment: s.attachment,
+    signs: [{ name: `${decl.repository}@${image}`, digest: image }],
+    predicateType: s.predicateType,
+    ...(ctx.signing ? { sigstore: ctx.signing.identity } : {}),
+  });
+  /** Sign the image and push each bundle as a referrer, unless the image has one with that predicate type already. */
+  const sign = async (ctx: PublishContext, registry: Registry, layout: LayoutImage): Promise<PublishItem[]> => {
+    if (!ctx.signing) return [];
+    const subject = { mediaType: layout.top.mediaType, digest: layout.top.digest, size: layout.top.bytes.byteLength };
+    const existing = await registry.referrers(layout.top.digest);
+    const items: PublishItem[] = [];
+    for (const s of signatures) {
+      const found = existing.find((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE && m.annotations?.[BUNDLE_PREDICATE_ANNOTATION] === s.predicateType);
+      if (found) {
+        ctx.log(`${layout.top.digest} already has a ${s.name}; it is not signed again`);
+        items.push({ ...signatureItem(ctx, s, layout.top.digest, found.digest), present: true });
+        continue;
+      }
+      const name = `${decl.repository}@${layout.top.digest}`;
+      const statement = s.predicateType === COSIGN_SIGN_PREDICATE ? cosignSignStatement({ name: decl.repository, digest: layout.top.digest }) : slsaProvenanceStatement(ctx, [{ name, digest: layout.top.digest }]);
+      ctx.log(`signing ${name} with ${ctx.signing.signer.name}: ${s.name}`);
+      const bytes = await ctx.signing.signer.signStatement(statement);
+      const bundle: Attachment = { kind: "provenance", name: `${s.attachment}.sigstore.json`, mediaType: SIGSTORE_BUNDLE_MEDIA_TYPE, bytes, digest: bytesDigest(bytes) };
+      const manifest = bundleReferrerManifest(bundle, s.predicateType, subject);
+      const digest = bytesDigest(manifest);
+      await registry.pushBlob(bytesDigest(EMPTY_CONFIG.bytes), () => EMPTY_CONFIG.bytes);
+      await registry.pushBlob(bundle.digest, () => bundle.bytes);
+      const listed = await registry.putManifest(digest, IMAGE_MANIFEST, manifest);
+      if (!listed) {
+        await registry.addToReferrersTag(layout.top.digest, {
+          mediaType: IMAGE_MANIFEST,
+          digest,
+          size: manifest.byteLength,
+          artifactType: SIGSTORE_BUNDLE_MEDIA_TYPE,
+          annotations: { "dev.sigstore.bundle.content": "dsse-envelope", [BUNDLE_PREDICATE_ANNOTATION]: s.predicateType },
+        });
+      }
+      items.push(signatureItem(ctx, s, layout.top.digest, digest));
+    }
+    return items;
+  };
   const connect = (ctx: PublishContext) => {
     const cred = ociCredential(decl, repo, ctx);
     return { cred, registry: new Registry(repo, fetchImpl, cred, ctx, deps.sleep) };
@@ -424,7 +553,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async plan(ctx) {
       const layout = inspect(ctx);
       try {
-        return [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem)];
+        return [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem), ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
       } finally {
         layout.cleanup();
       }
@@ -462,19 +591,22 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
           await registry.putManifest(r.digest, IMAGE_MANIFEST, r.manifest);
           items.push(referrerItem(r));
         }
+        // #5164: signed in the stage, so no tag points at an image before its signature is there.
+        items.push(...(await sign(ctx, registry, layout)));
         return { target: this.name, destination: this.destination, items, state: {} };
       } finally {
         layout.cleanup();
       }
     },
-    async reveal(ctx) {
+    async reveal(ctx, staged) {
       const layout = inspect(ctx);
       try {
         const { registry } = connect(ctx);
         const tags = ociTags(decl, ctx);
         for (const t of tags) await registry.putManifest(t, layout.top.mediaType, layout.top.bytes);
         ctx.log(tags.length > 0 ? `tagged ${layout.top.digest} ${tags.join(", ")}` : `no tag to point at ${layout.top.digest}`);
-        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem)] };
+        const signed = (staged?.items ?? []).filter((i) => i.attachment === "signature" || i.attachment === "attestation").map(({ present: _present, ...i }) => i);
+        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem), ...signed] };
       } finally {
         layout.cleanup();
       }

@@ -11,9 +11,10 @@
  *   verified signature, as the `release` gate in `identity.gates` does, and
  *   `chant components promote --release` verifies the release first.
  *   `chant release cut` refuses `release.green: "none"` (#5149).
- * - `supply-chain`: a publish without OIDC provenance warns, and a target
- *   with no SBOM source is refused (`publish-sbom-missing`). `chant release
- *   cut` refuses `release.green: "none"` (#5149).
+ * - `supply-chain`: a publish without OIDC provenance warns, a target
+ *   with no SBOM source is refused (`publish-sbom-missing`), the OCI and
+ *   forge targets sign with Sigstore (`release.signing`, #5164), and `chant
+ *   release cut` refuses `release.green: "none"` (#5149).
  * - `who-ran-it`: `chant ci tick` refuses to tag without a runner key.
  * - `review-rules`: `chant components pr-apply` counts an approval only from
  *   someone who approved the pull request on the forge, as
@@ -104,6 +105,7 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "SBOM on every target", byDefault: "off: a target with no SBOM source publishes without one", setting: "`sbom` on the target", group: "supply-chain", codes: ["security-sbom-disabled", "security-sbom-unsourced"] },
   { feature: "OIDC provenance", byDefault: "off: a plan field", setting: "`--require-provenance`", group: "supply-chain", codes: ["security-publish-no-provenance"] },
   { feature: "Cut needs a green gate", byDefault: "off: `release.green: \"none\"` cuts with a warning", setting: "`release.green` other than `none`", group: "supply-chain", codes: [] },
+  { feature: "Sigstore signatures and SLSA provenance on images and forge assets", byDefault: "off: nothing is signed", setting: "`release.signing`", group: "supply-chain", codes: [] },
   { feature: "SBOM and verify steps on components", byDefault: "off", setting: "a `generate-sbom` or `verify` step", group: "supply-chain", codes: ["security-component-no-sbom", "security-component-no-verify"] },
   { feature: "Signed green tags and runs", byDefault: "off: every tag counts", setting: "`ci.green.signedSince`", group: "who-ran-it", codes: ["security-signed-since-unset"] },
   { feature: "Trusted runner keys", byDefault: "off", setting: "`.chant/trust.json` with a runner role", group: "who-ran-it", codes: ["security-runner-untrusted"] },

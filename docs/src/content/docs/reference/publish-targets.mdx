@@ -354,7 +354,48 @@ The provenance statement is an [in-toto Statement v1](https://github.com/in-toto
 }
 ```
 
-`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/#release-verify), offline, against the signers file at the release's commit. `cut.green` is the [green gate](/chant/cli/release/#the-green-gate) the cut passed, as its cut line records it: `{ "source": "chant", "tag": ... }`, `{ "source": "forge-checks", "forge": "github", "checks": [...] }` with the checks by name, or `{ "source": "none" }`. A cut that ran under an override carries `cut.override` (who, when, why, and the tag or checks it stood in for) instead. A cut recorded before chant had either has neither field. `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token: in CI, npm's provenance is the one a registry records and signs, and for images, an attestation signed with the job's token is the CI's to add, such as `actions/attest-build-provenance`. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
+`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/#release-verify), offline, against the signers file at the release's commit. `cut.green` is the [green gate](/chant/cli/release/#the-green-gate) the cut passed, as its cut line records it: `{ "source": "chant", "tag": ... }`, `{ "source": "forge-checks", "forge": "github", "checks": [...] }` with the checks by name, or `{ "source": "none" }`. A cut that ran under an override carries `cut.override` (who, when, why, and the tag or checks it stood in for) instead. A cut recorded before chant had either has neither field. `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token. In CI, npm's provenance is the one a registry records and signs, and for images and forge assets, [Sigstore signing](#sigstore-signatures) adds a signature over it and SLSA provenance signed with the job's token. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
+
+### Sigstore signatures
+
+With signing on, the OCI and forge targets sign what they stage with Sigstore, keylessly with the CI job's OIDC token, before anything is revealed. The release's provenance statement and the cut's ssh signature stay as they are.
+
+| Target | Signature | SLSA provenance |
+|---|---|---|
+| OCI | A cosign signature (an in-toto statement with predicate type `https://sigstore.dev/cosign/sign/v1`), a referrer of the image | `https://slsa.dev/provenance/v1` over the image, a referrer of the image |
+| Forge | `<file>.sigstore.json` beside each asset, including each file an `artifact:` entry attaches from [`release.artifacts`](/chant/cli/release/#files-the-release-builds), the SBOM and `release.intoto.json` | `release.slsa.sigstore.json`, over the declared assets |
+
+Each is a Sigstore bundle (`application/vnd.dev.sigstore.bundle.v0.3+json`). An image's referrers are the ones `cosign sign` and `actions/attest-build-provenance` push: the bundle as the one layer, the artifact type the bundle's media type, and the predicate type in the `dev.sigstore.bundle.predicateType` annotation. On a registry without the referrers API, such as GHCR, chant lists them under the `sha256-<hex>` tag the OCI distribution spec falls back to, so cosign finds them:
+
+```bash
+cosign verify ghcr.io/acme/api@sha256:... \
+  --certificate-identity-regexp '^https://github\.com/acme/api/' --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify-attestation --type slsaprovenance1 ghcr.io/acme/api@sha256:... \
+  --certificate-identity-regexp '^https://github\.com/acme/api/' --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify-blob --bundle api-linux.tar.gz.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/acme/api/' --certificate-oidc-issuer https://token.actions.githubusercontent.com api-linux.tar.gz
+```
+
+[`chant release verify --sigstore`](/chant/cli/release/#checking-the-sigstore-signatures) runs these checks for every bundle the publish recorded.
+
+The SLSA predicate in GitHub Actions is the one `actions/attest-build-provenance` writes: build type `https://actions.github.io/buildtypes/workflow/v1`, the workflow, event and repository ids, the release's commit as the resolved source, and the run as the invocation. In GitLab CI its build type is `https://intentius.io/chant/release/build/gitlab-ci/v1`, naming the project, its CI config and the job. Either adds `internalParameters.chant`, the release's digest, label and member.
+
+chant writes the statements and runs cosign 3 to sign them: `cosign sign-blob` for a file and `cosign attest-blob --statement` for a statement. It runs the binary `CHANT_COSIGN` names, else `cosign` on `PATH`. It pushes and uploads the bundles with the target's own credentials, so cosign never holds a registry or forge token. The certificate names the job's workflow: in GitHub Actions a job with `permissions: id-token: write`, and in GitLab CI a job with `SIGSTORE_ID_TOKEN` under `id_tokens` with `aud: sigstore`. Public Fulcio does not issue certificates for other CI systems.
+
+Signing is off by default. Turn it on in the member's `chant.config.ts`:
+
+```ts
+export default {
+  release: {
+    signing: true,
+    // or name the identity `release verify --sigstore` expects:
+    // signing: { identity: "^https://github\\.com/acme/api/\\.github/workflows/chant-release\\.yml@", issuer: "https://token.actions.githubusercontent.com" },
+    publish: [{ type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api" }],
+  },
+};
+```
+
+The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/#release-doctor) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace and tauri-updater targets are not signed.
 
 ### A CI job that checks provenance
 

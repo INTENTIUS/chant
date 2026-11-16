@@ -15,7 +15,7 @@ chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--fo
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release doctor [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
-chant release verify <label|digest> [--json]
+chant release verify <label|digest> [--sigstore [--assets <dir>]] [--json]
 chant release stamp <label> [--json]
 chant release tag <label|digest|tag> [--json]
 chant release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
@@ -595,6 +595,8 @@ Each check ends `ok`, `warn`, `FAIL` or `can't tell`. A credential the publish n
 
 Under the `forge-checks` [green gate](#the-green-gate), the default without `ci.green`, the doctor also finds the forge and the token the cut would ask, and reads the checks and statuses of the commit checked out (`green-forge-checks`). It fails when no token is set in CI, or when the forge refuses the token, which on GitHub needs `checks: read` and `statuses: read`. Whether the commit's checks passed is the cut's question, and the line only reports it. A member with no `environments`, which releases only what `release.publish` names, is checked the same way.
 
+When the publish signs with [Sigstore](/chant/reference/publish-targets/#sigstore-signatures) and declares an `oci` or `forge` target, the doctor also checks what signing needs from the job it runs in: an OIDC token cosign can sign with (`signing-oidc`, which names the identity the certificate will carry) and cosign 3 (`signing-cosign`). Either one missing fails in CI. The generated release workflow installs cosign in the cut job as well as the publish job, and on GitLab gives the cut job `SIGSTORE_ID_TOKEN`, so the doctor there sees what the publish will.
+
 Two checks hand back a short-lived publishing token, which the doctor masks and drops: npm's OIDC exchange and Open VSX's trusted-publishing exchange. They are the requests a publish makes first. No other check sends a request that changes anything. Every line and the `--json` document go through the publish's redactor.
 
 The release workflow file is `release.workflow.file` in the workspace root's `chant.config.ts`, else the forge's default (`.gitlab-ci.yml` on GitLab, whose trusted publishers name the top-level file). In GitHub Actions, the run's own file comes from `GITHUB_WORKFLOW_REF`.
@@ -621,6 +623,8 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `release-unsigned` | No cut of the release is signed, and the workspace names a `release` gate in `identity.gates` or opts into `verified-releases` ([#4049](https://github.com/INTENTIUS/chant/issues/4049), [#4168](https://github.com/INTENTIUS/chant/issues/4168)). |
 | `release-signature-unverified` | Under the same settings, no cut's signature verifies for its actor against `.chant/allowed_signers` at base, or, under a `release` gate, the signer is not in the gate's class. |
 | `publish-provenance-missing` | `--require-provenance` is given, and the run has no OIDC token. |
+| `publish-signing-no-oidc` | The publish signs with Sigstore (`release.signing`, or the `supply-chain` group), an `oci` or `forge` target is declared, and the run has no OIDC token cosign can sign with: a GitHub Actions job without `id-token: write`, a GitLab CI job without `SIGSTORE_ID_TOKEN`, or a workstation. |
+| `publish-signing-tool-missing` | Under the same settings, cosign 3 is not on `PATH` and `CHANT_COSIGN` does not name it. |
 | `publish-config-invalid` | `release.publish` in `chant.config.ts` does not validate. |
 | `release-head-mismatch` | A target is declared, and the checkout's `HEAD` is not the release's commit. |
 | `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. Under `release.version`, a file it names that is exactly the commit's stamped with this release's label is not a change ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). |
@@ -634,6 +638,8 @@ The last two hold because a target uploads files from the checkout it runs in, w
 Signing is opt-in ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With no `release` gate and no `security` group in `chant.workspace.json`, an unsigned release publishes without a word, and the `--json` document's `signature.status` says `unsigned` or `unverified`. A workspace that sets `"security": ["verified-releases"]` publishes only a release signed by a key the signers file lists, so cut it with `--sign` (see [Who may cut](#who-may-cut)). There `--allow-unsigned` publishes a release with no signature that verifies anyway. It prints a warning first, and `release verify` then fails for what was published. Under a `release` gate in `identity.gates`, `--allow-unsigned` changes nothing: the gate publishes only a signed release.
 
 It then checks whether the run has an OIDC token. In GitHub Actions that means `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `permissions: id-token: write` gets. In GitLab CI it means an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN` under the job's `id_tokens`. Without one, as on a workstation, the `--json` document's `provenance.oidc` is false. A workspace that opts into `supply-chain` also gets a warning on stderr before anything is published: what it publishes carries no OIDC provenance. Without that group nothing is printed. `--require-provenance` refuses such a run with `publish-provenance-missing`, with or without the group. With a token, the npm target passes `--provenance`, and after the reveal runs `npm audit signatures` over what it published.
+
+When the publish signs ([#5164](https://github.com/INTENTIUS/chant/issues/5164)), the OCI and forge targets sign what they stage with Sigstore, keylessly with the job's OIDC token: an image gets a cosign signature and SLSA provenance as referrers, and a forge release gets a `.sigstore.json` bundle beside each file and `release.slsa.sigstore.json`. Signing is off unless `release.signing` in `chant.config.ts` turns it on or the workspace opts into `supply-chain`. [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures) has the details.
 
 Next it plans every target: each reads the files it would upload, checks a file the release records as an artifact against the release's digest, and finds its credentials. A target that can't stops the publish with its own code, such as `publish-file-missing`, `publish-artifact-digest-mismatch` or `publish-credentials-missing`, before anything is sent.
 
@@ -661,7 +667,7 @@ Each target attaches the release's provenance statement when it stages, and an S
 
 With no target declared it makes its checks and prints any warning. It then says that nothing was published and exits 0. The publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`, `load-image-on-host`) are deploy steps. They run in each environment's deploy of the release, [`chant components promote --release`](/chant/cli/components/#promoting-a-release), and not here.
 
-The document `--json` gives for a publish holds `dryRun` and the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), the `warnings`, the `targets` (each `kind`, `name`, `destination`, its `progress` from earlier runs, `none`, `staged` or `revealed`, and its planned `items`), what was `published` (each `target`, `destination` and `items`; empty in a dry run) and the release's `environments`. A dry run adds `next`, and a publish adds `resumed`, the targets an earlier run had staged or revealed, each with its `target` and `step`. The warning is printed on stderr in either form.
+The document `--json` gives for a publish holds `dryRun` and the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`), `provenance` (`oidc`, `ci`, `reason`), `signing` (the `identity` the certificate names and the `signer`, or `null` when the publish does not sign), the `warnings`, the `targets` (each `kind`, `name`, `destination`, its `progress` from earlier runs, `none`, `staged` or `revealed`, and its planned `items`), what was `published` (each `target`, `destination` and `items`; empty in a dry run) and the release's `environments`. A dry run adds `next`, and a publish adds `resumed`, the targets an earlier run had staged or revealed, each with its `target` and `step`. The warning is printed on stderr in either form.
 
 | Flag | Meaning |
 |---|---|
@@ -687,6 +693,8 @@ chant release workflow
 | `gitlab` | `.gitlab/chant-release.yml`, which `.gitlab-ci.yml` includes |
 
 The job checks out the tag and builds what the targets upload. Then it fetches the ci tags and `chant/lifecycle` and publishes with `--yes`. It always has the OIDC permission, so what it uploads carries provenance when the token is there. The workspace's security groups add the rest: `supply-chain` adds `--require-provenance`, and `verified-releases` adds a `chant release verify` step before the publish. With neither, nothing refuses a run that lacks them.
+
+When the publish signs with Sigstore (`release.signing`, or `supply-chain` with an `oci` or `forge` target), the jobs download cosign pinned by SHA-256 for the runner's platform and set `CHANT_COSIGN` to it, unless `release.workflow` sets `CHANT_COSIGN` itself.
 
 | Flag | Description |
 |---|---|
@@ -862,7 +870,25 @@ It exits 1 with one of these codes:
 | `release-commit-missing` | The release's commit is not in this clone. |
 | `trust-policy-unreadable` | The signers file or its history at the commit can't be read. |
 
-`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason` and each cut with its `signatureCheck`, and its `green` gate or `override` when the cut recorded one (see [The green gate](#the-green-gate)). A release that does not verify adds `error` with its `code` and `message`.
+`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason` and each cut with its `signatureCheck`, and its `green` gate or `override` when the cut recorded one (see [The green gate](#the-green-gate)). A release that does not verify adds `error` with its `code` and `message`. Without `--sigstore`, `sigstore.recorded` counts the Sigstore bundles the publish record holds.
+
+### Checking the Sigstore signatures
+
+A release published with [Sigstore signing](/chant/reference/publish-targets/#sigstore-signatures) has its bundles named in the publish record on `chant/lifecycle`. `--sigstore` checks each with cosign 3 (`CHANT_COSIGN`, else `cosign` on `PATH`), against the certificate identity and issuer `release.signing` names in `chant.config.ts`, else the ones the publish recorded: a workflow of the repository it ran in, and its CI's issuer. An image's signature and provenance are read from its registry, with docker's credentials. A forge release's bundles are read from the directory `--assets` names, where its assets were downloaded. Each bundle must be the bytes the publish uploaded, and an asset beside it must be the digest it signs.
+
+```bash
+gh release download release/v1.4.0 -D /tmp/v1.4.0
+chant release verify v1.4.0 --sigstore --assets /tmp/v1.4.0
+```
+
+This check reads the registry and Sigstore's trust root, so it is not offline. It exits 1 with:
+
+| Code | When |
+|---|---|
+| `release-sigstore-unsigned` | The publish record holds no Sigstore bundle for the release. |
+| `release-sigstore-unverified` | A bundle does not verify for the identity, differs from what was uploaded, or can't be checked (no cosign, or a forge bundle not in `--assets`). |
+
+`--json` adds `sigstore`: its `status` (`verified`, `failed` or `none`), `reason` and each check with its `name`, `kind`, `target`, `attachment` (`signature` or `attestation`), `signs`, `identity`, `status` (`verified`, `failed` or `unchecked`) and `reason`.
 
 ## release export
 

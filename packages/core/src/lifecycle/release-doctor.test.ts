@@ -342,3 +342,27 @@ describe("an artifact release (#5149)", () => {
     expect(report.targets[0]!.checks[0]!.check).toBe("forge-token");
   });
 });
+
+describe("Sigstore signing (#5164)", () => {
+  const forgeDecl = { type: "forge", forge: "github", repo: "acme/app", assets: [] } as unknown as PublishDeclaration;
+  const signing = (env: NodeJS.ProcessEnv, signer: { name: string; unavailable: () => string | null }, over: { signing?: boolean; groups?: Set<"supply-chain"> } = { signing: true }) =>
+    releaseDoctor({ cwd: mkdtempSync(join(tmpdir(), "chant-doctor-signing-")), publish: [forgeDecl], env, releaseWorkflow: null, ...over, deps: { fetch: fakeFetch([]).fetch, signer } }).then((r) => r.targets.find((t) => t.kind === "signing"));
+  const cosign = { name: "cosign v3.1.4", unavailable: () => null };
+  const ghEnv = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/app", ACTIONS_ID_TOKEN_REQUEST_URL: "https://t", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "x" };
+
+  test("reports the OIDC identity and cosign when the publish signs, and nothing when it does not", async () => {
+    const ok = await signing(ghEnv, cosign);
+    expect(ok?.checks.map((c) => [c.check, c.status])).toEqual([["signing-oidc", "ok"], ["signing-cosign", "ok"]]);
+    expect(ok?.checks[0]!.message).toContain("acme/app");
+    expect(await signing(ghEnv, cosign, {})).toBeUndefined();
+    expect(await signing(ghEnv, cosign, { groups: new Set(["supply-chain"]) })).toBeDefined();
+  });
+
+  test("fails in CI without an OIDC token or cosign, and warns on a workstation", async () => {
+    const noTool = { name: "cosign", unavailable: () => "cosign is not there" };
+    const ci = await signing({ GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/app" }, noTool);
+    expect(ci?.checks.map((c) => [c.check, c.status])).toEqual([["signing-oidc", "fail"], ["signing-cosign", "fail"]]);
+    const ws = await signing({}, noTool);
+    expect(ws?.checks.map((c) => c.status)).toEqual(["warn", "warn"]);
+  });
+});

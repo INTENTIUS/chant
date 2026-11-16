@@ -1,0 +1,68 @@
+/**
+ * The command-line tools the workflows chant generates download, each pinned
+ * by the SHA-256 of its release file for every platform a job runs on, as
+ * {@link ./image-pins.ts} pins images by digest and ../action-pins.ts pins
+ * actions by commit. A generated step downloads the file, checks it against
+ * the digest and refuses to run anything else, so a moved release asset
+ * fails the job instead of running. Each row names the release it was read
+ * from, so an update is one change here.
+ *
+ * Refresh a row from the release's checksums file:
+ *
+ *   curl -sL https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign_checksums.txt | grep -E 'cosign-linux-(amd64|arm64)$'
+ *   gh release download v2.19.0 -R goreleaser/goreleaser -p checksums.txt -O - | grep -E 'goreleaser_Linux_(x86_64|arm64)\.tar\.gz$'
+ */
+
+export interface ToolPin {
+  /** The tool's name: the binary the step leaves in its directory. */
+  readonly name: string;
+  /** The release the row was read from, such as `v3.1.4`. */
+  readonly version: string;
+  /** Set when each platform's file is a `.tar.gz` that holds the binary, rather than the binary itself. */
+  readonly archive?: boolean;
+  /** Each platform's download URL and the SHA-256 of the file, as hex. */
+  readonly platforms: Readonly<Record<string, { readonly url: string; readonly sha256: string }>>;
+}
+
+const cosign = (version: string, sums: Record<string, string>): ToolPin => ({
+  name: "cosign",
+  version,
+  platforms: Object.fromEntries(Object.entries(sums).map(([platform, sha256]) => [platform, { url: `https://github.com/sigstore/cosign/releases/download/${version}/cosign-${platform.replace("/", "-")}`, sha256 }])),
+});
+
+const goreleaser = (version: string, sums: Record<string, [string, string]>): ToolPin => ({
+  name: "goreleaser",
+  version,
+  archive: true,
+  platforms: Object.fromEntries(Object.entries(sums).map(([platform, [asset, sha256]]) => [platform, { url: `https://github.com/goreleaser/goreleaser/releases/download/${version}/${asset}`, sha256 }])),
+});
+
+export const TOOL_PINS = {
+  // #5164: Sigstore signing at publish. v3.1.4 was released 2026-10-20; the sums are its cosign_checksums.txt's.
+  cosign: cosign("v3.1.4", {
+    "linux/amd64": "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa",
+    "linux/arm64": "ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2",
+  }),
+  // #5151: release.artifacts entries goreleaser builds. v2.19.0 was released 2026-10-22; the sums are its checksums.txt's.
+  goreleaser: goreleaser("v2.19.0", {
+    "linux/amd64": ["goreleaser_Linux_x86_64.tar.gz", "ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b"],
+    "linux/arm64": ["goreleaser_Linux_arm64.tar.gz", "ef33741b684c9f62d6a21e7a3c8b051f139ea7b1d301693b67cc819c46226d53"],
+  }),
+} as const satisfies Record<string, ToolPin>;
+
+/**
+ * Shell that downloads `pin` for `platform` into `dir`, checks its SHA-256
+ * and leaves the executable `<dir>/<name>`: made executable, or unpacked
+ * from the archive. It fails, and so fails the step, when the file is not
+ * the pinned one. Throws for a platform the row has no file for.
+ */
+export function toolInstallLine(pin: ToolPin, platform: string, dir: string): string {
+  const file = pin.platforms[platform];
+  if (!file) throw new Error(`${pin.name} ${pin.version} is pinned for ${Object.keys(pin.platforms).join(", ")}, not ${platform}`);
+  if (pin.archive) {
+    const tgz = `${dir}/${pin.name}.tar.gz`;
+    return `mkdir -p "${dir}" && curl -fsSL -o "${tgz}" ${file.url} && echo "${file.sha256}  ${tgz}" | sha256sum -c - && tar -xzf "${tgz}" -C "${dir}" ${pin.name}`;
+  }
+  const path = `${dir}/${pin.name}`;
+  return `curl -fsSL -o "${path}" ${file.url} && echo "${file.sha256}  ${path}" | sha256sum -c - && chmod +x "${path}"`;
+}
