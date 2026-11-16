@@ -52,6 +52,7 @@ import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MED
 import { readCredential, type Credential } from "./publish-credentials";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
+import { trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
@@ -570,6 +571,36 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
   /** The image's digest among a release's recorded items: the one item that is not an attachment. */
   const imageDigest = (items: readonly PublishItem[]): string | undefined => items.find((i) => i.attachment === undefined && i.digest)?.digest;
   return {
+    /** #5165: the repository; what the image bundles is not read from it, so a member names that with `release.dependsOn`. */
+    async names() {
+      return { provides: [trainName("oci", decl.repository)], needs: [] };
+    },
+    /** #5165: whether each tag that names the label is there; null when no declared tag names it. */
+    async published(ctx) {
+      const label = ctx.label;
+      if (label === null) return null;
+      const tags = (decl.tags ?? ["{label}"]).filter((t) => t.includes("{label}")).map((t) => t.split("{label}").join(label));
+      if (tags.length === 0) return null;
+      const { registry } = connect(ctx);
+      for (const t of tags) if ((await registry.getManifest(t)) === null) return false;
+      return true;
+    },
+    /** #5165: wait until each tag the reveal moved names the image's digest. */
+    async visible(ctx, published) {
+      const digest = imageDigest(published.items);
+      const tags = ociTags(decl, ctx);
+      if (!digest || tags.length === 0) return;
+      const { registry } = connect(ctx);
+      await waitUntilServed(ctx, deps, {
+        what: decl.repository,
+        code: "publish-oci-not-served",
+        check: async () => {
+          const missing: string[] = [];
+          for (const t of tags) if ((await registry.getManifest(t))?.digest !== digest) missing.push(`${decl.repository}:${t}`);
+          return missing;
+        },
+      });
+    },
     /**
      * #5163: a registry has no deprecation, so deprecate does nothing here. A
      * yank points each moving tag that names this release's digest at the

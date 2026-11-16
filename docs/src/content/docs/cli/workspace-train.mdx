@@ -78,9 +78,9 @@ The two `<product>-train.yml` workflows are written by the GitHub lexicon (`gene
 
 ## Publish
 
-`chant workspace train publish <env>` publishes the newest train for `<env>`, or the one named by id or digest, as one set: every member's [publish targets](/chant/reference/publish-targets/#publishing-a-release-train) stage before any reveals, each member's [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands run before the first layer reveals, and the members reveal in dependency layers, each layer waiting until the one before it resolves for a consumer. It runs in a checkout of the commit the train's new releases were cut from, as a CI job on the train's tag does, and publishes each member whose release was cut there. A member pinned at a release from another commit is not published again, and must already be: its publish record or its registry says so, or nothing stages.
+`chant workspace train publish <env>` publishes the newest train for `<env>`, or the one named by id or digest, as one set: every member's [publish targets](/chant/reference/publish-targets/#publishing-a-release-train) stage before any reveals, each member's [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands run after the whole train has staged and before the first layer reveals, and the members reveal in dependency layers, each layer waiting until the one before it is served to a consumer. The layers come from what each member's targets publish and need, across kinds: an npm package after the packages it depends on, a crate after the crates it depends on, an MCP Registry entry after the packages and images its `server.json` lists. `release.dependsOn` in a member's `chant.config.ts` names members it comes after that no manifest shows, such as the member whose package an image bundles. It runs in a checkout of the commit the train's new releases were cut from, as a CI job on the train's tag does, and publishes each member whose release was cut there. A member pinned at a release from another commit is not published again, and must already be: its publish record or its registry says so, or nothing stages.
 
-Without `--yes` it prints the members in their layers, each with what it would publish where, and sends nothing. With `--yes` it publishes. A failure prints what is staged and what is revealed, and running the same command again resumes from each member's publish record. `--allow-unsigned` and `--require-provenance` apply to every member as they do to [`chant release publish`](/chant/cli/release/publish/). A train of `repo` members is refused, since each one publishes in its own repository.
+Without `--yes` it prints the members in their layers, each with the members it comes after and what it would publish where, and sends nothing. With `--yes` it publishes. A failure prints what is staged and what is revealed, and running the same command again resumes from each member's publish record. `--allow-unsigned` and `--require-provenance` apply to every member as they do to [`chant release publish`](/chant/cli/release/publish/). A train of `repo` members is refused, since each one publishes in its own repository.
 
 ```
 $ chant workspace train publish npm
@@ -89,7 +89,7 @@ Dry run: publish release train train-3c1e… (jcs1-sha256:9f0a…) for npm
   layer 0: core 0.125.1
     npm (1 package):
       @intentius/chant@0.125.1 to the registry npm's config names, dist-tag latest
-  layer 1: lexicon-aws 0.125.1
+  layer 1: lexicon-aws 0.125.1, after core
     npm (1 package):
       @intentius/chant-lexicon-aws@0.125.1 to the registry npm's config names, dist-tag latest
 ```

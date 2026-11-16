@@ -69,6 +69,7 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
 import { changelogNotes, type ChangelogCommit } from "./release-changelog";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
+import { trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
@@ -571,12 +572,39 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       `release ${tag} on ${decl.forge} ${decl.repo} already has an asset named ${a.name}${theirs ? ` with digest ${theirs}, not ${a.digest}` : ", and the forge reports no digest to compare"}${before.length > 0 ? `; ${before.map((i) => i.name).join(", ")} were staged before it` : ""}`,
       "Delete the asset on the forge, or cut a new release.",
     );
+  /** #5165: the release's tag and a client, read without the checkout's files; null when the tag, the API root or the token is missing. */
+  const reader = (ctx: PublishContext): { tag: string; client: ForgeClient } | null => {
+    const tag = decl.tag ?? ctx.releaseTag;
+    const api = forgeApi(decl, ctx.env);
+    const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+    return tag && api && token ? { tag, client: new ForgeClient(decl, api, token, fetchImpl, ctx) } : null;
+  };
   return {
     kind: "forge",
     name: `${decl.forge} release assets ${decl.repo}`,
     destination: `${decl.forge} ${decl.repo}`,
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
+    /** #5165: the repository whose releases it publishes; it needs nothing a train orders by. */
+    async names() {
+      return { provides: [trainName("forge", `${decl.forge}/${decl.repo}`)], needs: [] };
+    },
+    /** #5165: whether the forge has a published release, not a draft, for the release's tag. */
+    async published(ctx) {
+      const r = reader(ctx);
+      if (!r) return null;
+      return (await r.client.published(r.tag)) !== null;
+    },
+    /** #5165: wait until the forge serves the release for the tag as published. */
+    async visible(ctx) {
+      const r = reader(ctx);
+      if (!r) return;
+      await waitUntilServed(ctx, deps, {
+        what: `${decl.forge} ${decl.repo}`,
+        code: "publish-forge-not-served",
+        check: async () => ((await r.client.published(r.tag)) === null ? [`release ${r.tag}`] : []),
+      });
+    },
     /**
      * #5163: a forge release has no deprecation, so deprecate does nothing
      * here. A yank marks the release a prerelease, makes it a draft again, or

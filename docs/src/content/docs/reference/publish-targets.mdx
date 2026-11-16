@@ -637,19 +637,70 @@ The record is on the branch rather than read from the registries alone, because 
 
 ### Publishing a release train
 
-A [release train](/chant/cli/workspace-train/) whose members each publish one package goes out as one set with `chant workspace train publish <env> [<train>] --yes`. It runs in a checkout of the commit the train's new releases were cut from. Each member whose release was cut from that commit is published by this run. A member the train pins at a release cut from another commit must already be published: its publish record shows every target revealed, or each target that isn't finds the release's label on its destination (npm: `npm view <name>@<label> version`). Otherwise the publish is refused with `train-member-unpublished` before anything stages.
+A [release train](/chant/cli/workspace-train/) goes out as one set with `chant workspace train publish <env> [<train>] --yes`, whatever its members publish. It runs in a checkout of the commit the train's new releases were cut from. Each member whose release was cut from that commit is published by this run. A member the train pins at a release cut from another commit must already be published: its publish record shows every target revealed, or each target that isn't finds the release's label on its destination. Otherwise the publish is refused with `train-member-unpublished` before anything stages.
 
-Every member it publishes is checked as `chant release publish` checks one, and every target is planned, before anything stages. The members go in dependency layers: a member comes after the members that publish a package its packages depend on, through `dependencies`, `peerDependencies` or `optionalDependencies`. Members of one layer go in name order, so a train of chant's packages starts with `core`.
+| Target | A pinned release is published when |
+|---|---|
+| npm | `npm view <name>@<label> version` answers for each package |
+| OCI | each declared tag with `{label}` in it is in the repository. With no such tag it can't tell |
+| forge | the forge has a published release, not a draft, for the release's tag |
+| homebrew, index | the branch holds each manifest with the release's version in it. In `mode: "pull-request"` a manifest without it can't tell, since the pull request may be open; over SSH and for the `zed` preset it can't tell |
+| marketplace | the marketplace lists the version for the extension the `.vsix` names, or the member's `package.json` when the checkout has no `.vsix` |
+| PyPI | the simple API lists a file of the project at the release's version (`1.4.0-rc.1` is `1.4.0rc1`) |
+| cargo | the index holds each crate at the release's version. A crate whose `Cargo.toml` here has another version can't tell |
+| MCP Registry | the registry holds the version of the server `server.json` names |
+| Tauri updater | the rolling release is this version's. One that holds another version can't tell |
+
+A target that can't tell, or that has no credential to ask with, counts as not published.
+
+Every member it publishes is checked as `chant release publish` checks one, and every target is planned, before anything stages. The members go in dependency layers: a member comes after the members that publish a name it needs. Each target names what it publishes and what it needs, by kind:
+
+| Target | Publishes | Needs |
+|---|---|---|
+| npm | each package | each key of `dependencies`, `peerDependencies` and `optionalDependencies` |
+| OCI | the repository | nothing |
+| PyPI | each project its files hold | each project in `Requires-Dist` that is not under an extra |
+| cargo | each crate it publishes | each crate they depend on, apart from dev-dependencies |
+| marketplace | the extension | each extension in `extensionDependencies` and `extensionPack` |
+| MCP Registry | the server | each npm, PyPI, cargo and NuGet package and each OCI image `server.json` lists |
+| forge, homebrew, index, Tauri updater | where it publishes | nothing |
+
+A dependency no manifest shows, such as an image that bundles another member's package, goes in the member's `chant.config.ts`:
+
+```ts
+export default {
+  release: {
+    dependsOn: ["core"],
+    publish: [{ type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api" }],
+  },
+};
+```
+
+`dependsOn` names members of the workspace's `chant.workspace.json`. One it does not list is refused with `train-depends-on-unknown` before anything stages. A member the train pins at an earlier release is already published, so a dependency on it orders nothing. Members that depend on each other share a layer. Members of one layer go in name order, so a train of chant's packages starts with `core`. The dry run prints each member's layer and the members it comes after. Read by chant 0.124.101 and newer for targets other than npm and for `dependsOn`.
 
 Three steps then run across the whole train:
 
-1. Every member's targets stage, layer by layer. A failure here leaves no member's `latest` moved.
-2. Each member's `release.verify` commands run, in layer order, with the whole train's staged references: `CHANT_STAGED_NPM` names every member's staged packages. A failure is recorded in that member's record and moves no `latest`.
-3. Each layer reveals. Before the next layer reveals, the publish waits until each npm package of this layer is what `latest` (or the release's channel) resolves to, polling `npm view <name> dist-tags.latest` every 10 seconds, with a line about once a minute. `registryWait` caps that wait as it caps the registry wait above. So a package is never `latest` before the packages it depends on are.
+1. Every member's targets stage, layer by layer. A failure here leaves no member visible to a consumer.
+2. Each member's `release.verify` commands run, in layer order, after the whole train has staged, with the whole train's staged references: `CHANT_STAGED_NPM` names every member's staged packages, `CHANT_STAGED_IMAGES` every member's staged images. A failure is recorded in that member's record and reveals nothing.
+3. Each layer reveals. Before the next layer reveals, the publish waits until each target this layer revealed is served to a consumer, so nothing is visible before what it needs is. It asks again every 10 seconds, with a line about once a minute.
 
-An npm target with `stage: false` has nothing to hold back, so it is not staged up front. It publishes straight to `latest` in its layer's turn, after the layers before it resolve, so the verify commands can't see it, and the publish warns. A train of such targets publishes layer by layer.
+| Target | Waits until |
+|---|---|
+| npm | `npm view <name> dist-tags.latest` (or the release's channel) names each version. `registryWait` caps the wait; without it the wait ends when the registry serves them or fails |
+| OCI | each tag the reveal moved names the image's digest |
+| forge | the forge serves the release for the tag as published |
+| homebrew, index | in `mode: "commit"`, the branch serves each manifest as revealed. A pull request waits on the index's maintainers, so nothing waits for it |
+| marketplace | the marketplace lists the version |
+| PyPI | the simple API lists each uploaded file |
+| cargo | the index holds each crate version |
+| MCP Registry | the registry serves the version |
+| Tauri updater | the rolling release is this version's |
 
-Each step goes into the member's own `_releases/publishes.jsonl`. Run again after a failure, the train publish skips what each member's record shows revealed and reveals without staging again what it shows staged, so nothing is published twice. `chant release publish` in one member reads the same record.
+Apart from npm, a wait stops after 15 minutes with `publish-<target>-not-served`, such as `publish-pypi-not-served`. What revealed stays revealed, and running the same command again goes on from there.
+
+An npm target with `stage: false` has nothing to hold back, so it is not staged up front. It publishes straight to `latest` in its layer's turn, after the layers before it resolve, so the verify commands can't see it, and the publish warns. A marketplace, PyPI, cargo or MCP Registry target uploads in its reveal, in its layer's turn, for the same reason.
+
+Each step goes into the member's own `_releases/publishes.jsonl`. Run again after a failure in any layer, the train publish skips what each member's record shows revealed, reveals without staging again what it shows staged, and waits on each revealed layer again before the next, so nothing is published twice. `chant release publish` in one member reads the same record.
 
 ## Deprecating, yanking and restoring
 

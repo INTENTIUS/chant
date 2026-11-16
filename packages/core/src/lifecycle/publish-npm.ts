@@ -59,6 +59,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { packageSbom } from "./publish-attachments";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
+import { trainName } from "./publish-train-names";
 import { readPins, unknownPins } from "./release-images";
 import { NPM_STAGE_TAG, PublishTargetError, statusMessage, type PublishContext, type PublishContextBase, type PublishDeps, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
@@ -459,10 +460,10 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
       for (const path of decl.packages) {
         const pkg = packageManifest(memberFile(ctx.cwd, path));
         if (!pkg) continue;
-        if (typeof pkg.name === "string") provides.push(pkg.name);
+        if (typeof pkg.name === "string") provides.push(trainName("npm", pkg.name));
         for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
           const deps = pkg[field];
-          if (deps && typeof deps === "object") for (const n of Object.keys(deps)) needs.add(n);
+          if (deps && typeof deps === "object") for (const n of Object.keys(deps)) needs.add(trainName("npm", n));
         }
       }
       return { provides, needs: [...needs].filter((n) => !provides.includes(n)) };

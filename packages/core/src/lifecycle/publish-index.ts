@@ -65,6 +65,7 @@ import { GitHubRepo, githubApi } from "./publish-github";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey, releaseArtifactAt } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
+import { trainName, waitUntilServed } from "./publish-train-names";
 
 /** The first chant that publishes an `index` target (#5158). */
 export const PUBLISH_INDEX_FLOOR = "0.124.101";
@@ -403,6 +404,50 @@ export function indexTargetOf(s: IndexSettings, deps: PublishDeps): PublishTarge
     key: s.key,
     ...(s.revealsLast ? { revealsLast: true } : {}),
     ...(s.refusalWarns ? { refusalWarns: true } : {}),
+    /** #5165: the package's place in the index; the files it points at are its own member's. */
+    async names() {
+      return { provides: [trainName(s.kind, `${s.repo}/${s.name}`)], needs: [] };
+    },
+    /**
+     * #5165: whether the index's branch holds each manifest with the
+     * release's version in it, read through the API. A pull request may still
+     * be open, so in that mode a manifest without it can't say; over SSH and
+     * for Zed's submodule nothing is read.
+     */
+    async published(ctx) {
+      if (prereleaseOf(ctx.label)) return true;
+      const version = releaseVersion(ctx.label);
+      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      if (!version || !ctx.label || ssh || s.zed || !token) return null;
+      const upstream = new GitHubRepo(githubApi(s.api, ctx.env), s.repo, token, fetchImpl, ctx, failed);
+      const branch = s.branch ?? (await upstream.defaultBranch());
+      for (const f of s.files) {
+        const path = s.kind === "homebrew" ? f.path : fillIndexPath(f.path, { name: s.name, version, label: ctx.label }, code("path"));
+        const there = await upstream.file(path, branch);
+        if (!there || !there.bytes.toString("utf-8").includes(version)) return s.mode === "commit" ? false : null;
+      }
+      return true;
+    },
+    /** #5165: in `mode: "commit"`, wait until the branch serves each manifest as revealed. A pull request waits on the index's maintainers, so nothing waits for it. */
+    async visible(ctx, published) {
+      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      const files = published.items.filter((i): i is PublishItem & { digest: string } => typeof i.digest === "string" && !i.refused);
+      if (s.mode !== "commit" || ssh || s.zed || !token || files.length === 0) return;
+      const upstream = new GitHubRepo(githubApi(s.api, ctx.env), s.repo, token, fetchImpl, ctx, failed);
+      const branch = s.branch ?? (await upstream.defaultBranch());
+      await waitUntilServed(ctx, deps, {
+        what: `${s.repo}@${branch}`,
+        code: code("not-served"),
+        check: async () => {
+          const missing: string[] = [];
+          for (const f of files) {
+            const there = await upstream.file(f.name, branch);
+            if (!there || bytesDigest(new Uint8Array(there.bytes)) !== f.digest) missing.push(f.name);
+          }
+          return missing;
+        },
+      });
+    },
     async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
       const at = (path: string) => `${s.repo}:${path}`;
       const noun = s.kind === "homebrew" ? "formula" : "manifest";

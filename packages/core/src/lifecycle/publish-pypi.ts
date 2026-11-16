@@ -56,6 +56,8 @@ import { readCredential, type Credential } from "./publish-credentials";
 import type { PypiPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, hasIdToken, memberFile, publishTargetKey, runIdToken } from "./publish-targets";
 import type { InTotoStatement } from "./publish-signing";
+import { releaseVersion } from "./publish-index";
+import { pep440Version, pypiFileVersion, pypiRequirements, trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 
 /** The first chant that publishes a `pypi` target (#5167). */
@@ -529,6 +531,50 @@ export function pypiTarget(decl: PypiPublishDeclaration, deps: PublishDeps): Pub
     credentialEnv: [tokenName, PYPI_ID_TOKEN_ENV, ...(decl.usernameEnv ? [decl.usernameEnv] : [])],
     key: publishTargetKey(decl),
     uploadsAtReveal: true,
+    /** #5165: each project the files hold, and the projects their `Requires-Dist` names outside an extra. */
+    async names(ctx) {
+      let dists: PypiDistribution[];
+      try {
+        dists = distributions(ctx);
+      } catch {
+        const name = pypiProjectName(ctx.cwd, decl.files);
+        return { provides: name ? [trainName("pypi", name)] : [], needs: [] };
+      }
+      const provides = [...new Set(dists.map((d) => trainName("pypi", d.name)))];
+      const needs = new Set(dists.flatMap((d) => pypiRequirements(d.metadata).map((n) => trainName("pypi", n))));
+      return { provides, needs: [...needs].filter((n) => !provides.includes(n)) };
+    },
+    /** #5165: whether the index serves a file of the release's version of the project. */
+    async published(ctx) {
+      const name = pypiProjectName(ctx.cwd, decl.files);
+      const version = releaseVersion(ctx.label);
+      if (!name || !version) return null;
+      const files = await served(ctx, name);
+      if (!files) return false;
+      const want = pep440Version(version);
+      return [...files.keys()].some((f) => {
+        const v = pypiFileVersion(f);
+        return v !== null && pep440Version(v.version) === want;
+      });
+    },
+    /** #5165: wait until the simple API lists each file the reveal uploaded. */
+    async visible(ctx, published) {
+      const files = published.items.filter((i) => i.attachment === undefined && !i.refused).map((i) => ({ file: i.name, project: pypiFileVersion(i.name)?.name })).filter((f): f is { file: string; project: string } => f.project !== undefined);
+      if (files.length === 0) return;
+      await waitUntilServed(ctx, deps, {
+        what: index.label,
+        code: "publish-pypi-not-served",
+        check: async () => {
+          const byProject = new Map<string, Map<string, string | null> | null>();
+          const missing: string[] = [];
+          for (const f of files) {
+            if (!byProject.has(f.project)) byProject.set(f.project, await served(ctx, f.project));
+            if (!byProject.get(f.project)?.has(f.file)) missing.push(f.file);
+          }
+          return missing;
+        },
+      });
+    },
     async plan(ctx) {
       const dists = distributions(ctx);
       credential(ctx);

@@ -59,6 +59,8 @@ import { resolve } from "node:path";
 import { readCredential } from "./publish-credentials";
 import type { CargoPublishDeclaration } from "./publish-declaration";
 import { hasIdToken, memberFile, publishTargetKey, runIdToken } from "./publish-targets";
+import { releaseVersion } from "./publish-index";
+import { trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 
 /** The first chant that publishes a `cargo` target (#5167). */
@@ -285,6 +287,45 @@ export function cargoTarget(decl: CargoPublishDeclaration, deps: PublishDeps): P
     credentialEnv: [tokenName, CRATES_IO_ID_TOKEN_ENV],
     key: publishTargetKey(decl),
     uploadsAtReveal: true,
+    /** #5165: the crates it publishes, and every crate they depend on outside dev-dependencies, from `cargo metadata`. */
+    async names(ctx) {
+      const all = await cargoWorkspace(cargo, memberFile(ctx.cwd, decl.manifest ?? "Cargo.toml"), ctx.cwd, ctx.env);
+      const crates = cargoPublishOrder(all, decl);
+      const provides = crates.map((c) => trainName("cargo", c.name));
+      const needs = new Set(crates.flatMap((c) => c.dependencies.filter((d) => d.kind !== "dev").map((d) => trainName("cargo", d.name))));
+      return { provides, needs: [...needs].filter((n) => !provides.includes(n)) };
+    },
+    /**
+     * #5165: whether the index holds each crate at the release's version. A
+     * crate whose Cargo.toml here has another version, and that the index
+     * does not hold at the release's, can't say.
+     */
+    async published(ctx) {
+      const version = releaseVersion(ctx.label);
+      if (!version) return null;
+      const crates = cargoPublishOrder(await cargoWorkspace(cargo, memberFile(ctx.cwd, decl.manifest ?? "Cargo.toml"), ctx.cwd, ctx.env), decl);
+      const token = readCredential(ctx.env, [tokenName], ctx.redactor)?.value ?? null;
+      for (const c of crates) {
+        if ((await indexEntry(ctx, { name: c.name, version }, token)) !== null) continue;
+        return c.version === version ? false : null;
+      }
+      return true;
+    },
+    /** #5165: wait until the index serves each crate version the reveal published. */
+    async visible(ctx, published) {
+      const crates = published.items.map((i) => /^(.+)@([^@]+)$/.exec(i.name)).filter((m): m is RegExpExecArray => m !== null).map((m) => ({ name: m[1]!, version: m[2]! }));
+      if (crates.length === 0) return;
+      const token = readCredential(ctx.env, [tokenName], ctx.redactor)?.value ?? null;
+      await waitUntilServed(ctx, deps, {
+        what: label,
+        code: "publish-cargo-not-served",
+        check: async () => {
+          const missing: string[] = [];
+          for (const c of crates) if ((await indexEntry(ctx, c, token)) === null) missing.push(`${c.name}@${c.version}`);
+          return missing;
+        },
+      });
+    },
     async plan(ctx) {
       return (await setup(ctx)).items;
     },

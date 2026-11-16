@@ -192,6 +192,8 @@ export const ChantConfigSchema = z.object({
     green: z.enum(["chant", "forge-checks", "none"]).optional(),
     // #5157: commands a publish runs after every target has staged and before any reveals.
     verify: z.array(z.union([z.string().min(1), z.object({ name: z.string().min(1).optional(), run: z.string().min(1) }).strict()])).optional(),
+    // #5165: workspace members a train publish reveals before this one, beside what the targets' names say.
+    dependsOn: z.array(z.string().min(1)).optional(),
     // #5134: tag prefixes of releases cut before members had ledgers, read as a last release by `chant release changed`.
     legacyTags: z.array(z.string().min(1)).optional(),
     // #5191: what a breaking change does to a 0.x version when the label comes from commits.
@@ -554,6 +556,14 @@ export interface ChantConfig {
      * the publish with nothing visible. See ./lifecycle/publish-verify.ts.
      */
     verify?: import("./lifecycle/publish-verify").ReleaseVerifyDeclaration[];
+    /**
+     * Workspace members whose releases `chant workspace train publish` puts
+     * in an earlier layer than this one's (#5165), for a dependency the
+     * targets' manifests don't show, such as an image that bundles another
+     * member's package. Each is a member's name in chant.workspace.json. See
+     * ./workspace/train-publish.ts.
+     */
+    dependsOn?: string[];
     /**
      * Tag prefixes of releases cut before members had ledgers (#5134), such as
      * `release/npm/` and `chant-v`. `chant release changed` and `chant release
