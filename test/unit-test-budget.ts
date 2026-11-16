@@ -11,6 +11,11 @@
  * 3.7s when a worker loaded a large module cold. 5s leaves 2.5x headroom over
  * the typical slowest time, while a test that runs the CLI, tsc or a build
  * over projects takes longer and belongs in the e2e project.
+ *
+ * The budget is for an unloaded machine. When the one-minute load average is
+ * above the core count, the budget a test gets grows by that ratio
+ * ({@link loadFactor}, #5221), so a test fails for being slow itself and not
+ * for sharing the machine with a full suite or other jobs.
  */
 export const DEFAULT_UNIT_TEST_BUDGET_MS = 5_000;
 
@@ -26,6 +31,23 @@ export function unitTestBudgetMs(env: Record<string, string | undefined>): numbe
     throw new Error(`CHANT_UNIT_TEST_BUDGET_MS must be a whole number of milliseconds, or 0 to turn the budget off; got "${raw}".`);
   }
   return Number(raw);
+}
+
+/**
+ * How much a test's budget grows on a loaded machine (#5221): the one-minute
+ * load average over the core count, and never below 1. At or under one
+ * runnable process per core nothing changes; at load 45 on 18 cores the
+ * factor is 2.5, so 5s becomes 12.5s.
+ */
+export function loadFactor(loadavg: number, cpus: number): number {
+  if (!Number.isFinite(loadavg) || !Number.isFinite(cpus) || cpus <= 0) return 1;
+  return Math.max(1, loadavg / cpus);
+}
+
+/** The load a budget was scaled for: the one-minute load average and the core count. */
+export interface BudgetLoad {
+  loadavg: number;
+  cpus: number;
 }
 
 /**
@@ -126,15 +148,21 @@ export function unitTestBudgetForFile(file: string | undefined, runBudgetMs: num
 /**
  * The failure for a unit test that ran `elapsedMs` against a budget of
  * `budgetMs`. A test in a named slow file (#4472) has the message name the
- * file whose budget it went over.
+ * file whose budget it went over. With `load` (#5221) and a factor above 1,
+ * the message gives the budget the test had after scaling for the load.
  */
-export function overBudgetMessage(name: string, elapsedMs: number, budgetMs: number, file?: string): string {
+export function overBudgetMessage(name: string, elapsedMs: number, budgetMs: number, file?: string, load?: BudgetLoad): string {
   const took = `"${name}" took ${(elapsedMs / 1000).toFixed(1)}s`;
   const slow = file !== undefined && slowFiles.has(file.replaceAll("\\", "/"));
+  const factor = load === undefined ? 1 : loadFactor(load.loadavg, load.cpus);
+  const scaled =
+    load !== undefined && factor > 1
+      ? `, scaled to ${+(budgetMs * factor / 1000).toFixed(1)}s for load ${+load.loadavg.toFixed(1)} on ${load.cpus} cores`
+      : "";
   return [
     slow
-      ? `${took}, over the ${budgetMs / 1000}s unit-test budget of its file, ${file} (chant #2817, #4472).`
-      : `${took}, over the ${budgetMs / 1000}s unit-test budget (chant #2817).`,
+      ? `${took}, over the ${budgetMs / 1000}s unit-test budget of its file, ${file}${scaled} (chant #2817, #4472).`
+      : `${took}, over the ${budgetMs / 1000}s unit-test budget${scaled} (chant #2817).`,
     "Make it faster, or move it to a *.e2e.test.ts file: those are the e2e project (`just test-e2e`, and release-suites.yml on main before a release), which has no per-test budget and never runs on a pull request.",
     "CHANT_UNIT_TEST_BUDGET_MS changes the budget for a local run (0 turns it off).",
   ].join(" ");

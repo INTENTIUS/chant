@@ -5,6 +5,7 @@ import {
   DEFAULT_UNIT_TEST_BUDGET_MS,
   SLOW_FILE_BUDGET_MS,
   SLOW_UNIT_TEST_FILES,
+  loadFactor,
   overBudgetMessage,
   unitTestBudgetForFile,
   unitTestBudgetMs,
@@ -67,5 +68,33 @@ describe("the per-file budget for the named slow files (chant #4472)", () => {
     const message = overBudgetMessage("signs the release", 16_200, 15_000, slow);
     expect(message).toContain(`"signs the release" took 16.2s, over the 15s unit-test budget of its file, ${slow} (chant #2817, #4472).`);
     expect(overBudgetMessage("quick", 6_000, 5_000, "test/unit-test-budget.test.ts")).toContain("over the 5s unit-test budget (chant #2817).");
+  });
+});
+
+describe("the budget scales with machine load (#5221)", () => {
+  test("the factor is the load over the cores, never below 1", () => {
+    expect(loadFactor(45, 18)).toBe(2.5);
+    expect(loadFactor(18, 18)).toBe(1);
+    expect(loadFactor(3, 4)).toBe(1);
+    expect(loadFactor(0, 4)).toBe(1);
+  });
+
+  test("a value that is not a load or a core count gives 1", () => {
+    expect(loadFactor(Number.NaN, 4)).toBe(1);
+    expect(loadFactor(10, 0)).toBe(1);
+    expect(loadFactor(Number.POSITIVE_INFINITY, 4)).toBe(1);
+  });
+
+  test("the failure says the scaled budget when the load raised it, and says nothing at or under 1", () => {
+    const loaded = overBudgetMessage("builds the world", 21_340, 5_000, undefined, { loadavg: 45, cpus: 18 });
+    expect(loaded).toContain("over the 5s unit-test budget, scaled to 12.5s for load 45 on 18 cores (chant #2817).");
+    const idle = overBudgetMessage("builds the world", 21_340, 5_000, undefined, { loadavg: 4, cpus: 18 });
+    expect(idle).toContain("over the 5s unit-test budget (chant #2817).");
+    expect(idle).not.toContain("scaled");
+  });
+
+  test("a named slow file's message gives the scaling too", () => {
+    const file = "packages/core/src/workspace/ci-green.test.ts";
+    expect(overBudgetMessage("t", 40_000, 15_000, file, { loadavg: 36, cpus: 18 })).toContain(`of its file, ${file}, scaled to 30s for load 36 on 18 cores`);
   });
 });

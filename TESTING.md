@@ -351,7 +351,7 @@ The test suite is designed to run in continuous integration:
 
 `vitest.config.ts` defines two projects (#2817):
 
-- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 5 second budget (#3793; 15 before), set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise.
+- `unit`: every included `*.test.ts` except `*.e2e.test.ts`. Each test has a 5 second budget (#3793; 15 before), set in `test/unit-test-budget.setup.ts`. A test that runs longer fails with a message naming the budget, whether or not it passes otherwise. The budget grows with machine load (#5221): it is multiplied by the one-minute load average over the core count, when that ratio is above 1, so a full suite on a busy laptop does not fail a test that is only slow because the machine is. At or under one process per core the budget is the plain 5 seconds, and a failure on a loaded machine says the scaled figure.
 - `e2e`: every `*.e2e.test.ts` under `packages/`, `lexicons/` and `test/`, and the corpus walkers in `examples/*.e2e.test.ts`. These spawn the CLI, run tsc over fixtures, build every example in the corpus, boot containers or release whole projects. They have no budget beyond their own timeouts.
 
 ```bash
