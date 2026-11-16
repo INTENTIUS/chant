@@ -992,7 +992,25 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   const pre = prereleaseOf(label);
   if (pre && !args.json) say(`  prerelease: ${prereleaseNote(label, prepared.channel ?? undefined)}`);
   const floating = prepared.floating ?? null;
-  const base = { releaseDigest: release.releaseDigest, label, prerelease: pre !== null, ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}), commit: release.commit, signature, provenance, warnings: [signatureWarning, warning, signingWarning].filter((w): w is string => w !== null), signing: prepared.signing ? { identity: prepared.signing.identity, signer: prepared.signing.signer.name } : null, ...(floating ? { floating } : {}) };
+  // #5157: release.verify runs between the stages and the reveals; a target whose stage is visible is out of its reach.
+  const verifySteps = targets.length > 0 ? (prepared.verify ?? []) : [];
+  const { unstagedForVerify, unstagedWarning } = await import("../../lifecycle/publish-verify");
+  const unstaged = verifySteps.length > 0 ? unstagedForVerify(targets) : [];
+  const verifyWarning = unstaged.length > 0 ? unstagedWarning(unstaged) : null;
+  if (verifyWarning) console.error(formatWarning({ message: verifyWarning }));
+  const base = {
+    releaseDigest: release.releaseDigest,
+    label,
+    prerelease: pre !== null,
+    ...(pre ? { distTag: prepared.channel ?? pre.distTag } : {}),
+    commit: release.commit,
+    signature,
+    provenance,
+    warnings: [signatureWarning, warning, signingWarning, verifyWarning].filter((w): w is string => w !== null),
+    signing: prepared.signing ? { identity: prepared.signing.identity, signer: prepared.signing.signer.name } : null,
+    ...(floating ? { floating } : {}),
+    ...(verifySteps.length > 0 ? { verify: { steps: verifySteps, unstaged } } : {}),
+  };
   const floatingLine = (f: import("../../lifecycle/release-publish").FloatingTag, done: boolean): string =>
     f.move ? `  floating tag ${f.name}: ${done ? "moved" : "moves"} to ${f.commit.slice(0, 12)} once every target has revealed` : `  floating tag ${f.name}: left where it is, since ${f.reason}`;
 
@@ -1011,6 +1029,10 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
       out(`  ${p.name}${provenance.oidc && p.kind === "npm" ? ", with --provenance" : ""}${earlier}:`);
       for (const i of p.items) out(`    ${describeItem(i)}`);
     }
+    if (verifySteps.length > 0) {
+      out("  verify, after every target has staged and before any reveals (release.verify):");
+      for (const v of verifySteps) out(`    ${v.name === v.run ? v.run : `${v.name}: ${v.run}`}`);
+    }
     say(`Dry run: nothing was published. Run again with --yes to publish: ${next[0]}`);
     const hint = planned.length === 0 ? promoteHint() : null;
     if (hint) say(hint);
@@ -1020,14 +1042,15 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   if (targets.length > 0 && !args.json) say("  every target stages first, and none is visible until all have staged");
   let run: import("../../lifecycle/release-publish").PublishRun;
   try {
-    run = await runPublish({ cwd, release, label, targets, ctx: pctx, say: (line) => (args.json ? undefined : say(line)) });
+    run = await runPublish({ cwd, release, label, targets, ctx: pctx, verify: verifySteps, say: (line) => (args.json ? undefined : say(line)) });
   } catch (err) {
     if (err instanceof PublishRunError) {
       const again = sameWithYes(process.argv.slice(2));
       const where =
-        err.step === "stage"
+        err.step !== "reveal" && err.revealed.length === 0
           ? `nothing is visible yet${err.staged.length > 0 ? `; staged: ${err.staged.join(", ")}` : ""}`
-          : `revealed: ${err.revealed.length > 0 ? err.revealed.join(", ") : "none"}; staged and not yet revealed: ${err.staged.filter((t) => !err.revealed.includes(t)).join(", ")}`;
+          : `revealed: ${err.revealed.length > 0 ? err.revealed.join(", ") : "none"}; staged and not yet revealed: ${err.staged.filter((t) => !err.revealed.includes(t)).join(", ") || "none"}`;
+      if (args.json) console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, status: "failed", code: err.code, step: err.step, staged: err.staged, revealed: err.revealed }, null, 2)));
       return failed(err.code, `${err.message}; ${where}`, `${err.fix ? `${err.fix} ` : ""}Run the same command again to resume; what went out is not published again: ${again}`);
     }
     const e = errorOf(err);
@@ -1043,7 +1066,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   if (floatingWarning) console.error(formatWarning({ message: floatingWarning }));
   if (run.recordWarning && targets.length > 0) console.error(formatWarning({ message: redactor.redact(`${run.recordWarning}. A resume asks the registries what is already there.`) }));
   if (args.json) {
-    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, resumed: run.resumed, environments: deploySteps, ...(floating ? { floatingMoved: floating.move && floatingWarning === null } : {}) }, null, 2)));
+    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, targets: planned, published, resumed: run.resumed, ...(run.verify ? { verified: run.verify } : {}), environments: deploySteps, ...(floating ? { floatingMoved: floating.move && floatingWarning === null } : {}) }, null, 2)));
     return 0;
   }
   if (targets.length === 0) {

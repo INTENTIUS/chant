@@ -165,6 +165,8 @@ interface ForgeRelease {
   /** Asset names on the release, with the digest the forge reports when it reports one. */
   assets: Map<string, string | null>;
   uploadUrl?: string;
+  /** The release's page (`html_url`), which a draft's verify commands get as `CHANT_STAGED_RELEASE_URL` (#5157). */
+  url?: string;
   /** GitHub and Forgejo: the release's notes as the forge holds them. */
   body?: string;
 }
@@ -220,6 +222,7 @@ class ForgeClient {
       prerelease: body.prerelease === true,
       assets,
       ...(typeof body.upload_url === "string" ? { uploadUrl: body.upload_url } : {}),
+      ...(typeof body.html_url === "string" ? { url: body.html_url } : {}),
       ...(typeof body.body === "string" ? { body: body.body } : {}),
     };
   }
@@ -748,7 +751,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         }
         items.push(await signAndUpload(ctx, client, rel, version, tag, x));
       }
-      return done(items, { releaseId: rel.id, ...kept });
+      return done(items, { releaseId: rel.id, ...(rel.url ? { releaseUrl: rel.url } : {}), ...kept });
     },
     async reveal(ctx, staged) {
       const { tag, api, token, section } = setup(ctx);
