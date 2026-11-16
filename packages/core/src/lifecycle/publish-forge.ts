@@ -40,16 +40,27 @@
  * (./publish-attachments.ts). They go on the draft with the assets, so
  * nothing is visible before they are attached.
  *
+ * The release's notes (#4658, #5153) are a section of a file in the member,
+ * notes generated for the release, or both, between `before` and `after`.
+ * Generated notes are the forge's own (GitHub's `generate-notes`, GitLab's
+ * changelog API) or chant's, from the conventional commits in the member
+ * since its previous release. The stage decides them: the draft is made
+ * with them, or edited to them when it already exists, and they are kept in
+ * the publish record, so the reveal publishes what the draft showed, and a
+ * resumed reveal does not ask the forge again.
+ *
  * The token is read from `tokenEnv`, else `GITHUB_TOKEN`, `GITLAB_TOKEN`
  * then `CI_JOB_TOKEN`, or `FORGEJO_TOKEN`, and is masked in all output.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { memberSbom, releaseProvenance } from "./publish-attachments";
 import { releaseVersion } from "./publish-homebrew";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
+import { changelogNotes, type ChangelogCommit } from "./release-changelog";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 
@@ -58,6 +69,9 @@ export const PUBLISH_FORGE_LATEST_FLOOR = "0.124.63";
 
 /** The first chant whose forge target reads `notes` and may have no assets (#4658). Products feature-detect on it. */
 export const PUBLISH_FORGE_NOTES_FLOOR = "0.124.71";
+
+/** The first chant whose forge target generates notes, `notes.generate` (#5153). Products feature-detect on it. */
+export const PUBLISH_FORGE_GENERATED_NOTES_FLOOR = "0.124.101";
 
 /** `text` with `{label}`, `{version}` and `{tag}` filled in. */
 function fillNotesText(text: string, values: { label: string; version: string; tag: string }): string {
@@ -132,6 +146,8 @@ interface ForgeRelease {
   /** Asset names on the release, with the digest the forge reports when it reports one. */
   assets: Map<string, string | null>;
   uploadUrl?: string;
+  /** GitHub and Forgejo: the release's notes as the forge holds them. */
+  body?: string;
 }
 
 class ForgeClient {
@@ -179,7 +195,13 @@ class ForgeClient {
     } else {
       for (const a of (body.assets as Array<{ name: string; digest?: string | null }> | undefined) ?? []) assets.set(a.name, typeof a.digest === "string" ? a.digest : null);
     }
-    return { id: String(body.id ?? body.tag_name ?? tag), draft: body.draft === true, assets, ...(typeof body.upload_url === "string" ? { uploadUrl: body.upload_url } : {}) };
+    return {
+      id: String(body.id ?? body.tag_name ?? tag),
+      draft: body.draft === true,
+      assets,
+      ...(typeof body.upload_url === "string" ? { uploadUrl: body.upload_url } : {}),
+      ...(typeof body.body === "string" ? { body: body.body } : {}),
+    };
   }
 
   /** The published release for `tag`, or null when the forge has none. A draft is not found here. */
@@ -199,7 +221,15 @@ class ForgeClient {
     const mine = drafts.find((r) => r.draft === true && r.tag_name === tag);
     if (mine) {
       this.ctx.log(`using the draft ${this.decl.forge} release for ${tag}`);
-      return this.toRelease(mine, tag);
+      const rel = this.toRelease(mine, tag);
+      // #5153: the draft shows the notes the reveal will publish, so a draft made by an earlier stage gets them too.
+      if (body !== undefined && (rel.body ?? "") !== body) {
+        this.ctx.log(`setting the notes of the draft ${this.decl.forge} release for ${tag}`);
+        const edit = await this.call("PATCH", `${this.repoPath}/releases/${rel.id}`, JSON.stringify({ body }));
+        if (edit.status !== 200) this.fail(`setting the notes of the draft release ${tag}`, edit.status, edit.text);
+        rel.body = body;
+      }
+      return rel;
     }
     this.ctx.log(`creating a draft ${this.decl.forge} release for ${tag} at ${commit.slice(0, 12)}`);
     const create = await this.call("POST", `${this.repoPath}/releases`, JSON.stringify({ tag_name: tag, target_commitish: commit, name, draft: true, ...(body !== undefined ? { body } : {}) }));
@@ -220,6 +250,25 @@ class ForgeClient {
     else if (o.channel) body.prerelease = true;
     const res = await this.call("PATCH", `${this.repoPath}/releases/${id}`, JSON.stringify(body));
     if (res.status !== 200) this.fail(`publishing the draft release ${tag}`, res.status, res.text);
+  }
+
+  /**
+   * The forge's own notes for `tag` at `commit` (#5153): GitHub's
+   * `POST /repos/{repo}/releases/generate-notes`, since `previousTag` when
+   * one is known, else since the release GitHub picks; GitLab's
+   * `GET /projects/{id}/repository/changelog`, from the `Changelog:`
+   * trailers of the commits since `previousCommit`.
+   */
+  async generatedNotes(tag: string, commit: string, version: string, previous: { tag: string | null; commit: string } | null): Promise<string> {
+    if (this.decl.forge === "gitlab") {
+      const q = new URLSearchParams({ version, to: commit, ...(previous ? { from: previous.commit } : {}) });
+      const res = await this.call("GET", `${this.repoPath}/repository/changelog?${q.toString()}`);
+      if (res.status !== 200) this.fail(`generating the changelog for ${tag}`, res.status, res.text);
+      return String((res.json as { notes?: unknown } | null)?.notes ?? "").trim();
+    }
+    const res = await this.call("POST", `${this.repoPath}/releases/generate-notes`, JSON.stringify({ tag_name: tag, target_commitish: commit, ...(previous?.tag ? { previous_tag_name: previous.tag } : {}) }));
+    if (res.status !== 200) this.fail(`generating the notes for ${tag}`, res.status, res.text);
+    return String((res.json as { body?: unknown } | null)?.body ?? "").trim();
   }
 
   /** GitLab: create the release for `tag` at `commit` with a link to each asset. */
@@ -254,6 +303,56 @@ class ForgeClient {
     if (put.status !== 201 && put.status !== 200) this.fail(`uploading ${asset.name} to the generic package registry`, put.status, put.text);
     return url;
   }
+}
+
+function git(cwd: string, args: string[]): string | null {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The member's previous release (#5153): the release of it cut from the
+ * nearest ancestor of this release's commit, as the cut finds it, with its
+ * label. Null for the member's first release. Refuses when the history the
+ * notes are generated from is not in the checkout.
+ */
+export async function previousMemberRelease(ctx: Pick<PublishContext, "cwd" | "release">, forge: string): Promise<{ commit: string; label: string | null } | null> {
+  const top = git(ctx.cwd, ["rev-parse", "--show-toplevel"])?.trim();
+  if (!top) {
+    throw new PublishTargetError("publish-forge-notes-history", `the ${forge} release's notes are generated from the history since the member's previous release, and ${ctx.cwd} is not in a git checkout`, "Publish from a checkout of the release's commit.");
+  }
+  if (git(ctx.cwd, ["rev-parse", "--is-shallow-repository"])?.trim() === "true") {
+    throw new PublishTargetError(
+      "publish-forge-notes-history",
+      `the ${forge} release's notes are generated from the history since the member's previous release, and this checkout is shallow`,
+      "Check out the full history: fetch-depth: 0 on actions/checkout, GIT_DEPTH: 0 on GitLab.",
+    );
+  }
+  const { previousRelease } = await import("./release-cut");
+  const { readCuts, labelsByDigest } = await import("./release-store");
+  const prev = await previousRelease(top, ctx.release.commit, ctx.cwd);
+  if (!prev) return null;
+  return { commit: prev.commit, label: labelsByDigest((await readCuts({ cwd: ctx.cwd })).cuts).get(prev.releaseDigest) ?? null };
+}
+
+/** The commits in the member's directory after `from` (all of them when null) up to the release's commit, newest first, merges left out. */
+export function memberCommits(ctx: Pick<PublishContext, "cwd" | "release">, from: string | null, forge: string): ChangelogCommit[] {
+  const range = from ? `${from}..${ctx.release.commit}` : ctx.release.commit;
+  const out = git(ctx.cwd, ["log", "--no-merges", "--format=%H%x00%B%x1e", range, "--", "."]);
+  if (out === null) {
+    throw new PublishTargetError("publish-forge-notes-history", `the ${forge} release's notes are generated from the commits ${range}, and git could not list them here`, "Publish from a full checkout that holds the release's commit.");
+  }
+  return out
+    .split("\x1e")
+    .map((r) => r.replace(/^\n+/, ""))
+    .filter((r) => r.includes("\0"))
+    .map((r) => {
+      const [sha, message] = r.split("\0") as [string, string];
+      return { sha, message: message.trim() };
+    });
 }
 
 /** A GitLab generic package version: the label with what GitLab refuses replaced. */
@@ -300,23 +399,55 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       if (names.has(a.name)) throw new PublishTargetError("publish-forge-asset-name-taken", `two assets are named ${a.name}, and a release holds one asset per name`);
       names.add(a.name);
     }
-    return { tag, api, token, assets, notes: releaseNotes(ctx, tag) };
+    return { tag, api, token, assets, section: notesSection(ctx, tag) };
   };
-  // #4658: the notes are read when the target is planned, so a missing or empty section refuses before any target publishes.
-  const releaseNotes = (ctx: PublishContext, tag: string): string | undefined => {
+  // #4658: the file's section is read when the target is planned, so a missing or empty section refuses before any target publishes.
+  const notesSection = (ctx: PublishContext, tag: string): string | undefined => {
     const n = decl.notes;
-    if (!n) return undefined;
-    const label = ctx.label ?? tag;
-    const values = { label, version: releaseVersion(ctx.label) ?? label, tag };
-    const heading = fillNotesText(n.heading, values);
-    let section: string;
+    if (n?.generate === "forge" && decl.forge === "forgejo") {
+      throw new PublishTargetError(
+        "publish-forge-notes-unsupported",
+        "notes.generate is forge, and Forgejo has no API that generates a release's notes",
+        'Set notes.generate to "commits" for notes from the conventional commits since the previous release.',
+      );
+    }
+    if (!n?.file || !n.heading) return undefined;
+    const heading = fillNotesText(n.heading, notesValues(ctx, tag));
     try {
-      section = releaseNotesSection(readFileSync(memberFile(ctx.cwd, n.file), "utf8"), heading, n.linkBase);
+      return releaseNotesSection(readFileSync(memberFile(ctx.cwd, n.file), "utf8"), heading, n.linkBase);
     } catch (err) {
       const why = (err as NodeJS.ErrnoException).code === "ENOENT" ? "it does not exist" : (err as Error).message;
       throw new PublishTargetError("publish-forge-notes-missing", `the ${decl.forge} release's notes come from ${n.file}, and ${why}`, `Write the "${heading}" section in ${n.file}, or change notes.heading.`);
     }
-    return [...(n.before ? [fillNotesText(n.before, values), ""] : []), section, ...(n.after ? ["", fillNotesText(n.after, values)] : [])].join("\n") + "\n";
+  };
+  const notesValues = (ctx: PublishContext, tag: string) => {
+    const label = ctx.label ?? tag;
+    return { label, version: releaseVersion(ctx.label) ?? label, tag };
+  };
+  /**
+   * The notes: `before`, the file's section, the generated notes, then
+   * `after`, a blank line between each. `client` null is a plan, which asks
+   * the forge nothing, so the forge's own notes are named rather than
+   * fetched there.
+   */
+  const releaseNotes = async (ctx: PublishContext, tag: string, section: string | undefined, client: ForgeClient | null): Promise<string | undefined> => {
+    const n = decl.notes;
+    if (!n) return undefined;
+    const values = notesValues(ctx, tag);
+    let generated: string | undefined;
+    if (n.generate) {
+      const previous = await previousMemberRelease(ctx, decl.forge);
+      if (n.generate === "commits") {
+        generated = changelogNotes(memberCommits(ctx, previous?.commit ?? null, decl.forge), n.types);
+      } else {
+        const previousTag = previous && previous.label !== null && !decl.tag && ctx.label !== null && ctx.releaseTag?.endsWith(ctx.label) ? `${ctx.releaseTag.slice(0, -ctx.label.length)}${previous.label}` : null;
+        generated = client
+          ? await client.generatedNotes(tag, ctx.release.commit, values.version, previous ? { tag: previousTag, commit: previous.commit } : null)
+          : `(${decl.forge === "github" ? "GitHub" : "GitLab"}'s generated notes${previousTag ? ` since ${previousTag}` : ""}, made when the release stages)`;
+      }
+    }
+    const parts = [n.before ? fillNotesText(n.before, values) : "", section ?? "", generated ?? "", n.after ? fillNotesText(n.after, values) : ""].filter((p) => p.length > 0);
+    return parts.length > 0 ? `${parts.join("\n\n")}\n` : "";
   };
   const att = (a: Asset): Pick<PublishItem, "attachment"> => (a.attachment ? { attachment: a.attachment } : {});
   const where = (tag: string, name: string) => `${decl.forge} ${decl.repo} release ${tag}, asset ${name}`;
@@ -333,14 +464,15 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
     async plan(ctx) {
-      const { tag, assets, notes } = setup(ctx);
+      const { tag, assets, section } = setup(ctx);
+      const notes = await releaseNotes(ctx, tag, section, null);
       return [
         ...assets.map((a) => ({ name: a.path, destination: where(tag, a.name), digest: a.digest, ...att(a) })),
-        ...(notes !== undefined ? [{ name: decl.notes!.file, destination: `${decl.forge} ${decl.repo} release ${tag}, notes`, notes }] : []),
+        ...(notes !== undefined ? [{ name: decl.notes!.file ?? "generated notes", destination: `${decl.forge} ${decl.repo} release ${tag}, notes`, notes }] : []),
       ];
     },
     async stage(ctx): Promise<StagedTarget> {
-      const { tag, api, token, assets, notes } = setup(ctx);
+      const { tag, api, token, assets, section } = setup(ctx);
       ctx.log(`using the token from ${token.from}`);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
       const done = (items: PublishItem[], state: Record<string, string>): StagedTarget => ({ target: this.name, destination: this.destination, items, state });
@@ -365,6 +497,9 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         return done(items, { published: "true" });
       }
 
+      // #5153: the notes are decided here and kept in the record, so the reveal publishes what the draft shows.
+      const notes = await releaseNotes(ctx, tag, section, client);
+      const kept: Record<string, string> = notes !== undefined ? { notes } : {};
       const version = gitlabPackageVersion(ctx.label ?? tag);
       if (decl.forge === "gitlab") {
         // No draft on GitLab: the assets go to the package registry, and the release is made at the reveal.
@@ -373,7 +508,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
           ctx.log(`uploading ${a.name} (${a.bytes.byteLength} bytes) to the generic package registry`);
           items.push({ name: a.path, destination: await client.upload(null, version, a), digest: a.digest, ...att(a) });
         }
-        return done(items, {});
+        return done(items, kept);
       }
 
       const rel = await client.draft(tag, ctx.release.commit, ctx.label ?? tag, notes);
@@ -389,13 +524,15 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         ctx.log(`uploading ${a.name} (${a.bytes.byteLength} bytes) to the draft`);
         items.push({ name: a.path, destination: await client.upload(rel, version, a), digest: a.digest, ...att(a) });
       }
-      return done(items, { releaseId: rel.id });
+      return done(items, { releaseId: rel.id, ...kept });
     },
     async reveal(ctx, staged) {
-      const { tag, api, token, notes } = setup(ctx);
+      const { tag, api, token, section } = setup(ctx);
       const client = new ForgeClient(decl, api, token, fetchImpl, ctx);
       const items = staged.items.map((i) => ({ name: i.name, destination: i.destination, ...(i.digest ? { digest: i.digest } : {}), ...(i.attachment ? { attachment: i.attachment } : {}) }));
       if (staged.state.published === "true") return { target: this.name, destination: this.destination, items: items.map((i) => ({ ...i, present: true })) };
+      // The notes the stage decided; a stage recorded before chant kept them has them decided again.
+      const notes = staged.state.notes ?? (await releaseNotes(ctx, tag, section, client));
       if (decl.forge === "gitlab") {
         ctx.log(`creating the gitlab release ${tag} at ${ctx.release.commit.slice(0, 12)} with ${items.length} asset link(s)`);
         await client.createWithLinks(tag, ctx.release.commit, ctx.label ?? tag, items.map((i) => ({ name: basename(i.name), url: i.destination })), notes);

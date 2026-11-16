@@ -112,27 +112,41 @@ export const ForgePublishSchema = z
     /** Files to attach, relative to the member. May be empty when `notes` gives the release its body. */
     assets: z.array(z.string().min(1)),
     /**
-     * The release's notes (#4658): a section of a file in the member, sent as
-     * the release's body on GitHub and Forgejo and its description on GitLab.
+     * The release's notes (#4658), sent as the release's body on GitHub and
+     * Forgejo and its description on GitLab: a section of a file in the
+     * member, notes generated for the release (#5153), or both, between
+     * `before` and `after`. They are decided when the target stages, so the
+     * draft release carries them before the reveal.
      */
     notes: z
       .object({
-        /** The file, relative to the member, such as `CHANGELOG.md` or a docs site's changes page. */
-        file: z.string().min(1),
+        /** The file, relative to the member, such as `CHANGELOG.md` or a docs site's changes page. Needs `heading`. */
+        file: z.string().min(1).optional(),
         /**
          * The heading that starts the section, such as `## In {version}` or `## [{version}]`. `{label}`, `{version}`
          * (the label from its first digit) and `{tag}` are filled in. The section runs to the next heading of the same
          * level or higher.
          */
-        heading: z.string().regex(/^#{1,6} \S/, "a markdown heading, such as ## {version}"),
+        heading: z.string().regex(/^#{1,6} \S/, "a markdown heading, such as ## {version}").optional(),
         /** Links that start with `/` are made absolute against this, such as `https://docs.example.com`. */
         linkBase: z.string().url().optional(),
-        /** A paragraph before the section, with the same placeholders. */
+        /**
+         * Notes generated for the release, after the file's section (#5153). `forge`: the forge's own, GitHub's
+         * generate-notes or GitLab's changelog from `Changelog:` commit trailers; Forgejo has none and is refused.
+         * `commits`: chant's own, from the conventional commits in the member since its previous release.
+         */
+        generate: z.enum(["forge", "commits"]).optional(),
+        /** With `generate: "commits"`: the commit types listed. Default `feat`, `fix` and `perf`. A breaking change is listed whatever its type; `*` lists every commit. */
+        types: z.array(z.string().min(1)).min(1).optional(),
+        /** A paragraph before the notes, with the same placeholders. */
         before: z.string().min(1).optional(),
-        /** A paragraph after the section, with the same placeholders. */
+        /** A paragraph after the notes, with the same placeholders. */
         after: z.string().min(1).optional(),
       })
       .strict()
+      .refine((n) => (n.file === undefined) === (n.heading === undefined), { message: "notes.file and notes.heading go together", path: ["heading"] })
+      .refine((n) => n.file !== undefined || n.generate !== undefined, { message: "notes need a file section, generate, or both", path: ["generate"] })
+      .refine((n) => n.types === undefined || n.generate === "commits", { message: 'notes.types applies to generate: "commits"', path: ["types"] })
       .optional(),
     /** The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>`. */
     tag: z.string().min(1).optional(),

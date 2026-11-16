@@ -4,7 +4,7 @@
  * (terragucci `test/publish.test.ts`).
  */
 import { describe, expect, test } from "vitest";
-import { classifyCommit, changelogBump, releaseChangelog } from "./release-changelog";
+import { classifyCommit, changelogBump, changelogNotes, releaseChangelog } from "./release-changelog";
 import { buildReleaseCatalog } from "./release-catalog";
 
 describe("changelogBump agrees with terragucci's bumpFor", () => {
@@ -26,11 +26,11 @@ describe("changelogBump agrees with terragucci's bumpFor", () => {
 
 describe("classifyCommit", () => {
   test("reads the type, scope and description", () => {
-    expect(classifyCommit("feat(net): add flow logs\n\nbody")).toEqual({ kind: "feat", scope: "net", subject: "add flow logs" });
-    expect(classifyCommit("fix: tag subnets")).toEqual({ kind: "fix", subject: "tag subnets" });
-    expect(classifyCommit("refactor!: rename inputs")).toEqual({ kind: "breaking", subject: "rename inputs" });
-    expect(classifyCommit("docs: readme\n\nBREAKING CHANGE: moved")).toEqual({ kind: "breaking", subject: "readme" });
-    expect(classifyCommit("chore(deps): bump")).toEqual({ kind: "other", scope: "deps", subject: "bump" });
+    expect(classifyCommit("feat(net): add flow logs\n\nbody")).toEqual({ kind: "feat", type: "feat", scope: "net", subject: "add flow logs" });
+    expect(classifyCommit("fix: tag subnets")).toEqual({ kind: "fix", type: "fix", subject: "tag subnets" });
+    expect(classifyCommit("refactor!: rename inputs")).toEqual({ kind: "breaking", type: "refactor", subject: "rename inputs" });
+    expect(classifyCommit("docs: readme\n\nBREAKING CHANGE: moved")).toEqual({ kind: "breaking", type: "docs", subject: "readme" });
+    expect(classifyCommit("chore(deps): bump")).toEqual({ kind: "other", type: "chore", scope: "deps", subject: "bump" });
   });
 
   test("keeps a subject that is not conventional whole", () => {
@@ -66,5 +66,44 @@ describe("releaseChangelog", () => {
       { generatedAt: "2026-10-27T00:00:00.000Z" },
     );
     expect(catalog.components[0].versions[0].changelog).toEqual({ bump: "major", entries: log.entries });
+  });
+});
+
+describe("changelogNotes (#5153)", () => {
+  const commits = [
+    { sha: "a1".padEnd(40, "0"), message: "feat(net): add flow logs" },
+    { sha: "b2".padEnd(40, "0"), message: "fix: tag subnets" },
+    { sha: "c3".padEnd(40, "0"), message: "refactor!: rename inputs" },
+    { sha: "d4".padEnd(40, "0"), message: "chore: tidy" },
+    { sha: "e5".padEnd(40, "0"), message: "perf(iam): cache policies" },
+    { sha: "f6".padEnd(40, "0"), message: "Update README" },
+  ];
+
+  test("lists feat, fix and perf by default, and a breaking change of any type, grouped with a short sha", () => {
+    expect(changelogNotes(commits)).toBe(
+      [
+        "### Breaking changes",
+        "",
+        "- rename inputs (c300000)",
+        "",
+        "### Features",
+        "",
+        "- net: add flow logs (a100000)",
+        "",
+        "### Fixes",
+        "",
+        "- tag subnets (b200000)",
+        "",
+        "### Other changes",
+        "",
+        "- iam: cache policies (e500000)",
+      ].join("\n"),
+    );
+  });
+
+  test("types narrows the list, * lists every commit, and nothing listed is empty", () => {
+    expect(changelogNotes(commits, ["fix"])).toBe(["### Breaking changes", "", "- rename inputs (c300000)", "", "### Fixes", "", "- tag subnets (b200000)"].join("\n"));
+    expect(changelogNotes(commits, ["*"]).split("\n").filter((l) => l.startsWith("- "))).toHaveLength(6);
+    expect(changelogNotes([commits[3]!], ["feat"])).toBe("");
   });
 });

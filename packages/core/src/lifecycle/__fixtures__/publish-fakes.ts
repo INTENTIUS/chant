@@ -308,6 +308,8 @@ export interface FakeForge {
   failOnce(prefix: string): void;
   /** GitHub and Forgejo: the repository's tags, each the commit it names. Publishing a release makes its tag at its target when there is none. */
   tags: Map<string, string>;
+  /** The notes the forge generates (#5153): GitHub's `generate-notes` body, GitLab's changelog. Default: one naming the request. */
+  generatedNotes?: (req: Record<string, string>) => string;
 }
 
 /** A forge fake at `api` for `repo`, which holds `releases` to begin with. */
@@ -323,7 +325,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
   const view = (r: FakeForgeRelease) =>
     forge === "gitlab"
       ? { tag_name: r.tag_name, assets: { links: r.assets.map((a) => ({ name: a.name })) } }
-      : { id: r.id, tag_name: r.tag_name, name: r.name ?? r.tag_name, draft: r.draft, upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
+      : { id: r.id, tag_name: r.tag_name, name: r.name ?? r.tag_name, draft: r.draft, ...(r.body !== undefined ? { body: r.body } : {}), upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
   const text = (b: Uint8Array | string | undefined) => (b === undefined ? "" : typeof b === "string" ? b : Buffer.from(b).toString("utf-8"));
   const fetch: FakeForge["fetch"] = async (url, init) => {
     calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
@@ -335,7 +337,9 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     }
     const u = new URL(url);
     const path = url.split("?")[0]!;
+    const generated = (req: Record<string, string>) => (fake.generatedNotes ? fake.generatedNotes(req) : `generated: ${Object.entries(req).map(([k, v]) => `${k}=${v}`).join(" ")}`);
     if (forge === "gitlab") {
+      if (init.method === "GET" && path === `${root}/repository/changelog`) return json(200, { notes: generated(Object.fromEntries(u.searchParams)) });
       if (init.method === "PUT" && path.startsWith(`${root}/packages/generic/`)) {
         packages.set(path, text(init.body));
         return json(201, { message: "201 Created" });
@@ -360,6 +364,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
       return r ? json(200, view(r)) : json(404, { message: "Not Found" });
     }
     if (init.method === "GET" && path === `${root}/releases`) return json(200, releases.map(view));
+    if (forge === "github" && init.method === "POST" && path === `${root}/releases/generate-notes`) return json(200, { name: "notes", body: generated(JSON.parse(text(init.body)) as Record<string, string>) });
     if (init.method === "POST" && path === `${root}/releases`) {
       const b = JSON.parse(text(init.body)) as { tag_name: string; target_commitish: string; draft?: boolean; name?: string; body?: string };
       const r: FakeForgeRelease = { id: nextId++, tag_name: b.tag_name, draft: b.draft === true, target: b.target_commitish, assets: [], ...(b.name ? { name: b.name } : {}), ...(b.body !== undefined ? { body: b.body } : {}) };
@@ -406,7 +411,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     }
     return json(404, { message: "Not Found" });
   };
-  return {
+  const fake: FakeForge = {
     fetch,
     calls,
     releases,
@@ -415,6 +420,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
     failOnce: (prefix) => void failures.push(prefix),
     tags,
   };
+  return fake;
 }
 
 /** A small SPDX document, as `npm sbom --sbom-format spdx` writes one. */
