@@ -72,13 +72,19 @@ Then render the workflow:
 chant release workflow
 ```
 
-The file it writes starts by hand with one input, `levels`. The default, `auto`, lets each package's conventional commits and intent files decide its level; `minor` gives every package one, and `web=major` names one. The run picks the newest green commit, and [`chant workspace train cut`](/chant/cli/workspace-train/#cut) takes it from there:
+The file it writes starts by hand with the input `levels`. The default, `auto`, lets each package's conventional commits and intent files decide its level; `minor` gives every package one, and `web=major` names one. The run picks the newest green commit, and [`chant workspace train cut`](/chant/cli/workspace-train/#cut) takes it from there:
 
 - `chant release changed` lists the packages that changed since their last release, and the packages they need that changed too, in publish order.
 - Each package's label is past every version it already has: its ledger, its tags, its `package.json`, and what npm already holds. A label is never one the registry has.
 - Each package is cut at that commit, the train is recorded, and the package tags and `release-train/npm/<id>` go out in one push.
 
 The publish job then stamps every package the train cut (`chant workspace train prepare`), builds the workspace packages they build against once, and runs `chant workspace train publish`, which publishes the packages in dependency layers, waiting for each layer to resolve on npm before the next. A package the train pins at an earlier release must already be on npm. Each package's `release.verify` commands run after every package has staged and before any reveals, and `stage: true` keeps every package under `next` until the whole train has staged.
+
+A train that was cut and did not publish, because a publish job stopped part way or never ran, is finished from the same workflow: dispatch it with the input `train` set to the train's id, which `chant workspace train list npm` prints. That run skips the gate and the cut, checks out the train's commit, and publishes that train, resuming from what the earlier run staged or revealed. Nothing is cut again and no tag is pushed:
+
+```bash
+gh workflow run publish.yml -f train=<id>
+```
 
 ## Try it first
 

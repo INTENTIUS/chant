@@ -8,6 +8,11 @@ on:
         required: false
         default: auto
         type: string
+      train:
+        description: a recorded train's id (train-...) to publish instead of cutting one; the gate and cut are skipped, and the publish resumes from its tag
+        required: false
+        default: ""
+        type: string
   push:
     tags: ["release-train/npm/*"]
 permissions:
@@ -18,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   gate:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.train == ''
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -76,22 +81,23 @@ jobs:
           git config user.name "chant release"
           git config user.email "chant-release@localhost"
           npx tsx ../packages/core/src/cli/main.ts workspace train cut npm --at "$CHANT_RELEASE_COMMIT" --levels "${CHANT_RELEASE_LEVELS:-auto}" --yes --json > "$RUNNER_TEMP/chant-train.json"
-          echo "train=$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.train?.id??""))' "$RUNNER_TEMP/chant-train.json")" >> "$GITHUB_OUTPUT"
+          train="$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");let d;try{d=JSON.parse(t)}catch(e){const m=/"id": *"(train-[^"]+)"/.exec(t);console.error("the train cut printed more than its JSON document, so the train id can not be read ("+e.message+")."+(m?" The cut recorded "+m[1]+": dispatch this workflow with train="+m[1]+" to publish it.":" If it recorded a train, dispatch this workflow with train=<id> to publish it."));process.exit(1)}const id=d.train?.id??"";if(!id&&d.released==null&&(d.members??[]).length>0){console.error("the train cut "+d.members.length+" member(s), and its JSON names no train id to publish");process.exit(1)}process.stdout.write(id)' "$RUNNER_TEMP/chant-train.json")" || exit 1
+          echo "train=$train" >> "$GITHUB_OUTPUT"
   publish:
     needs: [gate, cut]
-    if: ${{ always() && (github.event_name == 'push' || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
+    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: release
     env:
-      CHANT_RELEASE_TRAIN: ${{ needs.cut.outputs.train }}
+      CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
       CHANT_RELEASE_GATE: "1"
       NPM_TOKEN: "${{ secrets.NPM_TOKEN }}"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ needs.gate.outputs.commit || github.sha }}
+          ref: ${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

@@ -95,7 +95,7 @@ export default {
 |---|---|
 | `env` | The environment the train is recorded for, and the middle of its tag `release-train/<env>/<id>`. The command's `<env>` must name it |
 | `first` | `each` (default) labels every member from its own versions. `together` makes the environment's first train cut every member at one label, one past the highest version any of them has, for packages that shipped at one shared version until now |
-| `check` | Shell lines run in the root once the labels are known and before any member is cut, with `CHANT_RELEASE_COMMIT`, `CHANT_TRAIN_ENV` and `CHANT_TRAIN_PLAN`, a JSON file of `{ env, commit, members: [{ member, label }] }`. One that fails stops the train with nothing cut |
+| `check` | Shell lines run in the root once the labels are known and before any member is cut, with `CHANT_RELEASE_COMMIT`, `CHANT_TRAIN_ENV` and `CHANT_TRAIN_PLAN`, a JSON file of `{ env, commit, members: [{ member, label }] }`. One that fails stops the train with nothing cut. What a line prints goes to stderr |
 | `buildDependencies` | The command [`prepare`](#prepare) runs in a package the train's members build against. Default: the package's `prepack` script, else its `build` script. `false` builds nothing |
 
 The cut, in order:
@@ -108,7 +108,7 @@ The cut, in order:
 6. The train is recorded, every member cut here at its new release and every other member at its newest, and `chant/lifecycle` is pushed.
 7. The member tags and `release-train/<env>/<id>` on the commit go to `origin` in one atomic push. A workflow on that tag publishes the train.
 
-Without `--yes` it prints the members, their labels and why, runs each cut's dry run, and writes nothing. `--no-push` records and tags locally and pushes no tag. `--json` prints the plan, the tags and the train.
+Without `--yes` it prints the members, their labels and why, runs each cut's dry run, and writes nothing. `--no-push` records and tags locally and pushes no tag. `--json` prints the plan, the tags and the train. Under `--json` stdout holds that document and nothing else: what the `release.train.check` lines and the member cuts print goes to stderr.
 
 ```
 $ chant workspace train cut npm --levels "lex=minor"
@@ -137,7 +137,7 @@ Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cu
 - its `release.version` files take the member's label, and under `ranges: "train"` each workspace dependency's range takes `^` and the label the train gives the member that owns that package. `train publish` takes these files, every member's, as the commit's.
 - the workspace packages it depends on, directly or not, that this run does not publish are built once each, dependencies first, with `release.train.buildDependencies` or the package's `prepack` (else `build`) script. A workspace package is one a member's `release.version.packages` or npm target names, or one the repository root declares in `workspaces` (npm, yarn) or `pnpm-workspace.yaml`. The members this run publishes build when npm packs them, in the train's layer order.
 
-It refuses a train that is not recorded (`train-unknown`), a checkout whose commit the train cut no member from (`train-nothing-cut-here`), and a build that fails (`train-build-failed`).
+The builds print to stderr, so `--json` prints only the train, what was stamped and what was built. It refuses a train that is not recorded (`train-unknown`), a checkout whose commit the train cut no member from (`train-nothing-cut-here`), and a build that fails (`train-build-failed`).
 
 ## Publish
 
