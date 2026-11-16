@@ -34,6 +34,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { prereleaseOf } from "./release-prerelease";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant with `release.tag` in `chant.config.ts`: the cut makes the tag the template renders (`{version}`, `{label}`, `{member}`, `{path}`), refuses one another member's template can render (`release-tag-collision`), `chant release tag` reads a release back from its tag through the ledger, `chant release publish` moves a `floating` tag at reveal, and `chant release workflow` triggers on the template's tags (#5150). */
+export const RELEASE_TAG_FLOOR = NEXT_RELEASE;
 
 /** `release.tag` in `chant.config.ts`. */
 export type ReleaseTagConfig = string | { name: string; floating?: string };

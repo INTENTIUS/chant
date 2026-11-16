@@ -18,6 +18,13 @@
  * version into every floor that names this constant as a literal, and moves
  * this constant to the next patch (#4501). The check fails while a floor
  * still names this constant after its version shipped.
+ *
+ * A new floor is declared next to the code it gates, in that feature's own
+ * file, as `export const <NAME>_FLOOR = NEXT_RELEASE;` with NEXT_RELEASE
+ * imported from here (#5196): scripts/floor-table.ts collects every floor
+ * under packages/core/src, so parallel features add floors to different
+ * files rather than to the end of this one. The floors below were declared
+ * here before that and keep the subpath they shipped under.
  */
 export const NEXT_RELEASE = "0.124.101";
 
@@ -275,14 +282,3 @@ export const COMMENT_ALLOW_FLOOR = "0.124.98";
 
 /** The first chant with `chant release changed`, the members to release at a commit with their dependency closure, and `release.legacyTags` in `chant.config.ts` (#5134). */
 export const RELEASE_CHANGED_FLOOR = "0.124.100";
-
-/** The first chant with `release.tag` in `chant.config.ts`: the cut makes the tag the template renders (`{version}`, `{label}`, `{member}`, `{path}`), refuses one another member's template can render (`release-tag-collision`), `chant release tag` reads a release back from its tag through the ledger, `chant release publish` moves a `floating` tag at reveal, and `chant release workflow` triggers on the template's tags (#5150). */
-export const RELEASE_TAG_FLOOR = NEXT_RELEASE;
-
-/** The first chant with `chant release doctor`, which checks each `release.publish` target before a cut, and whose `chant release workflow` runs it in a dispatched release's cut job (`release.workflow.doctor`) (#5161). */
-export const RELEASE_DOCTOR_FLOOR = NEXT_RELEASE;
-
-/** The first chant with `chant release next` and `chant release cut auto`, the label from the conventional commits and the `.chant/release/*.md` intent files since the member's previous release; a cut records the intent files it consumed (`intents` on its cut line), `release changed` computes each member's bump from them (`bumpFrom`, `intents`, `intent-pending`), notes generated from commits lead with their summaries, and a dispatched release workflow takes the label `auto` (#5159); with no release in the ledger the previous one is the newest version tag `release.tag` or `release.legacyTags` matches (#5200), and on 0.x a breaking commit bumps minor unless `release.breakingOnZero` is `major` (#5191). */
-export const RELEASE_NEXT_FLOOR = NEXT_RELEASE;
-/** The first chant with the `mcp-registry` publish target: a `server.json` published to the MCP Registry after the packages it names, with GitHub OIDC, and the `mcp-registry-*` checks of `chant release doctor` (#5162). */
-export const PUBLISH_MCP_REGISTRY_FLOOR = NEXT_RELEASE;
