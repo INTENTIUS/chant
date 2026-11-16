@@ -19,6 +19,8 @@ export default {
       { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api", usernameEnv: "GITHUB_ACTOR", passwordEnv: "GITHUB_TOKEN" },
       { type: "forge", forge: "github", repo: "acme/api", assets: ["dist/api-linux-amd64.tar.gz"] },
       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
+      { type: "pypi", files: ["dist"] },
+      { type: "cargo", crates: ["acme-core", "acme-cli"] },
     ],
   },
 };
@@ -306,6 +308,80 @@ GitHub can't replace what a release holds in one request, so the stage builds a 
 
 The reveal deletes the published rolling release and its tag, then publishes the draft with `make_latest`. GitHub makes the tag again at the release's commit when it publishes. Between the delete and the publish, a few requests apart, the rolling release's URLs answer 404. The updater treats that as no update, and the site's download links fail for that moment. A reveal run again after the draft was published finds it published and does nothing.
 
+## PyPI
+
+Python wheels and sdists on PyPI, TestPyPI, or another index that takes PyPI's upload API ([#5167](https://github.com/INTENTIUS/chant/issues/5167)). Read by chant 0.124.101 and newer.
+
+```ts
+{ type: "pypi", files: ["dist"] },
+{ type: "pypi", files: ["artifact:python"], index: "testpypi" },
+{ type: "pypi", files: ["dist"], uploadUrl: "https://pypi.acme.dev/legacy/", simpleUrl: "https://pypi.acme.dev/simple/", tokenEnv: "ACME_PYPI_TOKEN", usernameEnv: "ACME_PYPI_USER" },
+```
+
+| Field | Meaning |
+|---|---|
+| `files` | The distributions, relative to the member: a `.whl`, `.tar.gz` or `.zip` file, a directory (every such file in it, in name order), or `artifact:<name>` for every file the release records for that [`release.artifacts`](/chant/cli/release/#files-the-release-builds) entry |
+| `index` | `pypi` (the default) or `testpypi` |
+| `uploadUrl` and `simpleUrl` | Another index: its upload URL and its simple API root. They go together, and not with `index` |
+| `auth` | `token` or `trusted-publishing`. Unset: a token when the token's variable is set, else trusted publishing when the run has an OIDC ID token |
+| `tokenEnv` | The variable holding the API token. Default `PYPI_TOKEN`, or `TEST_PYPI_TOKEN` for TestPyPI |
+| `usernameEnv` | The variable holding the user the token is sent as. Default: the user `__token__`, which PyPI's API tokens take |
+| `sbom` | `false` publishes wheels that carry no SBOM under the `supply-chain` group. See [The SBOM](#the-sbom) |
+| `attestations` | `false` uploads no PEP 740 attestation. Default `true` |
+
+The project's name and version come from each file's own metadata: `.dist-info/METADATA` in a wheel, `PKG-INFO` in an sdist. The upload sends that metadata in the form fields twine sends. A file that is neither, or whose metadata has no `Metadata-Version`, `Name` and `Version`, is refused in the plan (`publish-pypi-not-a-distribution`), as is a directory with no distribution in it (`publish-pypi-no-files`) and a file name given twice (`publish-pypi-duplicate-file`). A file the release records must match its digest.
+
+An index has no draft. A file is visible as soon as it is uploaded, and a file name can never be uploaded again, even after it is deleted. So the stage uploads nothing, and the reveal uploads, as with a [marketplace](#editor-marketplaces). Nothing of this target is out between the two steps, so a check of what staged can't see it. If another target fails to stage, nothing has reached the index. Declare the target after the targets whose stage can hold a release back.
+
+| Step | What it does |
+|---|---|
+| Stage | Reads the project from the simple API, as JSON (PEP 691) or HTML (PEP 503). A file the index serves with the same SHA-256 is `present`, and one it serves with other bytes is refused (`publish-pypi-file-exists`). With trusted publishing, makes the token exchange below and drops the token. With a token, there is no read-only check, so the stage says so |
+| Reveal | Reads the simple API again, then uploads each file it does not serve to the upload URL with `:action=file_upload`, the file's metadata, its SHA-256 and its attestations. A file the index already holds with the same bytes, as after a run whose record was lost, is not sent again. A failure part way names the files uploaded before it, and the same publish run again uploads only the rest |
+
+### Trusted publishing on PyPI
+
+With `auth: "trusted-publishing"`, PyPI or TestPyPI hands the run a short-lived upload token for its OIDC ID token, with no stored secret. The target reads the audience at `{index}/_/oidc/audience`, gets an ID token for it (in GitHub Actions from a job with `permissions: id-token: write`; elsewhere from `PYPI_ID_TOKEN`, which a GitLab job declares under `id_tokens` with `aud: pypi`, or `testpypi` for TestPyPI), and exchanges it at `{index}/_/oidc/mint-token`. The stage makes the exchange to check that the index takes this workflow as a trusted publisher, and the reveal exchanges again, since the token lasts minutes. A refusal is `publish-pypi-trusted-publishing`, with the index's reason. Register the workflow once on the project's publishing settings, or as a pending publisher for a project that does not exist yet. Another index takes a token only, and `auth: "trusted-publishing"` beside `uploadUrl` fails validation.
+
+### Attestations on PyPI
+
+PyPI keeps PEP 740 attestations with each file. The target uploads the attestations beside each file, `<file>.<name>.attestation`, such as `pypi-attestations sign` writes. With [Sigstore signing](#sigstore-signatures) on and trusted publishing, the stage signs a publish attestation for each file that has none: an in-toto statement naming the file and its SHA-256, with the predicate type `https://docs.pypi.org/attestations/publish/v1`, signed with `cosign attest-blob` and made into PyPI's attestation form. The stage keeps it in the publish record's state, so a resumed reveal uploads the same attestation. PyPI takes attestations only from a trusted publisher, so under a token nothing is signed, and the stage says so. A file that is not a JSON object beside a distribution is refused (`publish-pypi-attestation-invalid`).
+
+## Cargo registries
+
+Rust crates on crates.io or another Cargo registry, published with `cargo publish` ([#5167](https://github.com/INTENTIUS/chant/issues/5167)). Read by chant 0.124.101 and newer.
+
+```ts
+{ type: "cargo" },
+{ type: "cargo", crates: ["acme-core", "acme-cli"], manifest: "rust/Cargo.toml" },
+{ type: "cargo", registry: "acme", index: "sparse+https://cargo.acme.dev/index/" },
+```
+
+| Field | Meaning |
+|---|---|
+| `manifest` | The `Cargo.toml` of the workspace or the crate, relative to the member. Default `Cargo.toml` |
+| `crates` | The crates to publish, by package name. Default: every workspace member whose `publish` allows the registry |
+| `registry` | A registry named in the project's `.cargo/config.toml`, passed as `--registry`. Default: crates.io. Needs `index` |
+| `index` | The registry's sparse index, which the stage and the reveal read. Default: crates.io's, `https://index.crates.io/` |
+| `api` | crates.io's root for trusted publishing. Default `https://crates.io` |
+| `auth` | `token` or `trusted-publishing`. Unset: a token when the token's variable is set, else trusted publishing when the run has an OIDC ID token |
+| `tokenEnv` | The variable holding the token. Default `CARGO_REGISTRY_TOKEN`, or `CARGO_REGISTRIES_<NAME>_TOKEN` with `registry`, the variables cargo reads. chant hands the token to cargo in the variable cargo reads for the registry |
+| `sbom` | `false` publishes under the `supply-chain` group, which otherwise refuses this target. See [The SBOM](#the-sbom) |
+
+The plan runs `cargo metadata --no-deps` on the manifest to read the crates, their versions and their dependencies. The version published is the one in each `Cargo.toml`; [`release.version`](/chant/cli/release/#the-label-as-the-package-version) can stamp it with the release's label. The crates go in dependency order: each after the selected crates it depends on, through normal, build and dev dependencies, ties in name order. A dev-dependency with no version is left out of the order, since cargo drops it from what it publishes. The plan refuses a crate `crates` names that the workspace does not have (`publish-cargo-unknown-crate`) or whose `publish` leaves out the registry (`publish-cargo-unpublishable`), a workspace with nothing to publish (`publish-cargo-no-crates`), a dependency on a workspace crate by path with no version, which cargo would refuse (`publish-cargo-dependency-version`), and crates that depend on each other (`publish-cargo-cycle`). With no `cargo` on `PATH` it stops with `publish-cargo-missing`.
+
+A registry has no draft. A crate version is visible as soon as it is published and can never be published again, so the reveal publishes, as on PyPI.
+
+| Step | What it does |
+|---|---|
+| Stage | Reads each crate's file in the sparse index. A version already there is `present`, with the index's checksum as its digest. With trusted publishing, exchanges a token and revokes it. With a token, there is no read-only check, so the stage says so |
+| Reveal | For each crate in order, reads the index again, and when the version is not there runs `cargo publish -p <crate> --manifest-path <manifest> --no-verify --allow-dirty`, with `--registry` for another registry. cargo waits until the index serves the version before it returns, so the next crate resolves it. A failure names the crates published before it (`publish-cargo-failed`), and the same publish run again publishes only the rest |
+
+`--no-verify` because a publish never builds: the build belongs to the cut. `--allow-dirty` because the checkout carries the stamped versions, which the publish's own check of the checkout already allows. cargo's output goes through the redactor. A crate's first version needs a token that may publish new crates.
+
+### Trusted publishing on crates.io
+
+With `auth: "trusted-publishing"`, crates.io hands the run a token for its OIDC ID token: one GitHub Actions issues with the audience `crates.io` (a job with `permissions: id-token: write`), or the value of `CRATES_IO_ID_TOKEN`. The target exchanges it at `POST {api}/api/v1/trusted_publishing/tokens` and revokes the token with a `DELETE` when the step ends. The stage makes the exchange to check that crates.io takes this workflow as a trusted publisher of the crates, and the reveal exchanges again. A refusal is `publish-cargo-trusted-publishing`. Add the repository and workflow once to each crate's trusted publishers on crates.io. A crate's first version can't be published this way. Another registry takes a token only.
+
 ## Prereleases
 
 A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is a prerelease on every target, with no `--channel`. The label is read as `MAJOR.MINOR.PATCH-PRERELEASE`, with an optional leading `v` and an optional `+build` suffix. A label that is not of this form, such as a date or `v1`, is not a prerelease.
@@ -318,6 +394,8 @@ A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is 
 | `homebrew` | Skipped. The formula is what `brew upgrade` installs, so the target changes nothing and the dry run says it is skipped |
 | `tauri-updater` | Skipped, as the updater feed is what installed apps update from |
 | `marketplace` | Unchanged. A pre-release is a property of the packaged `.vsix` |
+| `pypi` | Unchanged. A PEP 440 prerelease version, such as `1.4.0rc1` in the file's metadata, is one pip installs only when asked |
+| `cargo` | Unchanged. A semver prerelease in `Cargo.toml` is one cargo resolves only when a requirement names it |
 
 The member's floating tag (`release.tag.floating`, see [the release's tag](/chant/cli/release/#the-releases-tag)) stays where it is.
 
@@ -332,10 +410,14 @@ Each target attaches the release's provenance statement to what it publishes, an
 | npm | A file in each package, since npm keeps no file beside a package | npm's own, from `--provenance`, checked with `npm audit signatures` | The release's signature on `chant/lifecycle` only |
 | OCI | An OCI referrer of the image | The provenance statement as a referrer of the image | The same statement, which says its provenance is the signature |
 | Forge | An asset of the release | `release.intoto.json`, an asset of the release | The same asset, which says its provenance is the signature |
+| PyPI | A file in each wheel, since an index keeps no file beside a distribution | The PEP 740 attestations beside each file, and one signed at the stage under [Sigstore signing](#attestations-on-pypi) | The release's signature on `chant/lifecycle` only |
+| Cargo | None: a registry keeps no file beside a crate | None | The release's signature on `chant/lifecycle` only |
 
 ### The SBOM
 
 An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Keep it in what npm packs: a package with a `files` list names it there. A package with none publishes without one. Under `supply-chain`, or when `sbom` names a file the package does not hold, it is refused with `publish-sbom-missing` in the plan, before anything is sent.
+
+A wheel carries its SBOM in `.dist-info/sboms/`, as PEP 770 places it, written there by the build. Under `supply-chain`, a `pypi` target whose wheels carry none, or that publishes no wheel, is refused with `publish-sbom-missing`; an sdist has no place for one. A `cargo` target is refused under `supply-chain` too, since nothing it publishes can carry an SBOM. `sbom: false` on either target publishes without one; attach the SBOM to the release with a forge target instead.
 
 The OCI and forge targets attach the file `sbom` names. Without one they write an SPDX document from the nearest `package-lock.json` or `pom.xml`, in the member's directory or above it inside the repository, with the hermetic writer the [`generate-sbom`](/chant/components/build-archive/) capability uses. It lists the declared dependencies and not an image's base layers, so an image built with a layer scan (BuildKit's `--sbom`, `syft`) should name that scan's file in `sbom`. The document is dated with the cut's time, so a publish run again writes the same bytes. With neither a declared file nor a lockfile there is nothing to attach, which only `supply-chain` refuses. A file that is not SPDX or CycloneDX JSON is refused with `publish-sbom-invalid`. `sbom: false` publishes without an SBOM.
 
@@ -358,12 +440,13 @@ The provenance statement is an [in-toto Statement v1](https://github.com/in-toto
 
 ### Sigstore signatures
 
-With signing on, the OCI and forge targets sign what they stage with Sigstore, keylessly with the CI job's OIDC token, before anything is revealed. The release's provenance statement and the cut's ssh signature stay as they are.
+With signing on, the OCI, forge and PyPI targets sign what they stage with Sigstore, keylessly with the CI job's OIDC token, before anything is revealed. The release's provenance statement and the cut's ssh signature stay as they are.
 
 | Target | Signature | SLSA provenance |
 |---|---|---|
 | OCI | A cosign signature (an in-toto statement with predicate type `https://sigstore.dev/cosign/sign/v1`), a referrer of the image | `https://slsa.dev/provenance/v1` over the image, a referrer of the image |
 | Forge | `<file>.sigstore.json` beside each asset, including each file an `artifact:` entry attaches from [`release.artifacts`](/chant/cli/release/#files-the-release-builds), the SBOM and `release.intoto.json` | `release.slsa.sigstore.json`, over the declared assets |
+| PyPI | A PEP 740 publish attestation for each file, uploaded with it, under trusted publishing only. See [Attestations on PyPI](#attestations-on-pypi) | None |
 
 Each is a Sigstore bundle (`application/vnd.dev.sigstore.bundle.v0.3+json`). An image's referrers are the ones `cosign sign` and `actions/attest-build-provenance` push: the bundle as the one layer, the artifact type the bundle's media type, and the predicate type in the `dev.sigstore.bundle.predicateType` annotation. On a registry without the referrers API, such as GHCR, chant lists them under the `sha256-<hex>` tag the OCI distribution spec falls back to, so cosign finds them:
 
@@ -395,7 +478,7 @@ export default {
 };
 ```
 
-The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/#release-doctor) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace and tauri-updater targets are not signed.
+The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/#release-doctor) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater and cargo targets are not signed.
 
 ### A CI job that checks provenance
 
@@ -417,7 +500,7 @@ steps:
 
 ## Staging and resuming
 
-A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them, in the same order. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package. A failure while revealing leaves the targets before it visible and the rest staged.
+A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them, in the same order. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package. A marketplace, PyPI or Cargo target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads. A failure while revealing leaves the targets before it visible and the rest staged.
 
 Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifecycle`, beside `cuts.jsonl` and under the member's prefix. The file is append-only, and each line is pushed as soon as it is written. This line, `version` 1, is what chant 0.124.29 and newer write after staging an npm target:
 
@@ -459,7 +542,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The redactor masks | Such as |
 |---|---|
 | Each credential a target read, and each token a registry handed back for it | the value of `OCI_PASSWORD`, a GHCR bearer token |
-| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT` |
+| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT`, `PYPI_TOKEN`, `TEST_PYPI_TOKEN`, `TWINE_PASSWORD`, `PYPI_ID_TOKEN`, `CARGO_REGISTRY_TOKEN`, `CRATES_IO_ID_TOKEN` |
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
@@ -470,7 +553,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
@@ -481,6 +564,7 @@ interface PublishTarget<C extends PublishContextBase = PublishContext, K extends
   reveal(ctx: C, staged: StagedTarget): Promise<PublishedTarget>;
   // Optional, for a train publish:
   stagesVisibly?: boolean; // stage already makes the items visible (npm under stage: false)
+  uploadsAtReveal?: boolean; // stage sends nothing and reveal uploads (marketplace, pypi, cargo)
   names?(ctx: C): Promise<{ provides: string[]; needs: string[] }>;
   published?(ctx: C): Promise<boolean | null>;
   visible?(ctx: C, published: PublishedTarget): Promise<void>;
@@ -507,7 +591,7 @@ A release target is given a `PublishContext` with these fields. The last five (`
 | `redactor` | Masks credentials. A target adds each credential and token it reads |
 | `log(line)` | Prints a line of progress, redacted |
 
-The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew and marketplace targets use, and the `npm` and `vsce` executables, and the `git` and `ssh` that the homebrew target runs over SSH. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, and the forge targets call a forge fake with draft releases.
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew, marketplace and PyPI targets use, the `npm`, `vsce` and `cargo` executables, and the `git` and `ssh` that the homebrew target runs over SSH. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, the forge targets call a forge fake with draft releases, the PyPI target uploads to a fake index, and cargo is a fake binary that writes a fake sparse index.
 
 A target that publishes something other than a cut release takes its own context as `C`, which extends `PublishContextBase`, and its own `kind` names as `K` ([#4602](https://github.com/INTENTIUS/chant/issues/4602)). The terraform lexicon's module targets publish a module version this way. They throw `PublishTargetError` and take their requests and clock through `PublishDeps`. Credentials are read with `readCredential` from `lifecycle/publish-credentials.ts` and masked by the context's redactor. Their own code makes them, so they never appear under `release.publish`.
 

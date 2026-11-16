@@ -25,7 +25,7 @@
  * (`publish-provenance-missing`). Without either, provenance is only the
  * plan's `provenance` field.
  * When `release.signing` or `supply-chain` asks for Sigstore signing and an
- * OCI or forge target is declared (#5164, ./publish-signing.ts), a run that
+ * OCI, forge or pypi target is declared (#5164, ./publish-signing.ts), a run that
  * can't sign keylessly is refused (`publish-signing-no-oidc`,
  * `publish-signing-tool-missing`).
  * The targets come from {@link releasePublishTargets}: the member declares them under `release.publish` in its `chant.config.ts` (#4047).
@@ -163,6 +163,8 @@ export interface PublishDeps {
   npm?: string;
   /** The vsce executable the VS Code Marketplace target runs (#4676). Default: `vsce` on `PATH`. */
   vsce?: string;
+  /** The cargo executable the cargo target runs (#5167). Default: `cargo` on `PATH`. */
+  cargo?: string;
   /** The git executable the homebrew target runs to push over SSH (#4699). Default: `git` on `PATH`. */
   git?: string;
   /** The ssh executable git runs for it (#4699). Default: `ssh` on `PATH`. */
@@ -251,7 +253,7 @@ export class PublishTargetError extends Error {
 }
 
 /** The kinds `release.publish` declares and `createPublishTargets` makes. */
-export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater";
+export type ReleasePublishKind = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo";
 
 /** The npm dist-tag a set of packages is staged under before `latest` moves (#4048), as chant's own releases do (#3903). */
 export const NPM_STAGE_TAG = "next";
@@ -318,6 +320,13 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * turn, after the layers before it are visible, instead of up front.
    */
   stagesVisibly?: boolean;
+  /**
+   * True when {@link stage} sends nothing and {@link reveal} is the upload,
+   * because the destination has no place to hold a release unseen (a
+   * marketplace, PyPI, a Cargo registry, #5167). Nothing of it is out
+   * between the two steps, so a check of what staged can't see it.
+   */
+  uploadsAtReveal?: boolean;
   /**
    * The names this target publishes and the names of others' it depends on
    * (npm: the package names, and every `dependencies`, `peerDependencies`
@@ -532,7 +541,7 @@ export async function preparePublish(req: {
   const signingConfig = (await loadConfig(cwd).catch(() => null))?.config.release?.signing;
   const setting = resolveSigning(signingConfig, groups);
   let signing: PublishPlan["signing"] = null;
-  const signs = targets.filter((t) => t.kind === "oci" || t.kind === "forge");
+  const signs = targets.filter((t) => t.kind === "oci" || t.kind === "forge" || t.kind === "pypi");
   if (setting.on && signs.length > 0) {
     const why = setting.from === "config" ? "release.signing in chant.config.ts" : "the supply-chain group";
     const id = signingIdentity(env);

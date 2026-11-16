@@ -15,6 +15,10 @@
  *   Marketplace (through `vsce`) or Open VSX (through its REST API).
  * - `tauri-updater` (./publish-tauri.ts): a Tauri updater manifest and the
  *   app's bundles on a rolling GitHub release, replaced on each publish.
+ * - `pypi` (./publish-pypi.ts): wheels and sdists uploaded to PyPI, TestPyPI
+ *   or another index, with a token or PyPI's trusted publishing (#5167).
+ * - `cargo` (./publish-cargo.ts): `cargo publish` per crate of a workspace,
+ *   in dependency order, to crates.io or another registry (#5167).
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
@@ -28,7 +32,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import type { PublishDeclaration } from "./publish-declaration";
-import { PublishTargetError, type PublishDeps, type PublishTarget } from "./release-publish";
+import { PublishTargetError, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishTarget } from "./release-publish";
 import type { Release, ReleaseArtifact } from "./release-store";
 import { sortedJsonReplacer } from "../utils";
 
@@ -54,6 +58,12 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "tauri-updater":
         out.push((await import("./publish-tauri")).tauriUpdaterTarget(d, deps));
+        break;
+      case "pypi":
+        out.push((await import("./publish-pypi")).pypiTarget(d, deps));
+        break;
+      case "cargo":
+        out.push((await import("./publish-cargo")).cargoTarget(d, deps));
         break;
     }
   }
@@ -138,4 +148,42 @@ export function expandArtifactAssets(release: Release, assets: readonly string[]
     }
     return paths;
   });
+}
+
+/** True when the run can get an OIDC ID token: a GitHub Actions job with `id-token: write`, or one in `variable`. */
+export function hasIdToken(env: NodeJS.ProcessEnv, variable: string): boolean {
+  return Boolean(env[variable] || (env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN));
+}
+
+/**
+ * The run's OIDC ID token for `audience` (#5167): the value of `variable`
+ * when it is set, as a GitLab job's `id_tokens` entry gives it, else one
+ * GitHub Actions issues. Masked by the context's redactor. Throws `code`
+ * when there is none.
+ */
+export async function runIdToken(ctx: PublishContextBase, fetchImpl: PublishFetch, audience: string, variable: string, code: string): Promise<string> {
+  const direct = ctx.env[variable];
+  if (direct) {
+    ctx.redactor.add(direct);
+    return direct;
+  }
+  if (!(ctx.env.ACTIONS_ID_TOKEN_REQUEST_URL && ctx.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN)) {
+    throw new PublishTargetError(code, `this run has no OIDC ID token: not a GitHub Actions job with id-token: write, and ${variable} is not set`, `In GitHub Actions, give the job permissions: id-token: write. Elsewhere, put an ID token whose audience is ${audience} in ${variable}.`);
+  }
+  ctx.redactor.add(ctx.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN);
+  const url = new URL(ctx.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+  url.searchParams.set("audience", audience);
+  const res = await fetchImpl(url.toString(), { method: "GET", headers: { authorization: `Bearer ${ctx.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`, accept: "application/json" } });
+  const text = await res.text().catch(() => "");
+  let value: unknown;
+  try {
+    value = res.status === 200 ? (JSON.parse(text) as { value?: unknown }).value : undefined;
+  } catch {
+    value = undefined;
+  }
+  if (typeof value !== "string" || !value) {
+    throw new PublishTargetError(code, `GitHub Actions gave no OIDC ID token for ${audience}: it answered ${res.status}`, "Give the job permissions: id-token: write.");
+  }
+  ctx.redactor.add(value);
+  return value;
 }

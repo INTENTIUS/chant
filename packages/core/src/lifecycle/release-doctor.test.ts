@@ -366,3 +366,55 @@ describe("Sigstore signing (#5164)", () => {
     expect(ws?.checks.map((c) => c.status)).toEqual(["warn", "warn"]);
   });
 });
+
+describe("pypi and cargo (#5167)", () => {
+  const status = (checks: DoctorCheck[], name: string): DoctorStatus | undefined => checks.find((c) => c.check === name)?.status;
+  const GHA = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/kit", ACTIONS_ID_TOKEN_REQUEST_URL: "https://gha.test/token?x=1", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "gha-request" };
+
+  test("pypi: the project from pyproject.toml, a missing token, and the trusted-publishing exchange in CI", async () => {
+    const dir = member({});
+    writeFileSync(join(dir, "pyproject.toml"), '[build-system]\nrequires = ["hatchling"]\n\n[project]\nname = "Acme_Kit"\nversion = "0"\n');
+    const { fetch, calls } = fakeFetch([
+      (url) => (url === "https://pypi.org/simple/acme-kit/" ? { status: 404 } : undefined),
+      (url) => (url === "https://pypi.org/_/oidc/audience" ? { status: 200, body: { audience: "pypi" } } : undefined),
+      (url) => (url.startsWith("https://gha.test/token") && url.includes("audience=pypi") ? { status: 200, body: { value: "gha-id-for-pypi" } } : undefined),
+      (url, init) => (url === "https://pypi.org/_/oidc/mint-token" ? (JSON.parse(init.body as string).token === "gha-id-for-pypi" ? { status: 200, body: { token: "pypi-minted" } } : { status: 422 }) : undefined),
+    ]);
+    const publish: PublishDeclaration[] = [{ type: "pypi", files: ["dist"] }];
+    const local = await releaseDoctor({ cwd: dir, publish, env: {}, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(local.targets[0]!.name).toBe("pypi PyPI Acme_Kit");
+    expect(status(local.targets[0]!.checks, "pypi-project")).toBe("warn");
+    expect(status(local.targets[0]!.checks, "pypi-token")).toBe("warn");
+    const ci = await releaseDoctor({ cwd: dir, publish, env: GHA, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(status(ci.targets[0]!.checks, "pypi-trusted-publisher")).toBe("ok");
+    expect(JSON.stringify(ci)).not.toContain("pypi-minted");
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/legacy/"))).toBe(false);
+  });
+
+  test("cargo: the crates in order, a crate not on the registry yet, and the trusted-publishing exchange revoked", async () => {
+    const dir = member({});
+    const workspace = {
+      packages: [
+        { name: "acme-cli", version: "1.0.0", publish: null, dependencies: [{ name: "acme-core", req: "^1.0.0", kind: null, path: "/x" }] },
+        { name: "acme-core", version: "1.0.0", publish: null, dependencies: [] },
+      ],
+    };
+    const run = fakeRun({ "metadata --no-deps": { code: 0, stdout: JSON.stringify(workspace) } });
+    const { fetch, calls } = fakeFetch([
+      (url) => (url === "https://index.crates.io/ac/me/acme-core" ? { status: 200, body: '{"name":"acme-core","vers":"0.9.0"}' } : undefined),
+      (url) => (url === "https://index.crates.io/ac/me/acme-cli" ? { status: 404 } : undefined),
+      (url) => (url.startsWith("https://gha.test/token") && url.includes("audience=crates.io") ? { status: 200, body: { value: "gha-id-for-crates" } } : undefined),
+      (url, init) => (url === "https://crates.io/api/v1/trusted_publishing/tokens" ? (init.method === "POST" ? { status: 200, body: { token: "cio-minted" } } : { status: 204 }) : undefined),
+    ]);
+    const publish: PublishDeclaration[] = [{ type: "cargo" }];
+    const local = await releaseDoctor({ cwd: dir, publish, env: { CARGO_REGISTRY_TOKEN: "cio-secret" }, releaseWorkflow: WORKFLOW, deps: { fetch, run } });
+    const checks = local.targets[0]!.checks;
+    expect(checks.find((c) => c.check === "cargo-crates")!.message).toContain("acme-core@1.0.0, acme-cli@1.0.0");
+    expect(status(checks, "cargo-new-crates")).toBe("warn");
+    expect(status(checks, "cargo-token")).toBe("unknown");
+    const ci = await releaseDoctor({ cwd: dir, publish, env: GHA, releaseWorkflow: WORKFLOW, deps: { fetch, run } });
+    expect(status(ci.targets[0]!.checks, "cargo-trusted-publisher")).toBe("ok");
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+    expect(JSON.stringify(ci)).not.toContain("cio-minted");
+  });
+});
