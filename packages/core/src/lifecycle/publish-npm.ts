@@ -112,6 +112,25 @@ function readPackage(ctx: PublishContext, path: string, sbom: NpmPublishDeclarat
   return { path, abs, name: pkg.name, version: pkg.version, ...(digest ? { digest } : {}), ...(carried ? { sbom: carried.file } : {}) };
 }
 
+/** A package's package.json, from its directory or its packed `.tgz`, or null when it can't be read. Checks no digest (#5136). */
+function packageManifest(abs: string): Record<string, unknown> | null {
+  try {
+    const text = isDir(abs)
+      ? readFileSync(join(abs, "package.json"), "utf-8")
+      : execFileSync("tar", ["-xzOf", abs, "package/package.json"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+    const pkg = JSON.parse(text) as unknown;
+    return pkg !== null && typeof pkg === "object" ? (pkg as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `<name>@<version>` split at its last `@`, so a scoped name keeps its own. */
+function splitSpec(spec: string): [string, string] {
+  const at = spec.lastIndexOf("@");
+  return at > 0 ? [spec.slice(0, at), spec.slice(at + 1)] : [spec, ""];
+}
+
 /** The arguments of one `npm publish`, which stages under `tag`. */
 export function npmPublishArgs(decl: Pick<NpmPublishDeclaration, "registry" | "access">, abs: string, ctx: Pick<PublishContext, "provenance">, tag: string = NPM_STAGE_TAG): string[] {
   return [
@@ -418,8 +437,72 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
       rmSync(dir, { recursive: true, force: true });
     }
   };
+  /** Whether `dist-tags.<tag>` of `name` is `version` yet; a 404 is not yet, any other failure is the registry's error. */
+  const tagged = async (ctx: PublishContext, name: string, version: string, tag: string): Promise<boolean> => {
+    const r = await npm(ctx, ["view", name, `dist-tags.${tag}`, ...(decl.registry ? ["--registry", decl.registry] : [])]);
+    if (r.code === 0) return r.output.some((l) => l.trim() === version || l.trim() === JSON.stringify(version));
+    if (r.output.some((l) => NPM_VIEW_NOT_YET.test(l))) return false;
+    const said = r.output.filter((l) => /^npm (error|ERR!)/.test(l)).at(-1) ?? r.output.at(-1) ?? "npm printed nothing";
+    throw new PublishTargetError(
+      "publish-npm-registry-failed",
+      `npm view ${name} dist-tags.${tag} exited ${r.code} while the train waited for ${name}@${version} to be ${tag}: ${said}`,
+      "Each package was published. Once the registry answers, run the publish again: it publishes nothing twice.",
+    );
+  };
   return {
     kind: "npm",
+    stagesVisibly: !staging,
+    async names(ctx) {
+      const provides: string[] = [];
+      const needs = new Set<string>();
+      for (const path of decl.packages) {
+        const pkg = packageManifest(memberFile(ctx.cwd, path));
+        if (!pkg) continue;
+        if (typeof pkg.name === "string") provides.push(pkg.name);
+        for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+          const deps = pkg[field];
+          if (deps && typeof deps === "object") for (const n of Object.keys(deps)) needs.add(n);
+        }
+      }
+      return { provides, needs: [...needs].filter((n) => !provides.includes(n)) };
+    },
+    async published(ctx) {
+      for (const path of decl.packages) {
+        const pkg = packageManifest(memberFile(ctx.cwd, path));
+        if (!pkg || typeof pkg.name !== "string") return null;
+        const version = ctx.label ?? (typeof pkg.version === "string" ? pkg.version : null);
+        if (version === null) return null;
+        if (!(await onRegistry(ctx, { path, abs: "", name: pkg.name, version }))) return false;
+      }
+      return true;
+    },
+    async visible(ctx, published) {
+      const tag = revealTag(ctx);
+      const cap = decl.registryWait === undefined ? undefined : decl.registryWait * 1000;
+      const start = now();
+      let logged: number | undefined;
+      let missing = published.items.filter((i) => !i.refused && i.attachment === undefined).map((i) => splitSpec(i.name));
+      for (;;) {
+        const still: Array<[string, string]> = [];
+        for (const [name, version] of missing) if (!(await tagged(ctx, name, version, tag))) still.push([name, version]);
+        missing = still;
+        if (missing.length === 0) return;
+        const names = missing.map(([n, v]) => `${n}@${v}`).join(", ");
+        const waited = now() - start;
+        if (cap !== undefined && waited >= cap) {
+          throw new PublishTargetError(
+            "publish-npm-not-served",
+            `the registry did not resolve ${tag} to ${names} within ${Math.round(cap / 1000)}s, so the packages that depend on them were not published`,
+            "Once npm serves them, run the publish again: it publishes nothing twice and goes on from there. `registryWait` sets the wait.",
+          );
+        }
+        if (logged === undefined || now() - logged >= NPM_REGISTRY_PROGRESS_MS) {
+          ctx.log(`waiting for ${tag} to resolve to ${names}${waited > 0 ? ` (${Math.round(waited / 1000)}s so far)` : ""}`);
+          logged = now();
+        }
+        await sleep(NPM_REGISTRY_POLL_MS);
+      }
+    },
     name: `npm (${decl.packages.length} package${decl.packages.length === 1 ? "" : "s"})`,
     destination: `npm ${registry}`,
     credentialEnv: [],

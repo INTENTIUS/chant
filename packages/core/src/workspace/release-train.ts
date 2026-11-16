@@ -7,7 +7,9 @@
  * train names one of them per member: by default the newest cut release, or
  * the one `--pin <member>=<label|digest>` picks. It refuses unless every
  * `chant` member of the declaration has a release, so a train never leaves a
- * member out. It is written to `_members/_workspace/<env>/trains.jsonl`.
+ * member out. It is written to `_members/_workspace/<env>/trains.jsonl`, or
+ * for a nested workspace inside its outer member's ledger
+ * (`_members/<outer>/_members/_workspace/<env>/trains.jsonl`).
  *
  * A train's digest (#4037) is over the member release digests and nothing
  * else, so the same picks always give the same train digest, whatever the
@@ -150,13 +152,16 @@ export async function readMemberReleases(cwd: string, opts: { readRepo?: RepoRel
   const located = locateWorkspace(cwd);
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
   const out: MemberReleases[] = [];
+  // #5136: in a nested workspace each member's ledger sits inside the outer member's.
+  const { resolveMemberLedger } = await import("../lifecycle/member-ledger");
+  const outer = (await resolveMemberLedger(located.rootOnDisk)).members;
   for (const m of declaration.members) {
     if (m.kind === REPO_KIND && m.repo !== null) {
       out.push(await (opts.readRepo ?? readRepoReleases)(m.name, m.repo, located.rootOnDisk));
       continue;
     }
     if (m.kind !== "chant") continue;
-    const loc = { cwd: located.rootOnDisk, member: m.dir === "." ? "." : m.name };
+    const loc = { cwd: located.rootOnDisk, member: m.dir === "." ? outer : [...outer, m.name] };
     const { releases } = await readAllReleases(loc);
     const { cuts } = await readCuts(loc);
     const newest = (digest: string) => cuts.filter((c) => c.releaseDigest === digest).map((c) => c.timestamp).sort().at(-1) ?? "";
@@ -602,7 +607,7 @@ async function promoteAcrossRepos(query: TrainPromoteQuery, train: ReadTrain, no
 }
 
 const USAGE =
-  "chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json] | chant workspace train list <env> [--json] | chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json]";
+  "chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json] | chant workspace train list <env> [--json] | chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json] | chant workspace train publish <env> [<train id|digest>] [--yes] [--json]";
 
 /** The workspace runs that promoted each train, as `train list --json` gives them (#4037). */
 export interface TrainPromotion {
@@ -637,6 +642,10 @@ export async function runWorkspaceTrain(ctx: CommandContext): Promise<number> {
   const words = ctx.args.positionals ?? [];
   const rest = words[0] === "train" ? words.slice(1) : words;
   if (rest[0] === "promote") return runTrainPromote(ctx, rest.slice(1));
+  if (rest[0] === "publish") {
+    const { runTrainPublish } = await import("./train-publish");
+    return runTrainPublish(ctx, rest.slice(1));
+  }
   const listing = rest[0] === "list";
   const env = listing ? rest[1] : rest[0];
   if (!env) {

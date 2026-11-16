@@ -16,17 +16,27 @@
  *   `chant` member, with a digest over those releases (`./release-train.ts`).
  *   A train's promote is a run in `<env>/runs.jsonl` that names the train.
  *
+ * A nested workspace (a member of kind `workspace`) keeps its own workspace
+ * ledger inside the outer member's, as its members' ledgers are: the nested
+ * workspace in the outer member `npm` writes under
+ * `_members/npm/_members/_workspace/`. Two nested workspaces, and a nested
+ * one and the outer one, never share a file, whatever their environments
+ * are called (#5136).
+ *
  * A malformed line is skipped and counted, never thrown on.
  */
 
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { readBlobBySha, readBlobFromPath, readPathSha, RefCASConflictError, writeBlobToPath, type LedgerLocation } from "../lifecycle/git";
-import { MEMBERS_DIR } from "../lifecycle/member-ledger";
+import { MEMBERS_DIR, resolveMemberLedger } from "../lifecycle/member-ledger";
+import { findWorkspaceRoot } from "../project-root";
 import { sortedJsonReplacer } from "../utils";
 
 /** The reserved member name the workspace's own ledger sits under. */
 export const WORKSPACE_LEDGER_NAME = "_workspace";
-/** The branch prefix of the workspace's ledger. */
+/** The branch prefix of a top-level workspace's ledger; a nested one's sits under its outer member's prefix ({@link workspaceLedgerPrefix}). */
 export const WORKSPACE_LEDGER_PREFIX = `${MEMBERS_DIR}/${WORKSPACE_LEDGER_NAME}/`;
 /** The environment directory a run with no `--env` records under, as a member Op run does. */
 export const DEFAULT_WORKSPACE_ENV = "local";
@@ -34,8 +44,22 @@ export const WORKSPACE_GATES_DIR = "_gates";
 
 const APPEND_RETRY_ATTEMPTS = 5;
 
-function at(cwd: string): LedgerLocation {
-  return { cwd, ledgerPrefix: WORKSPACE_LEDGER_PREFIX };
+/**
+ * The branch prefix of the ledger of the workspace holding `cwd`:
+ * {@link WORKSPACE_LEDGER_PREFIX} for a top-level workspace, and inside the
+ * outer member's ledger for a nested one (#5136).
+ */
+export async function workspaceLedgerPrefix(cwd: string): Promise<string> {
+  const found = findWorkspaceRoot(cwd);
+  if (!found) return WORKSPACE_LEDGER_PREFIX;
+  // A root at the git top, or with no workspace above it, is top-level: no declaration is read.
+  const parent = dirname(found.dir);
+  if (parent === found.dir || existsSync(join(found.dir, ".git")) || !findWorkspaceRoot(parent)) return WORKSPACE_LEDGER_PREFIX;
+  return `${(await resolveMemberLedger(found.dir)).prefix}${WORKSPACE_LEDGER_PREFIX}`;
+}
+
+async function at(cwd: string): Promise<LedgerLocation> {
+  return { cwd, ledgerPrefix: await workspaceLedgerPrefix(cwd) };
 }
 
 /** Append one line to `<dir>/<file>` in the workspace ledger. Returns the ledger commit. */
@@ -44,10 +68,11 @@ export async function appendWorkspaceLine(cwd: string, dir: string, file: string
   let lastErr: unknown;
   for (let attempt = 1; attempt <= APPEND_RETRY_ATTEMPTS; attempt++) {
     try {
-      const priorSha = await readPathSha(dir, file, at(cwd));
+      const where = await at(cwd);
+      const priorSha = await readPathSha(dir, file, where);
       const existing = priorSha ? await readBlobBySha(priorSha, { cwd }) : null;
       const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${json}\n`;
-      return await writeBlobToPath(dir, file, content, message, { ...at(cwd), expectPriorPathSha: priorSha });
+      return await writeBlobToPath(dir, file, content, message, { ...where, expectPriorPathSha: priorSha });
     } catch (err) {
       if (!(err instanceof RefCASConflictError)) throw err;
       lastErr = err;
@@ -58,7 +83,7 @@ export async function appendWorkspaceLine(cwd: string, dir: string, file: string
 
 /** Read every line of `<dir>/<file>` that `accept` takes, oldest first. */
 export async function readWorkspaceLines<T>(cwd: string, dir: string, file: string, accept: (v: unknown) => v is T): Promise<{ records: T[]; malformed: number }> {
-  const content = await readBlobFromPath(dir, file, at(cwd));
+  const content = await readBlobFromPath(dir, file, await at(cwd));
   if (!content) return { records: [], malformed: 0 };
   const records: T[] = [];
   let malformed = 0;

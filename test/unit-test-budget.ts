@@ -79,6 +79,9 @@ export const SLOW_UNIT_TEST_FILES: readonly string[] = [
     // #4502: walks real git history per test and is load-sensitive, 5.4 to 16.9s
     // alone on a loaded Mac (slowest test 1.8 to 5.9s).
     "intent-gaps",
+    // #5136: cuts and publishes a train of real member releases in a temp repo, through the fake npm,
+    // as publish-resume does; 2 to 5.5s per test on a loaded Mac.
+    "train-publish",
   ].map((name) => `packages/core/src/workspace/${name}.test.ts`),
   ...[
     "release-at",

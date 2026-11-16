@@ -278,6 +278,35 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * again, it moves nothing that already moved. Throws {@link PublishTargetError}.
    */
   reveal(ctx: C, staged: StagedTarget): Promise<PublishedTarget>;
+  /**
+   * True when {@link stage} already puts the items where a consumer resolves
+   * them, so there is nothing to hold back (npm under `stage: false`). A
+   * train publish (#5136) stages such a target in its dependency layer's
+   * turn, after the layers before it are visible, instead of up front.
+   */
+  stagesVisibly?: boolean;
+  /**
+   * The names this target publishes and the names of others' it depends on
+   * (npm: the package names, and every `dependencies`, `peerDependencies`
+   * and `optionalDependencies` key). A train publish orders its members by
+   * them (#5136). Absent: the target neither provides nor needs anything.
+   */
+  names?(ctx: C): Promise<{ provides: string[]; needs: string[] }>;
+  /**
+   * Whether the destination already serves what this target publishes for
+   * `ctx.label`, read without checking digests, since the checkout need not
+   * be the release's commit (#5136): true, false, or null when it can't tell.
+   * A train publish asks it of a member pinned at an earlier release whose
+   * publish record does not show it revealed.
+   */
+  published?(ctx: C): Promise<boolean | null>;
+  /**
+   * Wait until a consumer resolving the reveal's tag gets what `published`
+   * holds (npm: `dist-tags.latest` names the version). A train publish waits
+   * on each dependency layer before the next one reveals (#5136). Throws
+   * {@link PublishTargetError}.
+   */
+  visible?(ctx: C, published: PublishedTarget): Promise<void>;
 }
 
 /** The targets the member at `cwd` declares under `release.publish` in its `chant.config.ts`. */

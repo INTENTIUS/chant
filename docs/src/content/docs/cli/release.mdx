@@ -478,6 +478,8 @@ The document `--json` gives for a publish holds `dryRun` and the release's diges
 | `--require-provenance` | Refuse a run with no OIDC token. A CI job that must give npm provenance passes it, so a misconfigured job fails instead of publishing without. |
 | `--json` | Print the document described above. |
 
+To publish the releases a [release train](/chant/cli/workspace-train/#publish) pins as one set, each member's packages after the packages they depend on, run `chant workspace train publish <env>` in the workspace root instead. It records each member's steps in the same publish record, so either command resumes the other.
+
 ## release workflow
 
 Writes the publish workflow, the job that runs `chant release publish` for the release a `release/**` tag names ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). It is generated the way [`chant ci workflow`](/chant/cli/ci/#ci-workflow) writes the tick, with a header naming the command that regenerates it.
