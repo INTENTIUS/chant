@@ -11,6 +11,7 @@ import { goreleaserFeature } from "./goreleaser";
 import { greenFeature } from "./green";
 import { imagesFeature } from "./images";
 import { nfpmFeature } from "./nfpm";
+import { nugetFeature } from "./nuget";
 import { pypiFeature } from "./pypi";
 import { qemuFeature } from "./qemu";
 import { signingFeature } from "./signing";
@@ -31,6 +32,7 @@ export const RELEASE_WORKFLOW_FEATURES: readonly ReleaseWorkflowFeature[] = [
   greenFeature,
   imagesFeature,
   nfpmFeature,
+  nugetFeature,
   pypiFeature,
   qemuFeature,
   signingFeature,

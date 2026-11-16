@@ -419,3 +419,51 @@ describe("pypi and cargo (#5167)", () => {
     expect(JSON.stringify(ci)).not.toContain("cio-minted");
   });
 });
+
+describe("maven, nuget and rubygems (#5232)", () => {
+  const status = (checks: DoctorCheck[], name: string): DoctorStatus | undefined => checks.find((c) => c.check === name)?.status;
+  const GHA = { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/kit", ACTIONS_ID_TOKEN_REQUEST_URL: "https://gha.test/token?x=1", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "gha-request" };
+
+  test("maven: a bundle not built yet, and the user token", async () => {
+    const dir = member({});
+    const { fetch } = fakeFetch([]);
+    const publish: PublishDeclaration[] = [{ type: "maven", bundle: "artifact:maven" }];
+    const r = await releaseDoctor({ cwd: dir, publish, env: { MAVEN_CENTRAL_USERNAME: "u-123", MAVEN_CENTRAL_PASSWORD: "p-123" }, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(status(r.targets[0]!.checks, "maven-bundle")).toBe("unknown");
+    expect(status(r.targets[0]!.checks, "maven-token")).toBe("unknown");
+    const none = await releaseDoctor({ cwd: dir, publish, env: { CI: "true" }, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(status(none.targets[0]!.checks, "maven-token")).toBe("fail");
+  });
+
+  test("nuget: a missing user, and the trusted-publishing exchange in CI", async () => {
+    const dir = member({});
+    const { fetch } = fakeFetch([
+      (url) => (url.startsWith("https://gha.test/token") && url.includes(encodeURIComponent("https://www.nuget.org")) ? { status: 200, body: { value: "gha-id-for-nuget" } } : undefined),
+      (url, init) => (url === "https://www.nuget.org/api/v2/token" ? (init.headers.authorization === "Bearer gha-id-for-nuget" && JSON.parse(init.body as string).username === "acme-bot" ? { status: 200, body: { apiKey: "nuget-minted" } } : { status: 401 }) : undefined),
+    ]);
+    const publish: PublishDeclaration[] = [{ type: "nuget", packages: ["artifact:nuget"], auth: "trusted-publishing" }];
+    const noUser = await releaseDoctor({ cwd: dir, publish, env: GHA, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(status(noUser.targets[0]!.checks, "nuget-trusted-publisher")).toBe("fail");
+    const ci = await releaseDoctor({ cwd: dir, publish, env: { ...GHA, NUGET_USER: "acme-bot" }, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(status(ci.targets[0]!.checks, "nuget-trusted-publisher")).toBe("ok");
+    expect(JSON.stringify(ci)).not.toContain("nuget-minted");
+  });
+
+  test("rubygems: the gem from its gemspec, not on RubyGems.org yet, and the exchange in CI", async () => {
+    const dir = member({});
+    writeFileSync(join(dir, "acme.gemspec"), 'Gem::Specification.new { |s| s.name = "acme-kit" }\n');
+    const { fetch } = fakeFetch([
+      (url) => (url === "https://rubygems.org/api/v1/versions/acme-kit.json" ? { status: 404 } : undefined),
+      (url) => (url.startsWith("https://gha.test/token") && url.includes("audience=rubygems.org") ? { status: 200, body: { value: "gha-id-for-gems" } } : undefined),
+      (url) => (url === "https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token" ? { status: 201, body: { rubygems_api_key: "gems-minted" } } : undefined),
+    ]);
+    const publish: PublishDeclaration[] = [{ type: "rubygems", gems: ["artifact:gem"] }];
+    const local = await releaseDoctor({ cwd: dir, publish, env: {}, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(local.targets[0]!.name).toBe("rubygems RubyGems.org acme-kit");
+    expect(status(local.targets[0]!.checks, "rubygems-gem")).toBe("warn");
+    expect(status(local.targets[0]!.checks, "rubygems-token")).toBe("warn");
+    const ci = await releaseDoctor({ cwd: dir, publish, env: GHA, releaseWorkflow: WORKFLOW, deps: { fetch } });
+    expect(status(ci.targets[0]!.checks, "rubygems-trusted-publisher")).toBe("ok");
+    expect(JSON.stringify(ci)).not.toContain("gems-minted");
+  });
+});

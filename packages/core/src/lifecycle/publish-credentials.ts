@@ -41,6 +41,11 @@ export const TOKEN_ENV_VARS = [
   "CRATES_IO_ID_TOKEN",
   "MCP_GITHUB_TOKEN",
   "MCP_REGISTRY_TOKEN",
+  "MAVEN_CENTRAL_PASSWORD",
+  "NUGET_API_KEY",
+  "NUGET_ID_TOKEN",
+  "GEM_HOST_API_KEY",
+  "RUBYGEMS_ID_TOKEN",
 ] as const;
 
 /** What a masked value is replaced with. */

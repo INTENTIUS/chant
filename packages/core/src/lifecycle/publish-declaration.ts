@@ -16,6 +16,9 @@
  *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *       { type: "pypi", files: ["dist"] },
  *       { type: "cargo", crates: ["acme-core", "acme-cli"] },
+ *       { type: "maven", bundle: "artifact:maven" },
+ *       { type: "nuget", packages: ["artifact:nuget"] },
+ *       { type: "rubygems", gems: ["artifact:gem"] },
  *       { type: "index", preset: "krew", name: "api", template: "packaging/krew.yaml", assets: ["artifact:api"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *       { type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/charts" }, index: { repo: "acme/charts" } },
  *     ],
@@ -359,6 +362,93 @@ export const CargoPublishSchema = z
   .refine((d) => d.auth !== "trusted-publishing" || d.tokenEnv === undefined, { message: "auth: trusted-publishing reads no token", path: ["tokenEnv"] });
 
 /**
+ * Maven components on Maven Central (#5232): a bundle uploaded to the
+ * Central Portal at the stage, validated there, and published at the reveal
+ * (./publish-maven.ts).
+ */
+export const MavenPublishSchema = z
+  .object({
+    type: z.literal("maven"),
+    /**
+     * The bundle, relative to the member: a `.zip` in Maven repository
+     * layout, a directory in that layout (chant zips it, adding each missing
+     * `.md5` and `.sha1`), or `artifact:<name>` for the one `.zip` the release
+     * records for that `release.artifacts` entry.
+     */
+    bundle: z.string().min(1),
+    /** The Central Portal's root. Default `https://central.sonatype.com`. */
+    api: z.string().url().optional(),
+    /** The repository the stage reads for components already published. Default `https://repo1.maven.org/maven2/`. */
+    repository: z.string().url().optional(),
+    /** The variable holding the user token's name. Default `MAVEN_CENTRAL_USERNAME`. */
+    usernameEnv: envName.optional(),
+    /** The variable holding the user token's password. Default `MAVEN_CENTRAL_PASSWORD`. */
+    passwordEnv: envName.optional(),
+    /** `false` publishes under the `supply-chain` group components that carry no `-cyclonedx` or `-spdx` file. */
+    sbom: z.literal(false).optional(),
+  })
+  .strict();
+
+/**
+ * NuGet packages on nuget.org or another feed that takes NuGet's push API
+ * (#5232), pushed at the reveal (./publish-nuget.ts).
+ */
+export const NugetPublishSchema = z
+  .object({
+    type: z.literal("nuget"),
+    /** The `.nupkg` files, relative to the member: a file, a directory (every `.nupkg` in it), or `artifact:<name>`. */
+    packages: z.array(z.string().min(1)).min(1),
+    /** Another feed's push URL, such as `https://nuget.acme.dev/api/v2/package`. Needs `flatContainerUrl`. Default nuget.org's. */
+    pushUrl: z.string().url().optional(),
+    /** That feed's package base address (flat container), which the stage and reveal read. */
+    flatContainerUrl: z.string().url().optional(),
+    /**
+     * `token` reads an API key from `tokenEnv`. `trusted-publishing`
+     * exchanges the run's OIDC ID token for a key that lasts an hour, on
+     * nuget.org only. Unset: a token when `tokenEnv`'s variable is set, else
+     * trusted publishing when the run has an OIDC ID token.
+     */
+    auth: z.enum(["token", "trusted-publishing"]).optional(),
+    /** The variable holding the API key. Default `NUGET_API_KEY`. */
+    tokenEnv: envName.optional(),
+    /** The variable holding the nuget.org user (profile name, not email) whose trusted publishing policy names this workflow. Default `NUGET_USER`. */
+    userEnv: envName.optional(),
+    /** `false` publishes under the `supply-chain` group packages that carry no SBOM. */
+    sbom: z.literal(false).optional(),
+  })
+  .strict()
+  .refine((d) => (d.pushUrl === undefined) === (d.flatContainerUrl === undefined), { message: "pushUrl and flatContainerUrl go together", path: ["flatContainerUrl"] })
+  .refine((d) => d.pushUrl === undefined || d.auth !== "trusted-publishing", { message: "trusted publishing is nuget.org's; another feed takes a token", path: ["auth"] })
+  .refine((d) => d.auth !== "trusted-publishing" || d.tokenEnv === undefined, { message: "auth: trusted-publishing reads no token", path: ["tokenEnv"] });
+
+/**
+ * Ruby gems on RubyGems.org or another host that takes its API (#5232),
+ * pushed at the reveal (./publish-rubygems.ts).
+ */
+export const RubygemsPublishSchema = z
+  .object({
+    type: z.literal("rubygems"),
+    /** The `.gem` files, relative to the member: a file, a directory (every `.gem` in it), or `artifact:<name>`. */
+    gems: z.array(z.string().min(1)).min(1),
+    /** The gem host. Default `https://rubygems.org`. */
+    host: z.string().url().optional(),
+    /**
+     * `token` reads an API key from `tokenEnv`. `trusted-publishing`
+     * exchanges the run's OIDC ID token for a short-lived key, on
+     * RubyGems.org only. Unset: a token when `tokenEnv`'s variable is set,
+     * else trusted publishing when the run has an OIDC ID token.
+     */
+    auth: z.enum(["token", "trusted-publishing"]).optional(),
+    /** The variable holding the API key. Default `GEM_HOST_API_KEY`, the one `gem push` reads. */
+    tokenEnv: envName.optional(),
+    /** `false` publishes under the `supply-chain` group, which otherwise refuses this target: a gem host keeps no SBOM beside a gem. */
+    sbom: z.literal(false).optional(),
+  })
+  .strict()
+  .refine((d) => d.host === undefined || d.auth !== "trusted-publishing", { message: "trusted publishing is RubyGems.org's; another host takes a token", path: ["auth"] })
+  .refine((d) => d.auth !== "trusted-publishing" || d.tokenEnv === undefined, { message: "auth: trusted-publishing reads no token", path: ["tokenEnv"] });
+
+/**
  * A `server.json` on the official MCP Registry (#5162), published after the
  * npm packages or images it names have been revealed
  * (./publish-mcp-registry.ts).
@@ -500,6 +590,9 @@ export const PublishDeclarationSchema = z.discriminatedUnion("type", [
   McpRegistryPublishSchema,
   IndexPublishSchema,
   HelmPublishSchema,
+  MavenPublishSchema,
+  NugetPublishSchema,
+  RubygemsPublishSchema,
 ]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
@@ -513,4 +606,7 @@ export type CargoPublishDeclaration = z.infer<typeof CargoPublishSchema>;
 export type McpRegistryPublishDeclaration = z.infer<typeof McpRegistryPublishSchema>;
 export type IndexPublishDeclaration = z.infer<typeof IndexPublishSchema>;
 export type HelmPublishDeclaration = z.infer<typeof HelmPublishSchema>;
+export type MavenPublishDeclaration = z.infer<typeof MavenPublishSchema>;
+export type NugetPublishDeclaration = z.infer<typeof NugetPublishSchema>;
+export type RubygemsPublishDeclaration = z.infer<typeof RubygemsPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;

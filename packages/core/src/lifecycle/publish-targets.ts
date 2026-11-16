@@ -27,6 +27,13 @@
  * - `helm` (./publish-helm.ts): Helm chart archives pushed to an OCI
  *   registry, and listed in a chart repository's `index.yaml` on a branch of
  *   a GitHub repository (#5233).
+ * - `maven` (./publish-maven.ts): a bundle uploaded to the Central Portal
+ *   and validated at the stage, published to Maven Central at the reveal
+ *   (#5232).
+ * - `nuget` (./publish-nuget.ts): `.nupkg` files pushed to nuget.org or
+ *   another feed, with an API key or nuget.org's trusted publishing (#5232).
+ * - `rubygems` (./publish-rubygems.ts): `.gem` files pushed to RubyGems.org
+ *   or another host, with an API key or trusted publishing (#5232).
  *
  * A file a target reads that the release records as an artifact at the same
  * path is checked against the release's digest, and a file that differs is
@@ -81,6 +88,15 @@ export async function createPublishTargets(decls: readonly PublishDeclaration[],
         break;
       case "helm":
         out.push((await import("./publish-helm")).helmTarget(d, deps));
+        break;
+      case "maven":
+        out.push((await import("./publish-maven")).mavenTarget(d, deps));
+        break;
+      case "nuget":
+        out.push((await import("./publish-nuget")).nugetTarget(d, deps));
+        break;
+      case "rubygems":
+        out.push((await import("./publish-rubygems")).rubygemsTarget(d, deps));
         break;
     }
   }

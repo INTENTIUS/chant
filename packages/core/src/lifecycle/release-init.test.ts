@@ -212,6 +212,36 @@ describe("detecting the project (#5160)", () => {
     expect(priv.notes.join("\n")).toContain("publish = false");
   });
 
+  test("pom.xml, a .csproj and a .gemspec get built artifacts and maven, nuget and rubygems targets (#5232)", () => {
+    const files = {
+      "pom.xml": "<project><parent><groupId>dev.parent</groupId></parent><artifactId>kit</artifactId><version>1.0.0</version><dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId></dependency></dependencies></project>",
+      "Kit.csproj": "<Project><PropertyGroup><PackageId>Acme.Kit</PackageId></PropertyGroup></Project>",
+      "Tests.csproj": "<Project><PropertyGroup><IsPackable>false</IsPackable></PropertyGroup></Project>",
+      "acme.gemspec": 'Gem::Specification.new do |spec|\n  spec.name = "acme"\nend\n',
+    };
+    const gh = planRelease(detectProject(repo(files, { origin: "https://github.com/acme/kit" })), PLAN);
+    expect(gh.release.publish).toEqual([
+      { type: "maven", bundle: "artifact:maven" },
+      { type: "nuget", packages: ["artifact:nuget"], auth: "trusted-publishing" },
+      { type: "rubygems", gems: ["artifact:gem"], auth: "trusted-publishing" },
+    ]);
+    const artifacts = gh.release.artifacts as Array<{ name: string; build: string; outputs: string[] }>;
+    expect(artifacts.map((a) => a.name)).toEqual(["maven", "nuget", "gem"]);
+    expect(artifacts[1]!.build).toBe('dotnet pack Kit.csproj -c Release -o dist/nuget -p:Version="$CHANT_RELEASE_LABEL"');
+    expect(artifacts[2]!.outputs).toEqual(["dist/gem/*.gem"]);
+    expect((gh.release.workflow as { env: Record<string, string> }).env).toEqual({ MAVEN_CENTRAL_USERNAME: "${{ secrets.MAVEN_CENTRAL_USERNAME }}", MAVEN_CENTRAL_PASSWORD: "${{ secrets.MAVEN_CENTRAL_PASSWORD }}", NUGET_USER: "${{ secrets.NUGET_USER }}" });
+    const steps = gh.registry.join("\n");
+    expect(steps).toContain("Maven Central dev.parent:kit: verify the namespace dev.parent");
+    expect(steps).toContain("nuget.org Acme.Kit: add a trusted publishing policy");
+    expect(steps).toContain("RubyGems.org acme: add a trusted publisher");
+    const fj = planRelease(detectProject(repo({ "acme.gemspec": "spec.name = 'acme'\n", "Kit.csproj": "<Project/>" }, { origin: "https://codeberg.org/acme/kit" })), PLAN);
+    expect(fj.release.publish).toEqual([
+      { type: "nuget", packages: ["artifact:nuget"], auth: "token" },
+      { type: "rubygems", gems: ["artifact:gem"], auth: "token" },
+    ]);
+    expect((fj.release.workflow as { env: Record<string, string> }).env).toEqual({ NUGET_API_KEY: "${{ secrets.NUGET_API_KEY }}", GEM_HOST_API_KEY: "${{ secrets.GEM_HOST_API_KEY }}" });
+  });
+
   test("a package.json and a pyproject.toml share release.version (#5202)", () => {
     const root = repo({ "package.json": JSON.stringify({ name: "acme-js" }), "pyproject.toml": '[project]\nname = "acme-py"\nversion = "0.1.0"\n' });
     const plan = planRelease(detectProject(root), PLAN);
