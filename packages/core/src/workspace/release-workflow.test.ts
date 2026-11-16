@@ -1125,4 +1125,45 @@ describe("a dispatched train workflow (#5154)", () => {
     expect(w.jobs.publish!.steps[0]!.with!.ref).toBe("${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}");
     expect(w.jobs["after-release"]!.steps[0]!.with!.ref).toBe(w.jobs.publish!.steps[0]!.with!.ref);
   });
+  test("members' images and files go from the cut job to the publish job, which checks them after its build (#5216)", () => {
+    const w = train({ train: { env: "npm", images: true, imagePlatforms: ["linux/amd64"], artifacts: true } });
+    const cut = w.jobs.cut!.steps as Array<{ id?: string; if?: string; run?: string; uses?: string; with?: Record<string, string> }>;
+    const stage = cut.findIndex((s) => s.run?.includes("workspace train artifacts npm"));
+    expect(cut[stage]).toMatchObject({ if: "steps.cut.outputs.train != ''", run: 'npx chant workspace train artifacts npm "${{ steps.cut.outputs.train }}" -o "$RUNNER_TEMP/chant-release-artifacts"' });
+    expect(cut[stage + 1]!.uses).toMatch(/^actions\/upload-artifact@/);
+    expect(cut.findIndex((s) => s.id === "cut")).toBeLessThan(stage);
+    const pub = w.jobs.publish!.steps as Array<{ if?: string; run?: string; uses?: string }>;
+    const build = pub.findIndex((s) => s.run === "npm run build");
+    const download = pub.findIndex((s) => s.uses?.startsWith("actions/download-artifact@"));
+    const check = pub.findIndex((s) => s.run?.startsWith("npx chant workspace train artifacts"));
+    // A pushed tag or a dispatched train has no cut job here, so nothing is downloaded and the check builds them again.
+    expect(pub[download]!.if).toBe("needs.cut.outputs.train != ''");
+    expect([build < download, download < check]).toEqual([true, true]);
+    expect(pub[check]!.run).toContain('--from "$RUNNER_TEMP/chant-release-artifacts"');
+    // No member builds anything: no step at all.
+    expect(JSON.stringify(train())).not.toContain("train artifacts");
+  });
+
+  test("the cut runs the doctor in every member unless doctor is false, and verified-releases verifies each before the publish (#5216)", () => {
+    expect(train().jobs.cut!.steps.find((s) => s.id === "cut")!.run).toContain("--levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes");
+    expect(train({ pipeline: { trigger: "dispatch", doctor: false } }).jobs.cut!.steps.find((s) => s.id === "cut")!.run).not.toContain("--doctor");
+    const runs = train({ groups: new Set<SecurityGroup>(["verified-releases"]) }).jobs.publish!.steps.map((s) => s.run ?? "");
+    expect(runs.indexOf('npx chant workspace train verify npm "$CHANT_RELEASE_TRAIN"')).toBeLessThan(runs.findIndex((r) => r.includes("train publish")));
+    expect(JSON.stringify(train())).not.toContain("train verify");
+  });
+
+  test("GitLab renders the train: started with CHANT_RELEASE_LEVELS, resumed with CHANT_RELEASE_TRAIN, published from the train's tag (#5216)", () => {
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { trigger: "dispatch" }, train: { env: "npm", artifacts: true } })) as Record<string, { rules: Array<{ if: string }>; script: string[]; needs?: unknown; artifacts?: { paths?: string[] } }>;
+    expect(Object.keys(doc)).toEqual(["chant-release-gate", "chant-release-cut", "chant-release-publish"]);
+    expect(doc["chant-release-cut"]!.rules[0]!.if).toContain("$CHANT_RELEASE_LEVELS");
+    expect(doc["chant-release-cut"]!.artifacts!.paths).toEqual([".chant-release-artifacts/"]);
+    expect(doc["chant-release-publish"]!.rules.map((r) => r.if)).toContain("$CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/");
+    expect(doc["chant-release-publish"]!.needs).toEqual([{ job: "chant-release-cut", optional: true }]);
+    const script = doc["chant-release-publish"]!.script;
+    expect(script.indexOf("git checkout --detach FETCH_HEAD")).toBeLessThan(script.findIndex((l) => l.includes("train prepare")));
+    expect(script).toContain('npx chant workspace train artifacts npm "$CHANT_RELEASE_TRAIN" --from /tmp/chant-release-artifacts');
+    const tag = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), train: { env: "npm" } })) as Record<string, { rules: Array<{ if: string }> }>;
+    expect(Object.keys(tag)).toEqual(["chant-release-publish"]);
+    expect(tag["chant-release-publish"]!.rules[0]!.if).toBe("$CI_COMMIT_TAG =~ /^release-train\\/npm\\//");
+  });
 });

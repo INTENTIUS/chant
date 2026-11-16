@@ -325,7 +325,7 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     if ("refusal" in plan) return refuse(plan.refusal.code, `${m.member}: ${plan.refusal.message}. Nothing was published.`, plan.refusal.fix);
     credentialEnv.push(...plan.targets.flatMap((t) => t.credentialEnv));
     for (const w of [plan.signatureWarning, plan.warning]) if (w && !warnings.includes(`${m.member}: ${w}`)) warnings.push(`${m.member}: ${w}`);
-    const ctx = publishContext(plan, { cwd: dir, env, tag: plan.channel, log: memberLog(m.member, plan.redactor) });
+    const ctx = publishContext(plan, { cwd: dir, env: await memberDigestsEnv(dir, plan.release, env), tag: plan.channel, log: memberLog(m.member, plan.redactor) });
     prepared.push({ m, dir, plan, ctx });
   }
   const redactor = createRedactor(env, credentialEnv);
@@ -404,6 +404,31 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
 }
 
 /** The tag `release.tag` gives `label` in the member at `dir`, or null when it can't be told. */
+/**
+ * The environment a member's targets run with (#5216): for a member that
+ * declares `release.images`, `CHANT_RELEASE_DIGESTS` names a file of the
+ * digests its release records, as `chant release images` writes it for one
+ * release, so a package it packs pins its own images. Other members get the
+ * environment as it is.
+ */
+export async function memberDigestsEnv(dir: string, release: import("../lifecycle/release-store").Release, env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
+  const { loadChantConfig } = await import("../config");
+  let images: import("../lifecycle/release-images").ReleaseImageDeclaration[];
+  try {
+    images = (await loadChantConfig(dir)).config.release?.images ?? [];
+  } catch {
+    return env;
+  }
+  if (images.length === 0) return env;
+  const { releaseImageDigests, writeReleaseDigests, RELEASE_DIGESTS_ENV } = await import("../lifecycle/release-images");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const file = join(mkdtempSync(join(tmpdir(), "chant-train-digests-")), "release-digests.json");
+  writeReleaseDigests(file, releaseImageDigests(release, images.map((i) => i.name)));
+  return { ...env, [RELEASE_DIGESTS_ENV]: file };
+}
+
 async function pinnedReleaseTag(dir: string, label: string): Promise<string | null> {
   try {
     const { memberTags, renderReleaseTag } = await import("../lifecycle/release-tag");

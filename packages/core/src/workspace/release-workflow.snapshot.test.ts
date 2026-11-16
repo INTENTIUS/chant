@@ -127,6 +127,12 @@ function trainCases(forge: Forge, trigger: "tag" | "dispatch"): Array<[string, P
     ["targets", { publish: [{ type: "npm" }, { type: "forge", forge: "github" }] }],
     ["images", { images: true }],
     ["builds", trigger === "dispatch" ? { pipeline: { builds: [{ name: "arm", runner: "arm64", build: "make", outputs: ["dist/arm"] }] } } : {}],
+    // #5216: what the members build at the cut, handed from the cut job to the publish job.
+    ["member images", { train: { env: "npm", images: true, imagePlatforms: ["linux/amd64", "linux/arm64"] } }],
+    ["member artifacts", { train: { env: "npm", artifacts: true } }],
+    ["member goreleaser", { train: { env: "npm", artifacts: true, goreleaser: true, goreleaserDir: "cli" } }],
+    ["verified-releases", { groups: new Set<SecurityGroup>(["verified-releases"]) }],
+    ["doctor off", { pipeline: { doctor: false } }],
   ];
 }
 
@@ -136,7 +142,7 @@ describe("release train workflow snapshots (#5154)", () => {
       test(`${forge} train ${trigger}`, async () => {
         const text = trainCases(forge, trigger)
           .map(([name, over]) => {
-            const input: ReleaseWorkflowInput = { forge, groups: new Set(), ...over, pipeline: { ...(over.pipeline ?? {}), ...(trigger === "dispatch" ? { trigger: "dispatch" as const } : {}) }, train: { env: "npm" } };
+            const input: ReleaseWorkflowInput = { forge, groups: new Set(), ...over, pipeline: { ...(over.pipeline ?? {}), ...(trigger === "dispatch" ? { trigger: "dispatch" as const } : {}) }, train: { env: "npm", ...(over.train ?? {}) } };
             let out: string;
             try {
               out = renderReleaseWorkflow(input);

@@ -86,6 +86,30 @@ A train that was cut and did not publish, because a publish job stopped part way
 gh workflow run publish.yml -f train=<id>
 ```
 
+## Packages that build images or files
+
+A member can build more than an npm package at its cut: container images (`release.images`) or files such as binaries and archives (`release.artifacts`, goreleaser included). Declare them in that member's `chant.config.ts`, beside its targets:
+
+```ts
+// packages/cli/chant.config.ts
+export default {
+  release: {
+    version: { packages: ["."], ranges: "train" },
+    artifacts: [{ name: "cli", goreleaser: {} }],
+    publish: [
+      { type: "npm", packages: ["."] },
+      { type: "forge", forge: "github", repo: "acme/mono", assets: ["artifact:cli"] },
+    ],
+  },
+};
+```
+
+The cut job builds them once, in that member's cut, and hands them to the publish job, which checks every file against the digests the release recorded before anything publishes. A publish with no cut job before it (a train tag pushed from a workstation, or a dispatched `train`) builds them again from the train's commit and publishes only when they come out the same. See [A release train](/chant/cli/release/workflow/#a-release-train) for what the jobs run.
+
+## On GitLab
+
+`chant release workflow` renders the train for GitLab as jobs of `.gitlab/chant-release.yml`, which `.gitlab-ci.yml` includes. Store a project access token with `write_repository` as the masked CI/CD variable `CHANT_RELEASE_TOKEN`, since a job token cannot push the train's tags. Start a train by running a pipeline with `CHANT_RELEASE_LEVELS=auto`, and finish one that did not publish with `CHANT_RELEASE_TRAIN=<id>`. [A release train on GitLab](/chant/cli/release/workflow/#a-release-train-on-gitlab) has the details.
+
 ## Try it first
 
 Plan the train from your machine; nothing is cut, recorded or pushed without `--yes`:

@@ -787,6 +787,8 @@ export interface ParsedArgs {
   ciJob?: string;
   /** `chant ci run --no-push` (#4156): write the run record on the local chant/lifecycle and push nothing. */
   noPush?: boolean;
+  /** `chant workspace train cut <env> --doctor` (#5216): `chant release doctor` in each member of the train before anything is cut. */
+  doctor?: boolean;
   /** `chant release init --one-release` (#5154): every package of a workspace in one release, not a train. */
   oneRelease?: boolean;
   /** `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the principal the runner key is listed for. */
