@@ -1,0 +1,11 @@
+---
+title: "chant release list"
+description: "Lists every release of the member, newest cut first, with its cuts and where it runs."
+diataxis: reference
+sidebar:
+  label: "list"
+---
+
+Lists every release of the member, newest cut first. Each line starts with the label and the digest. The commit comes next, then the newest cut's signature (`signed by <actor>`, `unsigned` or `unverified`), then where the release runs. An `unverified` signature's reason goes to stderr. A [revoked](/chant/cli/release/cut/#revoked-releases) release's line ends with `revoked`. Why it was revoked goes to stderr. A [deprecated or yanked](/chant/cli/release/status/) release's line ends with its status, and who set it, when and why go to stderr.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/#releases) document, `releases.schema.json`. Each entry holds the fields of the stored file. It adds `label` and `cuts`, and `environments` says where it runs: for each environment, the components whose latest deploy record there names its digest in `releaseDigest`. Each entry has `revoked`, which is `null` unless the release's commit is revoked. When it is, `revoked` holds the commit and the revoked tag as [`chant ci list`](/chant/cli/ci/#ci-list) shows it. It is also `null` when the tags can't be judged. Each cut carries `signatureCheck`, `{ status, key, reason }`. Its `status` is `verified`, `unsigned` or `unverified`, and `key` is the fingerprint in the signature. An environment shows up once `chant components promote --release` has deployed to it. A stored file or a cut line that can't be read is left out and counted under `reason`, with the code `ledger-malformed`. A read that fails outright exits 1 with `ledger-unreadable`, or `not-a-git-repository` outside git. The list reads the local branch and never fetches.

@@ -34,17 +34,17 @@ chant never moves or deletes a tag. A person may delete a `ci/revoked/<sha>` tag
 
 A deploy binds to a green sha, never to a branch tip. The tip is wherever trunk was a moment ago, and asking whether it is correct right now means every merge has to keep it correct. A green sha is fixed: CI passed on that exact commit, and the tag says so for as long as nobody revokes it.
 
-That changes what a red tip costs. A merge that breaks the build leaves the tip red, and the newest green sha is still there to cut from while someone fixes it. [`chant release candidates`](/chant/cli/release/#release-candidates) lists every green sha since what each environment runs, with the changes each would ship, and [`chant release cut --at <sha>`](/chant/cli/release/#cutting-a-chosen-commit) cuts any of them without checking it out. Choosing an older candidate is how a change that is not ready stays out, when it has no flag. [Curate a Release](/chant/guide/curate-a-release/) walks through it.
+That changes what a red tip costs. A merge that breaks the build leaves the tip red, and the newest green sha is still there to cut from while someone fixes it. [`chant release candidates`](/chant/cli/release/candidates/) lists every green sha since what each environment runs, with the changes each would ship, and [`chant release cut --at <sha>`](/chant/cli/release/cut/#cutting-a-chosen-commit) cuts any of them without checking it out. Choosing an older candidate is how a change that is not ready stays out, when it has no flag. [Curate a Release](/chant/guide/curate-a-release/) walks through it.
 
-When every green sha after the running release carries work that must stay out, no candidate will do. Then [`chant release compose`](/chant/cli/release/#release-compose) cherry-picks the chosen changes onto the running release's commit, on a pushed `chant/compose/<name>` branch. Each composed commit names its trunk commit in a `Chant-Composed-From` trailer. The composed commit goes green through its own CI, and the cut records its base and sources. The steps are on [Compose a Release](/chant/guide/compose-a-release/).
+When every green sha after the running release carries work that must stay out, no candidate will do. Then [`chant release compose`](/chant/cli/release/compose/) cherry-picks the chosen changes onto the running release's commit, on a pushed `chant/compose/<name>` branch. Each composed commit names its trunk commit in a `Chant-Composed-From` trailer. The composed commit goes green through its own CI, and the cut records its base and sources. The steps are on [Compose a Release](/chant/guide/compose-a-release/).
 
 ## Releases
 
 A release is one green sha compiled for every environment the member declares. It holds the sha, the digest of each artifact built once from it, and one target per environment with that environment's template digests and build parameters. All of that is hashed into one digest, and a label such as `v1.4.0` names it. Because the artifacts are built once, the bytes prod runs are the bytes staging tested.
 
-[`chant release cut`](/chant/cli/release/#release-cut) makes one. It refuses a dirty tree, a sha that is not on trunk, and a sha with no green tag. Without `--yes` it is a dry run that prints what it would compile and publish. A person runs it with `--yes`, on a workstation or in a CI job. The tick never cuts. The workspace declares who may cut in its `release` gate, and cutting every green sha would make builds nobody meant to ship. A project that does want that adds the cut as a pipeline step, as [Cutting on green](/chant/cli/release/#cutting-on-green) shows.
+[`chant release cut`](/chant/cli/release/cut/) makes one. It refuses a dirty tree, a sha that is not on trunk, and a sha with no green tag. Without `--yes` it is a dry run that prints what it would compile and publish. A person runs it with `--yes`, on a workstation or in a CI job. The tick never cuts. The workspace declares who may cut in its `release` gate, and cutting every green sha would make builds nobody meant to ship. A project that does want that adds the cut as a pipeline step, as [Cutting on green](/chant/cli/release/cut/#cutting-on-green) shows.
 
-[`chant release publish`](/chant/cli/release/#release-publish) runs in CI on the tag the cut made, where the job's OIDC token gives what it uploads provenance. [Release from Your Workstation](/chant/guide/release-from-workstation/) walks through the cut and the publish.
+[`chant release publish`](/chant/cli/release/publish/) runs in CI on the tag the cut made, where the job's OIDC token gives what it uploads provenance. [Release from Your Workstation](/chant/guide/release-from-workstation/) walks through the cut and the publish.
 
 ## Gates and promotion
 
@@ -70,7 +70,7 @@ An environment can also need an earlier build back for its own reasons. [`chant 
 
 ## Reading it back
 
-Each part of the flow is recorded where a reader can join it to the others. The tags are in git. What chant stores for a cut, its gates and its deploys is on the `chant/lifecycle` branch, and each record names the same digest, so [one lookup goes each way](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys). [`chant release list`](/chant/cli/release/#release-list) says where each one runs.
+Each part of the flow is recorded where a reader can join it to the others. The tags are in git. What chant stores for a cut, its gates and its deploys is on the `chant/lifecycle` branch, and each record names the same digest, so [one lookup goes each way](/chant/cli/release/#joining-a-release-to-its-commit-gates-and-deploys). [`chant release list`](/chant/cli/release/list/) says where each one runs.
 
 The same records give the delivery numbers. [`chant workspace metrics`](/chant/cli/workspace-metrics/) computes the four DORA metrics from the deploy records and the revoked tags, with no extra bookkeeping. [`chant lifecycle gc`](/chant/cli/lifecycle/#lifecycle-gc) prunes old cuts and change sets by a retention policy, and never one an environment runs or a pending gate binds.
 

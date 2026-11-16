@@ -20,7 +20,7 @@ chant run --components all --env dev --release v1.4.0
 chant components promote --to staging --release v1.4.0
 ```
 
-Without `--yes` the cut is a dry run. It refuses a commit with no `ci/green` tag. CI publishes the release through the pipeline [`chant release workflow`](/chant/cli/release/#release-workflow) writes.
+Without `--yes` the cut is a dry run. It refuses a commit with no `ci/green` tag. CI publishes the release through the pipeline [`chant release workflow`](/chant/cli/release/workflow/) writes.
 
 A promote moves the release to the next environment in `environments`. At a gate it exits 3. Approve it and run the same promote again. [Promote a release](/chant/guide/promote-a-release/).
 

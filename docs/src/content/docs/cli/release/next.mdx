@@ -1,0 +1,81 @@
+---
+title: "chant release next"
+description: "Prints the label of the member's next release, from the conventional commits and intent files since its previous release."
+diataxis: reference
+sidebar:
+  label: "next"
+---
+
+```
+chant release next [--at <sha>] [--pre <id>] [--json]
+```
+
+Prints the label of the member's next release, from the conventional commits and the [intent files](#intent-files) since its previous release. The label alone goes to stdout, so a script can read it, and why goes to stderr. `--at` reads another commit than `HEAD`. It fetches `chant/lifecycle` first, as `release tag` does.
+
+```bash
+chant release next          # 1.5.0
+                            #   minor from 1.4.2 (3f2a9c1e0b7d): 4 commits, 1 intent file
+                            #     minor  9b1c2d4 feat(api): stream responses
+                            #     minor  .chant/release/streaming.md
+                            #   tag v1.5.0
+chant release cut auto --yes
+```
+
+The previous release is the release in the member's ledger cut from the nearest ancestor of the commit whose label is a version without a prerelease part and that is not [yanked](/chant/cli/release/status/). A member whose ledger has none, such as a project that has just set up `chant release` and has releases tagged before it, reads its tag history instead: the newest tag on the commit or an ancestor of it that its [`release.tag`](/chant/cli/release/cut/#the-releases-tag) template, or one of its `release.legacyTags` prefixes, makes of a version without a prerelease part, other than a version the ledger holds as yanked. With `tag: "v{version}"` and the tags `v1.1.0`, `v1.2.0` and `v1.3.0-rc.1`, the previous release is `1.2.0`. Tags on other branches, and tags neither the template nor a prefix makes, don't count. `legacyTags` is read from the member's own `chant.config.ts` and from its workspace root's, and a project that is no workspace member reads its own. Once the ledger holds a release, the tags are no longer read.
+
+```bash
+chant release next          # 1.3.0
+                            #   minor from 1.2.0 (the tag v1.2.0, 8e41a07c55d2): 6 commits
+```
+
+The commits counted are the ones after it that touch the member's directory, merges left out. A release member that sits in a nested workspace, such as `release/core` beside a package at `packages/core`, counts the directory of the outer workspace's member of its name, as `release changed` maps paths. Each commit gives a level: a `type!:` subject or a `BREAKING CHANGE:` footer a major, `feat` a minor, anything else a patch. The pending intent files give theirs, and the highest of all is applied to the previous label. A label with a leading `v` gives labels with one.
+
+On a `0.x` version a commit's level drops one step: a breaking change bumps minor and a feature bumps patch, so `0.4.1` with a `feat!:` commit is followed by `0.5.0`, and with a `feat:` commit by `0.4.2`. A `0.x` project moves to `1.0.0` by choice, with an intent file that gives the member `major`, or a typed level such as `release changed --bump-member core=major`. `release.breakingOnZero` sets this:
+
+```ts
+release: {
+  breakingOnZero: "major",   // a breaking commit on 0.x gives 1.0.0, and a feature a minor
+},
+```
+
+| `breakingOnZero` | A breaking commit on `0.x` | A feature on `0.x` |
+|---|---|---|
+| `"minor"` (default) | minor | patch |
+| `"major"` | `1.0.0` | minor |
+
+A member reads its own `breakingOnZero`, else its workspace root's. Versions from `1.0.0` on are not affected.
+
+Prereleases cut since the previous release count too. When one has a higher version than the bumped one, the next label is that version, so `2.0.0-rc.1` is followed by `2.0.0` even when only fixes landed after it. With `--pre <id>` the label is a prerelease of the computed version, `<version>-<id>.<n>`, with `n` one past the highest that version and id have in the member's ledger: `1.5.0-rc.0`, then `1.5.0-rc.1`.
+
+A yanked release passed over keeps its version, since no registry takes a version twice, so a next label at or below it becomes its next patch. After `1.0.0`, and `1.1.0` yanked, a fix gives `1.1.1`, and the commits counted start at `1.0.0`.
+
+A commit the member already has a labelled release of answers that label (`alreadyCut: true`), so a release workflow run again at the same commit cuts nothing new.
+
+| Code | When |
+|---|---|
+| `release-next-no-previous` | The member has no release with a version label before the commit, and no version tag that `release.tag` or `release.legacyTags` matches. Cut the first release with the label you choose, or name the prefix of the earlier tags in `release.legacyTags` |
+| `release-next-unchanged` | No commit since the previous release touches the member, and no intent file names it |
+| `release-next-pre-invalid` | `--pre` is not a letter followed by letters, digits and `-` |
+| `release-next-history-shallow` | The clone is shallow, so the commits since the previous release can't be listed |
+| `release-intent-invalid` | An intent file can't be read |
+| `not-a-git-repository`, `revision-unknown` | No git repository here, or `--at` names no commit |
+
+`--json` prints `{ label, at, bump, alreadyCut, from: { label, commit, source, tag }, commits: [{ sha, subject, bump }], intents: [{ path, added, bump, summary }], tag }`, where `from.source` is `ledger` or `tag` (with `from.tag` the tag read), each commit's `bump` is its level after the `0.x` step, and `tag` is the one `release.tag` gives the label, or `{ error: { code, message, fix } }` with exit 1.
+
+## Intent files
+
+An intent file says what a change releases, for a change whose commits don't say it, or to write the summary the release notes show. It is a Markdown file under `.chant/release/` at the repository root, committed with the change. Its front matter names members and the level each takes, and the text after it is the summary:
+
+```md
+---
+core: minor
+lexicon-aws: patch
+---
+The core reads its config once, at start.
+```
+
+A key is a member's name as `release changed` lists it (a full ledger name such as `npm/core` also works), or `*` for every member, which is the key a project that is no workspace member uses. A level is `major`, `minor` or `patch`. `README.md` in the directory is not an intent file, and any other `.md` file directly in it is one.
+
+Intent files are read from the commit's tree. A cut of a member records each intent file at its commit that names the member and that no earlier cut of the member consumed, by its path and the commit that added it, on its cut line in `chant/lifecycle`. The file stays in the tree, and no commit to the branch is needed when releasing, since the next release of the member skips what a cut consumed. Delete consumed files whenever it suits; a file deleted and written again under the same name is a new intent. Each member consumes a file once, so one file naming two members applies to both releases.
+
+[Generated notes](/chant/reference/publish-targets/#generated-notes) from commits lead with the summaries of the intent files the release's cut consumed.

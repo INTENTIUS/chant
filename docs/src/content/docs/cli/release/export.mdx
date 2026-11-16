@@ -1,0 +1,16 @@
+---
+title: "chant release export"
+description: "Writes the files a release recorded for one environment, each checked against its digest."
+diataxis: reference
+sidebar:
+  label: "export"
+---
+
+Writes the files a cut recorded for one environment, each at the path it was compiled to, under `-o <dir>` (the member's directory by default). Each file's bytes are read from `chant/lifecycle`, after a best-effort fetch, and checked against the target's digest first. A missing or changed file stops the export before anything is written.
+
+```bash
+chant release export v1.4.0 --env prod
+kubectl apply -f dist/build.yaml
+```
+
+This is how a project with no components deploys what it cut. [`chant components promote --release`](/chant/cli/components/#components-promote) deploys components, and refuses such a cut with a pointer to this command. The project's own deploy, an Op such as `chant run deploy` or a CI job, then reads the exported files. An Op whose first phase runs the build again would overwrite them, so drop that phase when it deploys exported files. `--json` prints the digest and label with the environment and the directory written to. It also prints the target's templates and params.

@@ -1,0 +1,74 @@
+---
+title: "chant release deprecate, yank and restore"
+description: "Records a status for a published release and acts on each target that can: deprecate, yank, or restore."
+diataxis: reference
+sidebar:
+  label: "deprecate, yank, restore"
+---
+
+Changes what consumers get from a published release, on each target `release.publish` declares that can do it, and records the change on `chant/lifecycle`.
+
+```bash
+chant release deprecate v1.4.0 --reason "slow startup" --replacement v1.4.1   # a dry run
+chant release yank v1.4.0 --reason "corrupts the cache" --yes
+chant release restore v1.4.0 --yes
+```
+
+| Command | Status recorded | What it is for |
+|---|---|---|
+| `deprecate` | `deprecated` | The release still installs, and consumers are warned. |
+| `yank` | `yanked` | New consumers stop getting the release: every moving tag goes back to the previous good release. |
+| `restore` | `active` | Undoes a deprecation or a yank, as far as each target can. |
+
+The words match the statuses the record already used. A rollback of what an environment runs is a different thing, [`chant components rollback`](/chant/cli/components/), so these commands are not called that.
+
+What each target does:
+
+| Target | `deprecate` | `yank` | `restore` |
+|---|---|---|---|
+| `npm` | `npm deprecate <name>@<version> "<message>"` for each package | The same, then the dist-tag the publish moved (`latest`, the release's channel, or a prerelease's tag such as `rc`) moves to the previous good release's version where it names this one. The version stays on the registry. | Clears the message with `npm deprecate <name>@<version> ""`, and moves the dist-tag back when this release is the newest good one |
+| `oci` | Nothing: a registry has no deprecation | Each moving tag that names this release's digest is pointed at the previous good release's. A moving tag is a declared tag without `{label}`, such as `latest`, or the channel. A prerelease never moved `latest`, so its yank leaves it. The label's own tag stays | Points the moving tags back when this release is the newest good one |
+| `forge` | Nothing: a forge release has no deprecation | `--forge-release prerelease` (the default) marks the release a prerelease, `draft` makes it a draft again, and `delete` deletes it. The tag stays. On GitHub, unless the declaration sets `latest: false`, the previous good release becomes the latest. GitLab has no prerelease or draft, so only `delete` works there. A release with a prerelease label is a prerelease already, so `prerelease` is refused for it with `release-status-forge-prerelease` | Clears the prerelease mark, except on a release with a prerelease label, or publishes the draft. A deleted release is refused with `release-status-forge-deleted` |
+| `homebrew` | Nothing: a formula has no deprecation | When the tap branch still holds this release's formula, it is replaced by the formula the previous good release published. That formula is found by its digest among the last 100 commits of the branch that touch it. One commit, over the API or over SSH | Puts this release's formula back when it is the newest good one |
+| `index` with `mode: "commit"` (`homebrew-tap`, `scoop`, `artifacthub`) | Nothing: an index has no deprecation | Each manifest the branch still holds as this release published it is replaced by the one the previous good release published at that path, found by its digest among the last 100 commits of the branch that touch it. A manifest the previous good release did not publish, such as Artifact Hub's `{name}/{version}/artifacthub-pkg.yml`, is removed. One commit, over the API or over SSH | Puts this release's manifests back, from the same history, at each path no newer good release published |
+| `index` with `mode: "pull-request"` (`krew`, `winget`, `homebrew-core`, `zed`) | Nothing | Refused with `release-status-index-pull-request`: the index's maintainers merge what changes there. Open a pull request by hand | Refused the same way |
+| `cargo` | Nothing: a crate version has no deprecation | `cargo yank --version <version> <crate>` for each crate, with `--registry` when the target names one. The version stays downloadable for lockfiles that name it, and new resolutions skip it. It needs a token in the target's token variable that may yank the crates | `cargo yank --undo` for each crate |
+| `pypi`, `marketplace`, `tauri-updater` | Refused with `release-status-unsupported` | Refused | Refused |
+
+The previous good release, for a target, is the newest release of the member on the same line that has the status `active`, is not [revoked](/chant/cli/release/cut/#revoked-releases) and was published to that target. Order is the order the releases were first cut. A yank of a release with no such earlier release can't move what npm, the OCI tags, the formula and an index's manifests point at, and those actions are refused with `release-status-no-previous`. The rest still run. The line is the channel the release was cut for. Without one, it is the npm tag of a [prerelease](/chant/reference/publish-targets/#prereleases) label, such as `rc`, or the stable line for every other label. A yanked `1.4.0-rc.2` moves `rc` back to `1.4.0-rc.1`, and a yanked stable release never moves `latest` onto a prerelease.
+
+When `release.tag` declares a [floating tag](/chant/cli/release/cut/#the-releases-tag) such as `v{major}`, a yank of a stable release moves that tag back to the highest version of the same major that is active, not revoked, cut without a channel and published, when the tag names the yanked release's commit. A restore moves it to the restored release when that release is the highest of its major again. The tag is moved here and force-pushed to `origin`, as `release publish` moves it. With no other release of the major to move back to, the move is refused with `release-status-no-previous`. A release's forge release is found by the tag `release.tag` renders for its label.
+
+A yank never unpublishes from npm. npm's rules allow an unpublish only within 72 hours and only when no other package depends on the version, and the version can never be published again after it. The yank deprecates the version instead and says so. Run `npm unpublish` yourself if the version must go and npm's rules allow it.
+
+What went out to each target is read from the publish record, `_releases/publishes.jsonl`, and not from the checkout, so the commands run from any checkout of the member. A target the release was never published to is left alone. A release published to a target that `release.publish` no longer declares gets a warning naming it.
+
+Without `--yes` the command is a dry run. It prints the status record it would write and what each target would do, and asks no registry. A move is printed with its condition, such as `npm dist-tag add @acme/core@1.3.0 latest, if latest is 1.4.0`. With `--yes` it first appends the status record to `_releases/release-status.jsonl`, then acts on each target and appends what it did to `_releases/status-actions.jsonl`. Both files sit on `chant/lifecycle`, and each line is pushed as it is written. A yank acts on the targets last declared first, so a formula stops naming a forge release's assets before that release is withdrawn. The other two go in the order declared. Each action that is already so is reported and sends nothing. An action a target can't do is printed as a warning with its code, the other targets still run, and the command exits 0.
+
+A run that stops part way resumes. Run the same command again: the latest status record already sets that status, so no new record is written, and a target that has a line for the record in `status-actions.jsonl` is skipped. The reason and replacement of the record being resumed are the ones used.
+
+| Code | When |
+|---|---|
+| `release-not-found` | No cut names the label or digest in this member. |
+| `release-status-unchanged` | `restore` of a release that was never deprecated or yanked. |
+| `release-status-yanked` | `deprecate` of a yanked release. Restore it first. |
+| `release-status-flag-invalid` | `--forge-release` on anything but `yank`, or `--replacement` on `restore`. |
+| `release-unsigned` | The workspace names a `release` gate in `identity.gates`, and `--sign` is not given. |
+| `release-signer-refused` | Under that gate, the signature does not verify for the actor against `.chant/allowed_signers` at base, or the actor is not in the gate's class. |
+| `publish-config-invalid` | `release.publish` in `chant.config.ts` does not validate. |
+
+A target that fails part way stops the run with its own code, such as `release-status-npm-failed`, `release-status-oci-failed`, `release-status-homebrew-history`, `release-status-index-history`, `release-status-cargo-failed`, `release-status-tag-failed` (the floating tag could not be moved or pushed) or `publish-credentials-missing`, and names the targets already done. The credentials are the ones the target publishes with.
+
+Who may change a release's status follows [Who may cut](/chant/cli/release/cut/#who-may-cut). Without a `release` gate anyone who can push to `chant/lifecycle` and holds the targets' credentials may. With the gate, the change must be signed with `--sign` by a key the signers file at base lists for the actor, and the actor must be in the gate's class when it names one. The signature covers the release digest, the label, the actor, the time and the status, in the `chant-release` namespace. It goes in the record's `signature` field, and its bytes are never those of a cut's signature. `--actor` and `--sign` resolve the actor as `release cut` does.
+
+The status record is the one [`chant query`](/chant/cli/query/) loads into the `release_status` table, with `env` `_releases` and the member as `component` (`.` outside a workspace). `release list` ends a deprecated or yanked release's line with its status and prints who set it and why on stderr.
+
+| Flag | Meaning |
+|---|---|
+| `--yes` | Change the status. Without it the command is a dry run. |
+| `--reason <text>` | Why. It goes in the record and in npm's deprecation message. |
+| `--replacement <label>` | The release to use instead. It goes in the record, and npm's message says `use <label>`. |
+| `--forge-release prerelease\|draft\|delete` | How `yank` leaves a forge release. Default `prerelease`. |
+| `--actor <name>` | Who made the change, found as `release cut` finds it when not given. |
+| `--sign [<key file>]` | Sign the change with an ssh key, or with git's `user.signingkey`. Required under a `release` gate. |
+| `--json` | Print the plan, and with `--yes` the record written (`written`) and each target's `results`, as one document. |

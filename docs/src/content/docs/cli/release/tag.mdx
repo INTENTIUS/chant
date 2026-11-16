@@ -1,0 +1,16 @@
+---
+title: "chant release tag"
+description: "Prints the tag release.tag gives a release of the member, found by its label, its digest or the tag itself."
+diataxis: reference
+sidebar:
+  label: "tag"
+---
+
+Prints the tag `release.tag` gives a release of the member here, found by its label, its digest, or the tag itself ([#5150](https://github.com/INTENTIUS/chant/issues/5150)). It fetches `chant/lifecycle` first, as `release publish` does. A tag is matched by rendering the template for each label in the member's ledger, never parsed.
+
+```bash
+chant release tag 1.4.0            # v1.4.0
+chant release tag v1.4.0 --json    # { "releaseDigest": "sha256:…", "label": "1.4.0", "commit": "…", "tag": "v1.4.0", "floating": "v1", "template": "v{version}" }
+```
+
+`floating` is the floating tag the release would move, or null. It exits 1 with `release-not-found` when no release of the member has that label, digest or tag, `release-no-label` for a release with no label (`--json` prints `tag: null` instead), and `release-tag-template-invalid` as the cut does. The publish job of [`release workflow`](/chant/cli/release/workflow/) reads the label of the tag that started it this way.

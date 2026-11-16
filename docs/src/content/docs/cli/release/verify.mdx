@@ -1,0 +1,57 @@
+---
+title: "chant release verify"
+description: "Checks, offline, that a release was signed by a key .chant/allowed_signers lists, and with --sigstore its Sigstore signatures and provenance."
+diataxis: reference
+sidebar:
+  label: "verify"
+---
+
+Checks that a release was signed by a key `.chant/allowed_signers` lists ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). It reads the release and its cuts from the local `chant/lifecycle` branch, and the signers file at the release's own commit, with its signed history, as [`chant workspace evidence verify`](/chant/cli/workspace-evidence/) reads the policy at a revision. It fetches nothing and needs no key, so fetch `chant/lifecycle` and the release's commit first.
+
+```bash
+git fetch origin chant/lifecycle:chant/lifecycle
+chant release verify v1.4.0
+```
+
+A release verifies when its stored file is the digest of what it holds, and a cut of it carries a signature in the `chant-release` namespace that verifies for the cut's actor. When the declaration at the release's commit names a `release` gate with a class, the actor must be in it too. Because the signers file is read at the release's commit, a key added later does not make an older release verify, and a key removed later does not unmake it. [`release list`](/chant/cli/release/list/) judges cuts against the signers file at base instead, which is the policy now.
+
+It exits 0 when the release verifies and prints the signer on stderr:
+
+```
+  cut by alice at 2026-10-17T10:00:00.000Z: verified (SHA256:...)
+    green by ci/green tag (gate signed)
+Verified v1.4.0 (jcs1-sha256:...): signed by alice, checked against .chant/allowed_signers at 3f2a9c1d0b7e; green gate signed
+```
+
+It exits 1 with one of these codes:
+
+| Code | When |
+|---|---|
+| `release-unsigned` | No cut of the release is signed. |
+| `release-signature-unverified` | No cut's signature verifies against the signers file at the release's commit, such as one signed by a key the file does not list. |
+| `release-digest-mismatch` | The stored release is not the digest of what it holds, so it was changed after the cut. |
+| `release-not-found` | No cut names the label or digest in this member. |
+| `release-commit-missing` | The release's commit is not in this clone. |
+| `trust-policy-unreadable` | The signers file or its history at the commit can't be read. |
+
+The green gate each cut records is reported as `signed` when the cut's signature verifies and covers it, and `unsigned` otherwise. When more than one cut verifies, the one whose gate is signed is the one shown. A release whose verified cut was signed before chant signed the gate (see [Who may cut](/chant/cli/release/cut/#who-may-cut)) still verifies, and the line after the success says its gate is not covered by the signature.
+
+`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason`, `gate` (`status`, `signed` or `unsigned`, and `reason`) and each cut with its `signatureCheck` (whose `gate` is `signed` or `unsigned`), and its `green` gate or `override` when the cut recorded one (see [The green gate](/chant/cli/release/cut/#the-green-gate)). A release that does not verify adds `error` with its `code` and `message`. Without `--sigstore`, `sigstore.recorded` counts the Sigstore bundles the publish record holds.
+
+## Checking the Sigstore signatures
+
+A release published with [Sigstore signing](/chant/reference/publish-targets/#sigstore-signatures) has its bundles named in the publish record on `chant/lifecycle`. `--sigstore` checks each with cosign 3 (`CHANT_COSIGN`, else `cosign` on `PATH`), against the certificate identity and issuer `release.signing` names in `chant.config.ts`, else the ones the publish recorded: a workflow of the repository it ran in, and its CI's issuer. An image's signature and provenance are read from its registry, with docker's credentials. A forge release's bundles are read from the directory `--assets` names, where its assets were downloaded. Each bundle must be the bytes the publish uploaded, and an asset beside it must be the digest it signs.
+
+```bash
+gh release download release/v1.4.0 -D /tmp/v1.4.0
+chant release verify v1.4.0 --sigstore --assets /tmp/v1.4.0
+```
+
+This check reads the registry and Sigstore's trust root, so it is not offline. It exits 1 with:
+
+| Code | When |
+|---|---|
+| `release-sigstore-unsigned` | The publish record holds no Sigstore bundle for the release. |
+| `release-sigstore-unverified` | A bundle does not verify for the identity, differs from what was uploaded, or can't be checked (no cosign, or a forge bundle not in `--assets`). |
+
+`--json` adds `sigstore`: its `status` (`verified`, `failed` or `none`), `reason` and each check with its `name`, `kind`, `target`, `attachment` (`signature` or `attestation`), `signs`, `identity`, `status` (`verified`, `failed` or `unchecked`) and `reason`.

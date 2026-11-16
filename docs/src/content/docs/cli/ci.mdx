@@ -212,13 +212,13 @@ One pass over the branch. With a list in `ci.green.branch`, it makes the pass fo
 | a green tag and no revoked tag | fails a required phase | `ci/revoked/<sha>` |
 | a revoked tag | anything | nothing, and its check runs are not read |
 
-A revoked tag also revokes every [release](/chant/cli/release/#revoked-releases) cut from its commit, and the tick writes nothing more for that: the readers join each release's commit to the tags ([#4033](https://github.com/INTENTIUS/chant/issues/4033)). The tick never cuts a release.
+A revoked tag also revokes every [release](/chant/cli/release/cut/#revoked-releases) cut from its commit, and the tick writes nothing more for that: the readers join each release's commit to the tags ([#4033](https://github.com/INTENTIUS/chant/issues/4033)). The tick never cuts a release.
 
 Running it again over the same check runs changes nothing. `--dry-run` prints what it would tag and makes no tag. With [signed tags](#signed-tags), the tick signs each tag it makes and judges the tags already there as every other reader does, so a hand-pushed tag doesn't count. Since chant never moves or deletes a tag, a hand-pushed tag that holds the name of a tag the tick would make stops it, and the tick says which tag to delete. A commit that names no work item, or a wrong one, has `; why unknown:` and the reason at the end of its line, as in `ci list`.
 
 ### Compose branches
 
-The tick also fetches every `chant/compose/<name>` branch on `origin` ([#4168](https://github.com/INTENTIUS/chant/issues/4168), mode b). It judges each branch's first-parent commits within `window` that trunk does not have, by the same phases, and makes their tags. A tag's record names the compose branch, and with [signed tags](#signed-tags) its statement does too, so readers check it against that branch. Its output lists each branch and its composed commits after trunk's. Builds, retries and `_ci` records are trunk's only. When the tick revokes a trunk commit that a composed commit carries in its `Chant-Composed-From` trailer, it warns and names the composed commit, whose own tags decide its releases. [`release compose`](/chant/cli/release/#release-compose) makes the branches.
+The tick also fetches every `chant/compose/<name>` branch on `origin` ([#4168](https://github.com/INTENTIUS/chant/issues/4168), mode b). It judges each branch's first-parent commits within `window` that trunk does not have, by the same phases, and makes their tags. A tag's record names the compose branch, and with [signed tags](#signed-tags) its statement does too, so readers check it against that branch. Its output lists each branch and its composed commits after trunk's. Builds, retries and `_ci` records are trunk's only. When the tick revokes a trunk commit that a composed commit carries in its `Chant-Composed-From` trailer, it warns and names the composed commit, whose own tags decide its releases. [`release compose`](/chant/cli/release/compose/) makes the branches.
 
 ### Builds and records
 
@@ -307,7 +307,7 @@ A reader counts such a tag when all of these hold, and otherwise ignores it with
 | `untrusted` | No key that `.chant/trust.json` lists under `runners` signed it, or its principal holds no `runner` role there. Both are read where the branch is, at `refs/remotes/origin/<branch>` or the local branch. |
 | `mismatch` | It signs another commit, another kind of tag or another branch, the annotation's record is not the one signed, or the tag points at another commit than its name gives. |
 
-A tag on a strict first-parent ancestor of `signedSince` counts without a statement, so the tags a workspace already has keep working. Position in history decides, never a date: whoever makes a commit or a tag sets its time, so a backdated commit or tag outside that ancestry gains nothing. A `signedSince` that names no commit in the clone is refused with `declaration-invalid`, so fetch the branch before reading the tags. Every reader judges the tags the same way: `ci tick`, `ci list`, `ci last-green`, [`release cut`](/chant/cli/release/#release-cut) and chant's own `scripts/release-preflight.sh`.
+A tag on a strict first-parent ancestor of `signedSince` counts without a statement, so the tags a workspace already has keep working. Position in history decides, never a date: whoever makes a commit or a tag sets its time, so a backdated commit or tag outside that ancestry gains nothing. A `signedSince` that names no commit in the clone is refused with `declaration-invalid`, so fetch the branch before reading the tags. Every reader judges the tags the same way: `ci tick`, `ci list`, `ci last-green`, [`release cut`](/chant/cli/release/cut/) and chant's own `scripts/release-preflight.sh`.
 
 ### The runner key
 
@@ -795,7 +795,7 @@ It runs `WSP151` over the workspace as it would be with `ci.workflow` set, and p
 | `ci-workflow-no-environments` | `environments: ["staging", "prod"]` after `export default {`, when the default export is a plain object |
 | `ci-workflow-no-components` | `<member>.component.ts`, a stub with a gate and a `TODO(chant ci init)` line, which `WSP151` reports until it is filled in |
 | `ci-workflow-pipeline-missing`, `-pipeline-differs` | runs `chant build --components --generate <forge> --pr-loop` in each member, with `--env` set to the first environment, `--apply-on-merge` under that workflow and `--apply-before-merge` under apply before merge, then `chant ci workflow` on GitHub |
-| `ci-workflow-publish-missing` | runs [`chant release workflow`](/chant/cli/release/#release-workflow) |
+| `ci-workflow-publish-missing` | runs [`chant release workflow`](/chant/cli/release/workflow/) |
 
 The proposal is printed first: each file as a diff, then each generator. Nothing is written without `--yes` or a yes at the prompt. A key the declaration lacks is added as text, so the rest of the file keeps its layout. A component someone wrote is never edited, and one with no gate gets a note instead. A JSONC declaration is refused, since its comments would be lost. A rerun proposes only what is still missing.
 
