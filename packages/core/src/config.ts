@@ -51,6 +51,10 @@ const S3StoreSettingsShape = {
 /**
  * Zod schema for ChantConfig validation.
  */
+// #5152: a toolchain the release workflow sets up, by name or with its version.
+const RELEASE_TOOLCHAIN_NAMES = ["node", "go", "python", "rust", "java"] as const;
+const ReleaseToolchainSchema = z.union([z.enum(RELEASE_TOOLCHAIN_NAMES), z.object({ name: z.enum(RELEASE_TOOLCHAIN_NAMES), version: z.string().min(1) }).strict()]);
+
 const EnvironmentEntrySchema = z.union([
   z.string().min(1),
   z.object({
@@ -145,9 +149,20 @@ export const ChantConfigSchema = z.object({
     workflow: z.object({
       trigger: z.enum(["tag", "dispatch"]).optional(),
       gate: z.enum(["last-green", "head"]).optional(),
-      install: z.string().min(1).optional(),
+      install: z.union([z.string().min(1), z.literal(false)]).optional(),
       build: z.union([z.string().min(1), z.literal(false)]).optional(),
       chant: z.string().min(1).optional(),
+      // #5152: the toolchains the jobs set up, and per-platform build jobs before the cut.
+      toolchains: z.union([z.array(ReleaseToolchainSchema), z.literal(false)]).optional(),
+      builds: z.array(z.object({
+        name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a job name: lowercase letters, digits and dashes"),
+        runner: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
+        build: z.string().min(1),
+        outputs: z.array(z.string().min(1)).min(1),
+        install: z.union([z.string().min(1), z.literal(false)]).optional(),
+        toolchains: z.union([z.array(ReleaseToolchainSchema), z.literal(false)]).optional(),
+        env: z.record(z.string(), z.string()).optional(),
+      }).strict()).optional(),
       after: z.array(z.string().min(1)).optional(),
       permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
       env: z.record(z.string(), z.string()).optional(),

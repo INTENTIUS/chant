@@ -612,3 +612,136 @@ describe("release-only adoption (#5149)", () => {
     }
   });
 });
+
+describe("toolchains and per-platform builds (#5152)", () => {
+  const steps = (job: GhJob) => job.steps.filter((s) => s.uses).map((s) => ({ uses: s.uses!.split("@")[0], with: s.with }));
+
+  test("a Go project with no package.json: the jobs that build set up Go from go.mod with no cache, beside the Node chant runs on, and nothing runs npm", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-5152-go-")));
+    writeFileSync(join(root, "go.mod"), "module example.com/acme\n\ngo 1.24\n");
+    writeFileSync(join(root, "chant.config.ts"), `export default { release: { workflow: { trigger: "dispatch" }, publish: [{ type: "forge", forge: "github", repo: "acme/acme", assets: ["dist/acme"] }] } };\n`);
+    expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await runReleaseWorkflow({ args: { forge: "github", output: join(root, "release.yml") } } as unknown as CommandContext)).toBe(0);
+      const text = readFileSync(join(root, "release.yml"), "utf-8");
+      const doc = parseYAML(text) as GhDoc;
+      expect(steps(doc.jobs.gate!).map((s) => s.uses)).toEqual(["actions/checkout", "actions/setup-node"]);
+      for (const job of ["cut", "publish"]) {
+        expect(steps(doc.jobs[job]!).slice(0, 3)).toEqual([
+          { uses: "actions/checkout", with: { ref: "${{ needs.gate.outputs.commit }}", "fetch-depth": 0 } },
+          { uses: "actions/setup-node", with: { "node-version": 24, "registry-url": "https://registry.npmjs.org" } },
+          { uses: "actions/setup-go", with: { "go-version-file": "go.mod", cache: false } },
+        ]);
+      }
+      expect(text).not.toMatch(/npm ci|npm run build/);
+      expect(runs(doc.jobs.publish!).at(-1)).toMatch(/^npx --yes @intentius\/chant@\d+\.\d+\.\d+\S* release publish "\$CHANT_RELEASE_LABEL" --yes$/);
+      expect(text).toContain(`actions/setup-go@${ACTION_PINS.setupGo7.sha} # ${ACTION_PINS.setupGo7.tag}`);
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  test("declared toolchains with versions, each pinned; files name the version when none is declared; a member root prefixes the version files", () => {
+    const doc = parseYAML(dispatch("github", { pipeline: { trigger: "dispatch", toolchains: [{ name: "python", version: "3.12" }, "rust", "java", { name: "node", version: "22" }] } })) as GhDoc;
+    expect(steps(doc.jobs.cut!).slice(1)).toEqual([
+      { uses: "actions/setup-node", with: { "node-version": 22, "registry-url": "https://registry.npmjs.org" } },
+      { uses: "actions/setup-python", with: { "python-version": "3.12" } },
+      { uses: "actions-rust-lang/setup-rust-toolchain", with: { cache: false, rustflags: "" } },
+      { uses: "actions/setup-java", with: { distribution: "temurin", "java-version": "21" } },
+    ]);
+    // The gate runs chant only: Node at the declared version.
+    expect(steps(doc.jobs.gate!).slice(1)).toEqual([{ uses: "actions/setup-node", with: { "node-version": 22, "registry-url": "https://registry.npmjs.org" } }]);
+    const found = parseYAML(dispatch("github", { workspaceRoot: "tools/cli", projectFiles: ["pyproject.toml", ".python-version", "pom.xml", ".java-version"] })) as GhDoc;
+    expect(steps(found.jobs.publish!).slice(1)).toEqual([
+      { uses: "actions/setup-node", with: { "node-version": 24, "registry-url": "https://registry.npmjs.org" } },
+      { uses: "actions/setup-python", with: { "python-version-file": "tools/cli/.python-version" } },
+      { uses: "actions/setup-java", with: { distribution: "temurin", "java-version-file": "tools/cli/.java-version" } },
+    ]);
+    expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { toolchains: ["rust"] } })).toContain(`actions-rust-lang/setup-rust-toolchain@${ACTION_PINS.setupRustToolchain2.sha} # ${ACTION_PINS.setupRustToolchain2.tag}`);
+  });
+
+  test("toolchains: false sets nothing up, and install: false installs nothing", () => {
+    const doc = parseYAML(dispatch("github", { pipeline: { trigger: "dispatch", toolchains: false, install: false } })) as GhDoc;
+    for (const job of Object.values(doc.jobs)) expect(steps(job).map((s) => s.uses)).toEqual(["actions/checkout"]);
+    expect(Object.values(doc.jobs).flatMap(runs)).not.toContain("npm ci");
+  });
+
+  test("a package.json project renders as before when the files are given", () => {
+    for (const forge of FORGES) expect(dispatch(forge, { projectFiles: ["package.json"] })).toBe(dispatch(forge));
+    expect(renderReleaseWorkflow({ forge: "github", groups: new Set(), projectFiles: ["package.json"] })).toBe(renderReleaseWorkflow({ forge: "github", groups: new Set() }));
+  });
+
+  const builds = [
+    { name: "linux-arm64", runner: "ubuntu-24.04-arm", build: 'go build -ldflags "-X main.version=$CHANT_RELEASE_LABEL" -o dist/acme-linux-arm64 .', outputs: ["dist/acme-linux-arm64"] },
+    { name: "darwin", runner: "macos-15", build: "make dist", outputs: ["dist/acme-darwin-*"], env: { CGO_ENABLED: "0" } },
+    { name: "windows", runner: ["windows-latest"], build: "go build -o dist/acme.exe .", outputs: ["dist/acme.exe"], install: false as const },
+  ];
+
+  test("GitHub: a build job per runner, reading only, with no secrets, whose archive the cut unpacks before it cuts and the publish before it publishes", () => {
+    const doc = parseYAML(dispatch("github", { projectFiles: ["go.mod"], pipeline: { trigger: "dispatch", builds, env: { OCI_PASSWORD: "${{ secrets.OCI }}" } } })) as GhDoc & { jobs: Record<string, GhJob & { "runs-on": unknown; permissions?: unknown; defaults?: unknown }> };
+    const arm = doc.jobs["build-linux-arm64"]!;
+    expect(arm.needs).toBe("gate");
+    expect(arm["runs-on"]).toBe("ubuntu-24.04-arm");
+    expect(arm.permissions).toEqual({ contents: "read" });
+    expect(arm.defaults).toEqual({ run: { shell: "bash" } });
+    expect(arm.env).toBeUndefined();
+    expect(steps(arm)).toEqual([
+      { uses: "actions/checkout", with: { ref: "${{ needs.gate.outputs.commit }}", "fetch-depth": 0, "persist-credentials": false } },
+      { uses: "actions/setup-go", with: { "go-version-file": "go.mod", cache: false } },
+      { uses: "actions/upload-artifact", with: { name: "chant-release-build-linux-arm64", path: "chant-release-build-linux-arm64.tar", "if-no-files-found": "error", "retention-days": 1 } },
+    ]);
+    expect(runs(arm)).toEqual(["npm ci", builds[0]!.build, "tar -cf chant-release-build-linux-arm64.tar -- dist/acme-linux-arm64"]);
+    expect(doc.jobs["build-darwin"]!.env).toEqual({ CGO_ENABLED: "0" });
+    expect(doc.jobs["build-windows"]!["runs-on"]).toEqual(["windows-latest"]);
+    expect(runs(doc.jobs["build-windows"]!)[0]).toBe(builds[2]!.build);
+    expect(doc.jobs.cut!.needs).toEqual(["gate", "build-linux-arm64", "build-darwin", "build-windows"]);
+    expect(doc.jobs.publish!.needs).toEqual(["gate", "cut", "build-linux-arm64", "build-darwin", "build-windows"]);
+    const cut = runs(doc.jobs.cut!);
+    const unpack = cut.indexOf('tar -xkf "$RUNNER_TEMP/chant-release-builds/chant-release-build-darwin.tar"');
+    expect(unpack).toBeGreaterThan(-1);
+    expect(unpack).toBeLessThan(cut.findIndex((l) => l.includes("release cut")));
+    const pub = runs(doc.jobs.publish!);
+    expect(pub.indexOf('tar -xf "$RUNNER_TEMP/chant-release-builds/chant-release-build-windows.tar"')).toBeLessThan(pub.findIndex((l) => l.includes("release publish")));
+    expect(doc.jobs.cut!.steps.filter((s) => s.uses?.startsWith("actions/download-artifact@")).map((s) => s.with)).toEqual(
+      builds.map((b) => ({ name: `chant-release-build-${b.name}`, path: "${{ runner.temp }}/chant-release-builds" })),
+    );
+  });
+
+  test("Forgejo uses the v3 artifact actions; a member root places the archive under it", () => {
+    const text = dispatch("forgejo", { workspaceRoot: "cli", projectFiles: ["go.mod"], pipeline: { trigger: "dispatch", builds: builds.slice(0, 1) } });
+    const doc = parseYAML(text) as GhDoc;
+    const up = doc.jobs["build-linux-arm64"]!.steps.find((s) => s.uses?.startsWith("actions/upload-artifact@"))!;
+    expect(up.uses).toBe(`actions/upload-artifact@${ACTION_PINS.uploadArtifact3.sha}`);
+    expect(up.with!.path).toBe("cli/chant-release-build-linux-arm64.tar");
+    expect(doc.jobs.cut!.steps.find((s) => s.uses?.startsWith("actions/download-artifact@"))!.uses).toBe(`actions/download-artifact@${ACTION_PINS.downloadArtifact3.sha}`);
+    expect(text).toContain('go-version-file: "cli/go.mod"');
+  });
+
+  test("GitLab: build jobs on their runners' tags, whose archives the cut and publish need, unpack and move out of the checkout", () => {
+    const doc = parseYAML(dispatch("gitlab", { pipeline: { trigger: "dispatch", builds: builds.slice(0, 2) } })) as Record<string, { needs?: string[]; tags?: string[]; script: string[]; variables?: Record<string, string>; artifacts?: { paths: string[] } }>;
+    const arm = doc["chant-release-build-linux-arm64"]!;
+    expect(arm.tags).toEqual(["ubuntu-24.04-arm"]);
+    expect(arm.needs).toEqual(["chant-release-gate"]);
+    expect(arm.artifacts!.paths).toEqual(["chant-release-build-linux-arm64.tar"]);
+    expect(arm.script).toEqual(['git checkout --detach "$CHANT_RELEASE_COMMIT"', "npm ci", builds[0]!.build, "tar -cf chant-release-build-linux-arm64.tar -- dist/acme-linux-arm64"]);
+    expect(doc["chant-release-build-darwin"]!.variables).toEqual({ GIT_DEPTH: "0", CGO_ENABLED: "0" });
+    expect(doc["chant-release-cut"]!.needs).toEqual(["chant-release-gate", "chant-release-build-linux-arm64", "chant-release-build-darwin"]);
+    const cut = doc["chant-release-cut"]!.script;
+    expect(cut.indexOf("tar -xkf chant-release-build-darwin.tar")).toBeLessThan(cut.findIndex((l) => l.includes("release cut")));
+    expect(cut).toContain("mv chant-release-build-darwin.tar /tmp/");
+    expect(doc["chant-release-publish"]!.script).toContain("tar -xf chant-release-build-linux-arm64.tar");
+  });
+
+  test("refusals: builds with the tag trigger, an output outside the project, a name twice, and a GitLab toolchain", () => {
+    const b = builds[0]!;
+    expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { builds: [b] } })).toThrow(/release\.workflow\.builds: the tag trigger/);
+    expect(() => dispatch("github", { pipeline: { trigger: "dispatch", builds: [{ ...b, outputs: ["../secrets"] }] } })).toThrow(/not a path inside the project/);
+    expect(() => dispatch("github", { pipeline: { trigger: "dispatch", builds: [{ ...b, outputs: ["dist/a; curl x"] }] } })).toThrow(/not a path inside the project/);
+    expect(() => dispatch("github", { pipeline: { trigger: "dispatch", builds: [b, b] } })).toThrow(/linux-arm64 is named twice/);
+    expect(() => dispatch("gitlab", { pipeline: { trigger: "dispatch", toolchains: ["go"] } })).toThrow(/runner's image/);
+    expect(() => dispatch("github", { pipeline: { trigger: "dispatch", toolchains: ["go", "go"] } })).toThrow(/go is named twice/);
+  });
+});

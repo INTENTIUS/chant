@@ -575,12 +575,24 @@ The job checks out the tag and builds what the targets upload. Then it fetches t
 | Flag | Description |
 |---|---|
 | `--forge <forge>` | Inferred from the repository's pipeline files, `github` when there are none. |
-| `--install <command>` | The install step. Default `npm ci`. |
-| `--build <command>` | What builds the files the targets upload. Default `npm run build`. |
-| `--chant <command>` | What runs chant. Default `npx chant`. |
+| `--install <command>` | The install step. Default `npm ci` in a project with a `package.json`, none otherwise. |
+| `--build <command>` | What builds the files the targets upload. Default `npm run build` when the `package.json` has a `build` script, none otherwise. |
+| `--chant <command>` | What runs chant. Default `npx chant` in a project with a `package.json`; otherwise `npx --yes @intentius/chant@<version>`, the version that wrote the file. |
 | `--output <file>` | Write somewhere else. |
 
-A flag wins over the `release.workflow` field it names. With no `--build` and no `release.workflow.build`, a project whose `package.json` has no `build` script gets no build step.
+A flag wins over the `release.workflow` field it names. With no `--build` and no `release.workflow.build`, a project whose `package.json` has no `build` script, or that has no `package.json`, gets no build step.
+
+Each job sets up the toolchains the project builds with, found from the files at the project's root, beside the Node that chant runs on:
+
+| File | Toolchain | Action | Version |
+|---|---|---|---|
+| `package.json` | node | `actions/setup-node` | 24 |
+| `go.mod` | go | `actions/setup-go` | `go-version-file: go.mod` |
+| `pyproject.toml`, `setup.py`, `requirements.txt` | python | `actions/setup-python` | `.python-version` when there is one, otherwise `3.x` |
+| `Cargo.toml` | rust | `actions-rust-lang/setup-rust-toolchain` | `rust-toolchain.toml` when there is one, otherwise stable |
+| `pom.xml`, `build.gradle`, `build.gradle.kts` | java | `actions/setup-java` (Temurin) | `.java-version`, `.sdkmanrc` or `.tool-versions` when there is one, otherwise 21 |
+
+Every action is pinned by commit, as in the other workflows chant writes, and none caches, so a release build starts from the commit and the toolchain alone. The gate job, which only runs chant, sets up Node alone. A Go project with no `package.json` gets Node and Go, no install step and no build step, and runs chant with `npx --yes @intentius/chant@<version>`. `release.workflow.toolchains` names them instead (see below). On GitLab a job runs in its runner's image, which brings the toolchain: the file sets nothing up, `chant release workflow` says which toolchains the project's files name, and a `toolchains` field that names anything but `node` is refused.
 
 A project with no `chant.workspace.json` renders its workflow from the `chant.config.ts` in the current directory, and needs no `chant ci` setup: with no `ci.green` its cut is gated on the forge's checks (see [The green gate](#the-green-gate)).
 
@@ -604,7 +616,9 @@ release: {
 |---|---|
 | `trigger` | `tag` (default) publishes on a `release/**` tag, as above. `dispatch` starts the release by hand with its label |
 | `gate` | For `dispatch`: `last-green` (default) cuts the newest green commit at or below the dispatched one; `head` cuts the dispatched commit and refuses it when it is not green |
-| `install`, `build`, `chant` | As the flags. `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
+| `install`, `build`, `chant` | As the flags. `install: false` installs nothing and `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
+| `toolchains` | The toolchains the jobs set up, in place of those the files name: `"node"`, `"go"`, `"python"`, `"rust"`, `"java"`, or `{ name, version }` for a version, such as `[{ name: "go", version: "1.24" }]`. Jobs that run chant get Node as well. `false` sets up nothing and leaves the runner's own. GitHub and Forgejo |
+| `builds` | Per-platform build jobs for `trigger: "dispatch"`, see [Builds on other runners](#builds-on-other-runners) |
 | `after` | Shell lines run once the release is published, with `CHANT_RELEASE_LABEL` set |
 | `permissions` | Scopes added to the workflow's `contents: write` and `id-token: write`, such as `{ actions: "read" }`. GitHub and Forgejo only ([#4751](https://github.com/INTENTIUS/chant/issues/4751)) |
 | `env` | Variables for the cut and publish jobs. A forge expression stays in the job's `env:` (GitLab: `variables:`), off every `run:` line |
@@ -627,6 +641,38 @@ With `trigger: "dispatch"` the file has four jobs, and the label is an input of 
 No tag exists until the gate has passed and the cut has run. Under `forge-checks` the cut job gets the run's token as `GITHUB_TOKEN`, and on GitHub the workflow gets `checks: read` and `statuses: read`; on GitLab the cut reads pipelines with `CHANT_RELEASE_TOKEN` unless `CHANT_GITLAB_TOKEN` is set. On GitLab the jobs follow each other by `needs` in the default stage, so `.gitlab-ci.yml` keeps its own `stages`, and the cut and publish jobs push with `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, since a job token cannot push.
 
 With `release.images` (see [Images the package pins](#images-the-package-pins)), the publish job runs `chant release images <label>` after fetching `chant/lifecycle` and before the build, and exports `CHANT_RELEASE_DIGESTS`. In a dispatched release the cut job hands the archives it built to the publish job as a workflow artifact (`chant-release-images`; on GitLab, the cut job's `artifacts:`), and the publish job checks them with `chant release images <label> --no-build`, which reads the archives on disk and refuses one whose digest is not the recorded one. The images published are then the ones the cut built, even when the package mirror an image installs from moved between the two jobs. This holds for either trigger. `after` with the tag trigger adds an after-release job that follows the publish. A config with only `publish` renders the file it always did.
+
+### Builds on other runners
+
+`release.workflow.builds` adds a job per platform that builds on its own runner, such as a native arm64 runner, macOS or Windows, after the gate and before the cut:
+
+```ts
+release: {
+  workflow: {
+    trigger: "dispatch",
+    builds: [
+      { name: "linux-arm64", runner: "ubuntu-24.04-arm", build: "go build -o dist/acme-linux-arm64 .", outputs: ["dist/acme-linux-arm64"] },
+      { name: "darwin-arm64", runner: "macos-15", build: "go build -o dist/acme-darwin-arm64 .", outputs: ["dist/acme-darwin-arm64"] },
+      { name: "windows-amd64", runner: "windows-latest", build: "go build -o dist/acme.exe .", outputs: ["dist/acme.exe"] },
+    ],
+  },
+  publish: [{ type: "forge", forge: "github", repo: "acme/acme", assets: ["dist/acme-linux-arm64", "dist/acme-darwin-arm64", "dist/acme.exe"] }],
+},
+```
+
+| Field | Meaning |
+|---|---|
+| `name` | The job is `build-<name>` (`chant-release-build-<name>` on GitLab): lowercase letters, digits and dashes |
+| `runner` | GitHub's and Forgejo's `runs-on` label, or labels; on GitLab, the runner's `tags` |
+| `build` | Run with bash from the project root, with `CHANT_RELEASE_LABEL` set, so a version can be built in |
+| `outputs` | The files the job hands on, from the project root. Shell globs such as `dist/acme-*` are allowed; a path with `..` or a leading `/` is refused |
+| `install` | The install before the build. Default the workflow's; `false` for none |
+| `toolchains` | In place of the workflow's toolchains, as above. Node is not added: a build job doesn't run chant |
+| `env` | Variables for this job only |
+
+On GitHub and Forgejo a build job checks out the gate's commit without the job token's credentials, reads with `contents: read` and nothing more, and gets none of the cut and publish jobs' `env`, so a build cannot push, mint an OIDC token or read the publish credentials. On GitLab it gets none of the release file's variables or ID tokens, and the project's CI/CD variables reach it as they reach any job, so keep publish credentials protected and the release on a protected ref. A build job packs its outputs with `tar`, which keeps each file's path and mode, and hands the archive on as a workflow artifact (`chant-release-build-<name>`; on GitLab, the job's `artifacts:`). The cut job waits for every build and unpacks each archive into the project root before `chant release cut` runs, with `tar -k`, so a build cannot replace a file of the commit and two builds cannot write the same path. The cut then finds the files where its own build would have left them. The publish job unpacks them too, before the stamp, the images and the build, so the targets upload the files the runners built, under the same signing, provenance and SBOM checks as any other release. Build outputs belong in `.gitignore`, as for any build, or the publish refuses the tree as changed.
+
+`builds` needs `trigger: "dispatch"`: with the tag trigger the release was cut before the workflow ran, and `chant release workflow` refuses it.
 
 With `release.version` (see [The label as the package version](#the-label-as-the-package-version)), the publish job runs `chant release stamp <label>` after the install and the setup steps and before the images and the build, under either trigger. The cut job is unchanged: the cut stamps on its own. A config without `release.version` renders the file it did.
 
