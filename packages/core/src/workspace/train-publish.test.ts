@@ -13,10 +13,11 @@ import { dirname, join } from "node:path";
 import { cutRelease } from "../lifecycle/release-cut";
 import type { ReleaseArtifact } from "../lifecycle/release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
-import { readFakeNpmRegistry, seedFakeNpmRegistry, writeFakeNpm } from "../lifecycle/__fixtures__/publish-fakes";
+import { readFakeNpmRegistry, seedFakeNpmRegistry, writeFakeNpm, writeOciLayout } from "../lifecycle/__fixtures__/publish-fakes";
+import type { PublishFetch } from "../lifecycle/release-publish";
 import { TestRepo } from "./trust/test-repo";
 import { appendReleaseTrain, readMemberReleases, pickTrain, trainDigest, type ReleaseTrainRecord } from "./release-train";
-import { publishTrain, trainLayers, TrainPublishRunError } from "./train-publish";
+import { publishTrain, trainDependencies, trainLayers, TrainPublishRunError } from "./train-publish";
 import { workspaceLedgerPrefix } from "./workspace-ledger";
 
 const repos: TestRepo[] = [];
@@ -286,5 +287,142 @@ describe("a train that pins a member at an earlier release", () => {
     const done = await publishTrain({ cwd: nested, env: "npm", yes: true, processEnv: ENV(), deps: { npm, sleep: NO_WAIT } });
     expect(done).toMatchObject({ kind: "published", members: [{ member: "old", role: "pinned" }, { member: "core", role: "publish" }, { member: "lex", role: "publish" }] });
     expect(latest(log)).toEqual({ "@acme/core": "2.0.0", "@acme/lex": "2.0.0", "@acme/old": "1.5.0" });
+  });
+});
+
+/**
+ * #5165: a train of mixed kinds: npm core and lex (lex peers on core), an
+ * image member that names core in release.dependsOn, and an MCP Registry
+ * entry whose server.json lists lex. The registry is a fake fetch.
+ */
+function mixedSetup(opts: { dependsOn?: string[] } = {}) {
+  const r = new TestRepo("train-publish-mixed");
+  repos.push(r);
+  r.write("chant.workspace.json", JSON.stringify({ name: "acme", schema: 1, members: [{ name: "rel", dir: "release", kind: "workspace", because: "the releases" }] }, null, 2));
+  const names = ["core", "lex", "image", "server"];
+  r.write("release/chant.workspace.json", JSON.stringify({ name: "rel", schema: 1, members: names.map((n) => ({ name: n, dir: n, kind: "chant" })) }, null, 2));
+  for (const n of names) r.write(`release/${n}/packages.component.ts`, "export const packages = {};\n");
+  r.write("release/core/chant.config.ts", member("pkgs/core", true));
+  r.write("release/lex/chant.config.ts", member("pkgs/lex", true));
+  const dependsOn = JSON.stringify(opts.dependsOn ?? ["core"]);
+  r.write("release/image/chant.config.ts", `export default { environments: ["npm"], release: { dependsOn: ${dependsOn}, publish: [{ type: "oci", image: "img", repository: "127.0.0.1:5999/acme/img" }] } };\n`);
+  r.write("release/server/chant.config.ts", `export default { environments: ["npm"], release: { publish: [{ type: "mcp-registry", registry: "https://mcp.test" }] } };\n`);
+  r.write("release/server/server.json", JSON.stringify({ name: "io.github.acme/lex", version: "2.0.0", packages: [{ registryType: "npm", identifier: "@acme/lex", version: "2.0.0" }] }));
+  r.write("pkgs/core/package.json", pkg("@acme/core", "2.0.0"));
+  r.write("pkgs/lex/package.json", pkg("@acme/lex", "2.0.0", { "@acme/core": "^2.0.0" }));
+  writeOciLayout(join(r.dir, "release", "image", "img"));
+  const head = r.commit("init");
+  r.git(["tag", `ci/green/${head}`]);
+  const log = join(dirname(r.dir), "npm.log");
+  seedFakeNpmRegistry(log, { packages: { "@acme/core": { versions: ["1.0.0"], distTags: { latest: "1.0.0" } }, "@acme/lex": { versions: ["1.0.0"], distTags: { latest: "1.0.0" } } } });
+  const npm = writeFakeNpm(join(dirname(r.dir), "bin"), log);
+  return { r, log, npm, nested: join(r.dir, "release") };
+}
+
+/** The MCP Registry and GitHub's OIDC token service, in one fake fetch. `refuse` makes the publish fail. */
+function fakeMcp() {
+  const held = new Set<string>();
+  const state = { refuse: true, publishes: 0 };
+  const fetch: PublishFetch = async (url, init) => {
+    const u = new URL(url);
+    const answer = (status: number, json: unknown) => ({ ok: status < 300, status, headers: { get: () => null }, text: async () => JSON.stringify(json) });
+    if (u.hostname === "token.test") return answer(200, { value: "jwt" });
+    if (u.pathname === "/v0.1/auth/github-oidc") return answer(200, { registry_token: "reg" });
+    if (u.pathname === "/v0.1/publish") {
+      state.publishes++;
+      if (state.refuse) return answer(503, { detail: "unavailable" });
+      const b = JSON.parse(String(init.body)) as { name: string; version: string };
+      held.add(`${b.name}@${b.version}`);
+      return answer(200, {});
+    }
+    const m = /^\/v0\.1\/servers\/(.+)\/versions\/([^/]+)$/.exec(u.pathname);
+    if (m && held.has(`${decodeURIComponent(m[1]!)}@${decodeURIComponent(m[2]!)}`)) return answer(200, { server: { packages: [{ registryType: "npm", identifier: "@acme/lex", version: "2.0.0" }] } });
+    return answer(404, {});
+  };
+  return { fetch, held, state };
+}
+
+const MCP_ENV = { ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.test/t", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req" };
+
+describe("a train of mixed target kinds (#5165)", () => {
+  const f = fixture(async () => {
+    const x = mixedSetup();
+    for (const m of ["core", "lex", "image", "server"]) await cut(x.r, m, "2.0.0");
+    await recordTrain(x.nested);
+    return x;
+  });
+
+  test("layers members across kinds: an image after the member its dependsOn names, an MCP entry after the package its server.json lists", async () => {
+    const { npm, nested } = f();
+    const planned = await publishTrain({ cwd: nested, env: "npm", processEnv: ENV(MCP_ENV), deps: { npm } });
+    expect(planned).toMatchObject({
+      kind: "planned",
+      members: [
+        { member: "core", layer: 0 },
+        { member: "image", layer: 1, after: ["core"] },
+        { member: "lex", layer: 1, after: ["core"] },
+        { member: "server", layer: 2, after: ["lex"] },
+      ],
+    });
+  });
+
+});
+
+describe("release.dependsOn on a member the declaration does not list (#5165)", () => {
+  const f = fixture(async () => {
+    const x = mixedSetup({ dependsOn: ["nope"] });
+    for (const m of ["core", "lex", "image", "server"]) await cut(x.r, m, "2.0.0");
+    await recordTrain(x.nested);
+    return x;
+  });
+
+  test("is refused before anything stages", async () => {
+    const refused = await publishTrain({ cwd: f().nested, env: "npm", processEnv: ENV(MCP_ENV), deps: { npm: f().npm } });
+    expect(refused).toMatchObject({ kind: "refused", code: "train-depends-on-unknown" });
+    expect(refused.kind === "refused" && refused.message).toContain("image: release.dependsOn names nope");
+  });
+});
+
+describe("a mixed train resumes across layers (#5165)", () => {
+  const f = fixture(async () => {
+    const x = mixedSetup({ dependsOn: [] });
+    // Without the image: the OCI target is covered by its own tests, and this train publishes npm then the MCP Registry.
+    x.r.write("release/chant.workspace.json", JSON.stringify({ name: "rel", schema: 1, members: ["core", "lex", "server"].map((n) => ({ name: n, dir: n, kind: "chant" })) }, null, 2));
+    x.r.git(["tag", `ci/green/${x.r.commit("three members")}`]);
+    for (const m of ["core", "lex", "server"]) await cut(x.r, m, "2.0.0");
+    await recordTrain(x.nested);
+    return x;
+  });
+  const mcp = fakeMcp();
+  const run = () => publishTrain({ cwd: f().nested, env: "npm", yes: true, processEnv: ENV(MCP_ENV), deps: { npm: f().npm, sleep: NO_WAIT, fetch: mcp.fetch } });
+
+  test("a refused MCP publish in the last layer leaves the npm layers revealed", async () => {
+    const { log } = f();
+    const failed = await run().catch((e: unknown) => e);
+    expect(failed).toBeInstanceOf(TrainPublishRunError);
+    expect(failed).toMatchObject({ code: "publish-mcp-registry-failed", member: "server", step: "reveal", revealed: ["core: npm (1 package)", "lex: npm (1 package)"] });
+    expect(latest(log)).toEqual({ "@acme/core": "2.0.0", "@acme/lex": "2.0.0" });
+  });
+
+  test("run again, skips what each record shows revealed, waits on lex, and publishes the entry", async () => {
+    const { log } = f();
+    mcp.state.refuse = false;
+    const before = npmCalls(log).length;
+    const done = await run();
+    expect(done).toMatchObject({ kind: "published", resumed: [{ member: "server", step: "staged" }, { member: "core", step: "revealed" }, { member: "lex", step: "revealed" }] });
+    const calls = npmCalls(log).slice(before);
+    expect(calls.filter((a) => a[0] === "publish" || a[0] === "dist-tag")).toEqual([]);
+    expect(calls).toContainEqual(["view", "@acme/lex", "dist-tags.latest"]);
+    expect([...mcp.held]).toEqual(["io.github.acme/lex@2.0.0"]);
+  });
+});
+
+describe("dependencies", () => {
+  test("are each member's direct ones, by name", () => {
+    expect(Object.fromEntries(trainDependencies([
+      { member: "server", provides: ["mcp:x"], needs: ["npm:@a/lex", "oci:ghcr.io/a/img"] },
+      { member: "lex", provides: ["npm:@a/lex", "member:lex"], needs: [] },
+      { member: "img", provides: ["oci:ghcr.io/a/img", "member:img"], needs: ["member:lex"] },
+    ]))).toEqual({ server: ["img", "lex"], lex: [], img: ["lex"] });
   });
 });

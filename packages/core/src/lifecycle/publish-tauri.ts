@@ -53,6 +53,7 @@ import { fillUrl, releaseVersion } from "./publish-homebrew";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
+import { trainName, waitUntilServed } from "./publish-train-names";
 
 /** The first chant that publishes a `tauri-updater` target (#4676). */
 export const PUBLISH_TAURI_UPDATER_FLOOR = "0.124.63";
@@ -131,6 +132,35 @@ export function tauriUpdaterTarget(decl: TauriUpdaterPublishDeclaration, deps: P
     destination: `github ${decl.repo} release ${decl.tag}`,
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
+    /** #5165: the rolling release; it needs nothing a train orders by. */
+    async names() {
+      return { provides: [trainName("tauri-updater", `${decl.repo}@${decl.tag}`)], needs: [] };
+    },
+    /**
+     * #5165: whether the rolling release is this version's, by the name the
+     * stage gives its draft (`<tag> <version>`). A rolling release that holds
+     * another version can't say whether this one went out before it.
+     */
+    async published(ctx) {
+      if (prereleaseOf(ctx.label)) return true;
+      const version = releaseVersion(ctx.label);
+      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      if (!version || !token) return null;
+      const rel = await new GitHubRepo(githubApi(decl.api, ctx.env), decl.repo, token, fetchImpl, ctx, "publish-tauri-failed").publishedRelease(decl.tag);
+      return rel?.name === `${decl.tag} ${version}` ? true : null;
+    },
+    /** #5165: wait until the rolling release GitHub serves is this version's. */
+    async visible(ctx) {
+      const version = releaseVersion(ctx.label);
+      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      if (prereleaseOf(ctx.label) || !version || !token) return;
+      const repo = new GitHubRepo(githubApi(decl.api, ctx.env), decl.repo, token, fetchImpl, ctx, "publish-tauri-failed");
+      await waitUntilServed(ctx, deps, {
+        what: `github ${decl.repo}`,
+        code: "publish-tauri-not-served",
+        check: async () => ((await repo.publishedRelease(decl.tag))?.name === `${decl.tag} ${version}` ? [] : [`release ${decl.tag} ${version}`]),
+      });
+    },
     async plan(ctx) {
       if (prereleaseOf(ctx.label)) return [{ name: decl.tag, destination: target.destination, notes: skipNote(ctx) }];
       return setup(ctx).files.map((f) => itemOf(f));

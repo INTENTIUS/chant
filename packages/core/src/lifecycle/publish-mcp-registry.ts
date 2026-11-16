@@ -40,6 +40,7 @@ import { readCredential } from "./publish-credentials";
 import type { McpRegistryPublishDeclaration } from "./publish-declaration";
 import { releaseVersion } from "./publish-homebrew";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
+import { trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 
 /** The first chant with the `mcp-registry` publish target: a `server.json` published to the MCP Registry after the packages it names, with GitHub OIDC, and the `mcp-registry-*` checks of `chant release doctor` (#5162). */
@@ -235,6 +236,41 @@ export function mcpRegistryTarget(decl: McpRegistryPublishDeclaration, deps: Pub
     // Its stage sends nothing (the registry has no draft), so the verify commands can't see it.
     uploadsAtReveal: true,
     revealsLast: true,
+    /** #5165: the server, and each package its `server.json` lists: npm, PyPI, Cargo, NuGet, and OCI images. */
+    async names(ctx) {
+      const raw = JSON.parse(readFileSync(memberFile(ctx.cwd, path), "utf-8")) as { name?: unknown; packages?: unknown };
+      const needs = new Set<string>();
+      for (const p of Array.isArray(raw.packages) ? (raw.packages as Array<{ registryType?: unknown; identifier?: unknown }>) : []) {
+        if (typeof p?.identifier !== "string" || !p.identifier) continue;
+        if (p.registryType === "npm") needs.add(trainName("npm", p.identifier));
+        else if (p.registryType === "pypi") needs.add(trainName("pypi", p.identifier));
+        else if (p.registryType === "oci") needs.add(trainName("oci", p.identifier));
+        else if (p.registryType === "cargo") needs.add(trainName("cargo", p.identifier));
+        else if (p.registryType === "nuget") needs.add(`nuget:${p.identifier.toLowerCase()}`);
+      }
+      return { provides: typeof raw.name === "string" ? [trainName("mcp", raw.name)] : [], needs: [...needs] };
+    },
+    /** #5165: whether the registry holds the release's version of the server `server.json` names. */
+    async published(ctx) {
+      const raw = JSON.parse(readFileSync(memberFile(ctx.cwd, path), "utf-8")) as { name?: unknown };
+      const version = releaseVersion(ctx.label);
+      if (typeof raw.name !== "string" || !version) return null;
+      return (await served(ctx, { name: raw.name, version, packages: [] })) !== null;
+    },
+    /** #5165: wait until the registry serves the version the reveal published. */
+    async visible(ctx, published) {
+      const ids = published.items.map((i) => /^(.+)@([^@]+)$/.exec(i.name)).filter((m): m is RegExpExecArray => m !== null);
+      if (ids.length === 0) return;
+      await waitUntilServed(ctx, deps, {
+        what: "the MCP Registry",
+        code: "publish-mcp-registry-not-served",
+        check: async () => {
+          const missing: string[] = [];
+          for (const m of ids) if ((await served(ctx, { name: m[1]!, version: m[2]!, packages: [] })) === null) missing.push(m[0]);
+          return missing;
+        },
+      });
+    },
     async plan(ctx) {
       return [setup(ctx).item];
     },

@@ -17,9 +17,14 @@
  * one (`preparePublish`: revocation, signatures, provenance, a clean checkout
  * of the release's commit), and every target is planned, before anything
  * stages. The members are put in dependency layers from the names their
- * targets publish and need (`PublishTarget.names`: for npm, the package names
- * and their dependency, peer and optional keys); members of one layer go in
- * name order, so core comes first.
+ * targets publish and need (`PublishTarget.names`, #5165), each qualified by
+ * its kind (./lifecycle/publish-train-names.ts): npm package names and their
+ * dependency, peer and optional keys; an image's repository; PyPI projects and
+ * their `Requires-Dist`; crates and their dependencies; an extension and its
+ * `extensionDependencies`; an MCP Registry entry and the packages and images
+ * its `server.json` lists. A member's `release.dependsOn` adds the members a
+ * manifest doesn't show. Members of one layer go in name order, so core
+ * comes first.
  *
  * Then two passes, as `runPublish` does for one release (#4048), across the
  * whole train:
@@ -32,8 +37,9 @@
  *    publish before the first layer reveals.
  * 3. Reveal layer by layer. Before the next layer, wait until each revealed
  *    target of this one resolves for a consumer (`PublishTarget.visible`:
- *    npm's `dist-tags.latest` names the version), so no package is visible
- *    before the packages it needs are.
+ *    npm's `dist-tags.latest` names the version, an image's tags name its
+ *    digest, an index or registry lists the version), so nothing is visible
+ *    before what it needs is.
  *
  * Within a member, targets reveal in `revealOrder`: uploads at reveal after
  * the rest, and the MCP Registry last.
@@ -56,6 +62,10 @@ import type { Redactor } from "../lifecycle/publish-credentials";
 import { readDeclaration } from "./declaration";
 import { findTrain, readReleaseTrains, type ReadTrain, type TrainMember } from "./release-train";
 import { locateWorkspace } from "./which-chant";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant whose `chant workspace train publish` orders and resumes members of every target kind (#5165): the oci, forge, homebrew, index, marketplace, pypi, cargo, mcp-registry and tauri-updater targets name what they publish and need, say whether a pinned release is published, and wait until a reveal is served before the next layer; a member's `release.dependsOn` names members a manifest doesn't show. */
+export const TRAIN_PUBLISH_TARGETS_FLOOR = NEXT_RELEASE;
 
 /** One target of a member, as planned. */
 export interface TrainPlannedTarget {
@@ -77,6 +87,8 @@ export interface TrainPublishMember {
   role: "publish" | "pinned";
   /** The dependency layer, 0 first; null for a pinned member. */
   layer: number | null;
+  /** The members of this run it reveals after (#5165), from its targets' names and `release.dependsOn`. */
+  after?: string[];
   targets: TrainPlannedTarget[];
 }
 
@@ -194,6 +206,16 @@ export function trainLayers(members: ReadonlyArray<{ member: string; provides: r
   return layers;
 }
 
+/** Each member's direct dependencies among `members` (pure), by the same rule as {@link trainLayers}. */
+export function trainDependencies(members: ReadonlyArray<{ member: string; provides: readonly string[]; needs: readonly string[] }>): Map<string, string[]> {
+  const owner = new Map<string, string>();
+  for (const m of members) for (const n of m.provides) owner.set(n, m.member);
+  return new Map(members.map((m) => [m.member, [...new Set(m.needs.map((n) => owner.get(n)).filter((o): o is string => o !== undefined && o !== m.member))].sort()]));
+}
+
+/** The name a member provides for `release.dependsOn` (#5165). */
+const memberName = (member: string) => `member:${member}`;
+
 /** Plan, and with `yes` publish, a release train (#5136). */
 export async function publishTrain(query: TrainPublishQuery): Promise<TrainPublishOutcome> {
   const { preparePublish, publishContext, releasePublishTargets, detectProvenance } = await import("../lifecycle/release-publish");
@@ -245,7 +267,10 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
       const found = await resolveRelease(m.releaseDigest, { cwd: dir });
       if (!found) return refuse("release-not-found", `${name}: the train pins release ${m.releaseDigest}, which no cut in the member names`);
       const redactor = createRedactor(env, targets.flatMap((t) => t.credentialEnv));
-      const ctx: PublishContext = { release: found.release, label: m.label ?? found.label, releaseTag: null, provenance, cwd: dir, tag: null, env, redactor, log: memberLog(m.member, redactor) };
+      const label = m.label ?? found.label;
+      // #5165: the tag the cut made, which a forge release is named by.
+      const releaseTag = label !== null ? await pinnedReleaseTag(dir, label) : null;
+      const ctx: PublishContext = { release: found.release, label, releaseTag, provenance, cwd: dir, tag: null, env, redactor, log: memberLog(m.member, redactor) };
       for (const t of unrevealed) {
         const there = t.published ? await t.published(ctx).catch(() => null) : null;
         if (there !== true) {
@@ -277,11 +302,19 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     return refuse("train-nothing-cut-here", `release train ${train.id} has no release cut from this checkout's commit ${head ? head.slice(0, 12) : "(none)"}, so there is nothing for it to publish here`, "Run the publish in a checkout of the commit the train's new releases were cut from, as the job on its release-train tag does.");
   }
 
-  // Layers from what each member's targets publish and need.
+  // Layers from what each member's targets publish and need, and the members release.dependsOn names (#5165).
   const named: Array<{ member: string; provides: string[]; needs: string[] }> = [];
   for (const p of prepared) {
-    const provides: string[] = [];
-    const needs: string[] = [];
+    const unknown = (p.plan.dependsOn ?? []).filter((d) => !dirOf.has(d));
+    if (unknown.length > 0) {
+      return refuse(
+        "train-depends-on-unknown",
+        `${p.m.member}: release.dependsOn names ${unknown.join(", ")}, which the declaration does not list. Nothing was published.`,
+        `Name members of this workspace: ${[...dirOf.keys()].sort().join(", ")}.`,
+      );
+    }
+    const provides: string[] = [memberName(p.m.member)];
+    const needs: string[] = (p.plan.dependsOn ?? []).map(memberName);
     for (const t of p.plan.targets) {
       if (!t.names) continue;
       try {
@@ -295,6 +328,7 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     named.push({ member: p.m.member, provides, needs });
   }
   const layers = trainLayers(named);
+  const afterOf = trainDependencies(named);
   const layerOf = new Map(layers.flatMap((l, i) => l.map((m) => [m, i] as const)));
   const ordered: Prepared[] = layers.flat().map((member) => ({ ...prepared.find((p) => p.m.member === member)!, layer: layerOf.get(member)! }));
 
@@ -311,7 +345,8 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
         return refuse(e.code, redactor.redact(`nothing was published: ${p.m.member}: ${t.name}: ${e.message}`), e.fix);
       }
     }
-    members.push({ member: p.m.member, label: p.m.label, releaseDigest: p.m.releaseDigest, commit: p.m.commit, role: "publish", layer: p.layer, targets });
+    const after = afterOf.get(p.m.member) ?? [];
+    members.push({ member: p.m.member, label: p.m.label, releaseDigest: p.m.releaseDigest, commit: p.m.commit, role: "publish", layer: p.layer, ...(after.length > 0 ? { after } : {}), targets });
   }
   members.sort((a, b) => (a.layer ?? -1) - (b.layer ?? -1) || a.member.localeCompare(b.member));
   // #5157: each member's release.verify, after the whole train has staged; a target whose stage is visible is out of its reach.
@@ -335,6 +370,17 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     if (w) floatingWarnings.push(`${p.m.member}: ${w}`);
   }
   return { kind: "published", train, members, warnings, redactor, verify, ...ran, floatingWarnings };
+}
+
+/** The tag `release.tag` gives `label` in the member at `dir`, or null when it can't be told. */
+async function pinnedReleaseTag(dir: string, label: string): Promise<string | null> {
+  try {
+    const { memberTags, renderReleaseTag } = await import("../lifecycle/release-tag");
+    const tags = await memberTags(dir);
+    return renderReleaseTag(tags.template, tags.place, label);
+  } catch {
+    return null;
+  }
 }
 
 /** The two passes over the prepared members (#5136). Throws {@link TrainPublishRunError}. */
@@ -577,7 +623,7 @@ export async function runTrainPublish(ctx: import("../cli/registry").CommandCont
         out(`  ${m.member} ${m.label ?? m.releaseDigest}: pinned at commit ${m.commit.slice(0, 12)}, already published`);
         continue;
       }
-      out(`  layer ${m.layer}: ${m.member} ${m.label ?? m.releaseDigest}`);
+      out(`  layer ${m.layer}: ${m.member} ${m.label ?? m.releaseDigest}${m.after ? `, after ${m.after.join(", ")}` : ""}`);
       for (const t of m.targets) {
         const earlier = t.progress === "revealed" ? " (published by an earlier run; skipped)" : t.progress === "staged" ? " (staged by an earlier run; only revealed)" : "";
         out(`    ${t.name}${earlier}:`);

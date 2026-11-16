@@ -63,6 +63,8 @@ import { inflateRawSync } from "node:zlib";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { MarketplacePublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
+import { releaseVersion } from "./publish-index";
+import { trainName, waitUntilServed } from "./publish-train-names";
 import {
   PublishTargetError,
   type PublishContext,
@@ -307,6 +309,29 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
     return (body.results?.[0]?.extensions?.[0]?.versions ?? []).some((v) => v.version === id.version);
   };
 
+  /** #5165: the extension's manifest: from the `.vsix` when the checkout has it, else the member's package.json. */
+  const manifestOf = (ctx: PublishContext): Record<string, unknown> | null => {
+    try {
+      const entry = readZipEntry(readFileSync(memberFile(ctx.cwd, decl.vsix)), "extension/package.json");
+      if (entry) return JSON.parse(entry.toString("utf-8")) as Record<string, unknown>;
+    } catch {
+      // No .vsix here: the member's own manifest names the extension.
+    }
+    try {
+      return JSON.parse(readFileSync(memberFile(ctx.cwd, "package.json"), "utf-8")) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+  /** Whether the marketplace lists the version, read without downloading it. */
+  const has = async (ctx: PublishContext, id: { publisher: string; name: string; version: string }): Promise<boolean> => {
+    if (decl.marketplace === "vscode") return galleryHas(ctx, id);
+    const meta = await get(`${registry}/api/${encodeURIComponent(id.publisher)}/${encodeURIComponent(id.name)}/${encodeURIComponent(id.version)}`);
+    if (meta.status === 404) return false;
+    if (meta.status !== 200) fail(ctx, `reading ${id.publisher}.${id.name}@${id.version}`, meta.status, meta.text);
+    return true;
+  };
+
   const target: PublishTarget = {
     kind: "marketplace",
     name: `${label} ${decl.vsix}`,
@@ -314,6 +339,44 @@ export function marketplaceTarget(decl: MarketplacePublishDeclaration, deps: Pub
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
     uploadsAtReveal: true,
+    /** #5165: the extension, and the extensions its `extensionDependencies` and `extensionPack` name. */
+    async names(ctx) {
+      const m = manifestOf(ctx);
+      if (!m || typeof m.publisher !== "string" || typeof m.name !== "string") return { provides: [], needs: [] };
+      const self = trainName("marketplace", `${m.publisher}.${m.name}`);
+      const needs = new Set<string>();
+      for (const field of ["extensionDependencies", "extensionPack"]) {
+        const list = m[field];
+        if (Array.isArray(list)) for (const n of list) if (typeof n === "string" && n.includes(".")) needs.add(trainName("marketplace", n));
+      }
+      needs.delete(self);
+      return { provides: [self], needs: [...needs] };
+    },
+    /** #5165: whether the marketplace lists the release's version of the extension. */
+    async published(ctx) {
+      const m = manifestOf(ctx);
+      const version = releaseVersion(ctx.label);
+      if (!m || typeof m.publisher !== "string" || typeof m.name !== "string" || !version) return null;
+      return has(ctx, { publisher: m.publisher, name: m.name, version });
+    },
+    /** #5165: wait until the marketplace lists the version the reveal uploaded. */
+    async visible(ctx, published) {
+      const ids = published.items
+        .filter((i) => !i.refused)
+        .map((i) => /^([^.@]+)\.([^@]+)@(.+)$/.exec(i.name))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .map((m) => ({ publisher: m[1]!, name: m[2]!, version: m[3]! }));
+      if (ids.length === 0) return;
+      await waitUntilServed(ctx, deps, {
+        what: label,
+        code: "publish-marketplace-not-served",
+        check: async () => {
+          const missing: string[] = [];
+          for (const id of ids) if (!(await has(ctx, id))) missing.push(`${id.publisher}.${id.name}@${id.version}`);
+          return missing;
+        },
+      });
+    },
     async plan(ctx) {
       return [setup(ctx).item];
     },

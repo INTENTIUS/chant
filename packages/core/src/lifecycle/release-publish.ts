@@ -349,10 +349,11 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    */
   refusalWarns?: boolean;
   /**
-   * The names this target publishes and the names of others' it depends on
-   * (npm: the package names, and every `dependencies`, `peerDependencies`
-   * and `optionalDependencies` key). A train publish orders its members by
-   * them (#5136). Absent: the target neither provides nor needs anything.
+   * The names this target publishes and the names of others' it depends on,
+   * each `<kind>:<name>` (./publish-train-names.ts, #5165; npm: the package
+   * names, and every `dependencies`, `peerDependencies` and
+   * `optionalDependencies` key). A train publish orders its members by them
+   * (#5136), across kinds. Absent: the target neither provides nor needs anything.
    */
   names?(ctx: C): Promise<{ provides: string[]; needs: string[] }>;
   /**
@@ -365,7 +366,10 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
   published?(ctx: C): Promise<boolean | null>;
   /**
    * Wait until a consumer resolving the reveal's tag gets what `published`
-   * holds (npm: `dist-tags.latest` names the version). A train publish waits
+   * holds (npm: `dist-tags.latest` names the version; OCI: each tag names the
+   * digest; an index or registry lists the version). It reads only `ctx` and
+   * the items, which may come from the publish record of an earlier run. A
+   * train publish waits
    * on each dependency layer before the next one reveals (#5136). Throws
    * {@link PublishTargetError}.
    */
@@ -497,6 +501,8 @@ export interface PublishPlan {
   targets: PublishTarget[];
   /** `release.verify` (#5157): the commands run after every target has staged and before any reveals. */
   verify?: import("./publish-verify").VerifyStep[];
+  /** `release.dependsOn` (#5165): the workspace members a train publish reveals before this one. */
+  dependsOn?: string[];
   /** Masks the run's credentials in what the publish prints. */
   redactor: Redactor;
   /** Whether a target with no SBOM source is refused (`publish-sbom-missing`): the workspace opts into `supply-chain` (#4168). Otherwise it publishes without one. */
@@ -705,7 +711,7 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
+  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
 }
 
 /**

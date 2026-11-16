@@ -266,10 +266,12 @@ export interface GitHubRelease {
   /** Asset names, with the digest GitHub reports. */
   assets: Map<string, string | null>;
   uploadUrl?: string;
+  /** The release's name, when GitHub gives one. */
+  name?: string;
 }
 
 function toRelease(body: Record<string, unknown>): GitHubRelease {
   const assets = new Map<string, string | null>();
   for (const a of (body.assets as Array<{ name: string; digest?: string | null }> | undefined) ?? []) assets.set(a.name, typeof a.digest === "string" ? a.digest : null);
-  return { id: String(body.id), draft: body.draft === true, assets, ...(typeof body.upload_url === "string" ? { uploadUrl: body.upload_url } : {}) };
+  return { id: String(body.id), draft: body.draft === true, assets, ...(typeof body.upload_url === "string" ? { uploadUrl: body.upload_url } : {}), ...(typeof body.name === "string" ? { name: body.name } : {}) };
 }
