@@ -1303,6 +1303,13 @@ Workspace (level 1, #2524):
                         instead; --continue moves on from the member's answer
                         in _control/applied.jsonl, after applied or unchanged
                         (#5119)
+  workspace train publish <env> [<train id|digest>] [--yes] [--allow-unsigned] [--require-provenance] [--json]
+                        Publish a train as one set: every member cut from this
+                        commit stages before any reveals, then each dependency
+                        layer reveals, core first, once the layer before it
+                        resolves. A member pinned at another commit must
+                        already be published. Resumes from each member's
+                        publish record (#5136)
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
