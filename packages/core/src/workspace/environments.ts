@@ -79,6 +79,8 @@ export type ExecutorReasonCode = (typeof EXECUTOR_REASON_CODES)[number];
 /** The forge workflow that deploys an environment (#4402), or why none is named. */
 export interface ComponentExecutor {
   forge: EnvironmentExecutor["forge"] | null;
+  /** The CI system that runs the workflow (#5170), present only when the config names one; absent, the forge's own. */
+  ci?: NonNullable<EnvironmentExecutor["ci"]>;
   workflow: string | null;
   /** Null when `forge` and `workflow` are set. */
   reason: { code: ExecutorReasonCode; message: string } | null;
@@ -209,7 +211,7 @@ export function executorFor(env: string, member: MemberEnvironments | undefined)
     return { forge: null, workflow: null, reason: { code: "executor-config-unreadable", message: `chant.config.ts could not be read, so no executor is known for ${env}` } };
   }
   const found = environmentExecutor(member?.declared ?? undefined, env);
-  if (found) return { forge: found.forge, workflow: found.workflow, reason: null };
+  if (found) return { forge: found.forge, ...(found.ci ? { ci: found.ci } : {}), workflow: found.workflow, reason: null };
   return { forge: null, workflow: null, reason: { code: "executor-none-declared", message: `chant.config.ts declares no executor for ${env}` } };
 }
 

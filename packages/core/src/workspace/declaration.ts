@@ -18,6 +18,8 @@
 
 import { RETENTION_KINDS, type RetentionOverride } from "../lifecycle/retention-policy";
 import { parseReportUrl } from "../pr-report-url";
+import { defaultCiOf, defaultForgeOf, forgeCiProblem, type CiSystem, type ForgeCi } from "../ci-system";
+import type { ForgeKind } from "../pr-forge";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
@@ -414,6 +416,13 @@ export type CiLockGrain = "target" | "resource" | "repo";
 
 /** The declaration's `ci` block (#3573). */
 export interface CiDeclaration {
+  /**
+   * `ci.forge` and `ci.system` (#5170): the forge the repository is on and
+   * the CI system that runs its jobs, with the system defaulting to the
+   * forge's own and the forge to the one the system serves. Absent when the
+   * declaration names neither.
+   */
+  forgeCi?: ForgeCi;
   green: CiGreen | null;
   /** `ci.workflow` (#4168 step 6): the workflow every member follows unless it names its own; absent when the declaration sets none. */
   workflow?: CiWorkflow;
@@ -1472,10 +1481,20 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
+  const block = raw as { forge?: ForgeKind; system?: CiSystem; reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
+  // #5170: the forge and its CI system, each defaulting from the other.
+  let forgeCi: ForgeCi | undefined;
+  if (block.forge !== undefined || block.system !== undefined) {
+    const forge = block.forge ?? defaultForgeOf(block.system!);
+    const ci = block.system ?? defaultCiOf(forge);
+    const problem = forgeCiProblem(forge, ci);
+    if (problem) throw new WorkspaceReadError("declaration-invalid", `ci.system: ${problem.replace(/^ci: /, "")}`, at("/ci/system"));
+    forgeCi = { forge, ci };
+  }
   const workflow = {
+    ...(forgeCi ? { forgeCi } : {}),
     ...(block.workflow !== undefined ? { workflow: block.workflow } : {}),
     ...(hooks ? { hooks } : {}),
     ...(block.branches !== undefined ? { branches: globMap(block.branches) } : {}),

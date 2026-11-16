@@ -290,6 +290,21 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   // workspace module loads only when a declaration was found, so a project
   // outside any workspace generates exactly what it did before.
   const found = findWorkspaceRoot(resolve(args.path));
+  // #5170: the declaration's ci.system names the CI system whose files this build may write. Read only inside a workspace.
+  if (found) {
+    const { ciForgeAt, generateTargetProblem } = await import("../../workspace/ci-forge");
+    let declared: import("../../ci-system").ForgeCi | null = null;
+    try {
+      declared = ciForgeAt(resolve(args.path));
+    } catch {
+      // A declaration that does not read is reported by the member pipeline below.
+    }
+    const problem = generateTargetProblem(lexicon, declared);
+    if (problem) {
+      console.error(formatError({ message: problem }));
+      return 1;
+    }
+  }
   let plan: import("../../workspace/member-pipeline").MemberComponentPlan | undefined;
   let memberPipeline: typeof import("../../workspace/member-pipeline") | undefined;
   // #4160: without --report-url, the declaration's ci.reportUrl. Read only inside a workspace.

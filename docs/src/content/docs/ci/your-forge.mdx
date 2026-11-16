@@ -12,6 +12,12 @@ diataxis: reference
 
 [`chant ci forge-check`](/chant/cli/ci/#ci-forge-check) compares the forge's branch protection and each cloud's trust with what the pipeline needs. On GitLab and Forgejo, set `ci.green.source` to `runs`, because they have no check-run reader. [Green commits](/chant/guide/green-commits/).
 
+## A CI system other than the forge's own
+
+Each forge above runs its jobs on its own CI: GitHub Actions, GitLab CI or Forgejo Actions. A GitHub repository can run its jobs on Prow instead ([#5170](https://github.com/INTENTIUS/chant/issues/5170)). Name the two apart with `"ci": { "forge": "github", "system": "prow" }` in `chant.workspace.json` ([forge and CI system](/chant/reference/workspace-declaration/#forge-and-ci-system)). An environment's executor in `chant.config.ts` takes `ci` the same way ([the workflow that deploys an environment](/chant/configuration/config-file/#the-workflow-that-deploys-an-environment)).
+
+GitHub is still the forge, so the plan note and the commit status go to GitHub with the job's token, a Secret the job mounts as `GITHUB_TOKEN`. In a Prow job chant takes the pull request from Prow's own variables when the job sets no `GITHUB_*` ones. The jobs themselves are the [prow lexicon's](/chant/lexicons/prow/getting-started/), declared or written with `forgeJobConfig`. `chant build --components --generate prow` does not generate them from components yet.
+
 ## The chant runner on your own host
 
 With no forge runner, `chant ci serve` polls the forge and runs the jobs on a host you provide:

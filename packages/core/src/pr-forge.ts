@@ -1826,8 +1826,11 @@ export function forgeFromEnv(kind: ForgeKind, env: Record<string, string | undef
   }
   const token = env.CHANT_FORGE_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN;
   const host = hostOf(env.GITHUB_SERVER_URL);
+  // #5170: a Prow job names its GitHub repository in Prow's own variables.
+  const prow = kind === "github" ? prowJobOf(env) : undefined;
+  const repo = env.GITHUB_REPOSITORY || prow?.repo;
   const missing = [
-    ...(env.GITHUB_REPOSITORY ? [] : ["GITHUB_REPOSITORY"]),
+    ...(repo ? [] : [prow ? PROW_REPO_MISSING : "GITHUB_REPOSITORY"]),
     ...(token ? [] : ["GITHUB_TOKEN or CHANT_FORGE_TOKEN"]),
     ...(kind === "forgejo" && !host ? ["GITHUB_SERVER_URL"] : []),
     ...(kind === "forgejo" && !env.GITHUB_API_URL ? ["GITHUB_API_URL"] : []),
@@ -1835,11 +1838,11 @@ export function forgeFromEnv(kind: ForgeKind, env: Record<string, string | undef
   if (missing.length > 0) throw new ForgeEnvironmentError(kind, missing);
   const runUrl =
     env.GITHUB_SERVER_URL && env.GITHUB_RUN_ID
-      ? `${env.GITHUB_SERVER_URL.replace(/\/+$/, "")}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
+      ? `${env.GITHUB_SERVER_URL.replace(/\/+$/, "")}/${repo}/actions/runs/${env.GITHUB_RUN_ID}`
       : undefined;
   const opts = {
     apiBase: env.GITHUB_API_URL ?? "https://api.github.com",
-    repo: env.GITHUB_REPOSITORY!,
+    repo: repo!,
     token: token!,
     ...(runUrl ? { runUrl } : {}),
     ...f,
@@ -1853,16 +1856,41 @@ type Env = Record<string, string | undefined>;
 
 const truthy = (v: string | undefined): boolean => v === "true" || v === "1";
 
+const PROW_REPO_MISSING = "GITHUB_REPOSITORY, or REPO_OWNER and REPO_NAME from Prow";
+
+/**
+ * What a Prow job's pod says about its GitHub repository (#5170), or
+ * undefined outside a Prow job. Prow's pod utilities set `PROW_JOB_ID` in
+ * every job, `REPO_OWNER` and `REPO_NAME` in a presubmit and a postsubmit
+ * (and a periodic with `extra_refs`), `PULL_NUMBER` and `PULL_PULL_SHA` in a
+ * presubmit, and `PULL_BASE_SHA` beside them. Prow is the CI system here, and
+ * GitHub is still the forge whose API chant reads.
+ */
+export function prowJobOf(env: Env = process.env): { repo?: string; pr?: number; sha?: string } | undefined {
+  if (!env.PROW_JOB_ID?.trim()) return undefined;
+  const owner = env.REPO_OWNER?.trim();
+  const name = env.REPO_NAME?.trim();
+  const pr = num(env.PULL_NUMBER?.trim());
+  const sha = env.PULL_PULL_SHA?.trim() || env.PULL_BASE_SHA?.trim();
+  return {
+    ...(owner && name ? { repo: `${owner}/${name}` } : {}),
+    ...(pr !== undefined && pr > 0 ? { pr } : {}),
+    ...(sha ? { sha } : {}),
+  };
+}
+
 /**
  * The forge a CI job runs on, from its environment, or undefined outside a
- * GitHub Actions, GitLab CI or Forgejo Actions job. Forgejo is told apart by
+ * GitHub Actions, GitLab CI, Forgejo Actions or Prow job. Forgejo is told apart by
  * `FORGEJO_ACTIONS` or `GITEA_ACTIONS`, or by a GitHub-style job whose
- * `GITHUB_API_URL` ends in `/api/v1`, which GitHub never serves.
+ * `GITHUB_API_URL` ends in `/api/v1`, which GitHub never serves. A Prow job
+ * that names its repository ({@link prowJobOf}) is on GitHub (#5170).
  */
 export function detectForge(env: Env = process.env): ForgeKind | undefined {
   if (truthy(env.GITLAB_CI)) return "gitlab";
   if (truthy(env.FORGEJO_ACTIONS) || truthy(env.GITEA_ACTIONS)) return "forgejo";
   if (truthy(env.GITHUB_ACTIONS)) return /\/api\/v1\/?$/.test(env.GITHUB_API_URL ?? "") ? "forgejo" : "github";
+  if (prowJobOf(env)?.repo) return "github";
   return undefined;
 }
 
@@ -1945,6 +1973,10 @@ function prFromEvent(payload: unknown, ref: string | undefined): { pr?: number; 
  *   `GITHUB_REF`, its head from the payload, else `GITHUB_SHA`.
  * - Forgejo Actions: the same, with `FORGEJO_*` read before `GITHUB_*`,
  *   and the REST base `<server>/api/v1` when no API URL is set.
+ * - Prow, for the GitHub forge (#5170): the same `GITHUB_*` names when the
+ *   job sets them, else `REPO_OWNER`/`REPO_NAME`, `PULL_NUMBER`, and
+ *   `PULL_PULL_SHA` or `PULL_BASE_SHA` ({@link prowJobOf}). The token comes
+ *   from the job's own variables, such as a Secret mounted as `GITHUB_TOKEN`.
  * - GitLab CI: `CI_API_V4_URL` (or `CI_SERVER_URL/api/v4`), the merge
  *   request's project before the pipeline's (a fork's merge request runs in
  *   the fork), `CI_MERGE_REQUEST_IID`, `CI_COMMIT_SHA`, `CI_PIPELINE_URL`.
@@ -1989,7 +2021,9 @@ export function forgeTargetFromEnv(env: Env = process.env, opts: ForgeTargetOpti
 
   const fj = kind === "forgejo";
   const read = (name: string): string | undefined => (fj ? pick(`FORGEJO_${name}`, `GITHUB_${name}`) : pick(`GITHUB_${name}`));
-  const repo = read("REPOSITORY");
+  // #5170: in a Prow job, Prow's variables name what GitHub Actions' would; a GITHUB_* one set by the job still wins.
+  const prow = fj ? undefined : prowJobOf(env);
+  const repo = read("REPOSITORY") ?? prow?.repo;
   const server = read("SERVER_URL")?.replace(/\/+$/, "");
   const apiBase = read("API_URL")?.replace(/\/+$/, "") ?? (fj ? (server ? `${server}/api/v1` : undefined) : "https://api.github.com");
   let event: unknown;
@@ -2002,13 +2036,15 @@ export function forgeTargetFromEnv(env: Env = process.env, opts: ForgeTargetOpti
       event = undefined;
     }
   }
-  const { pr, sha: head } = prFromEvent(event, read("REF"));
-  if (!repo) missing.push(fj ? "FORGEJO_REPOSITORY or GITHUB_REPOSITORY" : "GITHUB_REPOSITORY");
+  const fromEvent = prFromEvent(event, read("REF"));
+  const pr = fromEvent.pr ?? prow?.pr;
+  const head = fromEvent.sha;
+  if (!repo) missing.push(fj ? "FORGEJO_REPOSITORY or GITHUB_REPOSITORY" : prow ? PROW_REPO_MISSING : "GITHUB_REPOSITORY");
   if (!apiBase) missing.push("GITHUB_SERVER_URL or GITHUB_API_URL");
-  if (opts.requirePr && !pr) missing.push("a pull request (a pull_request event, or refs/pull/<n>/ in GITHUB_REF)");
+  if (opts.requirePr && !pr) missing.push(`a pull request (a pull_request event, ${prow ? "refs/pull/<n>/ in GITHUB_REF, or PULL_NUMBER from a Prow presubmit" : "or refs/pull/<n>/ in GITHUB_REF"})`);
   if (!token) missing.push(tokenMissing);
   if (missing.length > 0) throw new ForgeEnvironmentError(kind, missing);
-  const sha = head ?? read("SHA");
+  const sha = head ?? read("SHA") ?? prow?.sha;
   const runId = read("RUN_ID");
   const runUrl = server && runId ? `${server}/${repo}/actions/runs/${runId}` : undefined;
   return {

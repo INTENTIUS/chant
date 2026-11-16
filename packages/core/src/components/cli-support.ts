@@ -322,7 +322,11 @@ export async function generateComponentsPipeline(
   if (!plugin?.generateComponentPipeline) {
     return {
       success: false,
-      error: `Lexicon "${lexicon}" does not support generate mode (no generateComponentPipeline). GitLab, GitHub, and Forgejo are supported today.`,
+      // #5170: Prow is a CI system with a lexicon of its own, whose jobs are declared rather than generated from components.
+      error:
+        lexicon === "prow"
+          ? `Lexicon "prow" does not generate a pipeline from components yet. Declare the Prow jobs with @intentius/chant-lexicon-prow and run chant build, or write the job config with its forgeJobConfig, which keys the jobs by the GitHub repository's owner/name.`
+          : `Lexicon "${lexicon}" does not support generate mode (no generateComponentPipeline). GitLab, GitHub, and Forgejo are supported today.`,
     };
   }
 

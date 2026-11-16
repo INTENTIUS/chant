@@ -30,7 +30,9 @@ export function pullRequestBaseFromEnv(kind: ForgeKind, env: Record<string, stri
   }
   const token = env.CHANT_FORGE_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN;
   const api = env.GITHUB_API_URL ?? (kind === "github" ? "https://api.github.com" : undefined);
-  if (!env.GITHUB_REPOSITORY || !token || !api) return undefined;
+  // #5170: a Prow job names its GitHub repository in Prow's own variables, as `prowJobOf` in ./pr-forge.ts reads them.
+  const repo = env.GITHUB_REPOSITORY || (kind === "github" && env.PROW_JOB_ID && env.REPO_OWNER && env.REPO_NAME ? `${env.REPO_OWNER}/${env.REPO_NAME}` : undefined);
+  if (!repo || !token || !api) return undefined;
   const headers: Record<string, string> = kind === "github" ? { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "chant" } : { authorization: `token ${token}`, accept: "application/json" };
-  return (pr) => read(`${api.replace(/\/+$/, "")}/repos/${env.GITHUB_REPOSITORY}/pulls/${pr}`, headers, (b) => (b.base && typeof b.base === "object" ? (b.base as { ref?: unknown }).ref : undefined));
+  return (pr) => read(`${api.replace(/\/+$/, "")}/repos/${repo}/pulls/${pr}`, headers, (b) => (b.base && typeof b.base === "object" ? (b.base as { ref?: unknown }).ref : undefined));
 }

@@ -5,6 +5,7 @@
  * ./live-endpoint.ts use them without bundling the config loader.
  */
 
+import type { CiSystem } from "./ci-system";
 import type { ChantConfig } from "./config";
 
 /**
@@ -25,16 +26,23 @@ import type { ChantConfig } from "./config";
  * `executor` names the forge and the committed workflow that deploys the
  * environment (#4402), so a reader such as behold knows a release there runs
  * through CI rather than a local `chant run`. chant declares and prints it
- * (`chant workspace graph --composites`); it never dispatches it.
+ * (`chant workspace graph --composites`); it never dispatches it. Its `ci`
+ * names the CI system that runs the workflow when that is not the forge's
+ * own, such as `prow` for a GitHub repository (#5170).
  */
 export type EnvironmentDeclaration = string | { name: string; endpoint?: string; canary?: boolean; executor?: EnvironmentExecutor };
 
 /** The forges an environment's executor can name (#4402). */
 export const EXECUTOR_FORGES = ["github", "gitlab", "forgejo"] as const;
 
+/** The CI systems an environment's executor can name (#5170), as `CI_SYSTEMS` in ./ci-system.ts lists them. */
+export const EXECUTOR_CI_SYSTEMS = ["github", "gitlab", "forgejo", "prow"] as const satisfies readonly CiSystem[];
+
 /** The forge workflow that deploys one environment (#4402). */
 export interface EnvironmentExecutor {
   forge: (typeof EXECUTOR_FORGES)[number];
+  /** The CI system that runs `workflow` (#5170). Absent, the forge's own: GitHub Actions, GitLab CI or Forgejo Actions. `prow` runs a GitHub repository's jobs, and `workflow` is then the job config file Prow loads. */
+  ci?: CiSystem;
   /** The committed workflow file the forge runs, such as `deploy-prod.yml` under `.github/workflows/`, or `.gitlab-ci.yml`. */
   workflow: string;
 }
