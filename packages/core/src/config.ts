@@ -187,6 +187,8 @@ export const ChantConfigSchema = z.object({
     verify: z.array(z.union([z.string().min(1), z.object({ name: z.string().min(1).optional(), run: z.string().min(1) }).strict()])).optional(),
     // #5134: tag prefixes of releases cut before members had ledgers, read as a last release by `chant release changed`.
     legacyTags: z.array(z.string().min(1)).optional(),
+    // #5191: what a breaking change does to a 0.x version when the label comes from commits.
+    breakingOnZero: z.enum(["minor", "major"]).optional(),
     // #5150: the tag a cut makes, as a template, and the floating tag a publish moves.
     tag: z.union([z.string().min(1), z.object({ name: z.string().min(1), floating: z.string().min(1).optional() }).strict()]).optional(),
     // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false.
@@ -545,11 +547,20 @@ export interface ChantConfig {
     verify?: import("./lifecycle/publish-verify").ReleaseVerifyDeclaration[];
     /**
      * Tag prefixes of releases cut before members had ledgers (#5134), such as
-     * `release/npm/` and `chant-v`. `chant release changed` reads the newest
-     * `<prefix><version>` tag as a member's last release when its ledger has
-     * no cut.
+     * `release/npm/` and `chant-v`. `chant release changed` and `chant release
+     * next` read the newest `<prefix><version>` tag as a member's last release
+     * when its ledger has no cut (#5200). Read from the member's own config and
+     * from its workspace root's.
      */
     legacyTags?: string[];
+    /**
+     * What a breaking commit does to a 0.x version when `chant release next`
+     * (and `release changed`) take the bump from commits (#5191): `minor`
+     * (the default) bumps minor, and a feature then bumps patch; `major`
+     * makes it 1.0.0. An intent file or a typed level of `major` gives 1.0.0
+     * either way.
+     */
+    breakingOnZero?: "minor" | "major";
     /**
      * The tag `chant release cut` makes (#5150), as a template: `v{version}`,
      * `cli-v{version}`, `{member}/v{version}` or `{path}/v{version}`. The

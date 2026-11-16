@@ -3,18 +3,24 @@
  * since the member's previous release (#5159): `chant release next` prints
  * it, and `chant release cut auto` cuts it.
  *
- * The previous release is found in the member's ledger, never from a tag:
- * the nearest release cut from the commit or an ancestor of it whose label
- * is a semver version without a prerelease part and that is not yanked
- * (#5163: `chant release yank` sets that status in
- * `_releases/release-status.jsonl`). The commits are those
+ * The previous release is found in the member's ledger: the nearest
+ * release cut from the commit or an ancestor of it whose label is a semver
+ * version without a prerelease part and that is not yanked (#5163:
+ * `chant release yank` sets that status in `_releases/release-status.jsonl`).
+ * A member whose ledger has none (a project that just adopted
+ * `chant release`) falls back to its tag history (#5200): the newest tag on
+ * the commit or an ancestor that the member's `release.tag` template or one
+ * of its `release.legacyTags` prefixes makes of a stable version that no
+ * yanked release holds, matched by `tagHistoryRelease`. The commits are those
  * after it, up to the commit, that touch the member's directory (or, for a
  * release member under a nested workspace, the directory of the outer
  * member of its name). Each is classified as {@link changelogBump} does: a
  * `type!:` subject or a `BREAKING CHANGE` footer is a major, `feat` a minor,
- * anything else a patch. The intent files that name the member and that no
- * cut of it consumed (./release-intents.ts) give their own levels, and the
- * bump is the highest of them all.
+ * anything else a patch. On a 0.x version each commit's level drops one
+ * step, a major to a minor and a minor to a patch, unless
+ * `release.breakingOnZero` is `major` (#5191). The intent files that name
+ * the member and that no cut of it consumed (./release-intents.ts) give
+ * their own levels, unshifted, and the bump is the highest of them all.
  *
  * Prereleases (#5166): a prerelease cut since that version whose own
  * version is higher than the bumped one raises it to that version, so
@@ -74,8 +80,8 @@ export interface NextRelease {
   bump: ReleaseBumpLevel | null;
   /** True when `at` already has a labelled release of the member, whose label this is. */
   alreadyCut: boolean;
-  /** The previous release the label follows. */
-  from: { label: string; commit: string };
+  /** The previous release the label follows: a cut in the member's ledger, or a version tag when the ledger has none (#5200), with that tag. */
+  from: { label: string; commit: string; source: "ledger" | "tag"; tag?: string };
   /** The commits after `from` that touch the member, newest first. */
   commits: NextCommit[];
   /** The intent files the release consumes, with their summaries. */
@@ -187,6 +193,31 @@ export async function memberPendingIntents(cwd: string, top: string, commit: str
   }
 }
 
+/**
+ * The commits with their levels as they apply to the version `label`
+ * (#5191): on 0.x, unless `breakingOnZero` is `major`, a major counts as a
+ * minor and a minor as a patch.
+ */
+export function shiftOnZero(commits: NextCommit[], label: string, breakingOnZero: "minor" | "major"): NextCommit[] {
+  const base = parse(label);
+  if (breakingOnZero === "major" || !base || base.core[0] !== 0) return commits;
+  return commits.map((c) => ({ ...c, bump: c.bump === "major" ? "minor" : "patch" }));
+}
+
+/** The tag shapes of the member's earlier releases: its `release.tag` template, then each `release.legacyTags` prefix. */
+async function historyShapes(cwd: string, top: string, legacyTags: readonly string[]): Promise<import("../workspace/release-changed").VersionTagShape[]> {
+  const shapes: import("../workspace/release-changed").VersionTagShape[] = [];
+  try {
+    const t = await import("./release-tag");
+    const mt = await t.memberTags(cwd, { top });
+    shapes.push({ ...t.tagShape(mt.template.name, mt.place), render: (l) => t.renderReleaseTag(mt.template, mt.place, l) });
+  } catch {
+    // A config that can't be read, or a template refused here, is refused by the cut; the legacy prefixes still count.
+  }
+  for (const prefix of legacyTags) shapes.push({ prefix, suffix: "" });
+  return shapes;
+}
+
 /** Read the next label of the member at `cwd`, at `at` (default `HEAD`). */
 export async function nextRelease(req: { cwd: string; at?: string; pre?: string }): Promise<NextRelease> {
   if (req.pre !== undefined && !PRE_ID.test(req.pre)) {
@@ -202,7 +233,7 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
   const { ancestorReleases } = await import("./release-cut");
   const { readCuts } = await import("./release-store");
   const { resolveMemberLedger } = await import("./member-ledger");
-  const { memberSourcePath } = await import("../workspace/release-changed");
+  const { memberSourcePath, memberReleaseSettings, tagHistoryRelease } = await import("../workspace/release-changed");
   const ledger = await resolveMemberLedger(req.cwd);
   const names = ledger.members.length > 0 ? [ledger.members.at(-1)!, ledger.members.join("/")] : [];
   const { cuts } = await readCuts({ cwd: req.cwd });
@@ -214,35 +245,46 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
   const yanked = (a: { release: { releaseDigest: string } }) => statusOf(statusRecords, component, a.release.releaseDigest).status === "yanked";
   const here = ancestors.find((a) => a.release.commit === at && a.label !== null);
   const stableAt = ancestors.findIndex((a) => a.release.commit !== at && a.label !== null && parse(a.label)?.pre === null && !yanked(a));
-  const stable = stableAt >= 0 ? ancestors[stableAt]! : null;
+  const settings = await memberReleaseSettings(req.cwd);
+  let stable: NextRelease["from"] | null = stableAt >= 0 ? { label: ancestors[stableAt]!.label!, commit: ancestors[stableAt]!.release.commit, source: "ledger" } : null;
+  // #5200: a member whose ledger has no stable release reads its tag history,
+  // passing over the tag of a release the ledger holds as yanked.
+  if (!stable && !here) {
+    const yankedVersions = ancestors.filter((a) => a.label !== null && yanked(a)).map((a) => a.label!.replace(/^v/, ""));
+    const hit = tagHistoryRelease(top, await historyShapes(req.cwd, top, settings.legacyTags), { at, stable: true, skip: yankedVersions });
+    if (hit) stable = { label: hit.label!, commit: hit.commit, source: "tag", tag: hit.tag };
+  }
 
   const intents = await memberPendingIntents(req.cwd, top, at, names, cuts);
   const path = relative(realpathSync(top), realpathOr(memberSourcePath(req.cwd))).split("\\").join("/");
-  const commits = stable ? commitsTouching(top, stable.release.commit, at, path) : [];
+  const commits = stable ? shiftOnZero(commitsTouching(top, stable.commit, at, path), stable.label, settings.breakingOnZero) : [];
 
   if (here) {
-    return { label: here.label!, at, bump: null, alreadyCut: true, from: stable ? { label: stable.label!, commit: stable.release.commit } : { label: here.label!, commit: at }, commits, intents: [] };
+    return { label: here.label!, at, bump: null, alreadyCut: true, from: stable ?? { label: here.label!, commit: at, source: "ledger" }, commits, intents: [] };
   }
   if (!stable) {
     const pre = ancestors.find((a) => a.label !== null && parse(a.label) !== null);
     throw new ReleaseNextError(
       "release-next-no-previous",
-      pre ? `the member has no release with a version label before ${at.slice(0, 12)}, only the prerelease ${pre.label}, so there is no version to bump` : `the member has no release with a version label before ${at.slice(0, 12)}, so there is no version to bump`,
-      "Cut the first release with the label you choose, such as: chant release cut 1.0.0",
+      pre
+        ? `the member has no release with a version label before ${at.slice(0, 12)}, only the prerelease ${pre.label}, and no version tag its release.tag or release.legacyTags matches, so there is no version to bump`
+        : `the member has no release with a version label before ${at.slice(0, 12)}, and no version tag its release.tag or release.legacyTags matches, so there is no version to bump`,
+      "Cut the first release with the label you choose, such as: chant release cut 1.0.0. If earlier releases were tagged by hand, name their tag prefix in release.legacyTags.",
     );
   }
-  // The prerelease labels cut since the stable one.
-  const since = ancestors.slice(0, stableAt).map((a) => a.label).filter((l): l is string => l !== null);
+  // The prerelease labels cut since the stable one: all the ledger holds when the previous release is a tag.
+  const since = (stable.source === "ledger" ? ancestors.slice(0, stableAt) : ancestors).map((a) => a.label).filter((l): l is string => l !== null);
   const bump = maxBump(commitsBump(commits), intents.reduce<ReleaseBumpLevel | null>((b, i) => maxBump(b, i.bump), null));
   if (bump === null && !since.some((l) => parse(l)?.pre !== null)) {
     throw new ReleaseNextError(
       "release-next-unchanged",
-      `no commit since ${stable.label} (${stable.release.commit.slice(0, 12)}) touches ${path || "the repository"}, and no intent file names the member, so there is nothing to release`,
+      `no commit since ${stable.label} (${stable.commit.slice(0, 12)}) touches ${path || "the repository"}, and no intent file names the member, so there is nothing to release`,
       "Cut with a label you choose if this commit should still be released.",
     );
   }
   const labels = cuts.map((c) => c.label).filter((l): l is string => l !== null);
-  const passed = ancestors.slice(0, stableAt).filter((a) => a.label !== null && yanked(a)).map((a) => a.label!);
-  const label = nextLabel({ stable: stable.label!, bump, since, labels, yanked: passed, ...(req.pre !== undefined ? { pre: req.pre } : {}) });
-  return { label, at, bump, alreadyCut: false, from: { label: stable.label!, commit: stable.release.commit }, commits, intents };
+  // #5163: the yanked releases passed over; with a tag as the previous release, every yanked one the ledger holds.
+  const passed = (stable.source === "ledger" ? ancestors.slice(0, stableAt) : ancestors).filter((a) => a.label !== null && yanked(a)).map((a) => a.label!);
+  const label = nextLabel({ stable: stable.label, bump, since, labels, yanked: passed, ...(req.pre !== undefined ? { pre: req.pre } : {}) });
+  return { label, at, bump, alreadyCut: false, from: stable, commits, intents };
 }

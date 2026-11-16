@@ -97,18 +97,21 @@ export async function runReleaseInit(ctx: CommandContext): Promise<number> {
   const configName = configPath === tsPath ? "chant.config.ts" : "chant.config.json";
   const created = !existsSync(configPath);
   const gr = plan.goreleaserPatch;
-  // The first label: a patch after the newest tag, else 0.1.0. `auto` reads
-  // the bump from the previous chant release (#5159), and the first has none.
+  // The first label: `auto` when release next reads the previous release
+  // from the tag history (#5200), else a patch after the newest tag, else 0.1.0.
   const newest = facts.tags.newest ? /(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(facts.tags.newest) : null;
-  const label = newest ? `${newest[1]}.${newest[2]}.${Number(newest[3]) + 1}` : "0.1.0";
+  const label = plan.readsHistory ? "auto" : newest ? `${newest[1]}.${newest[2]}.${Number(newest[3]) + 1}` : "0.1.0";
+  const wf = plan.workflowFile.split("/").pop();
   const next = [
     ...(write ? [] : ["chant release init --yes"]),
     `git add ${configName} ${plan.workflowFile}${gr?.append ? ` ${gr.file}` : ""} && git commit -m "ci: release with chant" && git push`,
     // #5161: what the registries say of the targets, once their setup is done.
     "chant release doctor",
-    facts.workflowForge === "github" ? `gh workflow run ${plan.workflowFile.split("/").pop()} -f label=${label}` : `start ${plan.workflowFile} by hand with the label ${label}`,
     facts.workflowForge === "github"
-      ? `# each later release: gh workflow run ${plan.workflowFile.split("/").pop()} -f label=auto (the label from the commits since the previous release)`
+      ? `gh workflow run ${wf} -f label=${label}${plan.readsHistory ? `  # the label from the commits since ${facts.tags.newest}` : ""}`
+      : `start ${plan.workflowFile} by hand with the label ${label}${plan.readsHistory ? ` (the label from the commits since ${facts.tags.newest})` : ""}`,
+    facts.workflowForge === "github"
+      ? `# each later release: gh workflow run ${wf} -f label=auto (the label from the commits since the previous release)`
       : `# each later release: start ${plan.workflowFile} with the label auto (the label from the commits since the previous release)`,
   ];
 

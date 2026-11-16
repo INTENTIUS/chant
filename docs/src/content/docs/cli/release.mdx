@@ -54,7 +54,7 @@ What it reads, from the directory it runs in, and what each sets:
 
 | Found | Sets |
 |---|---|
-| The repository's tags | `release.tag`: the prefix most version tags share, such as `v{version}` for `v1.2.0` or `cli-v{version}` for `cli-v0.4.1`; `v{version}` when no tag names a version, or `{path}/v{version}` for a Go module in a subdirectory. A release of more than one package keeps `v{version}` unless its tags are `v<version>` already. `release.legacyTags` lists the prefixes the existing tags use, so [`release changed`](#release-changed) reads them as earlier releases |
+| The repository's tags | `release.tag`: the prefix most version tags share, such as `v{version}` for `v1.2.0` or `cli-v{version}` for `cli-v0.4.1`; `v{version}` when no tag names a version, or `{path}/v{version}` for a Go module in a subdirectory. A release of more than one package keeps `v{version}` unless its tags are `v<version>` already. `release.legacyTags` lists the prefixes the existing tags use, so [`release next`](#release-next) and [`release changed`](#release-changed) read them as earlier releases |
 | `ci.green` in `chant.workspace.json`, or `ci/green/` tags | `release.green: "chant"`; otherwise `"forge-checks"`. A repository with no CI workflow is told that a cut refuses a commit with no checks |
 | `package.json`, with npm `workspaces` (a list or `{ packages }`) or `pnpm-workspace.yaml` | An `npm` target for every package not marked `private`, in dependency order, with `access: "public"` when a scoped package has no `publishConfig.access`. `release.version` stamps the same packages, with `ranges: "exact"` when one depends on another |
 | `engines.vscode` in a `package.json` | `marketplace` targets for the VS Code Marketplace and Open VSX (trusted publishing) from `dist/<name>.vsix`, and `VSCE_PAT` from the repository's secrets in `release.workflow.env` |
@@ -66,7 +66,7 @@ What it reads, from the directory it runs in, and what each sets:
 
 A project with no `chant.config.ts` gets one holding the block alone. One that has a config gets the block added to the object its default export names: `export default { ... }`, `export default defineConfig({ ... })`, or `export default config` with `const config = { ... }`. A `chant.config.json` is rewritten with the block added. A config that already has a `release` block is refused with `release-init-release-exists` unless `--force`, and one whose default export is not an object literal with `release-init-config-unreadable`; both print the block to add by hand. A release workflow file that chant did not generate is refused with `release-init-workflow-exists` unless `--force`.
 
-The output ends with the steps to take by hand, such as an npm trusted publisher that names the workflow file (`chant-release.yml`) with npm dist-tag allowed, the Open VSX trusted publisher, `VSCE_PAT`, a GHCR package's visibility, and on GitLab the include and `CHANT_RELEASE_TOKEN`. Then it prints the commands to commit and push, to run [`release doctor`](#release-doctor) once those steps are done, and to start the first release with a label: a patch after the newest version tag, or `0.1.0`. Each later release can be started with the label `auto` (`gh workflow run chant-release.yml -f label=auto`), which takes the label from the commits since the previous release with [`release next`](#release-next); the first release has no previous chant release to bump from. The dispatched workflow runs `release doctor` in its cut job too, before the cut.
+The output ends with the steps to take by hand, such as an npm trusted publisher that names the workflow file (`chant-release.yml`) with npm dist-tag allowed, the Open VSX trusted publisher, `VSCE_PAT`, a GHCR package's visibility, and on GitLab the include and `CHANT_RELEASE_TOKEN`. Then it prints the commands to commit and push, to run [`release doctor`](#release-doctor) once those steps are done, and to start the first release. When the repository has version tags that `release.tag` or `release.legacyTags` matches, that is the label `auto` (`gh workflow run chant-release.yml -f label=auto`), which takes the label from the commits since the newest of those tags with [`release next`](#release-next). Otherwise it is a label: a patch after the newest version tag, or `0.1.0`. Each later release can be started with `auto`, which then reads the previous release from chant's ledger. The dispatched workflow runs `release doctor` in its cut job too, before the cut.
 
 ## release cut
 
@@ -1046,7 +1046,29 @@ chant release next          # 1.5.0
 chant release cut auto --yes
 ```
 
-The previous release is found in the member's ledger, never from a tag: the release cut from the nearest ancestor of the commit whose label is a version without a prerelease part and that is not [yanked](#release-deprecate-yank-and-restore). The commits counted are the ones after it that touch the member's directory, merges left out. A release member that sits in a nested workspace, such as `release/core` beside a package at `packages/core`, counts the directory of the outer workspace's member of its name, as `release changed` maps paths. Each commit gives a level: a `type!:` subject or a `BREAKING CHANGE:` footer a major, `feat` a minor, anything else a patch. The pending intent files give theirs, and the highest of all is applied to the previous label. A label with a leading `v` gives labels with one, and a `0.x` version becomes `1.0.0` on a breaking change.
+The previous release is the release in the member's ledger cut from the nearest ancestor of the commit whose label is a version without a prerelease part and that is not [yanked](#release-deprecate-yank-and-restore). A member whose ledger has none, such as a project that has just set up `chant release` and has releases tagged before it, reads its tag history instead: the newest tag on the commit or an ancestor of it that its [`release.tag`](#the-releases-tag) template, or one of its `release.legacyTags` prefixes, makes of a version without a prerelease part, other than a version the ledger holds as yanked. With `tag: "v{version}"` and the tags `v1.1.0`, `v1.2.0` and `v1.3.0-rc.1`, the previous release is `1.2.0`. Tags on other branches, and tags neither the template nor a prefix makes, don't count. `legacyTags` is read from the member's own `chant.config.ts` and from its workspace root's, and a project that is no workspace member reads its own. Once the ledger holds a release, the tags are no longer read.
+
+```bash
+chant release next          # 1.3.0
+                            #   minor from 1.2.0 (the tag v1.2.0, 8e41a07c55d2): 6 commits
+```
+
+The commits counted are the ones after it that touch the member's directory, merges left out. A release member that sits in a nested workspace, such as `release/core` beside a package at `packages/core`, counts the directory of the outer workspace's member of its name, as `release changed` maps paths. Each commit gives a level: a `type!:` subject or a `BREAKING CHANGE:` footer a major, `feat` a minor, anything else a patch. The pending intent files give theirs, and the highest of all is applied to the previous label. A label with a leading `v` gives labels with one.
+
+On a `0.x` version a commit's level drops one step: a breaking change bumps minor and a feature bumps patch, so `0.4.1` with a `feat!:` commit is followed by `0.5.0`, and with a `feat:` commit by `0.4.2`. A `0.x` project moves to `1.0.0` by choice, with an intent file that gives the member `major`, or a typed level such as `release changed --bump-member core=major`. `release.breakingOnZero` sets this:
+
+```ts
+release: {
+  breakingOnZero: "major",   // a breaking commit on 0.x gives 1.0.0, and a feature a minor
+},
+```
+
+| `breakingOnZero` | A breaking commit on `0.x` | A feature on `0.x` |
+|---|---|---|
+| `"minor"` (default) | minor | patch |
+| `"major"` | `1.0.0` | minor |
+
+A member reads its own `breakingOnZero`, else its workspace root's. Versions from `1.0.0` on are not affected.
 
 Prereleases cut since the previous release count too. When one has a higher version than the bumped one, the next label is that version, so `2.0.0-rc.1` is followed by `2.0.0` even when only fixes landed after it. With `--pre <id>` the label is a prerelease of the computed version, `<version>-<id>.<n>`, with `n` one past the highest that version and id have in the member's ledger: `1.5.0-rc.0`, then `1.5.0-rc.1`.
 
@@ -1056,14 +1078,14 @@ A commit the member already has a labelled release of answers that label (`alrea
 
 | Code | When |
 |---|---|
-| `release-next-no-previous` | The member has no release with a version label before the commit. Cut the first release with the label you choose |
+| `release-next-no-previous` | The member has no release with a version label before the commit, and no version tag that `release.tag` or `release.legacyTags` matches. Cut the first release with the label you choose, or name the prefix of the earlier tags in `release.legacyTags` |
 | `release-next-unchanged` | No commit since the previous release touches the member, and no intent file names it |
 | `release-next-pre-invalid` | `--pre` is not a letter followed by letters, digits and `-` |
 | `release-next-history-shallow` | The clone is shallow, so the commits since the previous release can't be listed |
 | `release-intent-invalid` | An intent file can't be read |
 | `not-a-git-repository`, `revision-unknown` | No git repository here, or `--at` names no commit |
 
-`--json` prints `{ label, at, bump, alreadyCut, from: { label, commit }, commits: [{ sha, subject, bump }], intents: [{ path, added, bump, summary }], tag }`, where `tag` is the one `release.tag` gives the label, or `{ error: { code, message, fix } }` with exit 1.
+`--json` prints `{ label, at, bump, alreadyCut, from: { label, commit, source, tag }, commits: [{ sha, subject, bump }], intents: [{ path, added, bump, summary }], tag }`, where `from.source` is `ledger` or `tag` (with `from.tag` the tag read), each commit's `bump` is its level after the `0.x` step, and `tag` is the one `release.tag` gives the label, or `{ error: { code, message, fix } }` with exit 1.
 
 ### Intent files
 
@@ -1091,14 +1113,14 @@ chant release changed [--at <sha>] [--bump-member <member>=major|minor|patch]...
 
 Run in the root of a workspace whose `chant` members are released separately, it lists the members a release at a commit has to cut, in the order to publish them. `--at` names the commit; without it the tip of trunk is read, as [`release candidates`](#release-candidates) walks it.
 
-For each `chant` member the command finds its last release: the newest cut in the member's ledger, else the newest legacy tag. Legacy tags are the prefixes `release.legacyTags` names in the workspace root's `chant.config.ts`, each followed by a version: with `legacyTags: ["release/npm/", "chant-v"]`, `release/npm/0.124.44` and `chant-v0.124.44` count, and `release/npm/core/0.125.0` does not. It lists the paths changed from that commit to `--at` and maps each to the member of the outermost workspace that holds it. That member has the release member's name. Paths that `changes.ignore` matches and generated files count for nothing. A member with paths left, or with no release yet, is `paths-changed`.
+For each `chant` member the command finds its last release: the newest cut in the member's ledger, else the newest legacy tag. Legacy tags are the prefixes `release.legacyTags` names in the workspace root's `chant.config.ts` or in the member's own, each followed by a version: with `legacyTags: ["release/npm/", "chant-v"]`, `release/npm/0.124.44` and `chant-v0.124.44` count, and `release/npm/core/0.125.0` does not. It lists the paths changed from that commit to `--at` and maps each to the member of the outermost workspace that holds it. That member has the release member's name. Paths that `changes.ignore` matches and generated files count for nothing. A member with paths left, or with no release yet, is `paths-changed`.
 
 Dependencies then pull in more members, until nothing changes. The edges are the `dependencies`, `peerDependencies` and `optionalDependencies` of each member's `package.json` at the commit.
 
 - A member of the release also releases each workspace dependency of it, direct or transitive, that has changes since its own last release (`needed-by <member>`; a changed member no other member needs keeps `paths-changed`).
 - A dependent is added when the range its last release's `package.json` gives a dependency does not admit that dependency's next label (`range-broken-by <member>`). Under `^0.124.34`, a patch of the dependency forces nothing and a minor forces the dependent.
 
-A member that an [intent file](#intent-files) names, which no cut of it consumed, is in the release too (`intent-pending`), when no path of its own changed. Its next label is the last label bumped by the highest of its commits over the changed paths, classified as [`release next`](#release-next) does, and its pending intent files, a patch when neither gives one. `--bump-member` sets a member's level outright.
+A member that an [intent file](#intent-files) names, which no cut of it consumed, is in the release too (`intent-pending`), when no path of its own changed. Its next label is the last label bumped by the highest of its commits over the changed paths, classified as [`release next`](#release-next) does (with the same step down on `0.x` under `release.breakingOnZero`), and its pending intent files, a patch when neither gives one. `--bump-member` sets a member's level outright.
 
 ```
 chant release changed --bump-member core=minor

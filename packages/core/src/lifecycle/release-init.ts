@@ -372,6 +372,13 @@ export interface ReleaseInitPlan {
   workflowFile: string;
   /** Lines to add to the goreleaser config, when it lacks them. */
   goreleaserPatch: { file: string; append: string | null; manual: string | null } | null;
+  /**
+   * True when the existing version tags are ones `release.tag` or
+   * `release.legacyTags` matches, so `chant release next` reads the newest
+   * as the previous release and the first release can take the label `auto`
+   * (#5200).
+   */
+  readsHistory: boolean;
 }
 
 /** What the plan needs besides the facts. */
@@ -472,7 +479,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   if (tag.note) notes.push(tag.note);
   if (tag.legacy.length > 0) {
     release.legacyTags = tag.legacy;
-    reasons.push(`release.legacyTags ${JSON.stringify(tag.legacy)}: chant release changed reads the newest ${tag.legacy.map((p) => `${p}<version>`).join(" or ")} tag as the last release`);
+    reasons.push(`release.legacyTags ${JSON.stringify(tag.legacy)}: chant release next and release changed read the newest ${tag.legacy.map((p) => `${p}<version>`).join(" or ")} tag as the last release until chant has cut one`);
   }
   const unread = [facts.tags.prefix, ...facts.tags.others.map((o) => o.prefix)].filter((p): p is string => p !== null && p !== "" && !templatePrefix(p));
   if (unread.length > 0) notes.push(`Tags that no release.tag can make are left as they are: ${unread.slice(0, 5).map((p) => `${p}<version>`).join(", ")}.`);
@@ -586,7 +593,9 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
 
-  return { release, reasons, notes, registry, workflowFile, goreleaserPatch };
+  const h = facts.tags.prefix;
+  const readsHistory = h !== null && (tag.legacy.includes(h) || tag.template === `${h}{version}`);
+  return { release, reasons, notes, registry, workflowFile, goreleaserPatch, readsHistory };
 }
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;

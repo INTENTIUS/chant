@@ -200,4 +200,78 @@ describe("nextRelease", () => {
     expect(r.label).toBe("1.0.1");
     expect(r.commits.map((c) => c.subject)).toEqual(["fix: an api fix"]);
   });
+
+  test("#5200: with no release in the ledger, the newest stable version tag of release.tag on an ancestor is the previous release", async () => {
+    const dir = repo();
+    writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ release: { tag: "v{version}" } }));
+    const old = commit(dir, "feat: start", { "src/a.ts": "1" });
+    git(dir, "tag", "v1.1.0", old);
+    const tagged = commit(dir, "fix: last hand release", { "src/a.ts": "2" });
+    git(dir, "tag", "-a", "-m", "1.2.0", "v1.2.0", tagged);
+    // A prerelease, a tag the template doesn't make, and a tag off the branch don't count.
+    const rc = commit(dir, "feat: a feature", { "src/a.ts": "3" });
+    git(dir, "tag", "v1.3.0-rc.1", rc);
+    git(dir, "tag", "v1.9.0x", rc);
+    git(dir, "checkout", "-q", "-b", "side");
+    git(dir, "tag", "v7.0.0", commit(dir, "fix: side", { "src/b.ts": "1" }));
+    git(dir, "checkout", "-q", "main");
+    const head = commit(dir, "fix: after", { "src/a.ts": "4" });
+
+    const r = await nextRelease({ cwd: dir });
+    expect(r).toMatchObject({ label: "1.3.0", at: head, bump: "minor", from: { label: "1.2.0", commit: tagged, source: "tag", tag: "v1.2.0" } });
+    expect(r.commits.map((c) => c.subject)).toEqual(["fix: after", "feat: a feature"]);
+
+    // Intent files still apply.
+    commit(dir, "chore: plan", { ".chant/release/big.md": "---\n'*': major\n---\nA new config.\n" });
+    expect((await nextRelease({ cwd: dir })).label).toBe("2.0.0");
+
+    // Once the ledger holds a release, it is the previous one.
+    await cut(dir, head, "1.3.0");
+    commit(dir, "fix: ledger", { "src/a.ts": "5" });
+    expect((await nextRelease({ cwd: dir })).from).toMatchObject({ label: "1.3.0", commit: head, source: "ledger" });
+  });
+
+  test("#5200 with #5163: when the ledger's only stable release is yanked, the tag history gives the previous release, its tag passed over, and the label goes past it", async () => {
+    const dir = repo();
+    writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ release: { tag: "v{version}" } }));
+    const hand = commit(dir, "feat: start", { "src/a.ts": "1" });
+    git(dir, "tag", "v1.1.0", hand);
+    const feat = commit(dir, "feat: stream", { "src/a.ts": "2" });
+    const digest = await cut(dir, feat, "1.2.0");
+    git(dir, "tag", "v1.2.0", feat);
+    await appendReleaseStatus({ component: ".", env: "_releases", digest, releaseVersion: "1.2.0", status: "yanked", actor: "ci", timestamp: "2026-11-09T00:00:00.000Z" }, { cwd: dir });
+    commit(dir, "fix: close the stream", { "src/a.ts": "3" });
+
+    const r = await nextRelease({ cwd: dir });
+    expect(r).toMatchObject({ label: "1.2.1", bump: "minor", from: { label: "1.1.0", commit: hand, source: "tag", tag: "v1.1.0" } });
+    expect(r.commits.map((c) => c.subject)).toEqual(["fix: close the stream", "feat: stream"]);
+  });
+
+  test("#5200: release.legacyTags counts in a single-project repository", async () => {
+    const dir = repo();
+    const first = commit(dir, "feat: start", { "src/a.ts": "1" });
+    git(dir, "tag", "cli-v0.4.1", first);
+    commit(dir, "fix: x", { "src/a.ts": "2" });
+    const code = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => (e instanceof ReleaseNextError ? e.code : e));
+    expect(await code(nextRelease({ cwd: dir }))).toBe("release-next-no-previous");
+    writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ release: { legacyTags: ["cli-v"] } }));
+    expect(await nextRelease({ cwd: dir })).toMatchObject({ label: "0.4.2", from: { label: "0.4.1", commit: first, source: "tag", tag: "cli-v0.4.1" } });
+  });
+
+  test("#5191: on 0.x a breaking commit bumps minor and a feature patch, unless breakingOnZero is major; a major intent gives 1.0.0", async () => {
+    const dir = repo();
+    const first = commit(dir, "feat: start", { "src/a.ts": "1" });
+    await cut(dir, first, "0.4.1");
+    commit(dir, "feat: a feature", { "src/a.ts": "2" });
+    const feat = await nextRelease({ cwd: dir });
+    expect(feat).toMatchObject({ label: "0.4.2", bump: "patch" });
+    expect(feat.commits.map((c) => c.bump)).toEqual(["patch"]);
+    commit(dir, "feat!: rename the key", { "src/a.ts": "3" });
+    expect(await nextRelease({ cwd: dir })).toMatchObject({ label: "0.5.0", bump: "minor" });
+    writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ release: { breakingOnZero: "major" } }));
+    expect(await nextRelease({ cwd: dir })).toMatchObject({ label: "1.0.0", bump: "major" });
+    writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ release: {} }));
+    commit(dir, "chore: plan 1.0", { ".chant/release/one.md": "---\n'*': major\n---\nStable.\n" });
+    expect((await nextRelease({ cwd: dir })).label).toBe("1.0.0");
+  });
 });

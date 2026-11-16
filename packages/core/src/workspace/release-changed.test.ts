@@ -170,10 +170,17 @@ describe("chant release changed (#5134)", () => {
       expectValid(doc);
       if (!("members" in doc)) throw new Error(JSON.stringify(doc));
       expect(doc.members.map((m) => [m.member, m.reason.code, m.reason.member, m.bump, m.bumpFrom, m.next, m.intents])).toEqual([
-        ["core", "needed-by", "lexicon-aws", "minor", "commits", "0.125.0", []],
+        // #5191: on 0.x a feature bumps patch.
+        ["core", "needed-by", "lexicon-aws", "patch", "commits", "0.124.45", []],
         ["lexicon-aws", "paths-changed", null, "patch", "commits", "0.124.45", []],
         ["lexicon-k8s", "intent-pending", null, "patch", "intents", "0.124.45", [".chant/release/k8s.md"]],
       ]);
+      // breakingOnZero "major" in the root's config: a feature bumps minor, as on 1.x.
+      put(dir, { "release/chant.config.json": JSON.stringify({ release: { legacyTags: ["release/npm/", "chant-v"], breakingOnZero: "major" } }) });
+      const strict = await releaseChangedDocument({ cwd: join(dir, "release") });
+      if (!("members" in strict)) throw new Error(JSON.stringify(strict));
+      expect(strict.members.find((m) => m.member === "core")).toMatchObject({ bump: "minor", bumpFrom: "commits", next: "0.125.0" });
+      put(dir, { "release/chant.config.json": JSON.stringify({ release: { legacyTags: ["release/npm/", "chant-v"] } }) });
       const flagged = await releaseChangedDocument({ cwd: join(dir, "release"), bump: ["core=patch"] });
       if (!("members" in flagged)) throw new Error("no members");
       expect(flagged.members.find((m) => m.member === "core")).toMatchObject({ bump: "patch", bumpFrom: "flag", next: "0.124.45" });
@@ -182,6 +189,19 @@ describe("chant release changed (#5134)", () => {
       const bad = await releaseChangedDocument({ cwd: join(dir, "release") });
       expectValid(bad);
       expect("error" in bad && bad.error.code).toBe("intent-invalid");
+    });
+  });
+
+  test("#5200: a member's own legacyTags count beside the root's", async () => {
+    await withTestDir(async (dir) => {
+      repo(dir);
+      const at = commit(dir, "chore: k8s config", { "release/lexicon-k8s/chant.config.json": JSON.stringify({ release: { legacyTags: ["k8s-v"] } }) });
+      git(dir, "tag", "k8s-v0.130.2", at);
+      commit(dir, "fix: k8s and core", { "lexicons/k8s/src/index.ts": "export const k = 1;\n", "packages/core/src/index.ts": "export const c = 1;\n" });
+      const doc = await releaseChangedDocument({ cwd: join(dir, "release"), at: "HEAD" });
+      if (!("members" in doc)) throw new Error(JSON.stringify(doc));
+      expect(doc.members.find((m) => m.member === "lexicon-k8s")?.last).toMatchObject({ label: "0.130.2", source: "legacy" });
+      expect(doc.members.find((m) => m.member === "core")?.last).toMatchObject({ label: "0.124.44", source: "legacy" });
     });
   });
 

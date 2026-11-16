@@ -11,8 +11,9 @@
  *
  * For each `chant` member it finds the commit of its last release: the newest
  * cut in the member's ledger, else the newest legacy tag, one of the
- * `release.legacyTags` prefixes of the root's `chant.config.ts` followed by a
- * version (`release/npm/0.124.44`, `chant-v0.124.44`). It then lists the
+ * `release.legacyTags` prefixes of the root's `chant.config.ts` or the
+ * member's own followed by a version (`release/npm/0.124.44`,
+ * `chant-v0.124.44`). It then lists the
  * paths changed from there to the commit, takes the outer member that holds
  * each (`memberHolding`, the outermost workspace's members, one of which has
  * the member's own name), and drops the paths `changes.ignore` matches and
@@ -343,31 +344,118 @@ async function ledgerRelease(memberDir: string): Promise<{ last: LastRelease | n
   return { last: best ? { label: best.label, commit: best.commit, source: "ledger" } : null, cuts };
 }
 
-/** The newest legacy tag of `prefixes` that names a version, as a release, or null. */
-function legacyRelease(top: string, prefixes: readonly string[]): LastRelease | null {
-  let best: { v: Version; label: string; tag: string } | null = null;
-  for (const prefix of prefixes) {
-    const tags = tryGit(top, ["tag", "-l", `${prefix}[0-9]*`]) ?? "";
-    for (const tag of tags.split("\n").filter(Boolean)) {
-      const rest = tag.slice(prefix.length);
-      const v = parseVersion(rest);
-      // `release/npm/core/0.125.0` is a member's tag, not a legacy one: a version has no slash.
-      if (!v || rest.includes("/")) continue;
-      if (!best || compare(v, best.v) > 0) best = { v, label: rest.replace(/^v/, ""), tag };
-    }
-  }
-  if (!best) return null;
-  const commit = tryGit(top, ["rev-list", "-n", "1", best.tag]);
-  return commit ? { label: best.label, commit, source: "legacy" } : null;
+/**
+ * A shape the version tags of earlier releases take: the literal before and
+ * after the version. A `release.legacyTags` prefix is a shape with no
+ * suffix; a `release.tag` template gives one through `tagShape`, with
+ * `render`, the tag a label gets, so a match is confirmed by rendering it
+ * back (#5200).
+ */
+export interface VersionTagShape {
+  prefix: string;
+  suffix: string;
+  render?: (label: string) => string;
 }
 
-async function legacyPrefixes(root: string): Promise<string[]> {
+/**
+ * The newest tag of `shapes` that names a version, as a release, or null.
+ * The version between prefix and suffix holds no `/`: `release/npm/core/0.125.0`
+ * is a member's tag, not one of the prefix `release/`. The label drops a
+ * leading `v`, unless the shape's `render` only gives the tag back with it.
+ * With `at`, only a tag on that commit or an ancestor of it counts; with
+ * `stable`, only a version with no prerelease part; with `skip`, no
+ * version it lists (written without a leading `v`).
+ */
+export function tagHistoryRelease(top: string, shapes: readonly VersionTagShape[], opts: { at?: string; stable?: boolean; skip?: readonly string[] } = {}): (LastRelease & { tag: string }) | null {
+  const found: Array<{ v: Version; label: string; tag: string }> = [];
+  for (const shape of shapes) {
+    const tags = tryGit(top, ["tag", "-l", `${shape.prefix}*${shape.suffix}`]) ?? "";
+    for (const tag of tags.split("\n").filter(Boolean)) {
+      if (!tag.startsWith(shape.prefix) || !tag.endsWith(shape.suffix) || tag.length <= shape.prefix.length + shape.suffix.length) continue;
+      const rest = tag.slice(shape.prefix.length, tag.length - shape.suffix.length);
+      const v = parseVersion(rest);
+      if (!v || rest.includes("/") || !/^v?\d/.test(rest)) continue;
+      if (opts.stable && /[-+]/.test(rest)) continue;
+      if (opts.skip?.includes(rest.replace(/^v/, ""))) continue;
+      const label = [rest.replace(/^v/, ""), rest].find((l) => {
+        if (!shape.render) return true;
+        try {
+          return shape.render(l) === tag;
+        } catch {
+          return false;
+        }
+      });
+      if (label !== undefined) found.push({ v, label, tag });
+    }
+  }
+  found.sort((a, b) => compare(b.v, a.v));
+  for (const best of found) {
+    const commit = tryGit(top, ["rev-list", "-n", "1", best.tag]);
+    if (!commit) continue;
+    if (opts.at !== undefined && commit !== opts.at && tryGit(top, ["merge-base", "--is-ancestor", commit, opts.at]) === null) continue;
+    return { label: best.label, commit, source: "legacy", tag: best.tag };
+  }
+  return null;
+}
+
+/** The newest legacy tag of `prefixes` that names a version, as a release, or null. */
+function legacyRelease(top: string, prefixes: readonly string[]): LastRelease | null {
+  const hit = tagHistoryRelease(top, prefixes.map((prefix) => ({ prefix, suffix: "" })));
+  return hit ? { label: hit.label, commit: hit.commit, source: hit.source } : null;
+}
+
+/** The `release` settings of the `chant.config.ts` (or `.json`) in `dir` that pick a next label; empty when it has none or can't be read. */
+export async function releaseSettingsAt(dir: string): Promise<{ legacyTags: string[]; breakingOnZero?: "minor" | "major" }> {
+  if (!existsSync(join(dir, "chant.config.ts")) && !existsSync(join(dir, "chant.config.json"))) return { legacyTags: [] };
   try {
     const { loadChantConfig } = await import("../config");
-    return [...((await loadChantConfig(root)).config.release?.legacyTags ?? [])];
+    const release = (await loadChantConfig(dir)).config.release;
+    return { legacyTags: [...(release?.legacyTags ?? [])], ...(release?.breakingOnZero ? { breakingOnZero: release.breakingOnZero } : {}) };
   } catch {
-    return [];
+    return { legacyTags: [] };
   }
+}
+
+/**
+ * The settings for the member at `memberDir` (#5200, #5191): its own
+ * `release.legacyTags` with those of the workspace root it sits in, and its
+ * own `release.breakingOnZero`, else the root's. A project with no
+ * workspace reads its own config alone.
+ */
+export async function memberReleaseSettings(memberDir: string, root?: { dir: string; settings: Awaited<ReturnType<typeof releaseSettingsAt>> }): Promise<{ legacyTags: string[]; breakingOnZero: "minor" | "major" }> {
+  const own = await releaseSettingsAt(memberDir);
+  let outer = root;
+  if (outer === undefined) {
+    const found = findWorkspaceRoot(memberDir);
+    if (found && resolve(found.dir) !== resolve(memberDir)) outer = { dir: found.dir, settings: await releaseSettingsAt(found.dir) };
+  }
+  const same = outer !== undefined && realpathOr(outer.dir) === realpathOr(memberDir);
+  const rootSettings = outer && !same ? outer.settings : { legacyTags: [] as string[] };
+  return {
+    legacyTags: [...new Set([...own.legacyTags, ...rootSettings.legacyTags])],
+    breakingOnZero: own.breakingOnZero ?? rootSettings.breakingOnZero ?? "minor",
+  };
+}
+
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * The bump a commit gives on the version `label` (#5191): on 0.x, unless
+ * `breakingOnZero` is `major`, a breaking change bumps minor and a feature
+ * patch, since a 0.x project moves to 1.0.0 by choice (an intent file or a
+ * typed level of `major`). Any other version, or a null bump, is as given.
+ */
+export function zeroShift(bump: ReleaseBump | null, label: string | null, breakingOnZero: "minor" | "major"): ReleaseBump | null {
+  if (bump === null || breakingOnZero === "major" || label === null) return bump;
+  const v = parseVersion(label);
+  if (!v || v[0] !== 0) return bump;
+  return bump === "major" ? "minor" : "patch";
 }
 
 /** Read what a release at a commit of the workspace at `query.cwd` has to cut. */
@@ -439,8 +527,8 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     const holder = outerMemberOf(name) ?? declaration.members.find((m) => m.name === name)!;
     return holder === outerMemberOf(name) ? holder.dir : posix(relative(outerDir, join(rootDir, holder.dir)));
   };
-  const legacy = await legacyPrefixes(rootDir);
-  const legacyLast = legacy.length > 0 ? legacyRelease(top, legacy) : null;
+  const rootSettings = await releaseSettingsAt(rootDir);
+  const legacyLast = rootSettings.legacyTags.length > 0 ? legacyRelease(top, rootSettings.legacyTags) : null;
   const ignore = (outer.changes?.ignore ?? []).map((g) => picomatch(g, { dot: true }) as (p: string) => boolean);
 
   interface Info {
@@ -463,7 +551,9 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     const memberDir = join(rootDir, m.dir);
     if (!existsSync(memberDir)) throw new ReadFailure("ledger-unreadable", `member ${m.name} has no directory ${m.dir}`);
     const ledger = await ledgerRelease(memberDir);
-    const last = ledger.last ?? legacyLast;
+    // #5200: a member's own legacyTags count beside the root's; #5191: its breakingOnZero, else the root's.
+    const settings = await memberReleaseSettings(memberDir, { dir: rootDir, settings: rootSettings });
+    const last = ledger.last ?? (settings.legacyTags.length > rootSettings.legacyTags.length ? legacyRelease(top, settings.legacyTags) : legacyLast);
     let paths: string[] = [];
     if (last) {
       if (tryGit(top, ["cat-file", "-e", `${last.commit}^{commit}`]) === null) throw new ReadFailure("ledger-unreadable", `the last release of ${m.name} is at ${last.commit.slice(0, 12)}, which this clone does not have`);
@@ -487,7 +577,7 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
       last,
       paths,
       changed: last === null || paths.length > 0 || intents.length > 0,
-      commitBump: last && paths.length > 0 ? commitBumpOver(top, last.commit, at, paths.map((p) => `${prefix}${p}`)) : null,
+      commitBump: last && paths.length > 0 ? zeroShift(commitBumpOver(top, last.commit, at, paths.map((p) => `${prefix}${p}`)), last.label, settings.breakingOnZero) : null,
       intents,
       published: last ? readPackage(top, last.commit, `${prefix}${dir}/package.json`) : null,
     });
