@@ -75,6 +75,12 @@ beforeAll(async () => {
     join(project, "chant.config.json"),
     JSON.stringify({ lexicons: ["k8s"], k8s: { kustomize: { roots: ["overlays/prod"] } } }),
   );
+  // Load the graph and search handlers, the lexicon and its serializers here, where the budget does not count
+  // (#5221). Cold on a loaded machine that load took the test past five seconds; the test itself is 0.6s.
+  await inProject(() =>
+    runGraph({ args: { command: "graph", path: ".", format: "ir" } as never, plugins: [plugin], serializers: [] }),
+  );
+  await inProject(() => runSearch({ args: { path: "kind:K8s::", json: true } as never, plugins: [plugin], serializers: [] }));
 });
 
 afterAll(async () => {

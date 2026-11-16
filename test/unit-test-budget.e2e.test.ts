@@ -21,7 +21,7 @@ describe("the unit-test budget, in a real vitest run", () => {
     });
     const out = `${run.stdout}\n${run.stderr}`;
     expect(run.status, out).toBe(1);
-    expect(out).toMatch(/"a slow test goes over the budget" took \d+\.\ds, over the 0\.5s unit-test budget \(chant #2817\)/);
+    expect(out).toMatch(/"a slow test goes over the budget" took \d+\.\ds, over the 0\.5s unit-test budget(, scaled to \d+(\.\d)?s for load [\d.]+ on \d+ cores)? \(chant #2817\)/);
     expect(out).toMatch(/1 failed \| 1 passed/);
   }, 120_000);
 });
