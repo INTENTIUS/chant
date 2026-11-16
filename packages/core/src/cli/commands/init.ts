@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createInterface } from "readline";
+import { execFileSync } from "child_process";
 import { formatSuccess, formatWarning } from "../format";
-import { loadPlugin, recordProjectLexicons, unknownPathLexiconsNotice } from "../plugins";
+import { loadPlugin, recordProjectLexicons, resolveLexiconVersions, unknownPathLexiconsNotice } from "../plugins";
 import { lexiconModulePath, lexiconSourceLabel } from "../../lexicon-module";
 import { MCP_CONFIG_FILENAME, detectPackageManager, generateMcpConfig, mcpConfigPath } from "../mcp-config";
 
@@ -16,6 +17,41 @@ export function getChantVersion(): string {
   } catch {
     return "0.0.13";
   }
+}
+
+
+/** Where a lexicon's own version comes from: the installed package, then the registry. */
+export interface LexiconVersionSources {
+  installed: (lexicon: string) => string | undefined;
+  published: (lexicon: string) => string | undefined;
+}
+
+const defaultLexiconVersionSources: LexiconVersionSources = {
+  installed: (lexicon) => resolveLexiconVersions([lexicon])[lexicon],
+  published: (lexicon) => {
+    try {
+      const out = execFileSync("npm", ["view", `@intentius/chant-lexicon-${lexicon}`, "version"], {
+        encoding: "utf-8",
+        timeout: 20_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      return /^\d+\.\d+\.\d+/.test(out) ? out : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+/**
+ * The dependency range a scaffolded project writes for a lexicon package
+ * (#5138). Packages release on their own version lines, so the range is the
+ * lexicon's own version, never chant core's: the installed package's version
+ * when chant can resolve it, else the registry's latest, else the `latest`
+ * dist-tag, which installs whatever the registry has.
+ */
+export function lexiconDependencyRange(lexicon: string, sources: LexiconVersionSources = defaultLexiconVersionSources): string {
+  const version = sources.installed(lexicon) ?? sources.published(lexicon);
+  return version ? `^${version}` : "latest";
 }
 
 /**
@@ -91,7 +127,7 @@ function generatePackageJson(
   const dependencies: Record<string, string> = {
     "@intentius/chant": `^${ver}`,
     // chant#2578 — a lexicon declared by path is not a package to depend on.
-    ...(lexiconIsPackage ? { [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}` } : {}),
+    ...(lexiconIsPackage ? { [`@intentius/chant-lexicon-${lexicon}`]: lexiconDependencyRange(lexicon) } : {}),
   };
 
   const pkg = {

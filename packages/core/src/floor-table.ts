@@ -4,9 +4,10 @@
  * with.
  *
  * A floor is a constant `<NAME>_FLOOR` in chant core, or in a lexicon's
- * src/chant-floors.ts (#4916), naming the first chant release with a part
- * (an export, a field chant writes, a flag). Lexicons release with chant at
- * the same version, so a lexicon's floor is a chant version too. A product
+ * src/chant-floors.ts (#4916), naming the first release with a part (an
+ * export, a field chant writes, a flag). Packages have their own versions
+ * (#5138): a core floor is a version of `@intentius/chant`, and a lexicon's
+ * floor is a version of that lexicon, named by the row's `package`. A product
  * that runs on several chant releases checks one before it calls the part. The
  * rows are written by scripts/floor-table.ts from the constants themselves
  * (./floor-table.data.ts), and scripts/release-floors.ts fails while a floor
@@ -23,8 +24,10 @@ import { FLOOR_ROWS } from "./floor-table.data";
 export interface FloorRow {
   /** The constant's name, `CI_IMAGE_FLOOR`. */
   name: string;
-  /** The first chant release with the part. A floor not yet released has the next release's number. */
+  /** The first release of `package` with the part. A floor not yet released has the next release's number. */
   version: string;
+  /** The npm package `version` belongs to. Absent for chant core, `@intentius/chant`. */
+  package?: string;
   /** What the floor gates: the first sentence of the constant's doc comment. */
   gates: string;
   /** The issue that added it, `#4784`, or a product's (`terragucci issue 1303`). */

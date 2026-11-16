@@ -1,9 +1,26 @@
 import { describe, test, expect } from "vitest";
-import { initCommand, type InitOptions } from "./init";
+import { initCommand, lexiconDependencyRange, getChantVersion, type InitOptions } from "./init";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+describe("lexiconDependencyRange (#5138)", () => {
+  const none = () => undefined;
+
+  test("writes the lexicon's own version, not core's", () => {
+    expect(getChantVersion()).not.toBe("9.9.9");
+    expect(lexiconDependencyRange("aws", { installed: () => "9.9.9", published: none })).toBe("^9.9.9");
+  });
+
+  test("asks the registry when the lexicon is not installed", () => {
+    expect(lexiconDependencyRange("aws", { installed: none, published: () => "3.4.5" })).toBe("^3.4.5");
+  });
+
+  test("falls back to the latest dist-tag when nothing names a version", () => {
+    expect(lexiconDependencyRange("aws", { installed: none, published: none })).toBe("latest");
+  });
+});
 
 describe("initCommand", () => {
   test("creates project with aws lexicon", async () => {

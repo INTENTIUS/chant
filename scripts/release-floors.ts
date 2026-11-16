@@ -25,11 +25,19 @@
  * imports NEXT_RELEASE from `@intentius/chant/release-floors`, and
  * `--freeze` writes it as a literal the same way.
  *
+ * Packages have their own versions (#5138). A core floor is a version of
+ * `@intentius/chant`, and a floor in a lexicon's src/chant-floors.ts is a
+ * version of that lexicon, checked against that lexicon's releases: its
+ * `lexicon-<n>-v<v>` and `release/npm/lexicon-<n>/<v>` tags, the lockstep
+ * labels every package shipped at, its npm versions with `--npm`, and its own
+ * package.json stamp. scripts/floor-table.ts records which package each
+ * floor's version belongs to.
+ *
  * A published release is read from the checkout's tags, release/npm/<v> and
  * chant-v<v>, so the default mode needs no network; fetch the tags first
  * (`git fetch origin 'refs/tags/release/*:refs/tags/release/*'
  * 'refs/tags/chant-v*:refs/tags/chant-v*'`), as `just release` does. `--npm`
- * adds `npm view @intentius/chant versions`.
+ * adds `npm view <package> versions`.
  *
  * npm is the source of truth for what was published (#4503). A tag can exist
  * in one checkout and not on origin (chant-v0.81.0 did: npm lists 0.81.0,
@@ -79,6 +87,7 @@ import { TABLE_FILE, tableAgainst, writeTable } from "./floor-table";
 const ROOT = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" }).trim();
 const CONSTANT_FILE = "packages/core/src/release-floors.ts";
 const CONSTANT_RE = /export const NEXT_RELEASE = "(\d+\.\d+\.\d+)";/;
+const LEXICON_FLOORS_FILE = /^lexicons\/([^/]+)\/src\/chant-floors\.ts$/;
 const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_RELEASE));/g;
 
 /**
@@ -148,7 +157,8 @@ function floors(read: (file: string) => string, rev: string | undefined, next: s
   const out: Floor[] = [];
   for (const file of floorFiles(rev)) {
     const src = read(file);
-    for (const m of src.matchAll(FLOOR_RE)) out.push({ name: m[1], file, version: m[2] ?? next, symbolic: m[3] !== undefined });
+    const lexicon = LEXICON_FLOORS_FILE.exec(file)?.[1];
+    for (const m of src.matchAll(FLOOR_RE)) out.push({ name: m[1], file, version: m[2] ?? next, symbolic: m[3] !== undefined, ...(lexicon ? { lexicon } : {}) });
   }
   return out;
 }
@@ -157,6 +167,8 @@ export interface Floor {
   name: string;
   file: string;
   version: string;
+  /** The lexicon whose release the version belongs to; absent for chant core. */
+  lexicon?: string;
   /** The constant is NEXT_RELEASE, not a literal. */
   symbolic?: boolean;
 }
@@ -165,7 +177,7 @@ export interface Floor {
 function floorFiles(rev: string | undefined): string[] {
   return git(rev ? ["ls-tree", "-r", "--name-only", rev, "--", "packages/core/src", "lexicons"] : ["ls-files", "--", "packages/core/src", "lexicons"])
     .split("\n")
-    .filter((f) => (f.startsWith("packages/core/src/") && f.endsWith(".ts") && !f.endsWith(".test.ts")) || /^lexicons\/[^/]+\/src\/chant-floors\.ts$/.test(f));
+    .filter((f) => (f.startsWith("packages/core/src/") && f.endsWith(".ts") && !f.endsWith(".test.ts")) || LEXICON_FLOORS_FILE.test(f));
 }
 
 /**
@@ -268,41 +280,66 @@ export function nextPatch(v: string): string {
 }
 
 /**
- * The versions with a release, from a tag list (`git tag -l` output) and,
- * when given, npm's list of published versions.
+ * The versions with a release of one package, from a tag list (`git tag -l`
+ * output) and, when given, npm's list of that package's published versions.
+ * `release/npm/<v>` and `chant-v<v>` are lockstep releases that shipped every
+ * package. A lexicon's own releases are `lexicon-<n>-v<v>` and the member tag
+ * `release/npm/lexicon-<n>/<v>`; core's member tag is `release/npm/core/<v>`.
  */
-export function releasedVersions(tags: string[], npmVersions?: string[]): Set<string> {
+export function releasedVersions(tags: string[], npmVersions?: string[], lexicon?: string): Set<string> {
+  // Lexicon names are lowercase letters, digits and hyphens: no regex escaping needed.
+  const member = new RegExp(`^release/npm/${lexicon ? `lexicon-${lexicon}` : "core"}/(\\d+\\.\\d+\\.\\d+)$`);
+  const lexiconTag = lexicon ? new RegExp(`^lexicon-${lexicon}-v(\\d+\\.\\d+\\.\\d+)$`) : undefined;
   const out = new Set<string>();
-  for (const t of tags) {
-    const m = /^(?:release\/npm\/|chant-v)(\d+\.\d+\.\d+)$/.exec(t.trim());
+  for (const raw of tags) {
+    const t = raw.trim();
+    const m = /^(?:release\/npm\/|chant-v)(\d+\.\d+\.\d+)$/.exec(t) ?? member.exec(t) ?? lexiconTag?.exec(t);
     if (m) out.add(m[1]);
   }
   for (const v of npmVersions ?? []) out.add(v);
   return out;
 }
 
-/** The versions with a release: the checkout's tags, and npm's list with --npm. */
-function released(npm: boolean): Set<string> {
-  const tags = git(["tag", "-l", "release/npm/*", "chant-v*"]).split("\n");
-  if (!npm) return releasedVersions(tags);
-  const raw = execFileSync("npm", ["view", "@intentius/chant", "versions", "--json"], { encoding: "utf-8" });
-  return releasedVersions(tags, JSON.parse(raw) as string[]);
+/** The checkout's release tags, read once. `[0-9]*` keeps a member tag (`release/npm/core/1.0.0`) out of the lockstep labels. */
+let tagCache: string[] | undefined;
+function releaseTags(): string[] {
+  tagCache ??= git(["tag", "-l", "release/npm/[0-9]*", "release/npm/core/*", "release/npm/lexicon-*", "chant-v*", "lexicon-*-v*"]).split("\n");
+  return tagCache;
+}
+
+/** The versions of one package with a release (`lexicon` is a lexicon's name; none is chant core): the checkout's tags, and npm's list with --npm. */
+function released(npm: boolean, lexicon?: string): Set<string> {
+  const tags = releaseTags();
+  if (!npm) return releasedVersions(tags, undefined, lexicon);
+  const pkg = lexicon ? `@intentius/chant-lexicon-${lexicon}` : "@intentius/chant";
+  let versions: string[] = [];
+  try {
+    versions = JSON.parse(execFileSync("npm", ["view", pkg, "versions", "--json"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] })) as string[];
+  } catch (err) {
+    // A lexicon never published has no versions; core's list must come back.
+    if (!lexicon) throw err;
+  }
+  return releasedVersions(tags, Array.isArray(versions) ? versions : [versions as unknown as string], lexicon);
 }
 
 /** Each floor whose version is not in `allowed`, as a problem line. */
 export function unreleasedFloors(
-  named: { name: string; file: string; version: string }[],
-  allowed: Set<string>,
+  named: { name: string; file: string; version: string; lexicon?: string }[],
+  allowed: Set<string> | ((lexicon?: string) => Set<string>),
   npm: boolean,
 ): string[] {
+  const allowedFor = (lexicon?: string) => (typeof allowed === "function" ? allowed(lexicon) : allowed);
   return named
-    .filter((f) => !allowed.has(f.version))
-    .map((f) => `${f.file}: ${f.name} names ${f.version}, which has no release tag${npm ? " or npm version" : ""} and no local build stamp`);
+    .filter((f) => !allowedFor(f.lexicon).has(f.version))
+    .map(
+      (f) =>
+        `${f.file}: ${f.name} names ${f.version}, which has no ${f.lexicon ? `@intentius/chant-lexicon-${f.lexicon} ` : ""}release tag${npm ? " or npm version" : ""} and no local build stamp`,
+    );
 }
 
-/** The working tree's stamp: packages/core/package.json's version when it differs from HEAD's. */
-function localStamp(): string | undefined {
-  const file = "packages/core/package.json";
+/** The working tree's stamp: a package's package.json version (core's by default) when it differs from HEAD's. */
+function localStamp(lexicon?: string): string | undefined {
+  const file = lexicon ? `lexicons/${lexicon}/package.json` : "packages/core/package.json";
   const working = (JSON.parse(readFileSync(join(ROOT, file), "utf-8")) as { version?: string }).version;
   let committed: string | undefined;
   try {
@@ -382,6 +419,10 @@ function set(version: string): void {
   console.log(`NEXT_RELEASE ${old} -> ${version} in ${CONSTANT_FILE} and ${byFile.size} files of text`);
 }
 
+function localStampOf(lexicon: string, rev: string | undefined): string | undefined {
+  return rev ? undefined : localStamp(lexicon);
+}
+
 function check(args: Args): number {
   const read = reader(args.rev);
   const next = nextRelease(read);
@@ -395,7 +436,18 @@ function check(args: Args): number {
 
   const known = released(args.npm);
   const stamp = args.rev ? undefined : localStamp();
-  const allowed = new Set([...known, ...args.release, ...(stamp ? [stamp] : [])]);
+  const allowedCache = new Map<string, Set<string>>();
+  // #5138: a lexicon floor is checked against that lexicon's own releases and stamp.
+  const allowed = (lexicon?: string): Set<string> => {
+    const key = lexicon ?? "";
+    let set = allowedCache.get(key);
+    if (!set) {
+      const own = lexicon ? localStampOf(lexicon, args.rev) : stamp;
+      set = new Set([...(lexicon ? released(args.npm, lexicon) : known), ...args.release, ...(own ? [own] : [])]);
+      allowedCache.set(key, set);
+    }
+    return set;
+  };
   const named = [{ name: "NEXT_RELEASE", file: CONSTANT_FILE, version: next }, ...floors(read, args.rev, next)];
   problems.push(...unreleasedFloors(named, allowed, args.npm));
   problems.push(...shippedSymbolic(next, named, known, stamp));

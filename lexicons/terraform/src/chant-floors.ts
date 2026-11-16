@@ -1,9 +1,11 @@
 /**
- * The chant floors of the terraform lexicon's parts (#4916): for each part a
- * product may feature-detect on, the first chant release whose lexicon has
- * it. Lexicons release with chant at the same version, so each is a chant
- * version, and chant core's floor table (`@intentius/chant/floor-table`)
- * lists them beside core's, which `chant dev dead-guards` reads.
+ * The floors of the terraform lexicon's parts (#4916): for each part a
+ * product may feature-detect on, the first release of
+ * `@intentius/chant-lexicon-terraform` that has it. Each package has its own
+ * version (#5138), so these are versions of the terraform lexicon, not of
+ * chant core. chant core's floor table (`@intentius/chant/floor-table`)
+ * lists them beside core's with the package each belongs to, and `chant dev
+ * dead-guards` reads them against a product's pin on the lexicon.
  *
  * Only this file is read for the table: the `_FLOOR` constants elsewhere in
  * the lexicon name versions of other tools (`NEXUS_HOSTED_FLOOR` in
@@ -15,18 +17,18 @@
  */
 
 /**
- * The first chant whose terraform lexicon has `moduleConsumers`, the scan of
+ * The first terraform lexicon release that has `moduleConsumers`, the scan of
  * every registry module call a root makes, with `readRegistryCatalog` and
  * `deprecatedPins` beside it on `./registry` (#4599).
  */
 export const MODULE_CONSUMERS_FLOOR = "0.124.55";
 
 /**
- * The first chant whose terraform lexicon has `usedSources`, every module
+ * The first terraform lexicon release that has `usedSources`, every module
  * source and provider address a root uses, with `moduleSourceForms`,
  * `providerAddressForms` and `lockedProviders` on `./registry` (#3924).
  */
 export const USED_SOURCES_FLOOR = "0.124.55";
 
-/** The first chant whose terraform lexicon has `./module-catalog`, the known-module catalog TF047 reads (#4560). */
+/** The first terraform lexicon release that has `./module-catalog`, the known-module catalog TF047 reads (#4560). */
 export const MODULE_CATALOG_FLOOR = "0.124.55";
