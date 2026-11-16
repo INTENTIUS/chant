@@ -568,6 +568,10 @@ Releases:
                         Write the publish workflow, run on a release/** tag.
                         Under supply-chain it passes --require-provenance, and
                         under verified-releases it runs release verify first
+  release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
+                        The members to release at a commit, in publish order,
+                        each with why: changed, needed-by <member>, or
+                        range-broken-by <member>. Reads local refs only
   release list [--json]  Every release of this member with its targets, its
                         cuts and the environments that run it.
   release export <label|digest> --env <env> [-o <dir>] [--json]
@@ -2057,6 +2061,7 @@ export const commandRegistry: CommandDef[] = [
   // #4168 4.3: mode (b), chosen changes composed onto a base on chant/compose/<name>.
   { name: "release compose", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompose(ctx) },
   { name: "release candidates", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCandidates(ctx) },
+  { name: "release changed", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseChanged(ctx) },
   { name: "release list", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseList(ctx) },
   { name: "release export", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseExport(ctx) },
   { name: "release compile", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseCompile(ctx) },

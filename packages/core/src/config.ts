@@ -131,6 +131,8 @@ export const ChantConfigSchema = z.object({
       )
       .optional(),
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
+    // #5134: tag prefixes of releases cut before members had ledgers, read as a last release by `chant release changed`.
+    legacyTags: z.array(z.string().min(1)).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
     version: z.object({
       packages: z.array(z.string().min(1)).min(1),
@@ -437,6 +439,13 @@ export interface ChantConfig {
      * rather than `ci/green/<sha>`.
      */
     lane?: string;
+    /**
+     * Tag prefixes of releases cut before members had ledgers (#5134), such as
+     * `release/npm/` and `chant-v`. `chant release changed` reads the newest
+     * `<prefix><version>` tag as a member's last release when its ledger has
+     * no cut.
+     */
+    legacyTags?: string[];
     /**
      * The package directories whose `package.json` the release stamps with
      * its label (#4840), so the version needs no commit: the cut stamps them

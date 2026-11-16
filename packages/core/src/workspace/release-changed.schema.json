@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/release-changed/v1/release-changed.schema.json",
+  "title": "chant release changed output",
+  "description": "What `chant release changed --json` prints (#5134): the members of a workspace of separately released members that a release at a commit has to cut, in publish order, each with why. A member is `paths-changed` when paths changed since its last release (minus `changes.ignore` and generated files) or it has none; the closure adds each changed dependency of a member (`needed-by`) and each dependent whose last published range does not admit a member's next label (`range-broken-by`). It reads local refs and tags and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.124.100 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "members"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/release-changed/v1/release-changed.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "at": {
+          "type": "string",
+          "description": "The full sha the read was made at."
+        },
+        "members": {
+          "type": "array",
+          "description": "In publish order: layer, then name.",
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/release-changed/v1/release-changed.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "declaration-missing",
+                "revision-unknown",
+                "bump-invalid",
+                "ledger-unreadable"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "description": "Exit code 1."
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "member",
+        "layer",
+        "reason",
+        "last",
+        "bump",
+        "next",
+        "paths"
+      ],
+      "properties": {
+        "member": {
+          "type": "string"
+        },
+        "layer": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The dependency layer; members of one layer publish together, after every earlier layer."
+        },
+        "reason": {
+          "type": "object",
+          "required": [
+            "code",
+            "member"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "paths-changed",
+                "needed-by",
+                "range-broken-by"
+              ]
+            },
+            "member": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The member that needs this one (`needed-by`) or whose next label breaks its range (`range-broken-by`); null for `paths-changed`."
+            }
+          }
+        },
+        "last": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The member's last release, or null when it has none.",
+          "required": [
+            "label",
+            "commit",
+            "source"
+          ],
+          "properties": {
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "commit": {
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "ledger",
+                "legacy"
+              ],
+              "description": "A cut in the member's ledger, or a legacy tag named by `release.legacyTags`."
+            }
+          }
+        },
+        "bump": {
+          "enum": [
+            "major",
+            "minor",
+            "patch"
+          ],
+          "description": "The bump applied to the last label: `--bump-member`, else patch."
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The label a release would carry, or null when there is no last label to bump."
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The changed paths that count, from the outermost workspace root. Empty for a member taken only by the closure."
+        }
+      }
+    }
+  }
+}

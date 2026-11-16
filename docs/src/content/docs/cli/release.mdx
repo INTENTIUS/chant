@@ -10,6 +10,7 @@ diataxis: reference
 chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green]
                   [--image <component>=<repository>@sha256:<hex>]... [--json]
+chant release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
 chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
@@ -624,6 +625,31 @@ GH_TOKEN=$(gh auth token) chant release candidates --forge-issues --json
 ```
 
 With `--json` the output is the [read contract](/chant/reference/workspace-read-contract/)'s `release-candidates.schema.json` document. Its `environments` field lists what each one runs, `since` is the commit the walk stopped at (or `null`), `candidates` and `skipped` are newest first, and `pending` holds the commits after the newest candidate. Each change has `commit`, `subject`, `date`, `work`, `records` (every `Chant-Record` trailer as `<kind>:<id>`), `pr` and `merge`, the merge record `_merges/<sha>.json` on `chant/lifecycle` when one exists. Each change also has `closes`: `null` without `--forge-issues` or a pull request, else what the forge says the pull request closes, `{ resolved, issues, reason }`. Each candidate's `groups` holds the same changes as `{ work, issue, pullRequests: [{ pr, commits }] }`, with `null` for no work item, no issue and no pull request, in the order the text output prints them. Outside git the command exits 1 with `not-a-git-repository`. When the ledger or the tags can't be read it exits 1 with `ledger-unreadable`. Nothing is fetched, so fetch the tags and `chant/lifecycle` first. `--forge-issues` reads the forge's API and fetches no git ref.
+
+## release changed
+
+```
+chant release changed [--at <sha>] [--bump-member <member>=major|minor|patch]... [--json]
+```
+
+Run in the root of a workspace whose `chant` members are released separately, it lists the members a release at a commit has to cut, in the order to publish them. `--at` names the commit; without it the tip of trunk is read, as [`release candidates`](#release-candidates) walks it.
+
+For each `chant` member the command finds its last release: the newest cut in the member's ledger, else the newest legacy tag. Legacy tags are the prefixes `release.legacyTags` names in the workspace root's `chant.config.ts`, each followed by a version: with `legacyTags: ["release/npm/", "chant-v"]`, `release/npm/0.124.44` and `chant-v0.124.44` count, and `release/npm/core/0.125.0` does not. It lists the paths changed from that commit to `--at` and maps each to the member of the outermost workspace that holds it. That member has the release member's name. Paths that `changes.ignore` matches and generated files count for nothing. A member with paths left, or with no release yet, is `paths-changed`.
+
+Dependencies then pull in more members, until nothing changes. The edges are the `dependencies`, `peerDependencies` and `optionalDependencies` of each member's `package.json` at the commit.
+
+- A member of the release also releases each workspace dependency of it, direct or transitive, that has changes since its own last release (`needed-by <member>`; a changed member no other member needs keeps `paths-changed`).
+- A dependent is added when the range its last release's `package.json` gives a dependency does not admit that dependency's next label (`range-broken-by <member>`). The next label is the last label with `--bump-member` applied, a patch by default. Under `^0.124.34`, a patch of the dependency forces nothing and a minor forces the dependent.
+
+```
+chant release changed --bump-member core=minor
+layer 0  core  0.124.44 -> 0.125.0  (paths-changed)
+layer 1  lexicon-aws  0.124.44 -> 0.124.45  (range-broken-by core)
+```
+
+Members come in dependency layers: a member publishes after every member of the release it depends on, and layer 0 needs none. Within a layer they are sorted by name. A commit range that touches only `lexicons/aws/` lists `lexicon-aws`, and `core` only when core has changes of its own since its last release.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `release-changed.schema.json`, a read contract at version 1, written by chant 0.124.100 and newer. Each member has `member`, `layer`, `reason` (`{ code, member }`, with `code` one of `paths-changed`, `needed-by` and `range-broken-by`), `last` (`{ label, commit, source }`, or `null`), `bump`, `next` and `paths`. A failure exits 1 with `not-a-git-repository`, `declaration-missing`, `revision-unknown`, `bump-invalid` or `ledger-unreadable`. The read uses local refs and tags and never fetches.
 
 ## release compose
 

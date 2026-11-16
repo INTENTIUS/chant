@@ -786,6 +786,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--follow-squash") {
       // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
       result.followSquash = true;
+    } else if (arg === "--bump-member") {
+      // `chant release changed --bump-member <member>=<level>` (#5134) is repeatable.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--bump-member needs a member and a level: --bump-member <member>=major|minor|patch");
+      (result.bumpMember ??= []).push(value);
     } else if (arg === "--forge-issues") {
       // `chant release candidates --forge-issues` and `chant workspace graph --intent ... --forge-issues` (#4649)
       result.forgeIssues = true;

@@ -19,6 +19,8 @@
  *   release verify <label|digest> [--json]
  *       check the release's signature offline against .chant/allowed_signers
  *       at the release's commit (#4049)
+ *   release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
+ *       the members to release at a commit, with their dependency closure (#5134)
  *   release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json]
  *       the green commits of trunk a release can be cut from, each with what it
  *       would ship, and what each environment runs (#4168 4.2)
@@ -50,7 +52,7 @@ import { parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
 
 const USAGE =
-  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
+  "chant release cut [<label>] [--at <sha>] [--yes] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--json] | release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json] | release verify <label|digest> [--json] | release images <label|digest> [--no-build] [-o <file>] [--json] | release changed [--at <sha>] [--bump-member <member>=<level>]... [--json] | release candidates [--env <env>] [--lane <name>] [--forge-issues] [--json] | release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json] | release list [--json] | release export <label|digest> --env <env> [-o <dir>] [--json]";
 
 /** The build inputs `release cut` and `release compile` share. */
 function compileInputs(
@@ -859,6 +861,38 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
   const unread = new Set([...doc.candidates.flatMap((c) => c.changes), ...doc.pending].map((ch) => ch.closes?.reason).filter((r): r is string => typeof r === "string"));
   for (const r of unread) console.error(`Issues not read from the forge: ${r}`);
   if (doc.candidates.length > 0) console.error(`Cut one: chant release cut <label> --at <sha>${doc.lane !== null && ctx.args.lane !== undefined ? ` --lane ${doc.lane}` : ""}`);
+  return 0;
+}
+
+/**
+ * `release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]`
+ * (#5134): the members a release at a commit has to cut, in publish order,
+ * each with why. `--json` prints the read contract's `release-changed` document.
+ */
+export async function runReleaseChanged(ctx: CommandContext): Promise<number> {
+  const { releaseChangedDocument } = await import("../../workspace/release-changed");
+  const doc = await releaseChangedDocument({
+    cwd: resolve("."),
+    ...(ctx.args.at ? { at: ctx.args.at } : {}),
+    ...(ctx.args.bumpMember ? { bump: ctx.args.bumpMember } : {}),
+  });
+  if (ctx.args.json) {
+    console.log(JSON.stringify(doc, null, 2));
+    return "error" in doc ? 1 : 0;
+  }
+  if ("error" in doc) {
+    console.error(formatError({ message: `${doc.error.message} [${doc.error.code}]`, hint: USAGE }));
+    return 1;
+  }
+  if (doc.members.length === 0) {
+    console.log(`Nothing to release at ${doc.at.slice(0, 12)}.`);
+    return 0;
+  }
+  for (const m of doc.members) {
+    const why = m.reason.member !== null ? `${m.reason.code} ${m.reason.member}` : m.reason.code;
+    const label = m.next !== null ? `${m.last?.label ?? "?"} -> ${m.next}` : "no release yet";
+    console.log(`layer ${m.layer}  ${m.member}  ${label}  (${why})`);
+  }
   return 0;
 }
 
