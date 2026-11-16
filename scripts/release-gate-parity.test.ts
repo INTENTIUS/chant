@@ -171,7 +171,7 @@ describe("pull request and push CI run the unit tests only", () => {
   it("chant.yml runs typecheck and unit tests on a push or pull request, everything else by hand", () => {
     const chant = workflow("chant.yml");
     expect(Object.keys(chant.on).sort()).toEqual(["merge_group", "pull_request", "push", "workflow_dispatch"]);
-    const always = ["check", "lexicon-artifacts", "test", "test-shard"];
+    const always = ["check", "lexicon-artifacts", "test", "test-shard", "typecheck"];
     for (const [name, job] of Object.entries(chant.jobs)) {
       if (always.includes(name)) expect(job.if ?? "").not.toMatch(/workflow_dispatch/);
       else expect(job.if).toBe("github.event_name == 'workflow_dispatch'");
@@ -183,16 +183,18 @@ describe("pull request and push CI run the unit tests only", () => {
     for (const name of always) {
       expect(stepsRunning(chant.jobs[name], /--project e2e|ci-observability-binaries\.sh test|smoke\.sh|docker build/)).toEqual([]);
     }
+    expect(stepsRunning(chant.jobs.typecheck, /./).map((s) => s.run)).toContain("npx tsx scripts/typecheck.ts");
+    expect(chant.jobs.typecheck.needs).toEqual(["lexicon-artifacts"]);
     expect(chant.jobs.test.needs).toEqual(["test-shard"]);
   });
 
-  it("ci.green requires check and test and nothing else", () => {
+  it("ci.green requires check, typecheck and test and nothing else", () => {
     const declaration = JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf8")) as {
       ci: { green: { branch: string; phases: Record<string, { runs: string[]; build?: string }>; require: string[] } };
     };
     expect(declaration.ci.green.branch).toBe("main");
-    expect(declaration.ci.green.require).toEqual(["check", "test"]);
-    expect(Object.keys(declaration.ci.green.phases).sort()).toEqual(["check", "test"]);
+    expect(declaration.ci.green.require).toEqual(["check", "typecheck", "test"]);
+    expect(Object.keys(declaration.ci.green.phases).sort()).toEqual(["check", "test", "typecheck"]);
   });
 
   it("the suites, docs checks and large-suite workflows start only from a dispatch", () => {

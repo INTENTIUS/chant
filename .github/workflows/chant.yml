@@ -5,8 +5,9 @@ run-name: chant — ${{ github.head_ref || github.ref_name }}
 
 # Unit tests only, on every change (the maintainer's call, 2026-10-23: the
 # pipelines took too long). A pull request and a push to main run the lexicon
-# artifacts the unit tests read (lexicon-artifacts), core's typecheck (check)
-# and the unit tests (test-shard, aggregated as test). Nothing else.
+# artifacts the unit tests read (lexicon-artifacts), core's typecheck (check),
+# the repo-wide typecheck (typecheck) and the unit tests (test-shard,
+# aggregated as test). Nothing else.
 #
 # By hand only, from a workflow_dispatch of this workflow: the repo-wide
 # typechecks, lints, example runs and time budgets that used to be in check
@@ -37,7 +38,7 @@ on:
 # a later push neither cancels a run in progress nor replaces a queued one.
 # Written by chant ci workflow from ci.green's build (#4169); edit ci.green and run it again.
 concurrency:
-  group: chant-build-check-test-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: chant-build-check-test-typecheck-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -188,6 +189,64 @@ jobs:
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # The repo-wide typecheck (tests, scripts, examples) against
+  # scripts/typecheck-baseline.json, which can only shrink (#1388, #5187).
+  # It was dispatch-only, and six test files went red on main unseen (#5184).
+  # Its own job, beside check and the shards, so it adds no time to either.
+  typecheck:
+    needs: [lexicon-artifacts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Record job start time
+        id: start-time
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Restore the lexicon artifacts
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            lexicons/*/src/generated
+            lexicons/*/dist
+          key: ${{ needs.lexicon-artifacts.outputs.key }}
+          fail-on-cache-miss: true
+
+      - name: Repo-wide typecheck (tests, scripts, examples)
+        run: npx tsx scripts/typecheck.ts
+
+      - name: Record the job's duration
+        if: always()
+        run: |
+          elapsed=$(( $(date +%s) - ${{ steps.start-time.outputs.epoch }} ))
+          echo "typecheck ran $((elapsed / 60))m$((elapsed % 60))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Report a timeout, distinct from a failure
+        if: cancelled()
+        run: |
+          elapsed=$(( ($(date +%s) - ${{ steps.start-time.outputs.epoch }}) / 60 ))
+          message="typecheck job timed out after ~${elapsed}m against its 15 minute ceiling. This is a CI timeout, not a typecheck failure."
+          echo "::error::${message}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "${message}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # The steps check ran before unit-only CI, by hand only. Dispatch this
   # workflow to run them.
   guards:
@@ -253,13 +312,6 @@ jobs:
       # check-lexicons (in validate) does not reach it.
       - name: Typecheck the Kubernetes API client (#1074)
         run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/k8s-client/tsconfig.build.json
-
-      # #1388 — the two typechecks above cover packages/core and k8s-client, and
-      # check-lexicons builds each lexicon's tsconfig.build.json, which excludes
-      # tests. Nothing typechecked a lexicon test, script or example. This does,
-      # against a baseline that can only shrink.
-      - name: Repo-wide typecheck (tests, scripts, examples)
-        run: npx tsx scripts/typecheck.ts
 
       # #2657 (ws-052) — the chant and hud boundary. packages/core opens no
       # listener and imports no UI or agent-runtime package, and the owner

@@ -5,7 +5,7 @@ Working in the INTENTIUS workspace, `../agents/shared.md` applies too. This file
 ## Setup and gate
 
 - A fresh worktree needs `npm ci --ignore-scripts`, then `just _ensure-gen`. vitest fails fast with a message if the generated artifacts are missing.
-- The local gate is `just check` (build, lint, unit tests, lexicon contract). A change merges on it. Run the core typecheck in the foreground with a 600s timeout; it is slow.
+- The local gate is `just check` (build, repo-wide typecheck, lint, unit tests, lexicon contract). A change merges on it. Run the core typecheck in the foreground with a 600s timeout; it is slow.
 - `npx tsx scripts/typecheck.ts` checks against `scripts/typecheck-baseline.json`. The baseline may only shrink.
 - Docs changes also run `just docs-check`.
 - Some tests write to the real git directory when run from a worktree. Use temp repos in tests, and check the main checkout's `git status` before and after.
