@@ -351,62 +351,18 @@ ext-vscode-build:
 ext-vscode-package:
     cd editors/vscode && npm install && npm run build && npm run package
 
-# Releases the newest green commit on main, or <commit>, with `chant release
-# cut --at` from release/ (#4040). No version-bump commit: the label is the
-# version, and scripts/release-pack.sh writes it into the packages publish.yml
-# packs. The cut pushes chant/lifecycle; this pushes the release/npm/<label>
-# tag, which publish.yml publishes with `chant release publish`. --dry-run
-# runs the cut without --yes, which cuts, tags and pushes nothing.
-# Cut the newest green main commit as chant's next release (just release [major|minor|patch] [<commit>] [--dry-run])
-release bump="patch" *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source scripts/release-lib.sh
-    release_args {{bump}} {{args}}
-    # The cut's trunk check reads origin/main as fetched (release-workstation.ts).
-    git fetch --quiet origin main
-    git fetch --quiet origin 'refs/tags/ci/*:refs/tags/ci/*' 'refs/tags/release/*:refs/tags/release/*' 'refs/tags/chant-v*:refs/tags/chant-v*'
-    sha=$(bash scripts/release-preflight.sh ${RELEASE_COMMIT:+"$RELEASE_COMMIT"})
-    # The next version floors on every package.json at the commit and every
-    # version already tagged, since package.json no longer moves with a release.
-    versions=()
-    for f in packages/core/package.json packages/k8s-client/package.json lexicons/*/package.json; do
-      versions+=("$(release_version_at "$sha" "$f")")
-    done
-    # release_legacy_versions reads release/npm/<v> and chant-v<v> only, never
-    # a member's release/npm/<member>/<v> (#5135).
-    while read -r v; do
-      [ -n "$v" ] && versions+=("$v")
-    done < <(release_legacy_versions)
-    # A label in the release ledger is spent even when its publish never
-    # reached npm and its tag was deleted (#1481): labels bind once, so the
-    # next cut counts them too (0.124.53 was cut, failed in release-pack
-    # before npm, and can't be cut again).
-    git fetch --quiet origin chant/lifecycle:refs/remotes/origin/chant/lifecycle 2>/dev/null || true
-    while read -r l; do
-      [ -n "$l" ] && versions+=("$l")
-    done < <(cd release && npx tsx ../packages/core/src/cli/main.ts release list --json 2>/dev/null | jq -r '.releases[]?.label // empty' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
-    next=$(release_next "$(release_max "${versions[@]}")" "$RELEASE_BUMP")
-    rtag=$(release_reference_tag "$next")
-    # Refuse a cut whose floors name a version that is neither released nor
-    # $next (#4480): set NEXT_RELEASE on main first with
-    # `npx tsx scripts/release-floors.ts --set <version>`.
-    npx tsx scripts/release-floors.ts --npm --rev "$sha" --release "$next"
-    echo "Release $next from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
-    yes=()
-    [ "$RELEASE_DRY_RUN" = 1 ] || yes=(--yes)
-    (cd release && npx tsx ../packages/core/src/cli/main.ts release cut "$next" --at "$sha" "${yes[@]}")
-    if [ "$RELEASE_DRY_RUN" = 1 ]; then
-      echo "Dry run: nothing cut, tagged or pushed.${rtag:+ It would also tag $rtag.}"
-      exit 0
-    fi
-    # chant never pushes the release tag; publish.yml runs on it.
-    git push origin "refs/tags/release/npm/$next"
-    if [ -n "$rtag" ]; then
-      git tag "$rtag" "$sha"
-      git push origin "refs/tags/$rtag"
-    fi
-    echo "Released $next: publish.yml runs on release/npm/$next"
+# Releases chant's npm packages as a train of per-package releases (#5137,
+# design #5132): `chant release changed` at the newest green main commit (or
+# <commit>) names the members under release/ to release, each is cut with
+# `chant release cut --at`, `chant workspace train npm` records the train,
+# and the member tags and one release-train/npm/<id> tag are pushed.
+# publish.yml publishes the train from that tag, core first. A bare level
+# bumps every member; <member>=<level> bumps one. --dry-run runs the cuts
+# without --yes, which cuts, records, tags and pushes nothing. The steps are
+# in scripts/release-train.sh.
+# Cut a release train at the newest green main commit (just release [major|minor|patch] [<member>=major|minor|patch ...] [<commit>] [--dry-run])
+release *args:
+    bash scripts/release-train.sh {{args}}
 
 # Check that every contract floor names a released version or a local build
 # stamp, or set the next release's number (#4480), or after <v> is published
@@ -418,9 +374,9 @@ release-floors *args:
 
 # Bring main's head (or <commit>) to green and cut it (#4218): start the missing
 # phases, wait for them and the tick, run `just release`, wait on the publish
-# (just release-when-green [major|minor|patch] [<commit>] [--dry-run])
-release-when-green bump="patch" *args:
-    bash scripts/release-when-green.sh {{bump}} {{args}}
+# (just release-when-green [major|minor|patch] [<member>=<level> ...] [<commit>] [--dry-run])
+release-when-green *args:
+    bash scripts/release-when-green.sh {{args}}
 
 # The release path before #4040, kept until two releases have gone through
 # `just release`. It releases the newest commit on main whose `chant` run

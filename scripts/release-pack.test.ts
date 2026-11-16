@@ -28,10 +28,10 @@ const HELM = {
   dependencies: { "@intentius/chant-lexicon-k8s": "^0.124.34", "js-yaml": "^4.3.1" },
 };
 
-function trains(...list: { id: string; members: Record<string, string | null> }[]) {
+function trains(...list: { id: string; members: Record<string, string | null>; commits?: Record<string, string> }[]) {
   return JSON.stringify({
     env: "npm",
-    trains: list.map((t) => ({ id: t.id, trainDigest: `sha256:${t.id}`, members: Object.entries(t.members).map(([member, label]) => ({ member, label, releaseDigest: "d", commit: "c" })) })),
+    trains: list.map((t) => ({ id: t.id, trainDigest: `sha256:${t.id}`, members: Object.entries(t.members).map(([member, label]) => ({ member, label, releaseDigest: "d", commit: t.commits?.[member] ?? "c" })) })),
   });
 }
 
@@ -75,7 +75,7 @@ function packed(slug: string) {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chant-release-pack-"));
   git("init", "-q", "-b", "main");
-  for (const f of ["release-pack.sh", "release-lib.sh"]) {
+  for (const f of ["release-pack.sh", "release-lib.sh", "release-train-pack.sh"]) {
     mkdirSync(join(dir, "scripts"), { recursive: true });
     copyFileSync(join(import.meta.dirname, f), join(dir, "scripts", f));
   }
@@ -178,5 +178,51 @@ describe("release-pack.sh <member> <label> --train (#5135)", () => {
     const r = pack("lexicon-nope", "0.125.7");
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("no member lexicon-nope in chant.workspace.json");
+  });
+});
+
+describe("release-train-pack.sh <train> (#5137)", () => {
+  const trainPack = (...args: string[]) =>
+    spawnSync("bash", ["scripts/release-train-pack.sh", ...args], {
+      cwd: dir,
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${join(dir, "bin")}:${process.env.PATH}`, RELEASE_CHANT: join(dir, "bin", "fake-chant"), TMPDIR: dir },
+    });
+  const head = () => git("rev-parse", "HEAD").trim();
+
+  it("packs each member the train cut at HEAD with the train's ranges, and no other", () => {
+    fakes(trains({ id: "t1", members: { core: "0.125.4", "lexicon-k8s": "0.125.2", "lexicon-helm": "0.125.7" }, commits: { "lexicon-k8s": head(), "lexicon-helm": head() } }));
+    const r = trainPack("t1");
+    expect(r.status, r.stderr).toBe(0);
+    expect(packed("lexicons_k8s").version).toBe("0.125.2");
+    expect(packed("lexicons_helm").version).toBe("0.125.7");
+    expect(packed("lexicons_helm").dependencies["@intentius/chant-lexicon-k8s"]).toBe("^0.125.2");
+    expect(existsSync(join(dir, ".release/packs/packages_core.tgz"))).toBe(false);
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  it("prepacks a dependency the members share once", () => {
+    fakes(trains({ id: "t1", members: { core: "0.125.4", "lexicon-k8s": "0.125.2", "lexicon-helm": "0.125.7" }, commits: { "lexicon-k8s": head(), "lexicon-helm": head() } }));
+    expect(trainPack("t1").status).toBe(0);
+    const log = readFileSync(join(dir, ".log"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => `${l.split(" ")[0]} ${l.split("/").slice(-2).join("/")}`);
+    // helm's dependency k8s was packed (its prepack ran) before helm, so only core is prepacked for helm.
+    expect(log).toEqual(["prepack packages/core", "pack lexicons/k8s", "pack lexicons/helm"]);
+  });
+
+  it("refuses a train that cut nothing at HEAD", () => {
+    fakes(trains({ id: "t1", members: { core: "0.125.4", "lexicon-k8s": "0.125.2", "lexicon-helm": "0.125.7" } }));
+    const r = trainPack("t1");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("cut no member at");
+  });
+
+  it("refuses a train it can't find", () => {
+    fakes(trains());
+    const r = trainPack("nope");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("no release train nope for npm");
   });
 });

@@ -9,9 +9,15 @@ on:
     #   nothing published. Either tag reaches the same publish job; the
     #   per-package skip-if-unchanged guard below means a single-lexicon tag
     #   publishes only the package whose version actually moved.
-    # release/npm/<label> — a release cut by `just release` (#4040), published
-    #   by the release-publish job below with `chant release publish`.
-    tags: ['chant-v*', 'lexicon-*-v*', 'release/npm/*']
+    # release-train/npm/<train id> — a release train cut by `just release`
+    #   (#5137): one release member per package under release/, published
+    #   core first by the release-train job below with `chant workspace train
+    #   publish`. A member's own release/npm/<member>/<label> tag starts
+    #   nothing, since `*` here does not match `/`.
+    # release/npm/<label> — a lockstep release cut from release/'s root member
+    #   (#4040), published by the release-publish job below with `chant
+    #   release publish`. Kept for re-running a lockstep release.
+    tags: ['chant-v*', 'lexicon-*-v*', 'release/npm/*', 'release-train/npm/*']
     # GATED publish-on-merge (#528): uncomment to publish, on merge to main,
     # any package whose version changed. Only version-bumped packages publish
     # (per-package skip-if-unchanged in the publish job); the `test` gate is
@@ -68,7 +74,7 @@ jobs:
   publish:
     needs: [test]
     # Runs only when the unit-test gate passed.
-    if: ${{ !startsWith(github.ref, 'refs/tags/release/') && needs.test.result == 'success' }}
+    if: ${{ !startsWith(github.ref, 'refs/tags/release/') && !startsWith(github.ref, 'refs/tags/release-train/') && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       # What this run put on npm, name@version, space-separated. `untag`
@@ -177,6 +183,54 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npx tsx ../packages/core/src/cli/main.ts release publish "${GITHUB_REF_NAME#release/npm/}" --yes
 
+  # #5137: a release train cut with `just release` on its
+  # release-train/npm/<train id> tag, which sits on the commit the train's new
+  # member releases were cut from. scripts/release-train-pack.sh reads the
+  # train from chant/lifecycle and packs each member cut at this commit with
+  # scripts/release-pack.sh <member> <label> --train <id>, so every
+  # @intentius/* range is ^<that package's label in the train>, with
+  # CHANT_RELEASE_GATE armed as above. `chant workspace train publish npm`
+  # in release/ then publishes them in dependency layers, core and k8s-client
+  # first, waiting for each layer to resolve on npm before the next; a member
+  # the train pins at an earlier commit must already be on npm or nothing
+  # publishes. Each member's release/<member>/chant.config.ts has stage:
+  # false, so each package goes straight to latest in its layer's turn
+  # (#3904 is what staging needs). Publishing goes over each package's
+  # trusted-publisher record for this file, with NPM_TOKEN as the fallback
+  # (tokenEnv). The records go to chant/lifecycle, hence contents: write,
+  # and a run again after a failure resumes from them. The tag is never
+  # deleted.
+  release-train:
+    needs: [test]
+    if: ${{ startsWith(github.ref, 'refs/tags/release-train/npm/') && needs.test.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*' chant/lifecycle:chant/lifecycle
+      - name: Pack each member the train cut at this commit
+        env:
+          CHANT_RELEASE_GATE: "1"
+        run: bash scripts/release-train-pack.sh "${GITHUB_REF_NAME#release-train/npm/}"
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Publish the train, core first
+        working-directory: release
+        env:
+          # Fallback only, for a package whose trusted-publisher record fails.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npx tsx ../packages/core/src/cli/main.ts workspace train publish npm "${GITHUB_REF_NAME#release-train/npm/}" --yes
+
   # #1481 — a failed release must not leave its tag behind. `just release`
   # pushes the bump commit and the tag before this workflow runs, so when the
   # gate or the publish fails, main is left claiming a version the
@@ -203,7 +257,7 @@ jobs:
   # the gate and publishes. A cancelled gate (no output) still untags.
   untag:
     needs: [test, publish]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/release/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/release/') && !startsWith(github.ref, 'refs/tags/release-train/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

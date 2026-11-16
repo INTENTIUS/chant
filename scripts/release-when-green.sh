@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release-when-green.sh [major|minor|patch] [<sha>] [--dry-run] (#4218)
+# release-when-green.sh [major|minor|patch] [<member>=<level> ...] [<sha>] [--dry-run] (#4218)
 #
 # Brings main's head, or <sha>, to ci/green/<sha> and cuts it with
 # `just release`, then waits on the publish run and prints npm's `latest`:
@@ -13,8 +13,8 @@
 #   3. once every phase passed and the commit has no green tag, starts the tick
 #      (chant-ci-green.yml) and waits for the tag; a tick that finishes
 #      without tagging stops it;
-#   4. runs `just release <bump> <sha>` and waits on publish.yml at
-#      release/npm/<version>.
+#   4. runs `just release <bumps> <sha>`, which cuts a release train (#5137),
+#      and waits on publish.yml at the release-train/npm/<id> tag it names.
 #
 # Only events end a wait: a run finishing, a job failing, a tag appearing.
 # Nothing times out into a verdict. --dry-run says what it would start and
@@ -25,11 +25,11 @@
 # (default `just release`), RWG_CHANT (default this checkout's CLI through tsx).
 set -euo pipefail
 
-bump=patch sha="" dry=0
+bumps=() sha="" dry=0
 for a in "$@"; do
   case "$a" in
     "") ;;
-    major|minor|patch) bump="$a" ;;
+    major|minor|patch|*=major|*=minor|*=patch) bumps+=("$a") ;;
     --dry-run|-n) dry=1 ;;
     -*) echo "release-when-green: unknown flag $a" >&2; exit 2 ;;
     *) sha="$a" ;;
@@ -48,9 +48,10 @@ head=$(git rev-parse origin/main)
 sha=$(git rev-parse "${sha:-$head}^{commit}")
 short=$(git rev-parse --short "$sha")
 git merge-base --is-ancestor "$sha" origin/main || die "$short is not on origin/main"
-# Only a lockstep tag, release/npm/<v>, counts: ls-remote's `*` crosses `/`,
-# and a member's release/npm/<member>/<v> releases one package (#5135).
-released=$(git ls-remote origin 'refs/tags/release/npm/*' | awk -v s="$sha" '$1 == s { sub("refs/tags/release/npm/", "", $2); sub("\\^\\{\\}$", "", $2); if ($2 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) print $2 }' | head -1)
+# A release train's tag, release-train/npm/<id> (#5137), or a lockstep tag,
+# release/npm/<v>, counts: ls-remote's `*` crosses `/`, and a member's
+# release/npm/<member>/<v> releases one package (#5135).
+released=$(git ls-remote origin 'refs/tags/release-train/npm/*' 'refs/tags/release/npm/*' | awk -v s="$sha" '$1 == s { sub("refs/tags/", "", $2); sub("\\^\\{\\}$", "", $2); if ($2 ~ /^release-train\/npm\/[^\/]+$/ || $2 ~ /^release\/npm\/[0-9]+\.[0-9]+\.[0-9]+$/) print $2 }' | head -1)
 [ -z "$released" ] || { say "$short is already released as $released"; exit 0; }
 
 # The required phases and the check runs each needs, from the declaration on main.
@@ -124,9 +125,9 @@ fi
 
 if [ "$dry" = 1 ]; then
   if green; then
-    $release_cmd "$bump" "$sha" --dry-run
+    $release_cmd ${bumps[@]+"${bumps[@]}"} "$sha" --dry-run
   else
-    say "dry run: would wait for the phases on $short, run the tick, then cut with: $release_cmd $bump $short"
+    say "dry run: would wait for the phases on $short, run the tick, then cut with: $release_cmd ${bumps[*]-} $short"
   fi
   exit 0
 fi
@@ -162,17 +163,21 @@ done
 say "$short is tagged ci/green"
 
 # 4. Cut and publish.
-out=$($release_cmd "$bump" "$sha" | tee >(cat >&2))
-version=$(sed -n 's/^Released \([^:]*\):.*/\1/p' <<<"$out")
-[ -n "$version" ] || die "the release printed no version"
-say "waiting on publish.yml at release/npm/$version"
+out=$($release_cmd ${bumps[@]+"${bumps[@]}"} "$sha" | tee >(cat >&2))
+if grep -q '^Nothing to release' <<<"$out"; then
+  say "nothing to release at $short"
+  exit 0
+fi
+tag=$(sed -n 's/^Released .*: publish\.yml runs on \([^ ]*\)$/\1/p' <<<"$out")
+[ -n "$tag" ] || die "the release printed no tag"
+say "waiting on publish.yml at $tag"
 while true; do
-  run=$(gh run list -w publish.yml --branch "release/npm/$version" -L 1 --json databaseId,status,conclusion \
+  run=$(gh run list -w publish.yml --branch "$tag" -L 1 --json databaseId,status,conclusion \
     -q '.[] | "\(.databaseId)|\(.status)|\(.conclusion)"')
   case "$run" in
     *\|completed\|success) break ;;
-    *\|completed\|*) die "publish.yml for $version finished ${run##*|}: gh run view ${run%%|*}" ;;
+    *\|completed\|*) die "publish.yml for $tag finished ${run##*|}: gh run view ${run%%|*}" ;;
   esac
   sleep "$poll"
 done
-say "published $version; npm latest is $(npm view @intentius/chant dist-tags.latest)"
+say "published $tag; npm latest is $(npm view @intentius/chant dist-tags.latest)"

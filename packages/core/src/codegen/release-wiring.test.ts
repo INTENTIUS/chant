@@ -44,11 +44,13 @@ function releaseTagShapes(): Array<{ recipe: string; example: string }> {
       .replace(/\$\{?next\}?/g, "9.9.9");
     shapes.push({ recipe: raw, example });
   }
-  // `just release` (#4040) tags nothing itself: the cut makes the tag, and the
-  // recipe pushes it as `git push origin "refs/tags/release/npm/$next"`.
-  for (const m of justfile.matchAll(/git push origin "refs\/tags\/([^"]+)"/g)) {
-    if (m[1] === "$rtag") continue;
-    shapes.push({ recipe: m[1], example: m[1].replace(/\$\{?next\}?/g, "9.9.9") });
+  // `just release` (#5137) runs scripts/release-train.sh. Each member's cut
+  // makes its own release/npm/<member>/<label> tag, which publishes nothing
+  // by design; the train's tag, `ttag="release-train/npm/$train"`, is what
+  // publish.yml runs on.
+  const train = readFileSync(join(repoRoot, "scripts", "release-train.sh"), "utf-8");
+  for (const m of train.matchAll(/^ttag="([^"]+)"$/gm)) {
+    shapes.push({ recipe: m[1], example: m[1].replace(/\$\{?train\}?/g, "train-x") });
   }
   return shapes;
 }
@@ -83,9 +85,10 @@ describe("release wiring: justfile tags vs publish.yml trigger", () => {
 
   it("covers the two shapes the repo releases by", () => {
     const examples = releaseTagShapes().map((s) => s.example);
-    // Whole-repo release and single-lexicon patch. If a recipe stops
-    // producing one of these, the assertion above would pass vacuously.
-    expect(examples).toContain("release/npm/9.9.9");
+    // A release train, the legacy whole-repo release and single-lexicon
+    // patch. If a recipe stops producing one of these, the assertion above
+    // would pass vacuously.
+    expect(examples).toContain("release-train/npm/train-x");
     expect(examples).toContain("chant-v9.9.9");
     expect(examples).toContain("lexicon-docker-v9.9.9");
   });
@@ -250,13 +253,18 @@ describe("release wiring: release the newest green commit (#2816)", () => {
  * with no bump commit and no signing, and the recipe pushes the tag the cut
  * made. Its floor reads every tag, since package.json no longer moves.
  */
-describe("release wiring: just release runs chant release cut (#4040)", () => {
-  const body = () => recipeBody("release");
+describe("release wiring: just release cuts a release train (#5137)", () => {
+  const body = () => readFileSync(join(repoRoot, "scripts", "release-train.sh"), "utf-8");
 
-  it("cuts the commit the preflight chose, from the release/ member", () => {
-    expect(body()).toMatch(/sha=\$\(bash scripts\/release-preflight\.sh/);
-    expect(body()).toMatch(/cd release && .*release cut "\$next" --at "\$sha"/);
-    expect(body().indexOf("scripts/release-preflight.sh")).toBeLessThan(body().indexOf("release cut"));
+  it("the recipe runs scripts/release-train.sh", () => {
+    expect(recipeBody("release")).toMatch(/bash scripts\/release-train\.sh \{\{args\}\}/);
+  });
+
+  it("cuts each member at the commit the preflight chose, from its directory under release/", () => {
+    expect(body()).toMatch(/preflight="\$\{RELEASE_PREFLIGHT:-bash scripts\/release-preflight\.sh\}"/);
+    expect(body()).toMatch(/sha=\$\(\$preflight/);
+    expect(body()).toMatch(/cd "release\/\$m" && \$chant release cut "\$l" --at "\$sha"/);
+    expect(body().indexOf("sha=$($preflight")).toBeLessThan(body().indexOf("$chant release cut"));
   });
 
   it("makes no bump commit and signs nothing", () => {
@@ -264,16 +272,20 @@ describe("release wiring: just release runs chant release cut (#4040)", () => {
     expect(body()).not.toMatch(/--sign/);
   });
 
-  it("a dry run cuts without --yes and stops before any push", () => {
-    expect(body()).toMatch(/\[ "\$RELEASE_DRY_RUN" = 1 \] \|\| yes=\(--yes\)/);
-    const dry = body().indexOf('if [ "$RELEASE_DRY_RUN" = 1 ]; then');
+  it("a dry run cuts without --yes and stops before the train, the ledger push and any tag push", () => {
+    expect(body()).toMatch(/\[ "\$dry" = 1 \] \|\| yes=\(--yes\)/);
+    const dry = body().indexOf('if [ "$dry" = 1 ]; then');
     expect(dry).toBeGreaterThan(-1);
-    expect(dry).toBeLessThan(body().indexOf("git push"));
+    for (const later of ["workspace train npm --json", "$push_ledger\n", "git push"]) expect(dry).toBeLessThan(body().indexOf(later));
   });
 
-  it("floors on package.json at the commit and on every chant-v and release/npm tag", () => {
-    expect(body()).toMatch(/release_version_at "\$sha"/);
-    // release_legacy_versions: chant-v<v> and release/npm/<v>, never release/npm/<member>/<v> (#5135).
-    expect(body()).toMatch(/done < <\(release_legacy_versions\)/);
+  it("records the train and pushes the ledger before it pushes the train's tag", () => {
+    expect(body().indexOf("workspace train npm --json")).toBeLessThan(body().indexOf("$push_ledger\n"));
+    expect(body().indexOf("$push_ledger\n")).toBeLessThan(body().indexOf("git push --atomic"));
+  });
+
+  it("floors each label on every version its package has, and the first train on the lockstep labels", () => {
+    expect(body()).toMatch(/release_member_floor "\$m" "\$sha"/);
+    expect(body()).toMatch(/cd release && \$chant release list --json/);
   });
 });
