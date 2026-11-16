@@ -19,8 +19,9 @@
  * (#2524 D7), whatever directory the command runs in: `records --json`
  * reports it from there too.
  *
- * Exit codes: 0 when the lease was written, 2 when it was refused (someone
- * holds it, it expired, another clone got there first), 1 when the command
+ * Exit codes (#4585): 0 when the lease was written, 5 when it was refused
+ * because another worker holds it or another writer or clone got there first,
+ * 1 when nobody holds it (it expired, or the token is stale) or the command
  * could not run (usage, an unreadable kind, an unknown item).
  */
 

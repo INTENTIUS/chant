@@ -84,7 +84,7 @@ describe("chant workspace work (#2732)", () => {
     ]);
     const runs = [a, b];
     const won = runs.filter((r) => r.code === 0);
-    const lost = runs.filter((r) => r.code === 2);
+    const lost = runs.filter((r) => r.code === 5);
     expect(won, `${a.stderr}\n${b.stderr}`).toHaveLength(1);
     expect(lost).toHaveLength(1);
     const winner = json(won[0]);
@@ -137,7 +137,7 @@ describe("chant workspace work (#2732)", () => {
     expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.parse(claim.refused.heldBy.expiresAt));
 
     const wrong = await chant(root, ["workspace", "work", "release", "W-001", "--holder", "nobody", "--json"]);
-    expect(wrong.code).toBe(2);
+    expect(wrong.code).toBe(5);
     expect(json(wrong).refused.code).toBe("lease-held");
 
     const release = await chant(root, ["workspace", "work", "release", "W-001", "--holder", holder, "--outcome", "done"]);
