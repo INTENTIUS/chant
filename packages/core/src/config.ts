@@ -183,6 +183,8 @@ export const ChantConfigSchema = z.object({
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
     // #5149: what says a commit may be released.
     green: z.enum(["chant", "forge-checks", "none"]).optional(),
+    // #5157: commands a publish runs after every target has staged and before any reveals.
+    verify: z.array(z.union([z.string().min(1), z.object({ name: z.string().min(1).optional(), run: z.string().min(1) }).strict()])).optional(),
     // #5134: tag prefixes of releases cut before members had ledgers, read as a last release by `chant release changed`.
     legacyTags: z.array(z.string().min(1)).optional(),
     // #5150: the tag a cut makes, as a template, and the floating tag a publish moves.
@@ -533,6 +535,14 @@ export interface ChantConfig {
      * the repository holds `ci/green/` tags, else `forge-checks`. See ./lifecycle/release-green.ts.
      */
     green?: import("./lifecycle/release-green").ReleaseGreenSource;
+    /**
+     * Commands `chant release publish` and `chant workspace train publish`
+     * run after every target has staged and before any reveals (#5157), with
+     * the staged references in the environment (`CHANT_STAGED`,
+     * `CHANT_STAGED_NPM`, `CHANT_STAGED_IMAGES`, ...). One that fails stops
+     * the publish with nothing visible. See ./lifecycle/publish-verify.ts.
+     */
+    verify?: import("./lifecycle/publish-verify").ReleaseVerifyDeclaration[];
     /**
      * Tag prefixes of releases cut before members had ledgers (#5134), such as
      * `release/npm/` and `chant-v`. `chant release changed` reads the newest

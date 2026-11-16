@@ -398,6 +398,8 @@ export interface PublishPlan {
   /** The floating tag `release.tag.floating` names (#5150), and whether this release moves it; null when there is none. */
   floating?: FloatingTag | null;
   targets: PublishTarget[];
+  /** `release.verify` (#5157): the commands run after every target has staged and before any reveals. */
+  verify?: import("./publish-verify").VerifyStep[];
   /** Masks the run's credentials in what the publish prints. */
   redactor: Redactor;
   /** Whether a target with no SBOM source is refused (`publish-sbom-missing`): the workspace opts into `supply-chain` (#4168). Otherwise it publishes without one. */
@@ -511,11 +513,14 @@ export async function preparePublish(req: {
   } catch (err) {
     return { refusal: { code: "publish-config-invalid", message: `the publish targets can't be read: ${err instanceof Error ? err.message : String(err)}`, fix: "Fix release.publish in chant.config.ts." } };
   }
+  const { loadChantConfig } = await import("../config");
+  const releaseConfig = (await loadChantConfig(cwd)).config.release;
+  // #5157: the commands run after every target has staged and before any reveals.
+  const verify = (await import("./publish-verify")).verifySteps(releaseConfig?.verify);
   // A target publishes files from this checkout, so they must be the release commit's (#4047).
   if (targets.length > 0) {
     // #4840: the files release.version names may carry the label, as the publish job's `chant release stamp` writes them.
-    const { loadChantConfig } = await import("../config");
-    const version = (await loadChantConfig(cwd)).config.release?.version;
+    const version = releaseConfig?.version;
     const trains = version?.ranges === "train" && label !== null ? (await import("../workspace/train-range-labels")).trainLabelCandidates(cwd, label) : undefined;
     const refused = checkCheckoutIsRelease(cwd, release.commit, name, version ? { version, label, ...(trains ? { trains: await trains } : {}) } : {});
     if (refused) return { refusal: refused };
@@ -594,7 +599,7 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, releaseTagOf, floating, targets, redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
+  return { release, label, signature, provenance, warning, signatureWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
 }
 
 /**
@@ -739,6 +744,8 @@ export interface PublishRun {
   resumed: Array<{ target: string; step: "staged" | "revealed" }>;
   /** Why a record line was not written or not pushed, when one wasn't. A resume then asks the registries. */
   recordWarning: string | null;
+  /** How `release.verify` went (#5157): `passed`, or `skipped` when a reveal was already recorded; absent with no commands. */
+  verify?: "passed" | "skipped";
 }
 
 /** A publish that stopped, with what it left staged and revealed so a run of the same command resumes. */
@@ -747,7 +754,7 @@ export class PublishRunError extends PublishTargetError {
     code: string,
     message: string,
     fix: string | undefined,
-    readonly step: "stage" | "reveal",
+    readonly step: "stage" | "verify" | "reveal",
     readonly staged: string[],
     readonly revealed: string[],
   ) {
@@ -761,9 +768,14 @@ export class PublishRunError extends PublishTargetError {
  *
  * 1. Stage every target in the order declared, skipping one the record says
  *    staged or revealed. Each stage is recorded and pushed as it finishes.
- *    A failure here leaves nothing visible to a consumer.
- * 2. Only when every target has staged, reveal each in the same order,
- *    skipping one the record says revealed, and record each reveal.
+ *    A failure here leaves nothing visible to a consumer. A target whose
+ *    stage is already visible (`stagesVisibly`) is not staged here but just
+ *    before its reveal, so it is never visible before the others have staged.
+ * 2. Run `verify` (#5157), the `release.verify` commands, with the staged
+ *    references, unless the record shows a reveal. A failure is recorded
+ *    and stops the publish with nothing visible.
+ * 3. Reveal each target in the same order, skipping one the record says
+ *    revealed, and record each reveal.
  *
  * A run of the same publish after a failure resumes: what went out is not
  * published again, and a stage that failed part way sends only what its
@@ -775,6 +787,10 @@ export async function runPublish(req: {
   label: string | null;
   targets: readonly PublishTarget[];
   ctx: PublishContext;
+  /** `release.verify` (#5157). Default none. */
+  verify?: readonly import("./publish-verify").VerifyStep[];
+  /** Runs one verify command; the default runs it through the shell. */
+  runVerify?: import("./publish-verify").VerifyRunner;
   /** Write the record. Default true. */
   record?: boolean;
   /** Print one line of progress. Redacted by the caller. */
@@ -792,7 +808,7 @@ export async function runPublish(req: {
   const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
   let recordWarning: string | null = null;
 
-  const write = async (target: PublishTarget, step: "staged" | "revealed", items: PublishItem[], state: Record<string, string>) => {
+  const write = async (target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" }, step: import("./publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>) => {
     if (!record) return;
     try {
       await appendPublishRecord(
@@ -814,6 +830,19 @@ export async function runPublish(req: {
   const resumed: PublishRun["resumed"] = [];
   const staged = new Map<string, StagedTarget>();
   const stagedNames: string[] = [];
+  const revealedNames: string[] = [];
+  const stageOne = async (target: PublishTarget) => {
+    say(`  staging to ${target.destination}`);
+    let s: StagedTarget;
+    try {
+      s = await target.stage(ctx);
+    } catch (err) {
+      return fail(err, target, "stage", stagedNames, revealedNames);
+    }
+    staged.set(target.key, s);
+    stagedNames.push(target.name);
+    await write(target, "staged", s.items, s.state);
+  };
   for (const target of targets) {
     if (progress.revealed.has(target.key)) {
       resumed.push({ target: target.name, step: "revealed" });
@@ -828,20 +857,40 @@ export async function runPublish(req: {
       stagedNames.push(target.name);
       continue;
     }
-    say(`  staging to ${target.destination}`);
-    let s: StagedTarget;
-    try {
-      s = await target.stage(ctx);
-    } catch (err) {
-      return fail(err, target, "stage", stagedNames, []);
+    // Its stage is visible to a consumer, so it waits for its reveal's turn.
+    if (target.stagesVisibly) continue;
+    await stageOne(target);
+  }
+
+  // #5157: release.verify, with nothing visible yet; not once a reveal is recorded, since it could hold nothing back.
+  let verified: PublishRun["verify"];
+  const steps = req.verify ?? [];
+  if (steps.length > 0 && targets.some((t) => !progress.revealed.has(t.key))) {
+    if (progress.revealed.size > 0) {
+      say("  verify: skipped, since an earlier run began revealing");
+      verified = "skipped";
+    } else {
+      const { runVerifySteps, stagedReference, verifyKey } = await import("./publish-verify");
+      const refs = targets.filter((t) => staged.has(t.key)).map((t) => stagedReference(t, staged.get(t.key)!));
+      const outcome = runVerifySteps({ cwd, steps, env: ctx.env, release, label, releaseTag: ctx.releaseTag, staged: refs, say, ...(req.runVerify ? { run: req.runVerify } : {}) });
+      const key = { key: verifyKey(steps), kind: "verify" as const, name: "verify" };
+      if (!outcome.passed) {
+        await write(key, "verify-failed", [], { step: outcome.step.name, exitCode: String(outcome.exitCode) });
+        throw new PublishRunError(
+          "publish-verify-failed",
+          ctx.redactor.redact(`verify: ${outcome.step.name} exited ${outcome.exitCode ?? "on a signal"}`),
+          "Nothing was revealed. Fix what it found and run the same command again: what staged is not staged again, and the verify commands run again before any reveal. A release that should not go out stays staged, unseen by consumers.",
+          "verify",
+          stagedNames,
+          [],
+        );
+      }
+      await write(key, "verified", [], {});
+      verified = "passed";
     }
-    staged.set(target.key, s);
-    stagedNames.push(target.name);
-    await write(target, "staged", s.items, s.state);
   }
 
   const published: PublishedTarget[] = [];
-  const revealedNames: string[] = [];
   for (const target of targets) {
     const done = progress.revealed.get(target.key);
     if (done) {
@@ -849,6 +898,7 @@ export async function runPublish(req: {
       revealedNames.push(target.name);
       continue;
     }
+    if (!staged.has(target.key)) await stageOne(target);
     say(`  revealing ${target.name}`);
     let p: PublishedTarget;
     try {
@@ -865,5 +915,5 @@ export async function runPublish(req: {
     revealedNames.push(target.name);
     await write(target, "revealed", p.items, {});
   }
-  return { published, resumed, recordWarning };
+  return { published, resumed, recordWarning, ...(verified ? { verify: verified } : {}) };
 }

@@ -7,7 +7,10 @@
  * `chant/lifecycle`, under the member's prefix like `cuts.jsonl` beside it,
  * append-only. A target that staged gets a `staged` line with its items and
  * the state its reveal needs (a draft release's id); one that revealed gets
- * a `revealed` line. Each line is pushed as soon as it is written, so a CI
+ * a `revealed` line. The `release.verify` commands (#5157) get a `verified`
+ * or `verify-failed` line, under the target `verify:<hex>` of kind `verify`,
+ * with the failing command's name and exit status in its state; the lines of
+ * targets are what a resume reads. Each line is pushed as soon as it is written, so a CI
  * job that resumes on a fresh checkout reads it after `fetchLifecycle`.
  *
  * Why a record and not only the registries: a registry says whether a version
@@ -38,10 +41,10 @@ export interface PublishRecord {
   label: string | null;
   /** The target's key ({@link PublishTarget.key}). */
   target: string;
-  kind: PublishTarget["kind"];
+  kind: PublishTarget["kind"] | "verify";
   /** The target's name, for a reader. */
   name: string;
-  step: "staged" | "revealed";
+  step: "staged" | "revealed" | "verified" | "verify-failed";
   items: PublishItem[];
   /** What the reveal needs, on a `staged` line; `{}` on a `revealed` one. */
   state: Record<string, string>;
@@ -61,7 +64,7 @@ export function parsePublishRecords(text: string | null): { records: PublishReco
         r.version === 1 &&
         typeof r.releaseDigest === "string" &&
         typeof r.target === "string" &&
-        (r.step === "staged" || r.step === "revealed") &&
+        (r.step === "staged" || r.step === "revealed" || r.step === "verified" || r.step === "verify-failed") &&
         Array.isArray(r.items) &&
         typeof r.timestamp === "string";
       if (!ok) {
@@ -94,7 +97,7 @@ export function publishProgress(records: readonly PublishRecord[]): PublishProgr
   const revealed = new Map<string, PublishedTarget>();
   for (const r of records) {
     if (r.step === "staged") staged.set(r.target, { target: r.name, destination: "", items: r.items, state: r.state });
-    else revealed.set(r.target, { target: r.name, destination: "", items: r.items });
+    else if (r.step === "revealed") revealed.set(r.target, { target: r.name, destination: "", items: r.items });
   }
   return { staged, revealed };
 }

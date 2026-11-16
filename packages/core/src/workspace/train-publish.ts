@@ -26,7 +26,11 @@
  *
  * 1. Stage every member's targets, layer by layer, so a failure leaves no
  *    member visible to a consumer.
- * 2. Reveal layer by layer. Before the next layer, wait until each revealed
+ * 2. Run each member's `release.verify` commands (#5157), in layer order,
+ *    with the whole train's staged references, unless a record shows a
+ *    reveal. A failure is recorded in the member's record and stops the
+ *    publish before the first layer reveals.
+ * 3. Reveal layer by layer. Before the next layer, wait until each revealed
  *    target of this one resolves for a consumer (`PublishTarget.visible`:
  *    npm's `dist-tags.latest` names the version), so no package is visible
  *    before the packages it needs are.
@@ -73,6 +77,12 @@ export interface TrainPublishMember {
   targets: TrainPlannedTarget[];
 }
 
+/** A member's `release.verify` commands (#5157), and the targets of the train they can't see. */
+export interface TrainVerifyPlan {
+  member: string;
+  steps: import("../lifecycle/publish-verify").VerifyStep[];
+}
+
 export interface TrainPublishRefusal {
   kind: "refused";
   code: string;
@@ -82,7 +92,7 @@ export interface TrainPublishRefusal {
 
 export type TrainPublishOutcome =
   | TrainPublishRefusal
-  | { kind: "planned"; train: ReadTrain; members: TrainPublishMember[]; warnings: string[]; redactor: Redactor }
+  | { kind: "planned"; train: ReadTrain; members: TrainPublishMember[]; warnings: string[]; redactor: Redactor; verify: TrainVerifyPlan[] }
   | {
       kind: "published";
       train: ReadTrain;
@@ -94,6 +104,9 @@ export type TrainPublishOutcome =
       /** The targets an earlier run had staged or revealed, so this one did not stage them again. */
       resumed: Array<{ member: string; target: string; step: "staged" | "revealed" }>;
       recordWarning: string | null;
+      verify: TrainVerifyPlan[];
+      /** How the verify commands went: `passed`, or `skipped` when a reveal was already recorded; absent with none. */
+      verified?: "passed" | "skipped";
       /** Why a member's floating tag (#5150) was not moved, one line each. */
       floatingWarnings?: string[];
     };
@@ -105,7 +118,7 @@ export class TrainPublishRunError extends PublishTargetError {
     message: string,
     fix: string | undefined,
     readonly member: string,
-    readonly step: "stage" | "reveal" | "wait",
+    readonly step: "stage" | "verify" | "reveal" | "wait",
     readonly staged: string[],
     readonly revealed: string[],
   ) {
@@ -134,6 +147,8 @@ export interface TrainPublishQuery {
   /** Write the publish records. Default true. */
   record?: boolean;
   now?: () => Date;
+  /** Runs one `release.verify` command; the default runs it through the shell. */
+  runVerify?: import("../lifecycle/publish-verify").VerifyRunner;
 }
 
 interface Prepared {
@@ -296,9 +311,16 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     members.push({ member: p.m.member, label: p.m.label, releaseDigest: p.m.releaseDigest, commit: p.m.commit, role: "publish", layer: p.layer, targets });
   }
   members.sort((a, b) => (a.layer ?? -1) - (b.layer ?? -1) || a.member.localeCompare(b.member));
-  if (!query.yes) return { kind: "planned", train, members, warnings, redactor };
+  // #5157: each member's release.verify, after the whole train has staged; a target whose stage is visible is out of its reach.
+  const verify: TrainVerifyPlan[] = ordered.filter((p) => (p.plan.verify ?? []).length > 0 && p.plan.targets.length > 0).map((p) => ({ member: p.m.member, steps: p.plan.verify! }));
+  if (verify.length > 0) {
+    const { unstagedForVerify, unstagedWarning } = await import("../lifecycle/publish-verify");
+    const unstaged = ordered.flatMap((p) => unstagedForVerify(p.plan.targets).map((n) => `${p.m.member}: ${n}`));
+    if (unstaged.length > 0) warnings.push(unstagedWarning(unstaged));
+  }
+  if (!query.yes) return { kind: "planned", train, members, warnings, redactor, verify };
 
-  const ran = await runTrain({ ordered, layers: layers.length, progressOfMember, say: (l) => say(redactor.redact(l)), record: query.record ?? true, now: query.now ?? (() => new Date()) });
+  const ran = await runTrain({ ordered, layers: layers.length, progressOfMember, verify, say: (l) => say(redactor.redact(l)), record: query.record ?? true, now: query.now ?? (() => new Date()), ...(query.runVerify ? { runVerify: query.runVerify } : {}) });
   // #5150: each member's floating tag moves once the whole train has revealed, unless one of its targets refused.
   const floatingWarnings: string[] = [];
   const { moveFloatingTag } = await import("../lifecycle/release-publish");
@@ -309,7 +331,7 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     const w = refused ? `the floating tag ${f.name} was not moved, since a target refused the release` : moveFloatingTag(p.dir, f);
     if (w) floatingWarnings.push(`${p.m.member}: ${w}`);
   }
-  return { kind: "published", train, members, warnings, redactor, ...ran, floatingWarnings };
+  return { kind: "published", train, members, warnings, redactor, verify, ...ran, floatingWarnings };
 }
 
 /** The two passes over the prepared members (#5136). Throws {@link TrainPublishRunError}. */
@@ -317,10 +339,12 @@ async function runTrain(req: {
   ordered: Prepared[];
   layers: number;
   progressOfMember: Map<string, import("../lifecycle/publish-record").PublishProgress>;
+  verify: readonly TrainVerifyPlan[];
+  runVerify?: import("../lifecycle/publish-verify").VerifyRunner;
   say: (line: string) => void;
   record: boolean;
   now: () => Date;
-}): Promise<{ published: Array<{ member: string; targets: PublishedTarget[] }>; resumed: Array<{ member: string; target: string; step: "staged" | "revealed" }>; recordWarning: string | null }> {
+}): Promise<{ published: Array<{ member: string; targets: PublishedTarget[] }>; resumed: Array<{ member: string; target: string; step: "staged" | "revealed" }>; recordWarning: string | null; verified?: "passed" | "skipped" }> {
   const { appendPublishRecord } = await import("../lifecycle/publish-record");
   const { pushLifecycleReport } = await import("../lifecycle/git");
   const { resolveRunId } = await import("../lifecycle/release-ledger");
@@ -333,7 +357,7 @@ async function runTrain(req: {
   const keyOf = (p: Prepared, t: PublishTarget) => `${p.m.member}\u0000${t.key}`;
   const shown = (p: Prepared, t: PublishTarget) => `${p.m.member}: ${t.name}`;
 
-  const write = async (p: Prepared, target: PublishTarget, step: "staged" | "revealed", items: PublishItem[], state: Record<string, string>) => {
+  const write = async (p: Prepared, target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" }, step: import("../lifecycle/publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>) => {
     if (!req.record) return;
     try {
       const runId = resolveRunId(undefined, p.ctx.env).runId;
@@ -380,6 +404,38 @@ async function runTrain(req: {
       }
       if (t.stagesVisibly) continue;
       await stage(p, t);
+    }
+  }
+
+  // #5157: every member's release.verify, before the first layer reveals; not once any reveal is recorded.
+  let verified: "passed" | "skipped" | undefined;
+  const anyUnrevealed = ordered.some((p) => p.plan.targets.some((t) => !req.progressOfMember.get(p.m.member)!.revealed.has(t.key)));
+  if (req.verify.length > 0 && anyUnrevealed) {
+    if (ordered.some((p) => req.progressOfMember.get(p.m.member)!.revealed.size > 0)) {
+      say("  verify: skipped, since an earlier run began revealing");
+      verified = "skipped";
+    } else {
+      const { runVerifySteps, stagedReference, verifyKey } = await import("../lifecycle/publish-verify");
+      const refs = ordered.flatMap((p) => p.plan.targets.filter((t) => staged.has(keyOf(p, t))).map((t) => stagedReference(t, staged.get(keyOf(p, t))!, p.m.member)));
+      for (const v of req.verify) {
+        const p = ordered.find((x) => x.m.member === v.member)!;
+        const outcome = runVerifySteps({ cwd: p.dir, steps: v.steps, env: p.ctx.env, release: p.plan.release, label: p.plan.label, releaseTag: p.plan.releaseTag, staged: refs, say: (l) => say(l.replace(/^  /, `  ${p.m.member}: `)), ...(req.runVerify ? { run: req.runVerify } : {}) });
+        const key = { key: verifyKey(v.steps), kind: "verify" as const, name: "verify" };
+        if (!outcome.passed) {
+          await write(p, key, "verify-failed", [], { step: outcome.step.name, exitCode: String(outcome.exitCode) });
+          throw new TrainPublishRunError(
+            "publish-verify-failed",
+            p.plan.redactor.redact(`${p.m.member}: verify: ${outcome.step.name} exited ${outcome.exitCode ?? "on a signal"}`),
+            "Nothing was revealed. Fix what it found and run the same command again: what staged is not staged again, and the verify commands run again before any reveal.",
+            p.m.member,
+            "verify",
+            [...stagedNames],
+            [],
+          );
+        }
+        await write(p, key, "verified", [], {});
+      }
+      verified = "passed";
     }
   }
 
@@ -431,7 +487,7 @@ async function runTrain(req: {
       }
     }
   }
-  return { published, resumed, recordWarning };
+  return { published, resumed, recordWarning, ...(verified ? { verified } : {}) };
 }
 
 const USAGE = "chant workspace train publish <env> [<train id|digest>] [--yes] [--allow-unsigned] [--require-provenance] [--json]";
@@ -469,7 +525,7 @@ export async function runTrainPublish(ctx: import("../cli/registry").CommandCont
     }
     if (err instanceof TrainPublishRunError) {
       const where =
-        err.step === "stage"
+        (err.step === "stage" || err.step === "verify") && err.revealed.length === 0
           ? `nothing is visible yet${err.staged.length > 0 ? `; staged: ${err.staged.join(", ")}` : ""}`
           : `revealed: ${err.revealed.length > 0 ? err.revealed.join(", ") : "none"}; staged and not yet revealed: ${err.staged.filter((t) => !err.revealed.includes(t)).join(", ") || "none"}`;
       if (json) console.log(JSON.stringify({ status: "failed", code: err.code, message: err.message, member: err.member, step: err.step, staged: err.staged, revealed: err.revealed }, null, 2));
@@ -488,7 +544,7 @@ export async function runTrainPublish(ctx: import("../cli/registry").CommandCont
   const base = { train: outcome.train.id, trainDigest: outcome.train.trainDigest, env, members: outcome.members };
   if (outcome.kind === "planned") {
     if (json) {
-      console.log(redactor.redact(JSON.stringify({ dryRun: true, ...base }, null, 2)));
+      console.log(redactor.redact(JSON.stringify({ dryRun: true, ...base, ...(outcome.verify.length > 0 ? { verify: outcome.verify } : {}) }, null, 2)));
       return 0;
     }
     const out = (line: string) => console.log(redactor.redact(line));
@@ -505,13 +561,17 @@ export async function runTrainPublish(ctx: import("../cli/registry").CommandCont
         for (const i of t.items) out(`      ${i.name} to ${i.destination}`);
       }
     }
+    for (const v of outcome.verify) {
+      out(`  verify ${v.member}, after every member has staged and before the first layer reveals:`);
+      for (const s of v.steps) out(`    ${s.name === s.run ? s.run : `${s.name}: ${s.run}`}`);
+    }
     console.error(`Dry run: nothing was published. Run again with --yes to publish.`);
     return 0;
   }
   if (outcome.recordWarning) console.error(formatWarning({ message: redactor.redact(`${outcome.recordWarning}. A resume asks the registries what is already there.`) }));
   for (const w of outcome.floatingWarnings ?? []) console.error(formatWarning({ message: redactor.redact(w) }));
   if (json) {
-    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, published: outcome.published, resumed: outcome.resumed }, null, 2)));
+    console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, published: outcome.published, resumed: outcome.resumed, ...(outcome.verified ? { verified: outcome.verified } : {}) }, null, 2)));
     return 0;
   }
   const count = outcome.members.filter((m) => m.role === "publish").length;

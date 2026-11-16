@@ -34,11 +34,11 @@ const compiler: TargetCompiler = {
 };
 
 const pkg = (name: string, version: string, peer?: Record<string, string>) => JSON.stringify({ name, version, ...(peer ? { peerDependencies: peer } : {}) }, null, 2);
-const member = (pkgDir: string, stage: boolean) =>
-  `export default { environments: ["npm"], release: { publish: [{ type: "npm", stage: ${stage}, packages: ["../../${pkgDir}"] }] } };\n`;
+const member = (pkgDir: string, stage: boolean, verify?: string[]) =>
+  `export default { environments: ["npm"], release: { publish: [{ type: "npm", stage: ${stage}, packages: ["../../${pkgDir}"] }]${verify ? `, verify: ${JSON.stringify(verify)}` : ""} } };\n`;
 
 /** An outer workspace whose member `npm` is a nested workspace of two release members, core and lex; lex peers on core. */
-function setup(opts: { stage?: boolean; extra?: string[] } = {}) {
+function setup(opts: { stage?: boolean; extra?: string[]; verify?: Record<string, string[]> } = {}) {
   const r = new TestRepo("train-publish");
   repos.push(r);
   const stage = opts.stage ?? true;
@@ -46,7 +46,7 @@ function setup(opts: { stage?: boolean; extra?: string[] } = {}) {
   const names = ["core", "lex", ...(opts.extra ?? [])];
   r.write("release/chant.workspace.json", JSON.stringify({ name: "npm", schema: 1, members: names.map((n) => ({ name: n, dir: n, kind: "chant" })) }, null, 2));
   for (const n of names) {
-    r.write(`release/${n}/chant.config.ts`, member(`pkgs/${n}`, stage));
+    r.write(`release/${n}/chant.config.ts`, member(`pkgs/${n}`, stage, opts.verify?.[n]));
     r.write(`release/${n}/packages.component.ts`, "export const packages = {};\n");
   }
   r.write("pkgs/core/package.json", pkg("@acme/core", "2.0.0"));
@@ -191,6 +191,50 @@ describe("a staged train publish", () => {
     const again = await run();
     expect(again).toMatchObject({ kind: "published", resumed: [{ member: "core", step: "revealed" }, { member: "lex", step: "revealed" }] });
     expect(npmCalls(log).slice(third).filter((a) => a[0] === "publish" || a[0] === "dist-tag")).toEqual([]);
+  });
+});
+
+describe("a train publish with release.verify (#5157)", () => {
+  const f = fixture(async () => {
+    const x = setup({ verify: { lex: ["lex-check"] } });
+    await cut(x.r, "core", "2.0.0");
+    await cut(x.r, "lex", "2.0.0");
+    await recordTrain(x.nested);
+    return x;
+  });
+  const seen: Array<{ command: string; cwd: string; npm: string | undefined }> = [];
+  let exit = 1;
+  const runVerify = (command: string, o: { cwd: string; env: NodeJS.ProcessEnv }) => {
+    seen.push({ command, cwd: o.cwd, npm: o.env.CHANT_STAGED_NPM });
+    return exit;
+  };
+  const run = () => publishTrain({ cwd: f().nested, env: "npm", yes: true, processEnv: ENV(), deps: { npm: f().npm, sleep: NO_WAIT }, runVerify });
+
+  test("the plan names the member's verify commands", async () => {
+    const planned = await publishTrain({ cwd: f().nested, env: "npm", processEnv: ENV(), deps: { npm: f().npm } });
+    expect(planned).toMatchObject({ kind: "planned", verify: [{ member: "lex", steps: [{ name: "lex-check", run: "lex-check" }] }] });
+  });
+
+  test("runs after the whole train has staged, with every member's staged packages; a failure moves no latest and is in the member's record", async () => {
+    const { r, log } = f();
+    const failed = await run().catch((e: unknown) => e);
+    expect(failed).toBeInstanceOf(TrainPublishRunError);
+    expect(failed).toMatchObject({ code: "publish-verify-failed", member: "lex", step: "verify", staged: ["core: npm (1 package)", "lex: npm (1 package)"], revealed: [] });
+    expect(seen).toEqual([{ command: "lex-check", cwd: join(r.dir, "release", "lex"), npm: "@acme/core@2.0.0 @acme/lex@2.0.0" }]);
+    expect(latest(log)).toEqual({ "@acme/core": "1.0.0", "@acme/lex": "1.0.0" });
+    const rec = (m: string) => r.git(["show", `chant/lifecycle:_members/npm/_members/${m}/_releases/publishes.jsonl`]).trim().split("\n").map((l) => (JSON.parse(l) as { step: string }).step);
+    expect(rec("lex")).toEqual(["staged", "verify-failed"]);
+  });
+
+  test("run again, stages nothing again, verifies again, then reveals", async () => {
+    const { log } = f();
+    exit = 0;
+    const before = npmCalls(log).length;
+    const done = await run();
+    expect(done).toMatchObject({ kind: "published", verified: "passed" });
+    expect(seen).toHaveLength(2);
+    expect(npmCalls(log).slice(before).filter((a) => a[0] === "publish")).toEqual([]);
+    expect(latest(log)).toEqual({ "@acme/core": "2.0.0", "@acme/lex": "2.0.0" });
   });
 });
 

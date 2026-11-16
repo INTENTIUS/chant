@@ -500,7 +500,7 @@ steps:
 
 ## Staging and resuming
 
-A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them, in the same order. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package. A marketplace, PyPI or Cargo target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads. A failure while revealing leaves the targets before it visible and the rest staged.
+A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them, in the same order. Between the two it runs the [`release.verify`](/chant/cli/release/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI or Cargo target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package. A failure while revealing leaves the targets before it visible and the rest staged.
 
 Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifecycle`, beside `cuts.jsonl` and under the member's prefix. The file is append-only, and each line is pushed as soon as it is written. This line, `version` 1, is what chant 0.124.29 and newer write after staging an npm target:
 
@@ -511,9 +511,9 @@ Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifec
 | Field | Meaning |
 |---|---|
 | `target` | The target's key: its kind and the first 16 hex digits of the SHA-256 of its declaration. A declaration holds variable names and never a credential |
-| `step` | `staged` or `revealed` |
+| `step` | `staged` or `revealed`; for the [`release.verify`](/chant/cli/release/#verifying-the-staged-release) commands, `verified` or `verify-failed`, under the target `verify:<hex>` of kind `verify`, with the failing command's `step` and `exitCode` in `state` |
 | `items` | What the step published, with each destination and digest |
-| `state` | What the reveal needs that it can't read from the checkout, such as a draft release's `releaseId` |
+| `state` | What the reveal needs that it can't read from the checkout, such as a draft release's `releaseId` and `releaseUrl` |
 | `runId` | The CI run, or a `local-<epoch ms>` id on a workstation |
 
 Run again after a failure, the publish reads the record first. A target with a `revealed` line is skipped. A target with a `staged` line is revealed without staging again. The rest stage, and each stage asks its destination before it sends anything: an npm version on the registry, an image digest the registry holds, or an asset on the draft is not sent twice. So a resume publishes nothing twice, and that holds even when a record line was not written or not pushed, only slower. The record is pushed so that a CI job on a fresh clone of the release's commit resumes where the failed job stopped, since `chant release publish` fetches `chant/lifecycle` first. A push that fails is a warning, not a failure.
@@ -526,12 +526,13 @@ A [release train](/chant/cli/workspace-train/) whose members each publish one pa
 
 Every member it publishes is checked as `chant release publish` checks one, and every target is planned, before anything stages. The members go in dependency layers: a member comes after the members that publish a package its packages depend on, through `dependencies`, `peerDependencies` or `optionalDependencies`. Members of one layer go in name order, so a train of chant's packages starts with `core`.
 
-The two passes then run across the whole train:
+Three steps then run across the whole train:
 
 1. Every member's targets stage, layer by layer. A failure here leaves no member's `latest` moved.
-2. Each layer reveals. Before the next layer reveals, the publish waits until each npm package of this layer is what `latest` (or the release's channel) resolves to, polling `npm view <name> dist-tags.latest` every 10 seconds, with a line about once a minute. `registryWait` caps that wait as it caps the registry wait above. So a package is never `latest` before the packages it depends on are.
+2. Each member's `release.verify` commands run, in layer order, with the whole train's staged references: `CHANT_STAGED_NPM` names every member's staged packages. A failure is recorded in that member's record and moves no `latest`.
+3. Each layer reveals. Before the next layer reveals, the publish waits until each npm package of this layer is what `latest` (or the release's channel) resolves to, polling `npm view <name> dist-tags.latest` every 10 seconds, with a line about once a minute. `registryWait` caps that wait as it caps the registry wait above. So a package is never `latest` before the packages it depends on are.
 
-An npm target with `stage: false` has nothing to hold back, so it is not staged up front. It publishes straight to `latest` in its layer's turn, after the layers before it resolve. A train of such targets publishes layer by layer.
+An npm target with `stage: false` has nothing to hold back, so it is not staged up front. It publishes straight to `latest` in its layer's turn, after the layers before it resolve, so the verify commands can't see it, and the publish warns. A train of such targets publishes layer by layer.
 
 Each step goes into the member's own `_releases/publishes.jsonl`. Run again after a failure, the train publish skips what each member's record shows revealed and reveals without staging again what it shows staged, so nothing is published twice. `chant release publish` in one member reads the same record.
 
