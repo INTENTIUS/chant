@@ -399,7 +399,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   }
   // #5150: a release.tag template triggers on its own tags.
   if (input.tags && !input.tags.template.legacy) {
-    return renderTemplatedTagWorkflow(input, { chant, install, fullSetup, build, root, verify, flags, after, images, version, extra, forgeToken, doctor: p.doctor === true, tags: input.tags });
+    return renderTemplatedTagWorkflow(input, { chant, install, fullSetup, build, root, verify, flags, after, images, version, extra, forgeToken, doctor: p.doctor === true, artifacts, goreleaser, tags: input.tags });
   }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
   const digests = RELEASE_DIGESTS_PATHS[input.forge];
@@ -541,6 +541,9 @@ interface TemplatedInput {
   forgeToken: string[];
   /** `chant release doctor` before the stamp and build, under `doctor: true` (#5161). */
   doctor: boolean;
+  /** `release.artifacts` (#5151): built again and checked after the build. */
+  artifacts: boolean;
+  goreleaser: { github: string[]; gitlab: string[] };
   tags: MemberTags;
 }
 
@@ -574,10 +577,13 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
       ...extra.gitlabScript.map(q),
       ...labelLines.map(q),
       ...(o.doctor ? [q(`${chant} release doctor`)] : []),
+      ...o.goreleaser.gitlab.map((l) => `    - ${JSON.stringify(l)}`),
       ...(version ? [q(`${chant} release stamp ${label}`)] : []),
-      ...(images ? [ciFetch, `${chant} release images ${label} -o "${digests}"`, `export CHANT_RELEASE_DIGESTS="${digests}"`].map(q) : []),
+      ...(images || o.artifacts ? [q(ciFetch)] : []),
+      ...(images ? [`${chant} release images ${label} -o "${digests}"`, `export CHANT_RELEASE_DIGESTS="${digests}"`].map(q) : []),
+      ...(o.artifacts ? [q(`${chant} release artifacts ${label}`)] : []),
       ...(build ? [q(build)] : []),
-      ...(images ? [] : [q(ciFetch)]),
+      ...(images || o.artifacts ? [] : [q(ciFetch)]),
       ...(verify ? [q(`${chant} release verify ${label}`)] : []),
       q(`${chant} release publish ${label} ${flags}`),
     ];
@@ -611,10 +617,13 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     "        run: |",
     ...[...labelOfRefScript(chant, "$GITHUB_REF_NAME"), 'echo "CHANT_RELEASE_LABEL=$label" >> "$GITHUB_ENV"', 'echo "label=$label" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
     ...(o.doctor ? [run(`${chant} release doctor`)] : []),
+    ...o.goreleaser.github,
     ...(version ? [run(`${chant} release stamp ${label}`)] : []),
-    ...(images ? [run(ciFetch), run(`${chant} release images ${label} -o "${digests}"`), run(`echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`)] : []),
+    ...(images || o.artifacts ? [run(ciFetch)] : []),
+    ...(images ? [run(`${chant} release images ${label} -o "${digests}"`), run(`echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`)] : []),
+    ...(o.artifacts ? [run(`${chant} release artifacts ${label}`)] : []),
     ...(build ? [run(build)] : []),
-    ...(images ? [] : [run(ciFetch)]),
+    ...(images || o.artifacts ? [] : [run(ciFetch)]),
     ...(verify ? [run(`${chant} release verify ${label}`)] : []),
     run(`${chant} release publish ${label} ${flags}`),
   ];

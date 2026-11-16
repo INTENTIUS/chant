@@ -964,3 +964,16 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
     expect(plain).not.toContain("goreleaser");
   });
 });
+
+describe("release.artifacts under a release.tag template (#5151)", () => {
+  test("the publish job builds the artifacts after the ledger fetch and before the build", () => {
+    const tags: MemberTags = { place: { member: null, path: null }, template: resolveTagTemplate("v{version}", null) };
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), tags, artifacts: true, pipeline: { build: "npm run build" } })) as GhDoc;
+    const runs = doc.jobs.publish!.steps.map((s) => s.run?.trim() ?? "");
+    const a = runs.findIndex((r) => r.startsWith("npx chant release artifacts"));
+    expect(a).toBeGreaterThan(runs.findIndex((r) => r.startsWith("git fetch origin chant/lifecycle")));
+    expect(a).toBeLessThan(runs.indexOf("npm run build"));
+    const gl = (parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), tags, artifacts: true, pipeline: { build: "npm run build" } })) as Record<string, { script: string[] }>)["chant-release-publish"]!.script;
+    expect(gl.findIndex((l) => l.startsWith("npx chant release artifacts"))).toBeLessThan(gl.indexOf("npm run build"));
+  });
+});
