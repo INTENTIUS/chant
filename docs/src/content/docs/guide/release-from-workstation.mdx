@@ -73,7 +73,7 @@ git push origin release/v1.4.0
 
 ## Publish from CI
 
-[`chant release workflow`](/chant/cli/release/) writes this file for your forge, with `--require-provenance` under the `supply-chain` group and a `release verify` step under `verified-releases`. The workflow below runs on a `release/**` tag and ships the release the tag names. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance. The job checks out the tag, so the checkout is the release's commit, as a publish with targets requires. A publish never builds, so build what the targets upload before it runs, into paths `.gitignore` covers.
+[`chant release workflow`](/chant/cli/release/) writes this file for your forge, with `--require-provenance` under the `supply-chain` group and a `release verify` step under `verified-releases`. The workflow below runs on a `release/**` tag, the tag a cut makes when `release.tag` is unset, and ships the release the tag names. With [`release.tag`](/chant/cli/release/#the-releases-tag) set, the generated file runs on the tags the template makes and reads the label from the ledger. The job gets an OIDC token from `id-token: write`, so what it uploads carries provenance. The job checks out the tag, so the checkout is the release's commit, as a publish with targets requires. A publish never builds, so build what the targets upload before it runs, into paths `.gitignore` covers.
 
 ```yaml
 # .github/workflows/release-publish.yml

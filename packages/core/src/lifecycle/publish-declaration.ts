@@ -148,7 +148,7 @@ export const ForgePublishSchema = z
       .refine((n) => n.file !== undefined || n.generate !== undefined, { message: "notes need a file section, generate, or both", path: ["generate"] })
       .refine((n) => n.types === undefined || n.generate === "commits", { message: 'notes.types applies to generate: "commits"', path: ["types"] })
       .optional(),
-    /** The forge release's tag. Default: the tag the cut made, `release/<label>` or `release/<member>/<label>`. */
+    /** The forge release's tag. Default: the tag the cut made, from `release.tag` (#5150; `release/<label>` or `release/<member>/<label>` when unset). */
     tag: z.string().min(1).optional(),
     /** The variable holding the token. Default `GITHUB_TOKEN`, `GITLAB_TOKEN` (then `CI_JOB_TOKEN`), or `FORGEJO_TOKEN`. */
     tokenEnv: envName.optional(),

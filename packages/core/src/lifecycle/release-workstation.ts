@@ -17,7 +17,8 @@
  * - the actor: `--actor`, else the principal the signers file at base lists
  *   for the signing key, else the CI's actor, else git's `user.email`, else
  *   `$USER`.
- * - the tag: `release/<label>`, or `release/<member>/<label>` in a workspace
+ * - the tag: what `release.tag` renders (./release-tag.ts), by default
+ *   `release/<label>`, or `release/<member>/<label>` in a workspace
  *   member, an annotated tag on the commit that is created locally and never
  *   pushed by chant.
  */
@@ -202,7 +203,7 @@ export function resolveCutActor(req: {
   return undefined;
 }
 
-/** The tag a labelled release gets: `release/<label>`, or `release/<member>/<label>` for a workspace member. */
+/** The tag a labelled release gets when `release.tag` is unset: `release/<label>`, or `release/<member>/<label>` for a workspace member. See ./release-tag.ts. */
 export function releaseTagName(member: string | null, label: string): string {
   return member ? `release/${member}/${label}` : `release/${label}`;
 }

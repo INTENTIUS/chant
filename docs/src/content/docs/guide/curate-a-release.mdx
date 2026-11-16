@@ -41,7 +41,7 @@ If the change is already on trunk without a flag and every later candidate inclu
 
 ## Cut the candidate you picked
 
-Cut it with `--at`. The checkout you run it from need not be clean or at that sha, since the cut checks it out in a temporary worktree. It makes every check a cut at `HEAD` makes and tags the sha `release/<label>`. Without `--yes` it is a dry run.
+Cut it with `--at`. The checkout you run it from need not be clean or at that sha, since the cut checks it out in a temporary worktree. It makes every check a cut at `HEAD` makes and tags the sha with the release's tag, `release/<label>` unless `release.tag` names another. Without `--yes` it is a dry run.
 
 ```bash
 chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build"

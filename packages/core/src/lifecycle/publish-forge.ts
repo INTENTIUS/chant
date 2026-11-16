@@ -4,7 +4,8 @@
  * each forge's REST API and an injectable `fetch`.
  *
  * The tag is the declaration's `tag`, else the one the cut made
- * (`release/<label>`, or `release/<member>/<label>`), so a release with no
+ * (`release.tag`, #5150; `release/<label>` or `release/<member>/<label>`
+ * when unset), so a release with no
  * label and no declared tag is refused.
  *
  * A publish is two steps (#4048), so a consumer never sees a release with
@@ -342,6 +343,16 @@ export async function previousMemberRelease(ctx: Pick<PublishContext, "cwd" | "r
   return { commit: prev.commit, label: labelsByDigest((await readCuts({ cwd: ctx.cwd })).cuts).get(prev.releaseDigest) ?? null };
 }
 
+/**
+ * The tag the member's previous release has (#5150): its label through
+ * `release.tag`. A context that does not carry the template reads it off
+ * this release's tag, as the label's suffix, or not at all.
+ */
+export function previousReleaseTag(ctx: Pick<PublishContext, "label" | "releaseTag" | "releaseTagOf">, label: string): string | null {
+  if (ctx.releaseTagOf) return ctx.releaseTagOf(label);
+  return ctx.label !== null && ctx.releaseTag?.endsWith(ctx.label) ? `${ctx.releaseTag.slice(0, -ctx.label.length)}${label}` : null;
+}
+
 /** The commits in the member's directory after `from` (all of them when null) up to the release's commit, newest first, merges left out. */
 export function memberCommits(ctx: Pick<PublishContext, "cwd" | "release">, from: string | null, forge: string): ChangelogCommit[] {
   const range = from ? `${from}..${ctx.release.commit}` : ctx.release.commit;
@@ -444,7 +455,8 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       if (n.generate === "commits") {
         generated = changelogNotes(memberCommits(ctx, previous?.commit ?? null, decl.forge), n.types);
       } else {
-        const previousTag = previous && previous.label !== null && !decl.tag && ctx.label !== null && ctx.releaseTag?.endsWith(ctx.label) ? `${ctx.releaseTag.slice(0, -ctx.label.length)}${previous.label}` : null;
+        // #5150: the previous release's tag is the one release.tag gives its label, as the cut made it.
+        const previousTag = previous && previous.label !== null && !decl.tag ? previousReleaseTag(ctx, previous.label) : null;
         generated = client
           ? await client.generatedNotes(tag, ctx.release.commit, values.version, previous ? { tag: previousTag, commit: previous.commit } : null)
           : `(${decl.forge === "github" ? "GitHub" : "GitLab"}'s generated notes${previousTag ? ` since ${previousTag}` : ""}, made when the release stages)`;

@@ -297,7 +297,7 @@ export function proposeCiInit(root: string, options: CiInitOptions): CiInitPropo
       }
       else notes.push(`${forge} has no check runs for ci tick to read; set ci.green.source to runs and run chant ci tick from a scheduled job (see the green-commits guide).`);
     }
-    if (reported("ci-workflow-publish-missing")) commands.push({ cwd: ".", args: ["release", "workflow", "--forge", forge], why: "the publish job for release/** tags" });
+    if (reported("ci-workflow-publish-missing")) commands.push({ cwd: ".", args: ["release", "workflow", "--forge", forge], why: "the publish job for release tags" });
   }
   return { files, commands, notes, findings };
 }

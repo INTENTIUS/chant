@@ -5,7 +5,9 @@
  *
  * The job runs on a `release/**` tag, checks the tag out, fetches the ci tags
  * and `chant/lifecycle`, builds what the targets upload, and runs `chant
- * release publish` for the label the tag names. The security groups decide
+ * release publish` for the label the tag names. With `release.tag` (#5150)
+ * it runs on the tags the template makes instead, and reads the label from
+ * the ledger with `chant release tag`. The security groups decide
  * the rest, and nothing is on without one (#4168 section 8):
  *
  * - `supply-chain` adds `--require-provenance`, so a run with no OIDC token
@@ -32,6 +34,7 @@ import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { IMAGE_PINS, imageRef } from "../image-pins";
 import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
+import { tagShape, type MemberTags } from "../lifecycle/release-tag";
 import type { SecurityGroup } from "./security";
 import type { OpSetupStep } from "../lexicon";
 import { checkBuilds, releaseBuildArchive, releaseBuildArtifact, resolveToolchains, toolchainLines, type ReleaseBuildConfig, type ReleaseToolchainDecl } from "./release-toolchains";
@@ -49,7 +52,7 @@ export const RELEASE_WORKFLOW_FILES: Record<ReleaseWorkflowForge, string> = {
 
 /** `release.workflow` in `chant.config.ts` (#4656): how the release pipeline starts and what it runs. */
 export interface ReleasePipelineConfig {
-  /** `tag` (default): the publish job runs on a `release/**` tag. `dispatch`: the whole release starts by hand with a label. */
+  /** `tag` (default): the publish job runs on the tag the cut made (`release.tag`, default `release/**`). `dispatch`: the whole release starts by hand with a label. */
   trigger?: "tag" | "dispatch";
   /** For `dispatch`: the commit to cut. `last-green` (default) is the newest green commit at or below the dispatched one; `head` is the dispatched commit, which must be green. */
   gate?: "last-green" | "head";
@@ -149,6 +152,13 @@ export interface ReleaseWorkflowInput {
    * on GitHub, `checks: read` and `statuses: read`. Default `chant`.
    */
   green?: import("../lifecycle/release-green").ReleaseGreenSource;
+  /**
+   * `release.tag` (#5150) and where it renders. A tag-triggered workflow runs
+   * on the tags it makes, and its publish job reads the label of the tag that
+   * started it from the ledger (`chant release tag`). Absent, or the legacy
+   * default: the `release/**` file it always was.
+   */
+  tags?: MemberTags;
   /**
    * The config declares `release.version` (#4840): the publish job runs
    * `chant release stamp <label>` before the images and the build, so what
@@ -326,6 +336,10 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     const o = { chant, install, chantSetup, fullSetup, builds: buildJobs, build, root, verify, flags, after, images, version, archives, forge: input.forge, extra, forgeToken, cutToken, green, gate: p.gate ?? "last-green", ...(input.lane ? { lane: input.lane } : {}) };
     return input.forge === "gitlab" ? renderGitlabDispatch(o) : renderGithubDispatch(o);
   }
+  // #5150: a release.tag template triggers on its own tags.
+  if (input.tags && !input.tags.template.legacy) {
+    return renderTemplatedTagWorkflow(input, { chant, install, fullSetup, build, root, verify, flags, after, images, version, extra, forgeToken, tags: input.tags });
+  }
   // #4657: the images are built from the release, so chant/lifecycle is fetched before them and the build after.
   const digests = RELEASE_DIGESTS_PATHS[input.forge];
   const imageLines = (label: string, env: string): string[] => [`${chant} release images ${label} -o "${digests}"`, env];
@@ -405,6 +419,144 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       '      - run: echo "CHANT_RELEASE_LABEL=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"',
       ...(install ? [`      - run: ${install}`] : []),
       ...after.map((l) => `      - run: ${l}`),
+    );
+  }
+  return tagComments(`${lines.join("\n")}\n`);
+}
+
+/** A glob character GitHub's and Forgejo's tag filters treat as special, escaped. */
+function globLiteral(s: string): string {
+  return s.replace(/[*?+[\]!\\]/g, (c) => `\\${c}`);
+}
+
+/** A literal for a GitLab (RE2) regex between slashes. */
+function regexLiteral(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\/]/g, (c) => `\\${c}`);
+}
+
+/**
+ * The filters for the tags a template makes (#5150): GitHub and Forgejo
+ * globs (the release tags, and a negated pattern for the floating tag so its
+ * move starts nothing), and GitLab's rule.
+ */
+export function releaseTagFilters(tags: MemberTags): { globs: string[]; gitlabRule: string } {
+  const name = tagShape(tags.template.name, tags.place);
+  const floating = tags.template.floating ? tagShape(tags.template.floating, tags.place) : null;
+  const globs = [`${globLiteral(name.prefix)}*${globLiteral(name.suffix)}`, ...(floating ? [`!${globLiteral(floating.prefix)}[0-9]+${globLiteral(floating.suffix)}`] : [])];
+  const re = (s: { prefix: string; suffix: string }, v: string) => `/^${regexLiteral(s.prefix)}${v}${regexLiteral(s.suffix)}$/`;
+  const gitlabRule = `$CI_COMMIT_TAG =~ ${re(name, "[A-Za-z0-9._+-]+")}${floating ? ` && $CI_COMMIT_TAG !~ ${re(floating, "[0-9]+")}` : ""}`;
+  return { globs, gitlabRule };
+}
+
+/** The shell that reads the label of the tag `ref` names from the ledger and refuses a tag that names no release. */
+function labelOfRefScript(chant: string, ref: string): string[] {
+  return [
+    `label="$(${chant} release tag "${ref}" --json | ${field("d.label")})" || label=""`,
+    `if [ -z "$label" ]; then echo "${ref} names no release of this member, so nothing is published" >&2; exit 1; fi`,
+  ];
+}
+
+interface TemplatedInput {
+  chant: string;
+  install: string | null;
+  /** The toolchain steps of the publish and after-release jobs (#5152). */
+  fullSetup: string[];
+  build: string | null;
+  root: string | null;
+  verify: boolean;
+  flags: string;
+  after: string[];
+  images: boolean;
+  version: boolean;
+  extra: JobExtras;
+  forgeToken: string[];
+  tags: MemberTags;
+}
+
+/**
+ * The tag-triggered publish workflow for a `release.tag` template (#5150).
+ * It runs on the template's tags, fetches `chant/lifecycle` first, and
+ * reads the release's label from the ledger with `chant release tag`, since
+ * a tag is the label's rendering and is never parsed.
+ */
+function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInput): string {
+  const { chant, install, fullSetup, build, root, verify, flags, after, images, version, extra, forgeToken } = o;
+  const filters = releaseTagFilters(o.tags);
+  const digests = RELEASE_DIGESTS_PATHS[input.forge];
+  const label = '"$CHANT_RELEASE_LABEL"';
+  const ciFetch = "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'";
+  const ledgerFetch = "git fetch origin chant/lifecycle:chant/lifecycle";
+  if (input.forge === "gitlab") {
+    const q = (l: string) => `    - ${JSON.stringify(l)}`;
+    const labelLines = [ledgerFetch, ...labelOfRefScript(chant, "$CI_COMMIT_TAG"), 'export CHANT_RELEASE_LABEL="$label"'];
+    const lines = [
+      "chant-release-publish:",
+      "  rules:",
+      `    - if: ${filters.gitlabRule}`,
+      "  id_tokens:",
+      "    SIGSTORE_ID_TOKEN:",
+      "      aud: sigstore",
+      ...(extra.gitlabVariables.length > 0 ? ["  variables:", ...extra.gitlabVariables] : []),
+      "  script:",
+      ...(root ? [q(`cd ${root}`)] : []),
+      ...(install ? [q(install)] : []),
+      ...extra.gitlabScript.map(q),
+      ...labelLines.map(q),
+      ...(version ? [q(`${chant} release stamp ${label}`)] : []),
+      ...(images ? [ciFetch, `${chant} release images ${label} -o "${digests}"`, `export CHANT_RELEASE_DIGESTS="${digests}"`].map(q) : []),
+      ...(build ? [q(build)] : []),
+      ...(images ? [] : [q(ciFetch)]),
+      ...(verify ? [q(`${chant} release verify ${label}`)] : []),
+      q(`${chant} release publish ${label} ${flags}`),
+    ];
+    if (after.length > 0) {
+      lines.push("", "chant-release-after:", "  rules:", `    - if: ${filters.gitlabRule}`, "  needs: [chant-release-publish]", "  script:", ...(root ? [q(`cd ${root}`)] : []), ...(install ? [q(install)] : []), ...labelLines.map(q), ...after.map((l) => `    - ${l}`));
+    }
+    return `${lines.join("\n")}\n`;
+  }
+  const run = (l: string) => `      - run: ${l}`;
+  const lines = [
+    "name: chant release publish",
+    "on:",
+    "  push:",
+    `    tags: [${filters.globs.map((g) => JSON.stringify(g)).join(", ")}]`,
+    "permissions:",
+    "  contents: write",
+    "  id-token: write",
+    ...extra.permissions,
+    "jobs:",
+    "  publish:",
+    "    runs-on: ubuntu-latest",
+    ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
+    ...(after.length > 0 ? ["    outputs:", "      label: ${{ steps.label.outputs.label }}"] : []),
+    ...extra.githubEnv(forgeToken),
+    "    steps:",
+    ...githubSetup(undefined, fullSetup),
+    ...(install ? [run(install)] : []),
+    ...extra.githubSteps,
+    run(ledgerFetch),
+    "      - id: label",
+    "        run: |",
+    ...[...labelOfRefScript(chant, "$GITHUB_REF_NAME"), 'echo "CHANT_RELEASE_LABEL=$label" >> "$GITHUB_ENV"', 'echo "label=$label" >> "$GITHUB_OUTPUT"'].map((l) => `          ${l}`),
+    ...(version ? [run(`${chant} release stamp ${label}`)] : []),
+    ...(images ? [run(ciFetch), run(`${chant} release images ${label} -o "${digests}"`), run(`echo "CHANT_RELEASE_DIGESTS=${digests}" >> "$GITHUB_ENV"`)] : []),
+    ...(build ? [run(build)] : []),
+    ...(images ? [] : [run(ciFetch)]),
+    ...(verify ? [run(`${chant} release verify ${label}`)] : []),
+    run(`${chant} release publish ${label} ${flags}`),
+  ];
+  if (after.length > 0) {
+    lines.push(
+      "  after-release:",
+      "    needs: publish",
+      "    runs-on: ubuntu-latest",
+      ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
+      "    env:",
+      "      CHANT_RELEASE_LABEL: ${{ needs.publish.outputs.label }}",
+      "    steps:",
+      ...githubSetup(undefined, fullSetup),
+      ...(install ? [run(install)] : []),
+      ...after.map(run),
     );
   }
   return tagComments(`${lines.join("\n")}\n`);
@@ -874,6 +1026,17 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     console.error(formatError({ message: `chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
     return 1;
   }
+  // #5150: release.tag decides the tags the workflow runs on, refused when another member's can make the same tag.
+  let tags: MemberTags;
+  try {
+    const { memberTags, checkTagCollisions } = await import("../lifecycle/release-tag");
+    tags = await memberTags(root, { config: release?.tag, top: repoRoot });
+    await checkTagCollisions(root, tags);
+  } catch (err) {
+    const code = (err as { code?: unknown }).code;
+    console.error(formatError({ message: `${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`, hint: usage }));
+    return 1;
+  }
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
   const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
@@ -888,6 +1051,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(node || args.ciChant || release?.workflow?.chant !== undefined ? {} : { chant: `npx --yes @intentius/chant@${readerVersion()}` }),
     groups,
     workspaceRoot,
+    tags,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
@@ -895,13 +1059,13 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
       const { resolveGreenSource } = await import("../lifecycle/release-green");
       const { scopeSource } = await import("./write-scope");
       const { execFileSync } = await import("node:child_process");
-      let tags = "";
+      let greenTags = "";
       try {
-        tags = execFileSync("git", ["tag", "--list", "ci/green/*", "ci/green-*/*"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        greenTags = execFileSync("git", ["tag", "--list", "ci/green/*", "ci/green-*/*"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
       } catch {
-        tags = "";
+        greenTags = "";
       }
-      return resolveGreenSource(release?.green, (scopeSource(root).declaration?.ci?.green ?? null) !== null, release?.green === undefined && tags !== "");
+      return resolveGreenSource(release?.green, (scopeSource(root).declaration?.ci?.green ?? null) !== null, release?.green === undefined && greenTags !== "");
     })(),
     ...(release?.version ? { version: true } : {}),
     ...(release?.publish ? { publish: release.publish } : {}),
@@ -928,7 +1092,10 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
   const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null].filter(Boolean);
-  const what = release?.workflow?.trigger === "dispatch" ? "cuts and publishes a release started by hand with its label, from a green commit" : "publishes the release a release/** tag names";
+  const what =
+    release?.workflow?.trigger === "dispatch"
+      ? "cuts and publishes a release started by hand with its label, from a green commit"
+      : `publishes the release a ${tags.template.legacy ? "release/**" : releaseTagFilters(tags).globs[0]} tag names`;
   console.log(formatSuccess(`Wrote ${shown}: ${what}${extras.length > 0 ? `, and ${extras.join(" and ")}` : ""}.`));
   if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml: include: [{ local: ${release?.workflow?.file ?? RELEASE_WORKFLOW_FILES.gitlab} }]`);
   // #4876: a GitLab executor that refuses privileged containers can't install the handlers from the job.
@@ -937,6 +1104,8 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     console.log(`The cut and publish jobs install QEMU's binfmt handlers for ${archs.join(", ")} with docker run --privileged ${RELEASE_BINFMT_IMAGE}: the runner's executor must run privileged containers, or have the handlers installed on its host.`);
   const others = detectToolchains(new Set(projectFiles)).filter((t) => t !== "node");
   if (forge === "gitlab" && others.length > 0 && release?.workflow?.toolchains === undefined) console.log(`The jobs build with ${others.join(", ")}: a GitLab job takes its toolchain from the runner's image, so name an image that has it, and Node for chant, in .gitlab-ci.yml.`);
+  if (forge === "gitlab" && release?.workflow?.trigger !== "dispatch" && tags.template.floating)
+    console.log(`The publish job moves the floating tag (${tags.template.floating}) with git push, which a GitLab job token can't do: use release.workflow.trigger "dispatch", whose jobs push with CHANT_RELEASE_TOKEN, or move it by hand.`);
   if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
   return 0;
 }

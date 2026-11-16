@@ -94,6 +94,8 @@ export type TrainPublishOutcome =
       /** The targets an earlier run had staged or revealed, so this one did not stage them again. */
       resumed: Array<{ member: string; target: string; step: "staged" | "revealed" }>;
       recordWarning: string | null;
+      /** Why a member's floating tag (#5150) was not moved, one line each. */
+      floatingWarnings?: string[];
     };
 
 /** A train publish that stopped, with what it left staged and revealed (`<member>: <target>`), so a run of the same command resumes. */
@@ -297,7 +299,17 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
   if (!query.yes) return { kind: "planned", train, members, warnings, redactor };
 
   const ran = await runTrain({ ordered, layers: layers.length, progressOfMember, say: (l) => say(redactor.redact(l)), record: query.record ?? true, now: query.now ?? (() => new Date()) });
-  return { kind: "published", train, members, warnings, redactor, ...ran };
+  // #5150: each member's floating tag moves once the whole train has revealed, unless one of its targets refused.
+  const floatingWarnings: string[] = [];
+  const { moveFloatingTag } = await import("../lifecycle/release-publish");
+  for (const p of ordered) {
+    const f = p.plan.floating;
+    if (!f?.move) continue;
+    const refused = ran.published.find((x) => x.member === p.m.member)?.targets.some((t) => t.warning);
+    const w = refused ? `the floating tag ${f.name} was not moved, since a target refused the release` : moveFloatingTag(p.dir, f);
+    if (w) floatingWarnings.push(`${p.m.member}: ${w}`);
+  }
+  return { kind: "published", train, members, warnings, redactor, ...ran, floatingWarnings };
 }
 
 /** The two passes over the prepared members (#5136). Throws {@link TrainPublishRunError}. */
@@ -497,6 +509,7 @@ export async function runTrainPublish(ctx: import("../cli/registry").CommandCont
     return 0;
   }
   if (outcome.recordWarning) console.error(formatWarning({ message: redactor.redact(`${outcome.recordWarning}. A resume asks the registries what is already there.`) }));
+  for (const w of outcome.floatingWarnings ?? []) console.error(formatWarning({ message: redactor.redact(w) }));
   if (json) {
     console.log(redactor.redact(JSON.stringify({ dryRun: false, ...base, published: outcome.published, resumed: outcome.resumed }, null, 2)));
     return 0;
