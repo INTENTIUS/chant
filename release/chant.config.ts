@@ -44,6 +44,11 @@ export default {
       build: false,
       chant: "npx tsx ../packages/core/src/cli/main.ts",
       toolchains: ["node"],
+      // #5223: each member's prepack compiles its workspace dependencies'
+      // source, which imports their generated files. A resumed train skips a
+      // dependency an earlier run published, so nothing else would generate
+      // them: generate every lexicon after the install.
+      setup: [{ run: "cd .. && npm run generate" }],
       env: {
         CHANT_RELEASE_GATE: "1",
         NPM_TOKEN: "${{ secrets.NPM_TOKEN }}",
