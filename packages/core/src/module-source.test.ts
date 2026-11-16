@@ -6,8 +6,8 @@ import { describe, expect, test } from "vitest";
 import { isJavaScriptModule, isTypeScriptModule, moduleSourceDir, moduleSourceUrl, SOURCE_EXPORT_CONDITIONS } from "./module-source";
 
 describe("module-source (#3981)", () => {
-  test("from source, chant's own resolution adds the development condition", () => {
-    expect(SOURCE_EXPORT_CONDITIONS).toEqual(["development"]);
+  test("from source, chant's own resolution adds the @intentius/chant-source condition", () => {
+    expect(SOURCE_EXPORT_CONDITIONS).toEqual(["@intentius/chant-source"]);
   });
 
   // A package with a src/ tree beside its dist/, as in a checkout.

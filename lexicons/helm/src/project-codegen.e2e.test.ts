@@ -173,7 +173,7 @@ function typecheck(root: string, app: string): string[] {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
-    customConditions: ["development"],
+    customConditions: ["@intentius/chant-source"],
     types: ["node"],
     typeRoots: [join(repoRoot, "node_modules", "@types")],
   };

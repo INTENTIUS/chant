@@ -4,7 +4,7 @@
  * bundles, so every subpath they load must resolve, under plain Node and no
  * TypeScript loader, to compiled JS. Node does not strip types under
  * node_modules, so the core exports carry an `import` condition on `dist/*.js`
- * beside `development` and `default`, as `./notify` did first (#3803).
+ * beside `@intentius/chant-source` and `default`, as `./notify` did first (#3803).
  *
  * This packs core and the terraform lexicon the way a release does (each
  * prepack builds dist/), unpacks both into a scratch project's node_modules,

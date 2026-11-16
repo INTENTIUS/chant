@@ -149,7 +149,7 @@ export function lexiconCompiledTwin(url: string): string | undefined {
 const SOURCE_RESOLUTION = Symbol.for("chant.sourceResolution");
 
 /**
- * #3981 — the `development` target a chant package's `exports` give
+ * #3981 — the `@intentius/chant-source` target a chant package's `exports` give
  * `specifier`, found from `parentPath`'s directory up through each
  * `node_modules`, or `undefined` when there is none or its file does not
  * exist. Reads exact keys and single-`*` patterns, the shapes chant's
@@ -187,9 +187,9 @@ export function chantPackageSourceTarget(specifier: string, parentPath: string):
           star = subpath.slice(prefix.length, subpath.length - suffix.length);
         }
       }
-      const development = entry && typeof entry === "object" ? (entry as { development?: unknown }).development : undefined;
-      if (typeof development !== "string") return undefined;
-      const target = join(pkgDir, star === undefined ? development : development.split("*").join(star));
+      const sourceTarget = entry && typeof entry === "object" ? (entry as { "@intentius/chant-source"?: unknown })["@intentius/chant-source"] : undefined;
+      if (typeof sourceTarget !== "string") return undefined;
+      const target = join(pkgDir, star === undefined ? sourceTarget : sourceTarget.split("*").join(star));
       // Node keys a module by its real path, so a symlinked package must too.
       return existsSync(target) ? realpathSync(target) : undefined;
     }
@@ -201,10 +201,10 @@ export function chantPackageSourceTarget(specifier: string, parentPath: string):
 
 /**
  * #3981 — from source, resolve chant's own packages through their
- * `development` export condition, as `node --conditions=development` (which
+ * `@intentius/chant-source` export condition, as `node --conditions=@intentius/chant-source` (which
  * the repository's `bin/chant` passes) would. A lexicon's `default` export is
  * its compiled `dist/*.js`, which a checkout may not have built, or built from
- * older source; `development` is its `src/*.ts`, which vitest, a project's
+ * older source; `@intentius/chant-source` is its `src/*.ts`, which vitest, a project's
  * tsconfig `paths` and fold's own resolution (`SOURCE_EXPORT_CONDITIONS`)
  * pick. Without this, a CLI run from source by `node --import tsx` would load
  * a plugin from `dist/` and fold the project against `src/`: two copies of the

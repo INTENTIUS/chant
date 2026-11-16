@@ -92,7 +92,7 @@ export function splitBareSpecifier(specifier: string): { name: string; subpath: 
 
 /**
  * The conditions an ESM import in Node matches, which is what the run path
- * does. From source, `development` too (#3981): the run path there resolves a
+ * does. From source, `@intentius/chant-source` too (#3981): the run path there resolves a
  * chant package to its `src/*.ts`, not to the compiled `dist/*.js` its
  * `default` names.
  */

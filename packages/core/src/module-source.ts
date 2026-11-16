@@ -89,10 +89,10 @@ export function isJavaScriptModule(pathOrUrl: string): boolean {
 
 /**
  * #3981 — whether this process resolves chant's packages through their
- * `development` export condition: always when chant runs from source (the
+ * `@intentius/chant-source` export condition: always when chant runs from source (the
  * CLI's `main()` installs a resolve hook that does so, and vitest's resolver
  * adds the condition outside production mode), and otherwise when node runs
- * with `--conditions=development` (or `-C development`, on the command line
+ * with `--conditions=@intentius/chant-source` (or `-C @intentius/chant-source`, on the command line
  * or in `NODE_OPTIONS`). Not from the environment: a compiled CLI that a test
  * spawns inherits vitest's variables.
  */
@@ -102,9 +102,9 @@ function resolvesDevelopment(): boolean {
   const flags = [...process.execArgv, ...(process.env.NODE_OPTIONS ?? "").split(/\s+/)];
   return flags.some(
     (flag, i) =>
-      flag === "--conditions=development" ||
-      flag === "-C=development" ||
-      ((flag === "--conditions" || flag === "-C") && flags[i + 1] === "development"),
+      flag === "--conditions=@intentius/chant-source" ||
+      flag === "-C=@intentius/chant-source" ||
+      ((flag === "--conditions" || flag === "-C") && flags[i + 1] === "@intentius/chant-source"),
   );
 }
 
@@ -112,8 +112,8 @@ function resolvesDevelopment(): boolean {
  * #3981 — the package export conditions chant adds to `import`, `node` and
  * `default` when it resolves a package itself (fold's import resolution, the
  * sandbox bundle), so it lands on the module this process's `import()` would.
- * Each chant package maps `development` to `src/*.ts` and `default` to the
- * compiled `dist/*.js` it publishes. `["development"]` when the process
+ * Each chant package maps `@intentius/chant-source` to `src/*.ts` and `default` to the
+ * compiled `dist/*.js` it publishes. `["@intentius/chant-source"]` when the process
  * resolves with it ({@link resolvesDevelopment}), else empty.
  */
-export const SOURCE_EXPORT_CONDITIONS: readonly string[] = resolvesDevelopment() ? ["development"] : [];
+export const SOURCE_EXPORT_CONDITIONS: readonly string[] = resolvesDevelopment() ? ["@intentius/chant-source"] : [];

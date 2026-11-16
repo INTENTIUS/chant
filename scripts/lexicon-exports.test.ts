@@ -1,8 +1,8 @@
 /**
  * #3981 — every lexicon publishes compiled JS. Each package export that names
- * a module resolves `default` to `dist/*.js` and keeps `development` on the
+ * a module resolves `default` to `dist/*.js` and keeps `@intentius/chant-source` on the
  * matching `src/*.ts`, which the repository's own tools (vitest, `bin/chant`
- * from source with `--conditions=development`, tsc's `customConditions`)
+ * from source with `--conditions=@intentius/chant-source`, tsc's `customConditions`)
  * resolve. A compiled lexicon that imports another lexicon still on `.ts`
  * would fail under plain node, so the check covers all of them at once.
  *
@@ -37,25 +37,25 @@ function manifest(name: string): Manifest {
 function exportProblems(key: string, value: unknown): string[] {
   if (typeof value === "string") {
     // Data and declarations: no module to compile.
-    return /\.(json|d\.ts)$/.test(value) ? [] : [`${key}: "${value}" names a module without conditions; give it development and default`];
+    return /\.(json|d\.ts)$/.test(value) ? [] : [`${key}: "${value}" names a module without conditions; give it @intentius/chant-source and default`];
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return [`${key}: not a string or a condition object`];
   const entry = value as Record<string, unknown>;
   const problems: string[] = [];
-  const { development, default: dflt } = entry as { development?: unknown; default?: unknown };
-  if (typeof development !== "string" || !/^\.\/src\/.+\.ts$/.test(development)) {
-    problems.push(`${key}: development is ${JSON.stringify(development)}, not ./src/*.ts`);
+  const { "@intentius/chant-source": sourceTarget, default: dflt } = entry as { "@intentius/chant-source"?: unknown; default?: unknown };
+  if (typeof sourceTarget !== "string" || !/^\.\/src\/.+\.ts$/.test(sourceTarget)) {
+    problems.push(`${key}: @intentius/chant-source is ${JSON.stringify(sourceTarget)}, not ./src/*.ts`);
   }
   if (typeof dflt !== "string" || !/^\.\/dist\/.+\.js$/.test(dflt)) {
     problems.push(`${key}: default is ${JSON.stringify(dflt)}, not ./dist/*.js`);
   }
-  if (typeof development === "string" && typeof dflt === "string") {
-    const expected = development.replace(/^\.\/src\//, "./dist/").replace(/\.ts$/, ".js");
-    if (dflt !== expected) problems.push(`${key}: default ${dflt} is not the compiled ${development} (${expected})`);
+  if (typeof sourceTarget === "string" && typeof dflt === "string") {
+    const expected = sourceTarget.replace(/^\.\/src\//, "./dist/").replace(/\.ts$/, ".js");
+    if (dflt !== expected) problems.push(`${key}: default ${dflt} is not the compiled ${sourceTarget} (${expected})`);
   }
-  // Node reads conditions in key order, so `development` must come before `default`.
+  // Node reads conditions in key order, so `@intentius/chant-source` must come before `default`.
   const keys = Object.keys(entry);
-  if (keys.indexOf("development") > keys.indexOf("default")) problems.push(`${key}: development must come before default`);
+  if (keys.indexOf("@intentius/chant-source") > keys.indexOf("default")) problems.push(`${key}: @intentius/chant-source must come before default`);
   for (const condition of ["import", "require", "node"]) {
     if (condition in entry) problems.push(`${key}: a "${condition}" condition would win over default in Node; leave it out`);
   }
@@ -67,7 +67,7 @@ describe("lexicon packages ship compiled JS (#3981)", () => {
     expect(LEXICONS.length).toBeGreaterThanOrEqual(20);
   });
 
-  test.each(LEXICONS)("%s: every module export has default on dist/*.js and development on src/*.ts", (name) => {
+  test.each(LEXICONS)("%s: every module export has default on dist/*.js and @intentius/chant-source on src/*.ts", (name) => {
     const { exports } = manifest(name);
     expect(exports["."], "the root export").toBeDefined();
     const problems = Object.entries(exports).flatMap(([key, value]) => exportProblems(key, value));
@@ -87,7 +87,7 @@ describe("lexicon packages ship compiled JS (#3981)", () => {
     };
     expect(tsconfig.compilerOptions).toMatchObject({ outDir: "dist", rootDir: "src", noEmit: false });
     // A lexicon importing another compiles against its source, as the repository resolves it.
-    expect(tsconfig.compilerOptions.customConditions).toContain("development");
+    expect(tsconfig.compilerOptions.customConditions).toContain("@intentius/chant-source");
     const files = manifest(name).files ?? [];
     expect(files).toContain("dist/");
     expect(files).not.toContain("src/");
@@ -97,26 +97,26 @@ describe("lexicon packages ship compiled JS (#3981)", () => {
 
 describe("exportProblems", () => {
   test("accepts the shape every lexicon uses", () => {
-    expect(exportProblems(".", { development: "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" })).toEqual([]);
-    expect(exportProblems("./*", { development: "./src/*.ts", types: "./dist/*.d.ts", default: "./dist/*.js" })).toEqual([]);
+    expect(exportProblems(".", { "@intentius/chant-source": "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" })).toEqual([]);
+    expect(exportProblems("./*", { "@intentius/chant-source": "./src/*.ts", types: "./dist/*.d.ts", default: "./dist/*.js" })).toEqual([]);
     expect(exportProblems("./meta", "./dist/meta.json")).toEqual([]);
     expect(exportProblems("./types", "./dist/types/index.d.ts")).toEqual([]);
   });
 
   test("refuses a default still on src/*.ts", () => {
-    expect(exportProblems(".", { development: "./src/index.ts", default: "./src/index.ts" })).toContain(`.: default is "./src/index.ts", not ./dist/*.js`);
+    expect(exportProblems(".", { "@intentius/chant-source": "./src/index.ts", default: "./src/index.ts" })).toContain(`.: default is "./src/index.ts", not ./dist/*.js`);
   });
 
-  test("refuses a default that is not the development module compiled", () => {
-    expect(exportProblems(".", { development: "./src/index.ts", default: "./dist/other.js" })).toEqual([
+  test("refuses a default that is not the @intentius/chant-source module compiled", () => {
+    expect(exportProblems(".", { "@intentius/chant-source": "./src/index.ts", default: "./dist/other.js" })).toEqual([
       ".: default ./dist/other.js is not the compiled ./src/index.ts (./dist/index.js)",
     ]);
   });
 
-  test("refuses a missing development, a condition after default, and an import condition", () => {
-    expect(exportProblems(".", { default: "./dist/index.js" })).toEqual([".: development is undefined, not ./src/*.ts"]);
-    expect(exportProblems(".", { default: "./dist/index.js", development: "./src/index.ts" })).toEqual([".: development must come before default"]);
-    expect(exportProblems(".", { development: "./src/index.ts", import: "./dist/index.js", default: "./dist/index.js" })).toEqual([
+  test("refuses a missing @intentius/chant-source, a condition after default, and an import condition", () => {
+    expect(exportProblems(".", { default: "./dist/index.js" })).toEqual([".: @intentius/chant-source is undefined, not ./src/*.ts"]);
+    expect(exportProblems(".", { default: "./dist/index.js", "@intentius/chant-source": "./src/index.ts" })).toEqual([".: @intentius/chant-source must come before default"]);
+    expect(exportProblems(".", { "@intentius/chant-source": "./src/index.ts", import: "./dist/index.js", default: "./dist/index.js" })).toEqual([
       `.: a "import" condition would win over default in Node; leave it out`,
     ]);
   });

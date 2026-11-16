@@ -118,7 +118,7 @@ export function modulesOf(files: string[], read: (file: string) => string, pkg: 
   for (const [key, value] of Object.entries(pkg.exports)) {
     if (key.includes("*")) continue;
     const fields = value as Record<string, unknown>;
-    const target = typeof value === "string" ? value : (fields.development ?? fields.default);
+    const target = typeof value === "string" ? value : (fields["@intentius/chant-source"] ?? fields.default);
     if (typeof target !== "string" || !target.startsWith("./src/") || !target.endsWith(".ts")) continue;
     entries.set(key === "." ? pkg.name : `${pkg.name}/${key.slice(2)}`, `${dir}${target.slice(2)}`);
   }

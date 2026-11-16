@@ -27,9 +27,9 @@ describe("post-synth barrel is exported", () => {
     const pkg = JSON.parse(readFileSync(join(lexiconsDir, lexicon, "package.json"), "utf-8"));
     const entry = pkg.exports?.["./lint/post-synth"];
     // A conditional export: `types` resolves to the emitted declaration,
-    // `development` keeps the repository's own resolution on source, and
+    // `@intentius/chant-source` keeps the repository's own resolution on source, and
     // `default` is the compiled JS the package publishes (#3981).
-    expect(entry?.development).toBe("./src/lint/post-synth/index.ts");
+    expect(entry?.["@intentius/chant-source"]).toBe("./src/lint/post-synth/index.ts");
     expect(entry?.types).toBe("./dist/lint/post-synth/index.d.ts");
     expect(entry?.default).toBe("./dist/lint/post-synth/index.js");
   });

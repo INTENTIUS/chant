@@ -36,138 +36,138 @@
   },
   "exports": {
     ".": {
-      "development": "./src/index.ts",
+      "@intentius/chant-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./yaml": {
-      "development": "./src/yaml.ts",
+      "@intentius/chant-source": "./src/yaml.ts",
       "types": "./dist/yaml.d.ts",
       "import": "./dist/yaml.js",
       "default": "./dist/yaml.js"
     },
     "./cli": {
-      "development": "./src/cli/index.ts",
+      "@intentius/chant-source": "./src/cli/index.ts",
       "types": "./dist/cli/index.d.ts",
       "import": "./dist/cli/index.js",
       "default": "./dist/cli/index.js"
     },
     "./workspace/*.schema.json": {
-      "development": "./src/workspace/*.schema.json",
+      "@intentius/chant-source": "./src/workspace/*.schema.json",
       "default": "./dist/workspace/*.schema.json"
     },
     "./capabilities/templates.json": {
-      "development": "./src/capabilities/templates.json",
+      "@intentius/chant-source": "./src/capabilities/templates.json",
       "default": "./dist/capabilities/templates.json"
     },
     "./notify.schema.json": {
-      "development": "./src/notify.schema.json",
+      "@intentius/chant-source": "./src/notify.schema.json",
       "default": "./dist/notify.schema.json"
     },
     "./health.schema.json": {
-      "development": "./src/health.schema.json",
+      "@intentius/chant-source": "./src/health.schema.json",
       "default": "./dist/health.schema.json"
     },
     "./gate-statement.schema.json": {
-      "development": "./src/gate-statement.schema.json",
+      "@intentius/chant-source": "./src/gate-statement.schema.json",
       "default": "./dist/gate-statement.schema.json"
     },
     "./workspace/factory-rules": {
-      "development": "./src/workspace/factory-rules.ts",
+      "@intentius/chant-source": "./src/workspace/factory-rules.ts",
       "types": "./dist/workspace/factory-rules.d.ts",
       "import": "./dist/workspace/factory-rules.js",
       "default": "./dist/workspace/factory-rules.js"
     },
     "./workspace/conformance": {
-      "development": "./src/workspace/conformance/index.ts",
+      "@intentius/chant-source": "./src/workspace/conformance/index.ts",
       "types": "./dist/workspace/conformance/index.d.ts",
       "import": "./dist/workspace/conformance/index.js",
       "default": "./dist/workspace/conformance/index.js"
     },
     "./workspace/conformance/vitest": {
-      "development": "./src/workspace/conformance/vitest.ts",
+      "@intentius/chant-source": "./src/workspace/conformance/vitest.ts",
       "types": "./dist/workspace/conformance/vitest.d.ts",
       "import": "./dist/workspace/conformance/vitest.js",
       "default": "./dist/workspace/conformance/vitest.js"
     },
     "./cli/*": {
-      "development": "./src/cli/*.ts",
+      "@intentius/chant-source": "./src/cli/*.ts",
       "types": "./dist/cli/*.d.ts",
       "import": "./dist/cli/*.js",
       "default": "./dist/cli/*.js"
     },
     "./op": {
-      "development": "./src/op/index.ts",
+      "@intentius/chant-source": "./src/op/index.ts",
       "types": "./dist/op/index.d.ts",
       "import": "./dist/op/index.js",
       "default": "./dist/op/index.js"
     },
     "./op/activities": {
-      "development": "./src/op/activities/index.ts",
+      "@intentius/chant-source": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
       "import": "./dist/op/activities/index.js",
       "default": "./dist/op/activities/index.js"
     },
     "./template-request": {
-      "development": "./src/template-request/index.ts",
+      "@intentius/chant-source": "./src/template-request/index.ts",
       "types": "./dist/template-request/index.d.ts",
       "import": "./dist/template-request/index.js",
       "default": "./dist/template-request/index.js"
     },
     "./template-request/*.schema.json": {
-      "development": "./src/template-request/*.schema.json",
+      "@intentius/chant-source": "./src/template-request/*.schema.json",
       "default": "./dist/template-request/*.schema.json"
     },
     "./components": {
-      "development": "./src/components/index.ts",
+      "@intentius/chant-source": "./src/components/index.ts",
       "types": "./dist/components/index.d.ts",
       "import": "./dist/components/index.js",
       "default": "./dist/components/index.js"
     },
     "./testing": {
-      "development": "./src/testing.ts",
+      "@intentius/chant-source": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
       "default": "./dist/testing.js"
     },
     "./agents": {
-      "development": "./src/agents/index.ts",
+      "@intentius/chant-source": "./src/agents/index.ts",
       "types": "./dist/agents/index.d.ts",
       "import": "./dist/agents/index.js",
       "default": "./dist/agents/index.js"
     },
     "./notify-verify": {
-      "development": "./src/notify-verify.ts",
+      "@intentius/chant-source": "./src/notify-verify.ts",
       "types": "./dist/notify-verify.d.ts",
       "import": "./dist/notify-verify.js",
       "default": "./dist/notify-verify.js"
     },
     "./runner-start": {
-      "development": "./src/runner-start.ts",
+      "@intentius/chant-source": "./src/runner-start.ts",
       "types": "./dist/runner-start.d.ts",
       "import": "./dist/runner-start.js",
       "default": "./dist/runner-start.js"
     },
     "./notify": {
-      "development": "./src/notify.ts",
+      "@intentius/chant-source": "./src/notify.ts",
       "types": "./dist/notify.d.ts",
       "import": "./dist/notify.js",
       "default": "./dist/notify.js"
     },
     "./wave-runtime.mjs": "./dist/wave-runtime.mjs",
     "./bucket-check/fixtures/*.json": {
-      "development": "./src/bucket-check/fixtures/*.json",
+      "@intentius/chant-source": "./src/bucket-check/fixtures/*.json",
       "default": "./dist/bucket-check/fixtures/*.json"
     },
     "./object-store": {
-      "development": "./src/object-store/index.ts",
+      "@intentius/chant-source": "./src/object-store/index.ts",
       "types": "./dist/object-store/index.d.ts",
       "import": "./dist/object-store/index.js",
       "default": "./dist/object-store/index.js"
     },
     "./*": {
-      "development": "./src/*.ts",
+      "@intentius/chant-source": "./src/*.ts",
       "types": "./dist/*.d.ts",
       "import": "./dist/*.js",
       "default": "./dist/*.js"

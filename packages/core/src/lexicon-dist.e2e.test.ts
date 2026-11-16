@@ -169,8 +169,8 @@ describe("lexicons loaded from compiled JS (#3981)", () => {
         names: LEXICONS,
         taggable: pathToFileURL(join(repo, "lexicons", "aws", "src", "taggable.ts")).href,
       },
-      // The repository's lexicons through their `development` export, src/*.ts, as bin/chant runs from source.
-      ["--conditions=development", "--import", tsxLoader],
+      // The repository's lexicons through their `@intentius/chant-source` export, src/*.ts, as bin/chant runs from source.
+      ["--conditions=@intentius/chant-source", "--import", tsxLoader],
     );
     fromDist = count(join(scratch, "count.mjs"), {
       core: pathToFileURL(coreDist).href,

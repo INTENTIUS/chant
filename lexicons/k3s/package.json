@@ -7,22 +7,22 @@
   ],
   "exports": {
     ".": {
-      "development": "./src/index.ts",
+      "@intentius/chant-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./*": {
-      "development": "./src/*.ts",
+      "@intentius/chant-source": "./src/*.ts",
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
     },
     "./op/activities": {
-      "development": "./src/op/activities/index.ts",
+      "@intentius/chant-source": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
       "default": "./dist/op/activities/index.js"
     },
     "./lint/post-synth": {
-      "development": "./src/lint/post-synth/index.ts",
+      "@intentius/chant-source": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
       "default": "./dist/lint/post-synth/index.js"
     },

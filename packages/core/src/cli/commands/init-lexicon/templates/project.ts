@@ -11,12 +11,12 @@ export function generatePackageJson(name: string, names: { packageName: string }
     files: ["src/", "dist/"],
     exports: {
       ".": {
-        development: "./src/index.ts",
+        "@intentius/chant-source": "./src/index.ts",
         types: "./dist/index.d.ts",
         default: "./dist/index.js",
       },
       "./*": {
-        development: "./src/*.ts",
+        "@intentius/chant-source": "./src/*.ts",
         types: "./dist/*.d.ts",
         default: "./dist/*.js",
       },
@@ -60,7 +60,7 @@ export function generateTsConfig(): string {
 
 /**
  * Build config used by `npm run build` (and CI's `tsc --noEmit`). Uses `bundler`
- * resolution + the `development` condition so `@intentius/chant/*` resolves to the
+ * resolution + the `@intentius/chant-source` condition so `@intentius/chant/*` resolves to the
  * workspace source, and excludes tests/docs — the same setup the shipped lexicons
  * use. (The plain `tsconfig.json` extends the monorepo root and can't be tsc'd on
  * its own.)
@@ -76,7 +76,7 @@ export function generateTsConfigBuild(): string {
       rootDir: "src",
       paths: {},
       moduleResolution: "bundler",
-      customConditions: ["development"],
+      customConditions: ["@intentius/chant-source"],
     },
     include: ["src/**/*"],
     exclude: ["**/*.test.ts", "node_modules", "dist", "docs"],

@@ -32,32 +32,32 @@
   "exports": {
     "./workspace-kinds": "./workspace-kinds.json",
     ".": {
-      "development": "./src/index.ts",
+      "@intentius/chant-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./*": {
-      "development": "./src/*.ts",
+      "@intentius/chant-source": "./src/*.ts",
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
     },
     "./components": {
-      "development": "./src/components/index.ts",
+      "@intentius/chant-source": "./src/components/index.ts",
       "types": "./dist/components/index.d.ts",
       "default": "./dist/components/index.js"
     },
     "./op/activities": {
-      "development": "./src/op/activities/index.ts",
+      "@intentius/chant-source": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
       "default": "./dist/op/activities/index.js"
     },
     "./detect": {
-      "development": "./src/detect.ts",
+      "@intentius/chant-source": "./src/detect.ts",
       "types": "./dist/detect.d.ts",
       "default": "./dist/detect.js"
     },
     "./lint/post-synth": {
-      "development": "./src/lint/post-synth/index.ts",
+      "@intentius/chant-source": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
       "default": "./dist/lint/post-synth/index.js"
     },

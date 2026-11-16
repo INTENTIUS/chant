@@ -59,7 +59,7 @@ describe("ts-loader (#3878)", () => {
 });
 
 describe("chantPackageSourceTarget (#3981)", () => {
-  test("resolves a symlinked lexicon's root and pattern exports to their development source, by real path", () => {
+  test("resolves a symlinked lexicon's root and pattern exports to their @intentius/chant-source source, by real path", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-source-target-")));
     try {
       const lexicon = join(root, "lexicons", "demo");
@@ -71,8 +71,8 @@ describe("chantPackageSourceTarget (#3981)", () => {
         JSON.stringify({
           name: "@intentius/chant-lexicon-demo",
           exports: {
-            ".": { development: "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" },
-            "./*": { development: "./src/*.ts", types: "./dist/*.d.ts", default: "./dist/*.js" },
+            ".": { "@intentius/chant-source": "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" },
+            "./*": { "@intentius/chant-source": "./src/*.ts", types: "./dist/*.d.ts", default: "./dist/*.js" },
             "./meta": "./dist/meta.json",
           },
         }),
@@ -84,7 +84,7 @@ describe("chantPackageSourceTarget (#3981)", () => {
 
       expect(chantPackageSourceTarget("@intentius/chant-lexicon-demo", parent)).toBe(join(lexicon, "src", "index.ts"));
       expect(chantPackageSourceTarget("@intentius/chant-lexicon-demo/generated/index", parent)).toBe(join(lexicon, "src", "generated", "index.ts"));
-      // No development condition, a missing file, another scope or an absent package: left to Node.
+      // No @intentius/chant-source condition, a missing file, another scope or an absent package: left to Node.
       expect(chantPackageSourceTarget("@intentius/chant-lexicon-demo/meta", parent)).toBeUndefined();
       expect(chantPackageSourceTarget("@intentius/chant-lexicon-demo/missing", parent)).toBeUndefined();
       expect(chantPackageSourceTarget("@other/chant-lexicon-demo", parent)).toBeUndefined();
