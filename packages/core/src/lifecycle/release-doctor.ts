@@ -34,7 +34,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
 import type {
@@ -44,6 +44,9 @@ import type {
   HelmPublishDeclaration,
   IndexPublishDeclaration,
   MarketplacePublishDeclaration,
+  MavenPublishDeclaration,
+  NugetPublishDeclaration,
+  RubygemsPublishDeclaration,
   McpRegistryPublishDeclaration,
   NpmPublishDeclaration,
   OciPublishDeclaration,
@@ -230,6 +233,12 @@ async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTa
       return [await checkIndex(decl, ctx)];
     case "helm":
       return checkHelm(decl, ctx);
+    case "maven":
+      return [await checkMaven(decl, ctx)];
+    case "nuget":
+      return [await checkNuget(decl, ctx)];
+    case "rubygems":
+      return [await checkRubygems(decl, ctx)];
   }
 }
 
@@ -1059,6 +1068,177 @@ async function checkPypi(decl: PypiPublishDeclaration, ctx: Ctx): Promise<Doctor
     ex.status >= 200 && ex.status < 300 && typeof value === "string"
       ? { check: "pypi-trusted-publisher", status: "ok", message: `${index.label} takes this workflow as a trusted publisher` }
       : { check: "pypi-trusted-publisher", status: "fail", message: `${index.label} gave no upload token for this run (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: `Register this workflow as a trusted publisher${name ? ` of ${name}` : ""} at ${index.site}/manage/account/publishing/.` },
+  );
+  return t;
+}
+
+// Maven Central, NuGet and RubyGems (#5232)
+
+/** The files with `ext` the build already wrote at the paths `entries` names; `artifact:` entries are the cut's, so none yet. */
+function builtFiles(cwd: string, entries: readonly string[], ext: string): Array<{ path: string; abs: string }> {
+  const out: Array<{ path: string; abs: string }> = [];
+  for (const e of entries) {
+    if (e.startsWith("artifact:")) continue;
+    const abs = resolve(cwd, e);
+    if (!existsSync(abs)) continue;
+    if (statSync(abs).isDirectory()) for (const f of readdirSync(abs).filter((n) => n.endsWith(ext)).sort()) out.push({ path: join(e, f), abs: join(abs, f) });
+    else out.push({ path: e, abs });
+  }
+  return out;
+}
+
+async function checkMaven(decl: MavenPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { CENTRAL_PORTAL, MAVEN_CENTRAL_REPOSITORY, mavenPasswordEnv, mavenUsernameEnv, readMavenBundle } = await import("./publish-maven");
+  const checks: DoctorCheck[] = [];
+  const t: DoctorTarget = { kind: "maven", name: `maven ${decl.bundle}`, checks };
+  if (decl.bundle.startsWith("artifact:") || !existsSync(resolve(ctx.cwd, decl.bundle))) {
+    checks.push({ check: "maven-bundle", status: "unknown", message: `${decl.bundle} is not built yet; the publish reads its components and their signatures` });
+  } else {
+    try {
+      const b = readMavenBundle({ cwd: ctx.cwd, release: { artifactDigests: [] } as unknown as import("./release-store").Release }, decl.bundle);
+      t.name = `maven ${b.components.map((c) => `${c.groupId}:${c.artifactId}`).join(", ")}`;
+      checks.push({ check: "maven-bundle", status: "ok", message: `holds ${b.components.map((c) => `${c.groupId}:${c.artifactId}:${c.version}`).join(", ")}, each file signed` });
+      const repository = (decl.repository ?? MAVEN_CENTRAL_REPOSITORY).replace(/\/*$/, "/");
+      const there: string[] = [];
+      for (const c of b.components) {
+        const res = await answer(ctx, `${repository}${c.groupId.split(".").join("/")}/${c.artifactId}/${c.version}/${c.artifactId}-${c.version}.pom`, { method: "GET", headers: {} });
+        if (res.status === 200) there.push(`${c.groupId}:${c.artifactId}:${c.version}`);
+      }
+      if (there.length > 0) checks.push({ check: "maven-versions", status: "warn", message: `the repository already serves ${there.join(", ")}; Maven Central takes no version twice` });
+    } catch (err) {
+      checks.push({ check: "maven-bundle", status: "fail", message: err instanceof Error ? err.message : String(err), ...((err as { fix?: string }).fix ? { fix: (err as { fix?: string }).fix } : {}) });
+    }
+  }
+  const user = mavenUsernameEnv(decl);
+  const pass = mavenPasswordEnv(decl);
+  const set = Boolean(readCredential(ctx.env, [user], ctx.redactor)) && Boolean(readCredential(ctx.env, [pass], ctx.redactor));
+  checks.push(
+    set
+      ? { check: "maven-token", status: "unknown", message: `the user token in ${user} and ${pass} is set; whether the Central Portal takes it, and for which namespace, shows at the stage's upload` }
+      : missing(ctx, "maven-token", `${user} and ${pass} are not both set`, `Generate a user token at ${CENTRAL_PORTAL}/account and set ${user} and ${pass}.`),
+  );
+  return t;
+}
+
+async function checkNuget(decl: NugetPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { NUGET_AUDIENCE, NUGET_ID_TOKEN_ENV, NUGET_ORG, nugetAuth, nugetFeed, nugetTokenEnv, nugetUserEnv, readNupkg } = await import("./publish-nuget");
+  const feed = nugetFeed(decl);
+  const checks: DoctorCheck[] = [];
+  const t: DoctorTarget = { kind: "nuget", name: `nuget ${feed.label}`, checks };
+  const ids: string[] = [];
+  for (const f of builtFiles(ctx.cwd, decl.packages, ".nupkg")) {
+    try {
+      ids.push(readNupkg(f.path, f.abs).id);
+    } catch (err) {
+      checks.push({ check: "nuget-package", status: "fail", message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  if (ids.length === 0) checks.push({ check: "nuget-package", status: "unknown", message: "no package is built yet, so the ids can't be looked up" });
+  else t.name = `nuget ${feed.label} ${[...new Set(ids)].join(", ")}`;
+  for (const id of new Set(ids)) {
+    const res = await answer(ctx, `${feed.flat}${id.toLowerCase()}/index.json`, { method: "GET", headers: { accept: "application/json" } });
+    checks.push(
+      res.status === 200
+        ? { check: "nuget-package", status: "ok", message: `${feed.label} has the package ${id}` }
+        : res.status === 404
+          ? { check: "nuget-package", status: "warn", message: `${feed.label} has no package ${id} yet; the first push creates it`, fix: feed.nugetOrg ? "The key's or the trusted publishing policy's scope must allow pushing new packages." : undefined }
+          : { check: "nuget-package", status: "unknown", message: `${feed.flat}${id.toLowerCase()}/index.json answered ${res.status}` },
+    );
+  }
+  const auth = nugetAuth(decl, ctx.env);
+  if (auth === "token") {
+    const tokenName = nugetTokenEnv(decl);
+    checks.push(
+      readCredential(ctx.env, [tokenName], ctx.redactor)
+        ? { check: "nuget-token", status: "unknown", message: `the API key in ${tokenName} is set; ${feed.label} has no read-only check of a key, so whether it may push shows at the push` }
+        : missing(ctx, "nuget-token", `${tokenName} is not set${feed.nugetOrg ? " and there is no OIDC ID token for trusted publishing" : ""}`, `Set ${tokenName} to an API key that may push the packages${feed.nugetOrg ? ", or publish with trusted publishing from a CI job with an OIDC ID token" : ""}.`),
+    );
+    return t;
+  }
+  const userName = nugetUserEnv(decl);
+  const user = readCredential(ctx.env, [userName], ctx.redactor);
+  if (!user) {
+    checks.push(missing(ctx, "nuget-trusted-publisher", `${userName} is not set, and trusted publishing names the nuget.org user whose policy trusts the workflow`, `Set ${userName} to that user's profile name.`));
+    return t;
+  }
+  if (!ctx.environment.ci && !ctx.env[NUGET_ID_TOKEN_ENV]) {
+    checks.push({ check: "nuget-trusted-publisher", status: "unknown", message: `whether nuget.org takes this workflow as a trusted publisher can only be tested by ${onlyTheWorkflow(ctx)}, with its OIDC token` });
+    return t;
+  }
+  const tok = await idToken(ctx, NUGET_AUDIENCE, NUGET_ID_TOKEN_ENV);
+  if ("none" in tok) {
+    checks.push({ check: "nuget-trusted-publisher", status: "fail", message: tok.none, fix: `Give the job permissions: id-token: write, or declare ${NUGET_ID_TOKEN_ENV} under the GitLab job's id_tokens with aud: ${NUGET_AUDIENCE}.` });
+    return t;
+  }
+  const ex = await answer(ctx, NUGET_ORG.token, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tok.token}` }, body: JSON.stringify({ username: user.value, tokenType: "ApiKey" }) });
+  const value = (ex.json as { apiKey?: unknown } | null)?.apiKey;
+  if (typeof value === "string") ctx.redactor.add(value);
+  checks.push(
+    ex.status === 200 && typeof value === "string"
+      ? { check: "nuget-trusted-publisher", status: "ok", message: "nuget.org takes this workflow as a trusted publisher" }
+      : { check: "nuget-trusted-publisher", status: "fail", message: `nuget.org gave no API key for this run (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: `Add a trusted publishing policy on nuget.org for this repository and workflow file, created by the user in ${userName}.` },
+  );
+  return t;
+}
+
+async function checkRubygems(decl: RubygemsPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { RUBYGEMS_AUDIENCE, RUBYGEMS_ID_TOKEN_ENV, readGem, rubygemsAuth, rubygemsHost, rubygemsTokenEnv } = await import("./publish-rubygems");
+  const host = rubygemsHost(decl);
+  const label = decl.host ? new URL(host).host : "RubyGems.org";
+  const checks: DoctorCheck[] = [];
+  const t: DoctorTarget = { kind: "rubygems", name: `rubygems ${label}`, checks };
+  const names = new Set<string>();
+  for (const f of builtFiles(ctx.cwd, decl.gems, ".gem")) {
+    try {
+      names.add(readGem(f.path, f.abs).name);
+    } catch (err) {
+      checks.push({ check: "rubygems-gem", status: "fail", message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  if (names.size === 0) {
+    for (const spec of readdirSync(ctx.cwd).filter((n) => n.endsWith(".gemspec"))) {
+      const m = /\.name\s*=\s*["']([^"']+)["']/.exec(readFileSync(join(ctx.cwd, spec), "utf-8"));
+      names.add(m ? m[1]! : spec.slice(0, -".gemspec".length));
+    }
+  }
+  if (names.size === 0) checks.push({ check: "rubygems-gem", status: "unknown", message: "no gem is built and there is no .gemspec here, so the gem can't be looked up" });
+  else t.name = `rubygems ${label} ${[...names].join(", ")}`;
+  for (const name of names) {
+    const res = await answer(ctx, `${host}/api/v1/versions/${encodeURIComponent(name)}.json`, { method: "GET", headers: { accept: "application/json" } });
+    checks.push(
+      res.status === 200
+        ? { check: "rubygems-gem", status: "ok", message: `${label} has the gem ${name}` }
+        : res.status === 404
+          ? { check: "rubygems-gem", status: "warn", message: `${label} has no gem ${name} yet; the first push creates it`, fix: decl.host ? undefined : `For trusted publishing, add a pending trusted publisher for ${name} on RubyGems.org.` }
+          : { check: "rubygems-gem", status: "unknown", message: `${host}/api/v1/versions/${name}.json answered ${res.status}` },
+    );
+  }
+  const auth = rubygemsAuth(decl, ctx.env);
+  if (auth === "token") {
+    const tokenName = rubygemsTokenEnv(decl);
+    checks.push(
+      readCredential(ctx.env, [tokenName], ctx.redactor)
+        ? { check: "rubygems-token", status: "unknown", message: `the API key in ${tokenName} is set; ${label} has no read-only check of a key, so whether it may push shows at the push` }
+        : missing(ctx, "rubygems-token", `${tokenName} is not set${decl.host ? "" : " and there is no OIDC ID token for trusted publishing"}`, `Set ${tokenName} to an API key with the push scope${decl.host ? "" : ", or publish with trusted publishing from a GitHub Actions job with id-token: write"}.`),
+    );
+    return t;
+  }
+  if (!ctx.environment.ci && !ctx.env[RUBYGEMS_ID_TOKEN_ENV]) {
+    checks.push({ check: "rubygems-trusted-publisher", status: "unknown", message: `whether RubyGems.org takes this workflow as a trusted publisher can only be tested by ${onlyTheWorkflow(ctx)}, with its OIDC token` });
+    return t;
+  }
+  const tok = await idToken(ctx, RUBYGEMS_AUDIENCE, RUBYGEMS_ID_TOKEN_ENV);
+  if ("none" in tok) {
+    checks.push({ check: "rubygems-trusted-publisher", status: "fail", message: tok.none, fix: "Give the job permissions: id-token: write." });
+    return t;
+  }
+  const ex = await answer(ctx, `${host}/api/v1/oidc/trusted_publisher/exchange_token`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ jwt: tok.token }) });
+  const value = (ex.json as { rubygems_api_key?: unknown } | null)?.rubygems_api_key;
+  if (typeof value === "string") ctx.redactor.add(value);
+  checks.push(
+    ex.status >= 200 && ex.status < 300 && typeof value === "string"
+      ? { check: "rubygems-trusted-publisher", status: "ok", message: "RubyGems.org takes this workflow as a trusted publisher" }
+      : { check: "rubygems-trusted-publisher", status: "fail", message: `RubyGems.org gave no API key for this run (${ex.status}${ex.text ? `: ${short(ex.text)}` : ""})`, fix: "Add this repository and workflow as a trusted publisher of the gem on RubyGems.org." },
   );
   return t;
 }

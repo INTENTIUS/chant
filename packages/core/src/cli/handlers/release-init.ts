@@ -7,7 +7,7 @@
  * ../../lifecycle/release-init.ts.
  */
 
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
@@ -37,8 +37,8 @@ export async function runReleaseInit(ctx: CommandContext): Promise<number> {
     return 1;
   };
 
-  if (!["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py", "Dockerfile", "chant.config.ts", "chant.config.json"].some((f) => existsSync(join(root, f))) && !existsSync(join(root, ".git"))) {
-    return fail("release-init-not-a-project", "this directory holds no package.json, go.mod, Cargo.toml, pyproject.toml, Dockerfile or git repository", "Run chant release init in the project's root.");
+  if (!["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py", "pom.xml", "Dockerfile", "chant.config.ts", "chant.config.json"].some((f) => existsSync(join(root, f))) && !readdirSync(root).some((f) => f.endsWith(".csproj") || f.endsWith(".gemspec")) && !existsSync(join(root, ".git"))) {
+    return fail("release-init-not-a-project", "this directory holds no package.json, go.mod, Cargo.toml, pyproject.toml, pom.xml, .csproj, .gemspec, Dockerfile or git repository", "Run chant release init in the project's root.");
   }
 
   const facts = detectProject(root);

@@ -32,6 +32,10 @@ describe("a config with only publish (#4656)", () => {
       expect(ids([{ type: "pypi", auth: "token" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
       expect(ids([{ type: "pypi", uploadUrl: "https://pypi.acme.dev/legacy/" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
       expect(ids([{ type: "npm" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
+      // #5232: nuget.org's trusted publishing reads NUGET_ID_TOKEN.
+      expect(ids([{ type: "nuget" }, { type: "pypi" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore", PYPI_ID_TOKEN: "pypi", NUGET_ID_TOKEN: "https://www.nuget.org" });
+      expect(ids([{ type: "nuget", auth: "token" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
+      expect(ids([{ type: "nuget", pushUrl: "https://nuget.pkg.github.com/acme/" }], p)).toEqual({ SIGSTORE_ID_TOKEN: "sigstore" });
     }
   });
 

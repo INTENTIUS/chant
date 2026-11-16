@@ -6,7 +6,7 @@ sidebar:
   label: "publish"
 ---
 
-Publishes a cut release to the targets its member declares under `release.publish` in `chant.config.ts` ([#4027](https://github.com/INTENTIUS/chant/issues/4027), [#4047](https://github.com/INTENTIUS/chant/issues/4047)): npm packages, an image in an OCI registry such as GHCR or Docker Hub, release assets on GitHub, GitLab or Forgejo, a Homebrew tap, an editor marketplace, a Tauri updater feed, Python distributions on PyPI and Rust crates on crates.io. [Publish Targets](/chant/reference/publish-targets/) lists the declaration, each target and its credentials. It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
+Publishes a cut release to the targets its member declares under `release.publish` in `chant.config.ts` ([#4027](https://github.com/INTENTIUS/chant/issues/4027), [#4047](https://github.com/INTENTIUS/chant/issues/4047)): npm packages, an image in an OCI registry such as GHCR or Docker Hub, release assets on GitHub, GitLab or Forgejo, a Homebrew tap, an editor marketplace, a Tauri updater feed, Python distributions on PyPI, Rust crates on crates.io, Maven components on Maven Central, NuGet packages and Ruby gems. [Publish Targets](/chant/reference/publish-targets/) lists the declaration, each target and its credentials. It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
 
 ```bash
 chant release publish v1.4.0          # a dry run: prints what would be published where

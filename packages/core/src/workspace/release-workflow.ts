@@ -253,6 +253,8 @@ export interface ReleaseWorkflowTarget {
   uploadUrl?: string;
   /** A `helm` target's registry (#5233). */
   oci?: { repository: string; usernameEnv?: string; passwordEnv?: string };
+  /** A `nuget` target's `pushUrl` (#5232). */
+  pushUrl?: string;
 }
 
 // #5196: each feature's helpers and constants live with its steps in ./release-steps; these keep their names here.

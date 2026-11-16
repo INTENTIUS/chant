@@ -123,7 +123,7 @@ export function zipEntryNames(zip: Buffer): string[] {
 }
 
 /** One file of a zip archive, or null. Reads stored and deflated entries. */
-function zipEntry(zip: Buffer, name: string): Buffer | null {
+export function zipEntry(zip: Buffer, name: string): Buffer | null {
   let end = -1;
   for (let i = zip.length - 22; i >= Math.max(0, zip.length - 22 - 0xffff); i--) {
     if (zip.readUInt32LE(i) === 0x06054b50) {

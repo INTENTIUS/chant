@@ -21,6 +21,9 @@ export default {
       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
       { type: "pypi", files: ["dist"] },
       { type: "cargo", crates: ["acme-core", "acme-cli"] },
+      { type: "maven", bundle: "artifact:maven" },
+      { type: "nuget", packages: ["artifact:nuget"] },
+      { type: "rubygems", gems: ["artifact:gem"] },
       { type: "index", preset: "krew", name: "api", template: "packaging/krew.yaml", assets: ["artifact:api"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
       { type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/charts" }, index: { repo: "acme/charts" } },
     ],
@@ -499,9 +502,99 @@ On GitHub, a `helm` target whose `oci.repository` is on `ghcr.io` and names no c
 
 Debian, RPM and other Linux packages are built at the cut by an [`nfpm` entry](/chant/cli/release/cut/#helm-charts-and-linux-packages) of `release.artifacts`, and published by a `forge` target that names them, `assets: ["artifact:<name>"]`. They are attached to the forge release like any other asset. An apt or yum repository is not written.
 
+## Maven Central
+
+Maven components on Maven Central, uploaded to the [Central Portal](https://central.sonatype.com) as a bundle ([#5232](https://github.com/INTENTIUS/chant/issues/5232)).
+
+```ts
+{ type: "maven", bundle: "artifact:maven" },
+{ type: "maven", bundle: "target/staging-deploy" },
+```
+
+| Field | Meaning |
+|---|---|
+| `bundle` | The bundle, relative to the member: a `.zip` in Maven repository layout, a directory in that layout, or `artifact:<name>` for the one `.zip` the release records for that [`release.artifacts`](/chant/cli/release/cut/#files-the-release-builds) entry |
+| `api` | The Central Portal's root. Default `https://central.sonatype.com` |
+| `repository` | The repository the stage reads for components already published. Default `https://repo1.maven.org/maven2/` |
+| `usernameEnv` | The variable holding the user token's name. Default `MAVEN_CENTRAL_USERNAME` |
+| `passwordEnv` | The variable holding the user token's password. Default `MAVEN_CENTRAL_PASSWORD` |
+| `sbom` | `false` publishes under the `supply-chain` group components that carry no SBOM. See [The SBOM](#the-sbom) |
+
+A component is a `<group path>/<artifactId>/<version>/<artifactId>-<version>.pom` and the files beside it, such as `mvn deploy -DaltDeploymentRepository=local::file:./target/staging-deploy` writes them. A directory is zipped by chant, which adds a `.md5` and a `.sha1` for each file that has none. chant signs nothing: a file without its `.asc` beside it is refused in the plan (`publish-maven-unsigned`), as is a bundle with no component (`publish-maven-no-components`), a `-SNAPSHOT` version (`publish-maven-snapshot`), and an `artifact:` entry that records more than one file (`publish-maven-bundle`). A file the release records must match its digest.
+
+The Portal holds a deployment it has validated until someone publishes it, so this target stages as an OCI or forge target does: nothing is visible until the reveal.
+
+| Step | What it does |
+|---|---|
+| Stage | Reads each component's `.pom` from the repository. When every one is there with the same bytes, the target is `present` and nothing is uploaded; a `.pom` with other bytes, or a bundle only part of which is published, is refused (`publish-maven-version-exists`). Otherwise uploads the bundle to `POST {api}/api/v1/publisher/upload` with `publishingType=USER_MANAGED`, and asks the deployment's status every 10 seconds until the Portal says `VALIDATED`, for up to 30 minutes (`publish-maven-validation-timeout`). `FAILED` is refused with the Portal's errors (`publish-maven-invalid`), and the deployment stays in the Portal to be read and dropped there. The deployment's id goes in the publish record |
+| Reveal | Publishes the recorded deployment with `POST {api}/api/v1/publisher/deployment/<id>`. A deployment already `PUBLISHING` or `PUBLISHED` is not sent again, and one the Portal no longer has is refused (`publish-maven-deployment-missing`). The repository serves what was published within about half an hour |
+
+The user token comes from the Central Portal's account page and is sent as `Authorization: Bearer <base64 of name:password>`; the Portal has no trusted publishing. Its account must own the namespace of each component's `groupId`.
+
+## NuGet
+
+`.nupkg` packages on nuget.org, or on another feed that takes NuGet's push API ([#5232](https://github.com/INTENTIUS/chant/issues/5232)).
+
+```ts
+{ type: "nuget", packages: ["artifact:nuget"] },
+{ type: "nuget", packages: ["dist/nuget"], pushUrl: "https://nuget.acme.dev/api/v2/package", flatContainerUrl: "https://nuget.acme.dev/v3/flatcontainer/", tokenEnv: "ACME_NUGET_KEY" },
+```
+
+| Field | Meaning |
+|---|---|
+| `packages` | The packages, relative to the member: a `.nupkg` file, a directory (every `.nupkg` in it, in name order), or `artifact:<name>` |
+| `pushUrl` and `flatContainerUrl` | Another feed: its push URL and its package base address (flat container). They go together. Default: nuget.org's |
+| `auth` | `token` or `trusted-publishing`. Unset: a token when the key's variable is set, else trusted publishing when the run has an OIDC ID token |
+| `tokenEnv` | The variable holding the API key. Default `NUGET_API_KEY` |
+| `userEnv` | The variable holding the nuget.org user, by profile name and not email, whose trusted publishing policy names the workflow. Default `NUGET_USER` |
+| `sbom` | `false` publishes under the `supply-chain` group packages that carry no SBOM. See [The SBOM](#the-sbom) |
+
+The id and version come from the `.nuspec` at each package's root. A file that is not a zip with one is refused in the plan (`publish-nuget-not-a-package`), as is a directory with no package (`publish-nuget-no-files`) and a file name given twice (`publish-nuget-duplicate-file`). `.snupkg` symbol packages are not pushed.
+
+A feed has no draft: a version is listed once it is pushed and validated, and an id and version can never be pushed again. So the stage pushes nothing, and the reveal pushes, as on PyPI.
+
+| Step | What it does |
+|---|---|
+| Stage | Reads `{flatContainerUrl}<id>/index.json`. A version the feed lists is `present`. nuget.org signs every package it takes, so the bytes it serves are not the bytes pushed, and no digest is compared. With trusted publishing in GitHub Actions, makes the exchange below and drops the key. With a key, there is no read-only check, so the stage says so |
+| Reveal | Reads the flat container again, then pushes each package it does not list with `PUT {pushUrl}`, the package as the first part of a multipart body, the key in `X-NuGet-ApiKey` and `X-NuGet-Protocol-Version: 4.1.0`. A push answered `409`, as for a version pushed moments ago that the flat container does not list yet, is `present`. `400` is `publish-nuget-invalid`. A failure part way names the packages pushed before it, and the same publish run again pushes only the rest |
+
+### Trusted publishing on nuget.org
+
+With `auth: "trusted-publishing"`, nuget.org hands the run an API key that lasts an hour for its OIDC ID token, with no stored key. The target gets an ID token with the audience `https://www.nuget.org` (in GitHub Actions from a job with `permissions: id-token: write`; elsewhere from `NUGET_ID_TOKEN`, which a GitLab job declares under `id_tokens`) and posts it to `https://www.nuget.org/api/v2/token` with the user in `userEnv`. nuget.org takes an ID token once. GitHub Actions issues a new one each time it is asked, so there the stage makes the exchange to check that nuget.org takes the workflow, and the reveal exchanges again. With `NUGET_ID_TOKEN` the stage does not exchange, and the reveal's exchange is the only one. A refusal is `publish-nuget-trusted-publishing`. Add the policy once under the user's Trusted Publishing settings on nuget.org. Another feed takes a key only, and `auth: "trusted-publishing"` beside `pushUrl` fails validation.
+
+## RubyGems
+
+`.gem` files on RubyGems.org, or on another host that takes its API ([#5232](https://github.com/INTENTIUS/chant/issues/5232)).
+
+```ts
+{ type: "rubygems", gems: ["artifact:gem"] },
+{ type: "rubygems", gems: ["pkg"], auth: "token" },
+```
+
+| Field | Meaning |
+|---|---|
+| `gems` | The gems, relative to the member: a `.gem` file, a directory (every `.gem` in it, in name order), or `artifact:<name>` |
+| `host` | Another host. Default `https://rubygems.org` |
+| `auth` | `token` or `trusted-publishing`. Unset: a token when the key's variable is set, else trusted publishing when the run has an OIDC ID token |
+| `tokenEnv` | The variable holding the API key. Default `GEM_HOST_API_KEY`, the one `gem push` reads |
+| `sbom` | `false` publishes under the `supply-chain` group, which otherwise refuses this target. See [The SBOM](#the-sbom) |
+
+The name, version and platform come from each gem's own `metadata.gz`. A file that is not a gem chant can read is refused in the plan (`publish-rubygems-not-a-gem`), as is a directory with no gem (`publish-rubygems-no-files`) and a file name given twice (`publish-rubygems-duplicate-file`).
+
+A host has no draft: a version is visible once it is pushed, and a version can never be pushed again, even after a yank. So the stage pushes nothing, and the reveal pushes.
+
+| Step | What it does |
+|---|---|
+| Stage | Reads `{host}/api/v1/versions/<name>.json`. A version the host lists for the gem's platform with the same SHA-256 is `present`, and one with another is refused (`publish-rubygems-version-exists`). With trusted publishing, makes the exchange below and drops the key. With a key, there is no read-only check, so the stage says so |
+| Reveal | Reads the versions again, then pushes each gem the host does not list with `POST {host}/api/v1/gems`, the gem as the body and the key in `Authorization`. A push the host refuses as a repush is `present` when it lists the same bytes. An account that asks for a one-time password on API pushes refuses the push, and the fix says so. A failure part way names the gems pushed before it, and the same publish run again pushes only the rest |
+
+### Trusted publishing on RubyGems.org
+
+With `auth: "trusted-publishing"`, RubyGems.org hands the run a short-lived API key for its OIDC ID token: one GitHub Actions issues with the audience `rubygems.org` (a job with `permissions: id-token: write`), or the value of `RUBYGEMS_ID_TOKEN`. The target exchanges it at `POST {host}/api/v1/oidc/trusted_publisher/exchange_token`. The stage makes the exchange to check that RubyGems.org takes this workflow as a trusted publisher, and the reveal exchanges again. A refusal is `publish-rubygems-trusted-publishing`. Add the repository and workflow once to the gem's trusted publishers on RubyGems.org, or as a pending trusted publisher for a gem that does not exist yet. Another host takes a key only.
+
 ## MCP Registry
 
-A `server.json` on the official [MCP Registry](https://registry.modelcontextprotocol.io), so MCP clients can find the server. A `server.json` names the npm packages, PyPI packages or OCI images that run the server, and the registry checks that they exist, so this target reveals after every other target, the PyPI, Cargo and marketplace uploads among them, whatever its place in `release.publish`. It shares the last turn with [index targets](#index-repositories), and those reveal in the order declared. Read by chant 0.124.101 and newer.
+A `server.json` on the official [MCP Registry](https://registry.modelcontextprotocol.io), so MCP clients can find the server. A `server.json` names the npm packages, PyPI packages or OCI images that run the server, and the registry checks that they exist, so this target reveals after every other target, the PyPI, Cargo, NuGet, RubyGems and marketplace uploads among them, whatever its place in `release.publish`. It shares the last turn with [index targets](#index-repositories), and those reveal in the order declared. Read by chant 0.124.101 and newer.
 
 ```ts
 { type: "npm", packages: ["packages/mcp"] },
@@ -545,6 +638,9 @@ A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is 
 | `marketplace` | Unchanged. A pre-release is a property of the packaged `.vsix` |
 | `pypi` | Unchanged. A PEP 440 prerelease version, such as `1.4.0rc1` in the file's metadata, is one pip installs only when asked |
 | `cargo` | Unchanged. A semver prerelease in `Cargo.toml` is one cargo resolves only when a requirement names it |
+| `maven` | Unchanged. Maven Central publishes a version with a qualifier, such as `1.4.0-rc.1`, as it publishes any other |
+| `nuget` | Unchanged. A SemVer prerelease in the `.nuspec` is one NuGet installs only when asked |
+| `rubygems` | Unchanged. A version with a letter, such as `1.4.0.rc.1` in the gemspec, is one RubyGems installs only when asked |
 | `mcp-registry` | Unchanged. The registry takes a prerelease version as it takes any other |
 
 The member's floating tag (`release.tag.floating`, see [the release's tag](/chant/cli/release/cut/#the-releases-tag)) stays where it is.
@@ -562,12 +658,17 @@ Each target attaches the release's provenance statement to what it publishes, an
 | Forge | An asset of the release | `release.intoto.json`, an asset of the release | The same asset, which says its provenance is the signature |
 | PyPI | A file in each wheel, since an index keeps no file beside a distribution | The PEP 740 attestations beside each file, and one signed at the stage under [Sigstore signing](#attestations-on-pypi) | The release's signature on `chant/lifecycle` only |
 | Cargo | None: a registry keeps no file beside a crate | None | The release's signature on `chant/lifecycle` only |
+| Maven Central | A `-cyclonedx.json`, `-cyclonedx.xml` or `-spdx.json` file of each component, which the build attaches | None | The release's signature on `chant/lifecycle` only |
+| NuGet | A file in each package, since a feed keeps no file beside a package | None | The release's signature on `chant/lifecycle` only |
+| RubyGems | None: a host keeps no file beside a gem | None | The release's signature on `chant/lifecycle` only |
 
 ### The SBOM
 
 An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Keep it in what npm packs: a package with a `files` list names it there. A package with none publishes without one. Under `supply-chain`, or when `sbom` names a file the package does not hold, it is refused with `publish-sbom-missing` in the plan, before anything is sent.
 
 A wheel carries its SBOM in `.dist-info/sboms/`, as PEP 770 places it, written there by the build. Under `supply-chain`, a `pypi` target whose wheels carry none, or that publishes no wheel, is refused with `publish-sbom-missing`; an sdist has no place for one. A `cargo` target is refused under `supply-chain` too, since nothing it publishes can carry an SBOM. `sbom: false` on either target publishes without one; attach the SBOM to the release with a forge target instead.
+
+A Maven component carries its SBOM as one of its files, such as the `-cyclonedx.json` the CycloneDX Maven plugin attaches, and a NuGet package carries one inside it: a file ending `.spdx.json`, `.cdx.json` or `.cyclonedx.json`, or `_manifest/spdx_*/` as Microsoft's sbom-tool writes it. Under `supply-chain`, a `maven` or `nuget` target with a component or package that carries none is refused with `publish-sbom-missing`. A `rubygems` target is refused under `supply-chain`, as a `cargo` one is. `sbom: false` on any of the three publishes without one.
 
 The OCI and forge targets attach the file `sbom` names. Without one they write an SPDX document from the nearest `package-lock.json` or `pom.xml`, in the member's directory or above it inside the repository, with the hermetic writer the [`generate-sbom`](/chant/components/build-archive/) capability uses. It lists the declared dependencies and not an image's base layers, so an image built with a layer scan (BuildKit's `--sbom`, `syft`) should name that scan's file in `sbom`. The document is dated with the cut's time, so a publish run again writes the same bytes. With neither a declared file nor a lockfile there is nothing to attach, which only `supply-chain` refuses. A file that is not SPDX or CycloneDX JSON is refused with `publish-sbom-invalid`. `sbom: false` publishes without an SBOM.
 
@@ -628,7 +729,7 @@ export default {
 };
 ```
 
-The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater and cargo targets are not signed.
+The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater, cargo, maven, nuget and rubygems targets are not signed.
 
 ### A CI job that checks provenance
 
@@ -650,9 +751,9 @@ steps:
 
 ## Staging and resuming
 
-A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them. Between the two it runs the [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI, Cargo or MCP Registry target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package.
+A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them. Between the two it runs the [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI, Cargo, NuGet, RubyGems or MCP Registry target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package.
 
-The reveals go in three groups, each in the order declared: first the targets whose reveal moves a tag or publishes a draft (npm, OCI, forge, Homebrew, Tauri updater); then the targets that upload at reveal (marketplace, PyPI, Cargo), since an upload can't be taken back; then the targets that reveal last: the MCP Registry, whose entry names packages the other targets publish, and the [index targets](#index-repositories), whose manifests point at files the other targets make downloadable. Those last go in the order declared, so an index target declared before an `mcp-registry` target reveals before it. They stage with the rest, where no consumer resolves them. A train publish uses the same order within each member. A failure while revealing leaves the targets before it visible and the rest staged.
+The reveals go in three groups, each in the order declared: first the targets whose reveal moves a tag or publishes a draft (npm, OCI, forge, Homebrew, Tauri updater, Maven Central); then the targets that upload at reveal (marketplace, PyPI, Cargo, NuGet, RubyGems), since an upload can't be taken back; then the targets that reveal last: the MCP Registry, whose entry names packages the other targets publish, and the [index targets](#index-repositories), whose manifests point at files the other targets make downloadable. Those last go in the order declared, so an index target declared before an `mcp-registry` target reveals before it. They stage with the rest, where no consumer resolves them. A train publish uses the same order within each member. A failure while revealing leaves the targets before it visible and the rest staged.
 
 Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifecycle`, beside `cuts.jsonl` and under the member's prefix. The file is append-only, and each line is pushed as soon as it is written. This line, `version` 1, is what chant 0.124.29 and newer write after staging an npm target:
 
@@ -685,6 +786,9 @@ A [release train](/chant/cli/workspace-train/) goes out as one set with `chant w
 | marketplace | the marketplace lists the version for the extension the `.vsix` names, or the member's `package.json` when the checkout has no `.vsix` |
 | PyPI | the simple API lists a file of the project at the release's version (`1.4.0-rc.1` is `1.4.0rc1`) |
 | cargo | the index holds each crate at the release's version. A crate whose `Cargo.toml` here has another version can't tell |
+| Maven Central | the repository serves each component's `.pom` at the release's version |
+| NuGet | the feed's flat container lists each package at the release's version |
+| RubyGems | the host lists each gem at the release's version |
 | MCP Registry | the registry holds the version of the server `server.json` names |
 | Tauri updater | the rolling release is this version's. One that holds another version can't tell |
 
@@ -698,6 +802,9 @@ Every member it publishes is checked as `chant release publish` checks one, and 
 | OCI | the repository | nothing |
 | PyPI | each project its files hold | each project in `Requires-Dist` that is not under an extra |
 | cargo | each crate it publishes | each crate they depend on, apart from dev-dependencies |
+| Maven Central | each component, `<groupId>:<artifactId>` | each dependency in its `.pom` outside the `test`, `provided` and `system` scopes, and not optional |
+| NuGet | each package id | each dependency in its `.nuspec` |
+| RubyGems | each gem | each run-time dependency in its gemspec |
 | marketplace | the extension | each extension in `extensionDependencies` and `extensionPack` |
 | MCP Registry | the server | each npm, PyPI, cargo and NuGet package and each OCI image `server.json` lists |
 | forge, homebrew, index, Tauri updater | where it publishes | nothing |
@@ -730,18 +837,21 @@ Three steps then run across the whole train:
 | marketplace | the marketplace lists the version |
 | PyPI | the simple API lists each uploaded file |
 | cargo | the index holds each crate version |
+| Maven Central | the repository serves each component's `.pom`. This wait stops after an hour, since Central takes up to half an hour |
+| NuGet | the flat container lists each version. nuget.org validates and indexes a package first, which takes minutes |
+| RubyGems | the host lists each version |
 | MCP Registry | the registry serves the version |
 | Tauri updater | the rolling release is this version's |
 
 Apart from npm, a wait stops after 15 minutes with `publish-<target>-not-served`, such as `publish-pypi-not-served`. What revealed stays revealed, and running the same command again goes on from there.
 
-An npm target with `stage: false` has nothing to hold back, so it is not staged up front. It publishes straight to `latest` in its layer's turn, after the layers before it resolve, so the verify commands can't see it, and the publish warns. A marketplace, PyPI, cargo or MCP Registry target uploads in its reveal, in its layer's turn, for the same reason.
+An npm target with `stage: false` has nothing to hold back, so it is not staged up front. It publishes straight to `latest` in its layer's turn, after the layers before it resolve, so the verify commands can't see it, and the publish warns. A marketplace, PyPI, cargo, NuGet, RubyGems or MCP Registry target uploads in its reveal, in its layer's turn, for the same reason. A Maven Central target stages its validated deployment up front, as an OCI target does.
 
 Each step goes into the member's own `_releases/publishes.jsonl`. Run again after a failure in any layer, the train publish skips what each member's record shows revealed, reveals without staging again what it shows staged, and waits on each revealed layer again before the next, so nothing is published twice. `chant release publish` in one member reads the same record.
 
 ## Deprecating, yanking and restoring
 
-[`chant release deprecate`, `yank` and `restore`](/chant/cli/release/status/) act on what a target published for a release, read from the items each target's `revealed` line holds in `_releases/publishes.jsonl`. They never read the checkout. npm deprecates and moves its dist-tag. The OCI target moves its tags with no `{label}`. A forge release becomes a prerelease, a draft, or is deleted. A tap's formula is reverted, and so are the manifests of an `index` target that commits; one that opens pull requests refuses. The cargo target yanks each crate version and a restore undoes the yank. The PyPI, marketplace and Tauri updater targets refuse. A prerelease's yank moves its own dist-tag, such as `rc`, back to the previous release with that tag, and never touches `latest`. The member's floating tag moves back too. Each target's actions are recorded in `_releases/status-actions.jsonl`, so a change that stopped part way resumes.
+[`chant release deprecate`, `yank` and `restore`](/chant/cli/release/status/) act on what a target published for a release, read from the items each target's `revealed` line holds in `_releases/publishes.jsonl`. They never read the checkout. npm deprecates and moves its dist-tag. The OCI target moves its tags with no `{label}`. A forge release becomes a prerelease, a draft, or is deleted. A tap's formula is reverted, and so are the manifests of an `index` target that commits; one that opens pull requests refuses. The cargo target yanks each crate version and a restore undoes the yank. The NuGet target unlists each version on a yank and lists it again on a restore. The RubyGems target yanks each version and refuses a restore, since RubyGems.org takes no yank back. The PyPI, Maven Central, marketplace and Tauri updater targets refuse. A prerelease's yank moves its own dist-tag, such as `rc`, back to the previous release with that tag, and never touches `latest`. The member's floating tag moves back too. Each target's actions are recorded in `_releases/status-actions.jsonl`, so a change that stopped part way resumes.
 
 ## Credentials
 
@@ -750,7 +860,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The redactor masks | Such as |
 |---|---|
 | Each credential a target read, and each token a registry handed back for it | the value of `OCI_PASSWORD`, a GHCR bearer token |
-| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT`, `PYPI_TOKEN`, `TEST_PYPI_TOKEN`, `TWINE_PASSWORD`, `PYPI_ID_TOKEN`, `CARGO_REGISTRY_TOKEN`, `CRATES_IO_ID_TOKEN`, `MCP_GITHUB_TOKEN`, `MCP_REGISTRY_TOKEN` |
+| The value of each variable CI and registries use for tokens | `NODE_AUTH_TOKEN`, `NPM_TOKEN`, `NPM_ID_TOKEN`, `SIGSTORE_ID_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `OCI_PASSWORD`, `DOCKER_PASSWORD`, `VSCE_PAT`, `OVSX_PAT`, `PYPI_TOKEN`, `TEST_PYPI_TOKEN`, `TWINE_PASSWORD`, `PYPI_ID_TOKEN`, `CARGO_REGISTRY_TOKEN`, `CRATES_IO_ID_TOKEN`, `MCP_GITHUB_TOKEN`, `MCP_REGISTRY_TOKEN`, `MAVEN_CENTRAL_PASSWORD`, `NUGET_API_KEY`, `NUGET_ID_TOKEN`, `GEM_HOST_API_KEY`, `RUBYGEMS_ID_TOKEN` |
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
@@ -761,7 +871,7 @@ A target that needs a credential and finds none stops the publish before anythin
 A target is an object with this shape, from `packages/core/src/lifecycle/release-publish.ts`:
 
 ```ts
-interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo" | "mcp-registry" | "index"> {
+interface PublishTarget<C extends PublishContextBase = PublishContext, K extends string = "npm" | "oci" | "forge" | "homebrew" | "marketplace" | "tauri-updater" | "pypi" | "cargo" | "mcp-registry" | "index" | "maven" | "nuget" | "rubygems"> {
   kind: K;
   name: string;            // for messages, such as "npm (2 packages)"
   destination: string;     // printed before it runs
@@ -773,7 +883,7 @@ interface PublishTarget<C extends PublishContextBase = PublishContext, K extends
   refusalWarns?: boolean;  // a refused stage or reveal is a warning, and the target is not recorded (index onRefusal: warn)
   // Optional, for a train publish:
   stagesVisibly?: boolean; // stage already makes the items visible (npm under stage: false)
-  uploadsAtReveal?: boolean; // stage sends nothing and reveal uploads (marketplace, pypi, cargo); reveals after the rest
+  uploadsAtReveal?: boolean; // stage sends nothing and reveal uploads (marketplace, pypi, cargo, nuget, rubygems); reveals after the rest
   revealsLast?: boolean; // reveals after every other target, uploads included (mcp-registry, index)
   names?(ctx: C): Promise<{ provides: string[]; needs: string[] }>;
   published?(ctx: C): Promise<boolean | null>;
@@ -805,7 +915,7 @@ A release target is given a `PublishContext` with these fields. The last five (`
 | `redactor` | Masks credentials. A target adds each credential and token it reads |
 | `log(line)` | Prints a line of progress, redacted |
 
-The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew, index, marketplace and PyPI targets use, the `sleep` and `now` that the index target's wait for a new fork reads, the `npm`, `vsce` and `cargo` executables, and the `git` and `ssh` that the homebrew and index targets run over SSH. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, the forge targets call a forge fake with draft releases, the PyPI target uploads to a fake index, and cargo is a fake binary that writes a fake sparse index. The index target calls a GitHub fake with forks and pull requests, and pushes over SSH to a local bare repository.
+The targets take their dependencies through `PublishDeps`, which holds the `fetch` the OCI, forge, homebrew, index, marketplace, PyPI, Maven Central, NuGet and RubyGems targets use, the `sleep` and `now` that the index target's wait for a new fork reads, the `npm`, `vsce` and `cargo` executables, and the `git` and `ssh` that the homebrew and index targets run over SSH. In the tests npm runs as a fake binary that keeps a registry with dist-tags in a file, the OCI target pushes to a registry fake that the test starts on `127.0.0.1`, the forge targets call a forge fake with draft releases, the PyPI target uploads to a fake index, and cargo is a fake binary that writes a fake sparse index. The Maven Central target talks to a fake Central Portal and repository, and the NuGet and RubyGems targets to fakes of their push, listing and trusted-publishing endpoints. The index target calls a GitHub fake with forks and pull requests, and pushes over SSH to a local bare repository.
 
 A target that publishes something other than a cut release takes its own context as `C`, which extends `PublishContextBase`, and its own `kind` names as `K` ([#4602](https://github.com/INTENTIUS/chant/issues/4602)). The terraform lexicon's module targets publish a module version this way. They throw `PublishTargetError` and take their requests and clock through `PublishDeps`. Credentials are read with `readCredential` from `lifecycle/publish-credentials.ts` and masked by the context's redactor. Their own code makes them, so they never appear under `release.publish`.
 

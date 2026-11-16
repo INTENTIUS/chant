@@ -11,6 +11,9 @@
  * | `oci` | the repository, lowercased, with no tag or digest, and Docker Hub's `docker.io/` (and `library/`) left off |
  * | `pypi` | the project name normalized as PEP 503 does |
  * | `cargo` | the crate name, lowercased, `_` as `-` |
+ * | `maven` | `<groupId>:<artifactId>` |
+ * | `nuget` | the package id, lowercased |
+ * | `rubygems` | the gem name |
  * | `marketplace` | `<publisher>.<name>`, lowercased |
  * | `mcp` | the server's name in `server.json` |
  * | `forge`, `homebrew`, `index`, `tauri-updater` | where it publishes: the repository, and the formula or manifest name |
@@ -21,7 +24,7 @@
 
 import { PublishTargetError, type PublishContextBase, type PublishDeps } from "./release-publish";
 
-export type TrainNameKind = "npm" | "oci" | "pypi" | "cargo" | "marketplace" | "mcp" | "forge" | "homebrew" | "index" | "tauri-updater";
+export type TrainNameKind = "npm" | "oci" | "pypi" | "cargo" | "marketplace" | "mcp" | "forge" | "homebrew" | "index" | "tauri-updater" | "maven" | "nuget" | "rubygems";
 
 /** PEP 503's normalized project name. */
 function pep503(name: string): string {
@@ -51,6 +54,8 @@ export function trainName(kind: TrainNameKind, name: string): string {
       return `cargo:${name.toLowerCase().replace(/_/g, "-")}`;
     case "marketplace":
       return `marketplace:${name.toLowerCase()}`;
+    case "nuget":
+      return `nuget:${name.toLowerCase()}`;
     default:
       return `${kind}:${name}`;
   }

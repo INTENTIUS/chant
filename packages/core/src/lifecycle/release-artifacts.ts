@@ -761,6 +761,9 @@ interface ArchiveEntry {
   bytes?: Buffer;
 }
 
+/** An entry of a zip: a file, or bytes with no file (#5232), which get mode 0644. */
+export type ZipEntry = ArchiveEntry | { name: string; bytes: Buffer };
+
 const modeOf = (abs: string): number => (statSync(abs).mode & 0o111 ? 0o755 : 0o644);
 
 function tarHeader(name: string, size: number, mode: number, mtime: number): Buffer {
@@ -831,13 +834,13 @@ function dosTime(epoch: number): { time: number; date: number } {
 }
 
 /** A zip of the entries in order, deflated, each dated `mtime` (UTC) with its Unix mode. */
-export function zipArchive(entries: readonly ArchiveEntry[], mtime: number): Buffer {
+export function zipArchive(entries: readonly ZipEntry[], mtime: number): Buffer {
   const { time, date } = dosTime(mtime);
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
   for (const e of entries) {
-    const data = e.bytes ?? readFileSync(e.abs);
+    const data = "abs" in e ? (e.bytes ?? readFileSync(e.abs)) : e.bytes;
     const packed = deflateRawSync(data, { level: 9 });
     const name = Buffer.from(e.name, "utf-8");
     const crc = crc32(data);
@@ -865,7 +868,7 @@ export function zipArchive(entries: readonly ArchiveEntry[], mtime: number): Buf
     c.writeUInt32LE(packed.length, 20);
     c.writeUInt32LE(data.length, 24);
     c.writeUInt16LE(name.length, 28);
-    c.writeUInt32LE(((0o100000 | modeOf(e.abs)) << 16) >>> 0, 38);
+    c.writeUInt32LE(((0o100000 | ("abs" in e ? modeOf(e.abs) : 0o644)) << 16) >>> 0, 38);
     c.writeUInt32LE(offset, 42);
     locals.push(local, name, packed);
     central.push(c, name);

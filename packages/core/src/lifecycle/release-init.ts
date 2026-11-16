@@ -23,6 +23,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, posix, relative, sep } from "node:path";
 import { GENERATED_MARKER } from "../discovery/files";
 import { forgeOfRemote } from "../forge-remote";
+import { detectRegistryProjects, planRegistryTargets, type RegistryProjectFacts } from "./release-init-registries";
 
 export type ReleaseInitCode =
   | "release-init-release-exists"
@@ -129,6 +130,8 @@ export interface ProjectFacts {
   chantCi: boolean;
   /** `.gitignore` ignores `dist/`. */
   distIgnored: boolean;
+  /** A `pom.xml`, `*.csproj` files or a `*.gemspec` at the root (#5232). */
+  registries?: RegistryProjectFacts;
 }
 
 /** The release tags a repository holds, grouped by what comes before the version. */
@@ -455,6 +458,7 @@ export function detectProject(root: string): ProjectFacts {
     tags: readTagHistory(tagList),
     chantCi: ciGreen || tagList.some((t) => t.startsWith("ci/green/") || /^ci\/green-[^/]+\//.test(t)),
     distIgnored: /^\/?dist\/?\s*$/m.test(gitignore) || /^\/?dist\/\*\s*$/m.test(gitignore),
+    registries: detectRegistryProjects(root),
   };
 }
 
@@ -781,6 +785,16 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
       `crates.io ${rs.name ?? "each crate"}: ${forge === "github" ? `add a trusted publisher to ${rs.name ? "the crate" : "each crate"} on crates.io for GitHub Actions naming ${trustedRepo} and the workflow file ${workflowName}. A crate's first version can't be published that way: publish it by hand, or store a token that may publish new crates as the secret CARGO_REGISTRY_TOKEN and set CARGO_REGISTRY_TOKEN: "\${{ secrets.CARGO_REGISTRY_TOKEN }}" in release.workflow.env.` : `create an API token that may publish ${rs.name ? "the crate" : "the crates"} and store it as the ${forge === "gitlab" ? "masked CI/CD variable" : "secret"} CARGO_REGISTRY_TOKEN${forge === "gitlab" ? "." : ", and set CARGO_REGISTRY_TOKEN: \"${{ secrets.CARGO_REGISTRY_TOKEN }}\" in release.workflow.env."}`}`,
     );
   } else if (rs) notes.push(`${rs.name ?? "The crate"} is tagged and not published to crates.io: ${rs.unpublishable ? "Cargo.toml sets publish = false" : "Cargo.toml has no [package] name or [workspace]"}.`);
+  // Maven, .NET and Ruby packages (#5232).
+  if (facts.registries) {
+    const r = planRegistryTargets(facts.registries, { forge, repo: trustedRepo, workflowName });
+    if (r.artifacts.length > 0) release.artifacts = [...((release.artifacts as Json[] | undefined) ?? []), ...r.artifacts];
+    publish.push(...r.publish);
+    reasons.push(...r.reasons);
+    notes.push(...r.notes);
+    registry.push(...r.registry);
+    if (Object.keys(r.env).length > 0) workflow.env = { ...((workflow.env as Record<string, Json>) ?? {}), ...r.env };
+  }
   if (versionFiles.length > 0) {
     const current = (release.version as Record<string, Json> | undefined) ?? {};
     release.version = { ...current, files: versionFiles };
@@ -795,7 +809,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   reasons.push(`release.workflow: a release started by hand with its label from ${workflowFile}, which cuts a green commit and publishes it`);
   if (adopted) reasons.push(`release.workflow.file ${workflowFile}: it runs npm publish today, so the npm trusted publisher that names it keeps working; the release workflow replaces it rather than publishing from a second file`);
 
-  if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || charts.length > 0 || facts.nfpm || publish.some((p) => (p as { type?: string }).type === "pypi") || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
+  if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || charts.length > 0 || facts.nfpm || publish.some((p) => ["pypi", "nuget", "rubygems"].includes((p as { type?: string }).type ?? "")) || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
 
   const h = facts.tags.prefix;
