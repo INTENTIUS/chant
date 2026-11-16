@@ -243,6 +243,11 @@ if (args[0] === "publish") {
   const p = reg.packages[args[1]];
   if (!p) { console.error("npm error code E404"); console.error("npm error 404 Not Found - " + args[1]); process.exit(1); }
   console.log(JSON.stringify(p.versions.length === 1 ? p.versions[0] : p.versions));
+} else if (args[0] === "view" && args[2] === "version" && args[1].lastIndexOf("@") <= 0) {
+  // #5230: a view of a bare name asks whether the package was ever published.
+  const p = reg.packages[args[1]];
+  if (!p) { console.error("npm error code E404"); console.error("npm error 404 Not Found - " + args[1]); process.exit(1); }
+  console.log(p.distTags.latest || p.versions[p.versions.length - 1] || "");
 } else if (args[0] === "view") {
   const [name, version] = split(args[1]);
   const p = reg.packages[name];

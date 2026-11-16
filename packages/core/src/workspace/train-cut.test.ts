@@ -75,7 +75,7 @@ const cutter =
   (r: TestRepo): MemberCutter =>
   async (m, commit, o) => {
     if (!o.yes) return { tag: null };
-    await cutRelease({ cwd: join(o.root, m.dir), compiler, label: m.label, actor: "alice", env: {}, now: () => new Date("2026-11-16T10:00:00.000Z") });
+    await cutRelease({ cwd: join(o.root, m.dir), compiler, label: m.label, actor: "alice", env: {}, npmPublished: () => true, now: () => new Date("2026-11-16T10:00:00.000Z") });
     const tag = `release/npm/${m.member}/${m.label}`;
     if (r.git(["tag", "-l", tag]).trim() === "") r.git(["tag", tag, commit]);
     return { tag };
@@ -158,6 +158,22 @@ describe("a train cut, resumed", () => {
     const again = await planTrainCut({ cwd: nested, env: "npm", at: head, registry: npmVersions(npm) });
     expect(again.released).toBe(out.trainTag);
     expect(again.members).toEqual([]);
+  });
+});
+
+describe("a package npm has never had", () => {
+  test("refuses the train before any member is cut, naming the package and the first publish", async () => {
+    const x = setup();
+    const head = x.head;
+    let cuts = 0;
+    const known = npmVersions(x.npm);
+    const registry = (name: string, reg: string | undefined) => (name === "@acme/lex" ? null : known(name, reg));
+    const err = await cutTrain({ cwd: x.nested, env: "npm", at: head, registry, yes: true, noPush: true, cutter: async () => ({ tag: (cuts++, null) }) }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TrainCutError);
+    expect((err as TrainCutError).code).toBe("publish-npm-never-published");
+    expect((err as TrainCutError).message).toContain("@acme/lex has never been published to npm");
+    expect((err as TrainCutError).fix).toContain("placeholder version");
+    expect(cuts).toBe(0);
   });
 });
 

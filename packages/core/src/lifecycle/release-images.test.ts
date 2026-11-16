@@ -308,6 +308,7 @@ describe("an npm package that would carry an image archive (#4934)", () => {
       label: "v2",
       actor: "alice",
       env: {},
+      npmPublished: () => true,
       buildImages: () =>
         buildReleaseImages({
           images: [{ name: "app", build: "build", archive: "dist/images/app.tar" }],

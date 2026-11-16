@@ -52,7 +52,7 @@
  * environment, and everything it prints is redacted before chant prints it.
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -290,6 +290,71 @@ export function checkDeclaredPackageImages(
     });
     checkPackageImages(release, cwd, pkgs, bin, env);
   }
+}
+
+/** Whether the registry has ever published the package. Throws a {@link PublishTargetError} when it can't say. */
+export type NpmPublishedLookup = (name: string, registry: string | undefined) => boolean;
+
+/** The default {@link NpmPublishedLookup}: `npm view <name> version`, with the registry the target declares. A 404 is "never published"; any other failure is the registry's error. */
+export function npmPublishedLookup(bin = "npm", env: NodeJS.ProcessEnv = process.env): NpmPublishedLookup {
+  return (name, registry) => {
+    const r = spawnSync(bin, ["view", name, "version", ...(registry ? ["--registry", registry] : [])], { encoding: "utf-8", env });
+    if (r.status === 0) return true;
+    const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+    if (/\bE404\b|\b404 Not Found\b/.test(out)) return false;
+    throw new PublishTargetError(
+      "publish-npm-registry-unreadable",
+      `npm view ${name} exited ${r.status ?? "without a status"}, so whether ${name} has ever been published is unknown: ${(r.error?.message ?? out).trim().split("\n").filter(Boolean).at(-1) ?? "no output"}`,
+      "Check that npm can reach the registry, and cut again.",
+    );
+  };
+}
+
+/** The packages the npm targets of `decls` publish, by name, with the registry each target declares. Directories without a readable, non-private package.json are left for the publish's plan to refuse. */
+export function declaredNpmPackages(
+  decls: ReadonlyArray<{ type: string; packages?: readonly string[]; registry?: string }>,
+  cwd: string,
+): Array<{ name: string; registry: string | undefined }> {
+  const out = new Map<string, { name: string; registry: string | undefined }>();
+  for (const decl of decls) {
+    if (decl.type !== "npm") continue;
+    for (const path of decl.packages ?? []) {
+      const abs = resolve(cwd, path);
+      if (!existsSync(abs) || !isDir(abs)) continue;
+      try {
+        const pkg = JSON.parse(readFileSync(join(abs, "package.json"), "utf-8")) as { name?: unknown; private?: unknown };
+        if (typeof pkg.name === "string" && pkg.private !== true && !out.has(`${decl.registry ?? ""}\n${pkg.name}`)) out.set(`${decl.registry ?? ""}\n${pkg.name}`, { name: pkg.name, registry: decl.registry });
+      } catch {
+        // Not a package the plan can read.
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/** The refusal for packages the registry has never had: npm trusted publishing can't create a package. */
+export function neverPublishedError(names: readonly string[]): PublishTargetError {
+  const list = names.join(", ");
+  return new PublishTargetError(
+    "publish-npm-never-published",
+    `${list} ${names.length === 1 ? "has" : "have"} never been published to npm, and trusted publishing can't create a package, so its first publish would fail partway through the release`,
+    `Publish one placeholder version of ${list} by hand (npm login, then npm publish), then add the trusted publisher on npmjs.com under the package's Settings, and cut again.`,
+  );
+}
+
+/**
+ * Refuses a cut whose npm targets name a package the registry has never
+ * published (#5230). Run by the cut before anything is recorded or tagged, and
+ * by the train cut before its first member. A registry that can't answer is a
+ * refusal too (`publish-npm-registry-unreadable`), not a pass.
+ */
+export function checkPackagesPublished(
+  decls: ReadonlyArray<{ type: string; packages?: readonly string[]; registry?: string }>,
+  cwd: string,
+  lookup: NpmPublishedLookup = npmPublishedLookup(),
+): void {
+  const missing = declaredNpmPackages(decls, cwd).filter((p) => !lookup(p.name, p.registry)).map((p) => p.name);
+  if (missing.length > 0) throw neverPublishedError(missing);
 }
 
 export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): PublishTarget {

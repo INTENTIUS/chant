@@ -60,8 +60,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { canonicalJson } from "../effect-receipt";
 import { getHeadCommit } from "./git";
 import { resolveMemberLedger } from "./member-ledger";
@@ -89,6 +89,7 @@ import {
 } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import type { ForgeChecksReader, ReleaseGreenSource } from "./release-green";
+import type { NpmPublishedLookup } from "./publish-npm";
 
 /** The first chant that cuts from a lane's green tag and writes `lane` on the cut line (#4692). */
 export const RELEASE_CUT_LANE_FLOOR = "0.124.64";
@@ -151,7 +152,10 @@ export type ReleaseCutCode =
   | "declaration-invalid"
   /** #4941: the npm target's image check, run by the cut (./publish-npm.ts `checkPackageImages`). */
   | "publish-npm-carries-image"
-  | "publish-npm-pack-failed";
+  | "publish-npm-pack-failed"
+  /** #5230: an npm target names a package the registry has never published, or the registry can't say. */
+  | "publish-npm-never-published"
+  | "publish-npm-registry-unreadable";
 
 export class ReleaseCutError extends Error {
   constructor(
@@ -188,6 +192,8 @@ export interface CutRequest {
    * targets; with none, and no `release.images`, it has nothing to release.
    */
   publishes?: readonly ReleasePublish[];
+  /** Whether the registry has ever published a package, for the cut's first-publish check (#5230). Default: `npm view`. */
+  npmPublished?: NpmPublishedLookup;
   now?: () => Date;
   /** The process environment the CI run is read from. */
   env?: NodeJS.ProcessEnv;
@@ -612,6 +618,21 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
       "this member's chant.config.ts declares no environments and no release.publish target, so there is nothing to release",
       "Declare where the release publishes (release.publish: [{ type: \"npm\", packages: [\".\"] }]), or the environments it is compiled for in promotion order (environments: [\"dev\", \"staging\", \"prod\"]).",
     );
+  }
+
+  // #5230: a package npm has never had can't be published by trusted publishing, so the cut stops before the label is spent.
+  // A config that never says "npm" has no npm target, so it is not evaluated here.
+  const configText = ["chant.config.ts", "chant.config.json"].map((f) => join(cwd, f)).filter((f) => existsSync(f)).map((f) => readFileSync(f, "utf-8")).join("\n");
+  if (/\bnpm\b/.test(configText)) {
+    const { loadChantConfig } = await import("../config");
+    const { checkPackagesPublished, npmPublishedLookup } = await import("./publish-npm");
+    const { PublishTargetError } = await import("./release-publish");
+    try {
+      checkPackagesPublished((await loadChantConfig(cwd)).config.release?.publish ?? [], cwd, req.npmPublished ?? npmPublishedLookup());
+    } catch (err) {
+      if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
+      throw err;
+    }
   }
 
   // #4657: the images first, so the build command that packs a package can pin their digests.

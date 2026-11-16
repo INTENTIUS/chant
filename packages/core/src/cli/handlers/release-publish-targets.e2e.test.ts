@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { REPO } from "../../workspace/__fixtures__/contract-repo";
-import { readFakeNpmRegistry, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
+import { readFakeNpmRegistry, seedFakeNpmRegistry, startFakeRegistry, writeFakeNpm, writeLockfile, writeOciLayout, writePackage, type FakeRegistry } from "../../lifecycle/__fixtures__/publish-fakes";
 import { hasSshKeygen } from "../../workspace/trust/test-repo";
 
 const CHANT = [process.execPath, "--import", pathToFileURL(join(REPO, "node_modules", "tsx", "dist", "loader.mjs")).href, join(REPO, "packages", "core", "src", "cli", "main.ts")];
@@ -86,6 +86,9 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The cut's first-publish lookup (#5230): npm view of a bare package name. */
+const isCutLookup = (a: string[]) => a[0] === "view" && a[2] === "version" && a[1]!.lastIndexOf("@") <= 0;
+
 describe("chant release publish with targets", () => {
   test.skipIf(!hasSshKeygen)(
     "a dry run by default; with --yes publishes a signed release's two npm packages in order with --provenance, audits their signatures, and an image by digest with its SBOM and provenance; prints no credential, and refuses a moved checkout",
@@ -126,6 +129,8 @@ describe("chant release publish with targets", () => {
 
       const log = join(root, "npm.log");
       const bin = join(root, "bin");
+      // #5230: a cut refuses a package npm has never had, so each is known to the registry with no version, as a package made by a first publish.
+      seedFakeNpmRegistry(log, { packages: { "@acme/core": { versions: [], distTags: {} }, "@acme/cli": { versions: [], distTags: {} } } });
       writeFakeNpm(bin, log);
       const path = { PATH: `${bin}:${process.env.PATH}` };
       const calls = () => (existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { args: string[]; tokenSet: boolean }) : []);
@@ -147,13 +152,14 @@ describe("chant release publish with targets", () => {
       expect(dry.stdout).toContain("  npm (2 packages), with --provenance:\n    @acme/core@1.0.0 to the registry npm's config names, dist-tag next, then latest, carrying sbom.spdx.json\n    @acme/cli@1.0.0 to");
       expect(dry.stdout).toContain(`    image (tag v1) to ${reg.host}/acme/api@${digest}`);
       expect(dry.stderr).toContain("Dry run: nothing was published. Run again with --yes to publish: chant release publish v1 --yes");
-      expect(calls()).toEqual([]);
+      // The cut looks each package up (#5230); the dry run publishes nothing.
+      expect(calls().filter((c) => !isCutLookup(c.args))).toEqual([]);
       expect(reg.requests).toEqual([]);
 
       const pub = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(pub.code, pub.stderr).toBe(0);
       expect(pub.stderr).toContain("signed by alice");
-      expect(calls().map((c) => c.args)).toEqual([
+      expect(calls().map((c) => c.args).filter((a) => !isCutLookup(a))).toEqual([
         ["view", "@acme/core@1.0.0", "version"],
         ["publish", join(dir, "packages/core"), "--tag", "next", "--access", "public", "--provenance"],
         ["view", "@acme/cli@1.0.0", "version"],
@@ -168,7 +174,7 @@ describe("chant release publish with targets", () => {
         ["audit", "signatures"],
       ]);
       expect(pub.stderr).toContain("2 packages have verified attestations");
-      expect(calls().every((c) => c.tokenSet)).toBe(true);
+      expect(calls().filter((c) => !isCutLookup(c.args)).every((c) => c.tokenSet)).toBe(true);
       expect(reg.manifests.has(digest)).toBe(true);
       expect(reg.manifests.has("v1")).toBe(true);
       expect(pub.stderr).toContain(`published: image (tag v1) to ${reg.host}/acme/api@${digest}`);
@@ -215,7 +221,7 @@ describe("chant release publish with targets", () => {
       const moved = await chant(dir, ["release", "publish", "v1", "--yes"], { ...path, ...secrets, ...oidc });
       expect(moved.code).toBe(1);
       expect(moved.stderr).toMatch(/\[release-head-mismatch\]/);
-      expect(calls()).toHaveLength(10);
+      expect(calls().filter((c) => !isCutLookup(c.args))).toHaveLength(10);
     },
     240_000,
   );
@@ -251,6 +257,7 @@ describe("chant release publish with targets", () => {
 
       const log = join(root, "resume-npm.log");
       const bin = join(root, "resume-bin");
+      seedFakeNpmRegistry(log, { packages: { "@acme/rcore": { versions: [], distTags: {} }, "@acme/rcli": { versions: [], distTags: {} } } });
       writeFakeNpm(bin, log);
       const path = { PATH: `${bin}:${process.env.PATH}` };
       const calls = () => (existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { args: string[] }).args) : []);
