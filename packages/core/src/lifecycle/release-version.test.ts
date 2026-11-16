@@ -74,7 +74,7 @@ describe("stamping the label (#4840)", () => {
     const { r } = workspace("release-version-refuse");
     expect(() => stampReleaseVersion({ cwd: r.dir, config: { packages: ["packages/cli", "packages/nope"] }, label: "0.4.53" })).toThrow(/packages\/nope\/package.json, which does not exist/);
     expect(r.git(["status", "--porcelain"])).toBe("");
-    expect(() => stampReleaseVersion({ cwd: r.dir, config: { packages: ["../other"] }, label: "0.4.53" })).toThrow(/not a path inside the member/);
+    expect(() => stampReleaseVersion({ cwd: r.dir, config: { packages: ["../other"] }, label: "0.4.53" })).toThrow(/not a path inside the repository/);
   });
 
   test("chant.config.ts takes release.version, and refuses a misspelt key", () => {

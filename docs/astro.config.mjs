@@ -250,6 +250,7 @@ export default defineConfig({
 								{ label: 'Land Without a Pull Request', slug: 'guide/land-without-a-pull-request' },
 								{ label: 'Compose a Release', slug: 'guide/compose-a-release' },
 								{ label: 'Release from Your Workstation', slug: 'guide/release-from-workstation' },
+								{ label: 'Release a Monorepo', slug: 'guide/release-a-monorepo' },
 								{ label: 'Promote a Release', slug: 'guide/promote-a-release' },
 								{ label: 'Prune chant/lifecycle', slug: 'guide/prune-lifecycle' },
 								{ label: 'Read Delivery Metrics', slug: 'guide/delivery-metrics' },

@@ -22,9 +22,10 @@
  * `ranges` (#5155) each workspace dependency's range follows the label the
  * release or a train gives that package: `exact` and `caret` for the
  * packages the release stamps, `train` also for the packages of the other
- * members a release train pins. scripts/release-pack.sh --train does the
- * same for chant itself, and more (the floors, the packing in dependency
- * layers), so chant's own release keeps it for now. `files` (#5156) names
+ * members a release train pins, which `chant workspace train prepare`
+ * (#5154) stamps for every member a train cut from one commit. A package
+ * path may leave the member as long as it stays inside the repository
+ * (#5154), so `release/core` can stamp `../../packages/core`. `files` (#5156) names
  * other manifests the label goes into, by format, field or pattern, edited
  * in place (./release-version-formats.ts).
  *
@@ -106,17 +107,41 @@ export function checkVersionLabel(label: string | null): asserts label is string
 
 const norm = (p: string): string => posix.normalize(p.split("\\").join("/")).replace(/\/$/, "") || ".";
 
-const outside = (p: string): boolean => isAbsolute(p) || norm(p).split("/").includes("..");
+/**
+ * Whether `p` leaves the repository (#5154). A path may climb out of the
+ * member with `..`, so a member under `release/<member>` can stamp
+ * `../../packages/core`, as long as it stays inside the repository that
+ * holds the member. Without `where`, only an absolute path is refused.
+ */
+function outside(p: string, where?: { cwd: string; top: string }): boolean {
+  if (isAbsolute(p)) return true;
+  if (!where) return false;
+  const rel = relative(where.top, resolve(where.cwd, norm(p))).split("\\").join("/");
+  return rel === ".." || rel.startsWith("../") || isAbsolute(rel);
+}
 
-/** Check the declaration: at least one package or file, every path inside the member, each file's format known. */
-export function checkReleaseVersion(config: ReleaseVersionConfig): void {
+/** The repository root that holds `cwd`, or `cwd` itself outside git. */
+function repositoryTop(cwd: string): string {
+  try {
+    return realpathSync(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+  } catch {
+    return cwd;
+  }
+}
+
+/**
+ * Check the declaration: at least one package or file, every path inside the
+ * repository (`where`: the member's directory and the repository root; a path
+ * may leave the member, #5154), each file's format known.
+ */
+export function checkReleaseVersion(config: ReleaseVersionConfig, where?: { cwd: string; top: string }): void {
   if (config.ranges !== undefined && !["keep", "exact", "caret", "train"].includes(config.ranges)) {
     throw new ReleaseVersionError("release-version-invalid", `release.version.ranges is "${String(config.ranges)}", not keep, exact, caret or train`);
   }
   const files = config.files ?? [];
   if ((config.packages ?? []).length === 0 && files.length === 0) throw new ReleaseVersionError("release-version-invalid", "release.version names no package directory and no file");
   for (const p of [...(config.packages ?? []), ...(typeof config.lockfile === "string" ? [config.lockfile] : []), ...files.map(versionFilePath)]) {
-    if (outside(p)) throw new ReleaseVersionError("release-version-invalid", `release.version: ${p} is not a path inside the member`);
+    if (outside(p, where)) throw new ReleaseVersionError("release-version-invalid", `release.version: ${p} is not a path inside the repository`, "Name the path relative to the member's chant.config.ts; it may leave the member with .., as long as it stays inside the repository.");
   }
   const seen = new Set<string>();
   for (const f of files) {
@@ -267,7 +292,7 @@ export interface Stamped {
  * package directory with no `package.json`, before anything is written.
  */
 export function stampReleaseVersion(i: { cwd: string; config: ReleaseVersionConfig; label: string | null; train?: RangeLabels }): Stamped {
-  checkReleaseVersion(i.config);
+  checkReleaseVersion(i.config, { cwd: realpathSync(i.cwd), top: repositoryTop(i.cwd) });
   checkVersionLabel(i.label);
   const stamp = stamper(i.cwd, i.config, i.label, i.train);
   const files = releaseVersionFiles(i.cwd, i.config);

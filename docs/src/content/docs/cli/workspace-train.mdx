@@ -1,6 +1,6 @@
 ---
 title: "chant workspace train"
-description: Record a release train that pins one release of every chant and repo member, list the trains recorded for an environment, promote one within this repository or across repositories, and publish one as a set
+description: Record a release train that pins one release of every chant and repo member, cut every changed member as one train, list the trains recorded for an environment, promote one within this repository or across repositories, and prepare and publish one as a set
 diataxis: reference
 ---
 
@@ -10,6 +10,8 @@ diataxis: reference
 chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
 chant workspace train list <env> [--json]
 chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json]
+chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--yes] [--no-push] [--json]
+chant workspace train prepare <env> [<train id|digest>] [--json]
 chant workspace train publish <env> [<train id|digest>] [--yes] [--allow-unsigned] [--require-provenance] [--json]
 ```
 
@@ -76,6 +78,67 @@ Each member keeps its own gate. A workspace gate covers members of one repositor
 
 The two `<product>-train.yml` workflows are written by the GitHub lexicon (`generateTrainMemberPipeline` and `generateTrainControlPipeline` in `@intentius/chant-lexicon-github/components/train-pipeline`). The pieces come from `@intentius/chant/control/train`. The member's workflow takes the product's cloud login steps before the run. The control repository's job has one step after the checkout, which holds the dispatch tokens and nothing else. `generateControlPipeline({ trainMembers })` maps the same tokens into the dependents workflow, so an answer can dispatch the next member. A GitLab member repository takes no train dispatch yet.
 
+## Cut
+
+`chant workspace train cut <env>` releases every member that changed, in one run, at the commit `--at` names (the trunk's tip without it). It runs in the root of a workspace whose `chant` members are the units released separately, such as one member per package of a monorepo, and needs `release.train` in the root's `chant.config.ts`:
+
+```ts
+// release/chant.config.ts, the root of the workspace of release members
+export default {
+  release: {
+    train: { env: "npm" },
+  },
+};
+```
+
+| Field | Meaning |
+|---|---|
+| `env` | The environment the train is recorded for, and the middle of its tag `release-train/<env>/<id>`. The command's `<env>` must name it |
+| `first` | `each` (default) labels every member from its own versions. `together` makes the environment's first train cut every member at one label, one past the highest version any of them has, for packages that shipped at one shared version until now |
+| `check` | Shell lines run in the root once the labels are known and before any member is cut, with `CHANT_RELEASE_COMMIT`, `CHANT_TRAIN_ENV` and `CHANT_TRAIN_PLAN`, a JSON file of `{ env, commit, members: [{ member, label }] }`. One that fails stops the train with nothing cut |
+| `buildDependencies` | The command [`prepare`](#prepare) runs in a package the train's members build against. Default: the package's `prepack` script, else its `build` script. `false` builds nothing |
+
+The cut, in order:
+
+1. A commit a `release-train/<env>/*` tag already names is released: it says so and does nothing.
+2. The members are those [`chant release changed`](/chant/cli/release/changed/) lists at the commit, with its dependency closure, in publish order. `--levels` types levels: `auto` (the default: each member's conventional commits and intent files decide), a level for every member (`minor`), `<member>=<level>`, or several separated by spaces or commas (`minor core=major`). A member already cut from this commit, by a run that stopped part way, is taken at its label and is not cut again.
+3. Each member's label is its bumped label, floored past every version it already has: the labels in its ledger, its release tags (as `release.tag` renders them, default `release/<workspace>/<member>/<label>`), the `release.legacyTags` tags, the `version` of each package its `release.version` names at the commit, and every version npm lists for the packages it stamps or publishes (`npm view <name> versions`, at the target's `registry`). A label is never one the registry already holds. A registry that can't answer stops the cut with `train-registry-unreadable`; one that has never heard of a package adds nothing.
+4. `release.train.check` runs.
+5. [`chant release cut <label> --at <commit> --yes`](/chant/cli/release/cut/) runs in each member's directory. Each cut pushes its record and tags the commit locally.
+6. The train is recorded, every member cut here at its new release and every other member at its newest, and `chant/lifecycle` is pushed.
+7. The member tags and `release-train/<env>/<id>` on the commit go to `origin` in one atomic push. A workflow on that tag publishes the train.
+
+Without `--yes` it prints the members, their labels and why, runs each cut's dry run, and writes nothing. `--no-push` records and tags locally and pushes no tag. `--json` prints the plan, the tags and the train.
+
+```
+$ chant workspace train cut npm --levels "lex=minor"
+Release train for npm from 3c9f58c44300:
+  core                     1.0.4        paths-changed; patch from default; floor 1.0.3
+  lex                      1.1.0        paths-changed; minor from typed; floor 1.0.0
+Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cut the train.
+```
+
+| Code | Why the cut stopped |
+|---|---|
+| `train-not-declared` | The root's `chant.config.ts` declares no `release.train` |
+| `train-env-mismatch` | `<env>` is not the one `release.train.env` names |
+| `train-levels-invalid` | `--levels` has a word that is not a level or `<member>=<level>`, names a member the workspace does not have, or gives per-member levels to a `first: "together"` train |
+| `train-registry-unreadable` | npm could not say which versions a package has |
+| `train-check-failed` | A `release.train.check` line failed. Nothing was cut |
+| `train-cut-failed` | A member's cut failed. Run the train again: members already cut from the commit are taken as they are |
+| `train-member-unreleased` | A member the train does not cut has no release to pin |
+| `train-record-not-pushed` | The train was recorded and `chant/lifecycle` did not reach the remote, so no tag was pushed |
+| `train-tags-not-pushed` | The atomic tag push failed; the message names the push to run |
+
+## Prepare
+
+`chant workspace train prepare <env> [<train>]` readies a checkout of the train's commit for `train publish`, as the generated workflow's publish job does before it. For each member the train cut from this commit:
+
+- its `release.version` files take the member's label, and under `ranges: "train"` each workspace dependency's range takes `^` and the label the train gives the member that owns that package. `train publish` takes these files, every member's, as the commit's.
+- the workspace packages it depends on, directly or not, that this run does not publish are built once each, dependencies first, with `release.train.buildDependencies` or the package's `prepack` (else `build`) script. A workspace package is one a member's `release.version.packages` or npm target names, or one the repository root declares in `workspaces` (npm, yarn) or `pnpm-workspace.yaml`. The members this run publishes build when npm packs them, in the train's layer order.
+
+It refuses a train that is not recorded (`train-unknown`), a checkout whose commit the train cut no member from (`train-nothing-cut-here`), and a build that fails (`train-build-failed`).
+
 ## Publish
 
 `chant workspace train publish <env>` publishes the newest train for `<env>`, or the one named by id or digest, as one set: every member's [publish targets](/chant/reference/publish-targets/#publishing-a-release-train) stage before any reveals, each member's [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands run after the whole train has staged and before the first layer reveals, and the members reveal in dependency layers, each layer waiting until the one before it is served to a consumer. The layers come from what each member's targets publish and need, across kinds: an npm package after the packages it depends on, a crate after the crates it depends on, an MCP Registry entry after the packages and images its `server.json` lists. `release.dependsOn` in a member's `chant.config.ts` names members it comes after that no manifest shows, such as the member whose package an image bundles. It runs in a checkout of the commit the train's new releases were cut from, as a CI job on the train's tag does, and publishes each member whose release was cut there. A member pinned at a release from another commit is not published again, and must already be: its publish record or its registry says so, or nothing stages.
@@ -102,7 +165,10 @@ Dry run: publish release train train-3c1e… (jcs1-sha256:9f0a…) for npm
 | `--gate <name>` | (`promote`) Plan every member first and wait on one workspace gate over their release gates. Refused for a train of `repo` members. |
 | `--continue` | (`promote`) For a train of `repo` members: move the promote in flight on from the answer the control repository recorded, and start nothing new. |
 | `--dry-run` | Pick the releases and print the train without writing it. With `promote`, print the order and run nothing. |
-| `--yes` | (`publish`) Publish. Without it the publish prints its plan and sends nothing. |
+| `--yes` | (`cut`) Cut, record, tag and push. (`publish`) Publish. Without it each prints its plan and sends nothing. |
+| `--at <sha>` | (`cut`) The commit to release. Default: the trunk's tip. |
+| `--levels <levels>` | (`cut`) `auto`, a level for every member, `<member>=<level>`, or several of them separated by spaces or commas. |
+| `--no-push` | (`cut`) Record the train and tag locally, and push no tag. |
 | `--allow-unsigned`, `--require-provenance` | (`publish`) As for `chant release publish`, for every member. |
 | `--json` | Print the train, or the list, as JSON. |
 | `--actor <principal>` | Who records the train; else the CI or shell identity. |

@@ -179,7 +179,7 @@ release: {
 
 | Field | Meaning |
 |---|---|
-| `packages` | Package directories relative to the member, `"."` for the member's own. Each `package.json` gets the label as its `version`. With the default `ranges`, no other field changes |
+| `packages` | Package directories relative to the member, `"."` for the member's own. A path may leave the member with `..` as long as it stays inside the repository, so a release member at `release/core` can stamp `../../packages/core`; a path outside the repository is refused with `release-version-invalid`. Each `package.json` gets the label as its `version`. With the default `ranges`, no other field changes |
 | `files` | Other manifests the label goes into, such as `Cargo.toml`, `pyproject.toml` or `Chart.yaml`. See [Other manifests](#other-manifests). A member names `packages`, `files` or both |
 | `lockfile` | The lockfile whose entries for those packages follow, with the root entry and the top-level `version` for `"."`. Default `package-lock.json` when the member has one; `false` for none |
 | `ranges` | What happens to the ranges of workspace dependencies: `keep` (the default), `exact`, `caret` or `train`. See [Workspace dependency ranges](#workspace-dependency-ranges) |
@@ -207,7 +207,7 @@ With two packages released in lockstep, `reference` then publishes depending on 
 chant release stamp 0.125.3 --train train-2f6c   # in the member's directory
 ```
 
-`--train` takes a train's id or digest, found in the environments the member's `chant.config.ts` declares. A member owns the packages its `release.version.packages` names; a member with no `release.version` owns none, so dependencies on it keep their ranges. `chant release publish` takes a tree stamped from a train that pins the release's label as the commit's. A package of a member the train pins with no label is refused with `release-ranges-unpinned`, a train that pins none of the member's packages at the release's label with `release-train-not-pinned`, an unknown train with `release-train-unknown`, and `--train` under any other `ranges` with `release-ranges-not-train`.
+[`chant workspace train prepare`](/chant/cli/workspace-train/#prepare) stamps every member a train cut from the commit this way at once. `--train` takes a train's id or digest, found in the environments the member's `chant.config.ts` declares and the one its workspace root's `release.train` names. A member owns the packages its `release.version.packages` names; a member with no `release.version` owns none, so dependencies on it keep their ranges. `chant release publish` takes a tree stamped from a train that pins the release's label as the commit's. A package of a member the train pins with no label is refused with `release-ranges-unpinned`, a train that pins none of the member's packages at the release's label with `release-train-not-pinned`, an unknown train with `release-train-unknown`, and `--train` under any other `ranges` with `release-ranges-not-train`.
 
 ### Other manifests
 

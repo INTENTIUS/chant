@@ -216,6 +216,13 @@ export const ChantConfigSchema = z.object({
       // #5156: other manifests the label goes into, by format, field or pattern.
       files: z.array(ReleaseVersionFileSchema).min(1).optional(),
     }).strict().refine((v) => v.packages !== undefined || v.files !== undefined, { message: "release.version names packages, files, or both" }).optional(),
+    // #5154: a workspace root's members release as a train: the environment it is recorded for, and how it is cut and built.
+    train: z.object({
+      env: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "an environment name: letters, digits, dots, dashes and underscores"),
+      first: z.enum(["each", "together"]).optional(),
+      check: z.array(z.string().min(1)).optional(),
+      buildDependencies: z.union([z.string().min(1), z.literal(false)]).optional(),
+    }).strict().optional(),
     workflow: z.object({
       trigger: z.enum(["tag", "dispatch"]).optional(),
       gate: z.enum(["last-green", "head"]).optional(),
@@ -612,6 +619,15 @@ export interface ChantConfig {
      * ./lifecycle/publish-signing.ts.
      */
     signing?: import("./lifecycle/publish-signing").SigningConfig;
+    /**
+     * The members of this workspace root release as a train (#5154): `chant
+     * workspace train cut <env>` picks the members `chant release changed`
+     * lists, labels each past every version it already has, cuts them,
+     * records the train and pushes the tags; `chant workspace train prepare`
+     * and `train publish` publish it. With `release.workflow`, `chant release
+     * workflow` renders the whole train. See ./workspace/train-cut.ts.
+     */
+    train?: import("./workspace/train-cut").ReleaseTrainConfig;
     /**
      * The release pipeline `chant release workflow` writes (#4656): a
      * dispatched release with gate, cut, publish and post-release jobs, the

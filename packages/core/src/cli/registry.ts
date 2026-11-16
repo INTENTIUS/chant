@@ -679,6 +679,8 @@ export interface ParsedArgs {
   intent?: string;
   /** `chant workspace graph --intent` and `chant workspace runs` (#3035): follow squash merges to their pull requests' original commits, fetching missing pull request refs. */
   followSquash?: boolean;
+  /** `chant workspace train cut <env> --levels <levels>` (#5154): `auto`, a level for every member, `<member>=<level>`, separated by spaces or commas. */
+  levels?: string;
   /** `chant release changed --bump-member <member>=<level>` (#5134) — repeatable. */
   bumpMember?: string[];
   /** `chant release candidates --forge-issues` and `chant workspace graph --intent --forge-issues` (#4649): ask the forge which issues each squash-merged pull request closes, once per pull request. */

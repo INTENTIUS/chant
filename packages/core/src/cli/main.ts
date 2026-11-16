@@ -1220,6 +1220,20 @@ Workspace (level 1, #2524):
                         instead; --continue moves on from the member's answer
                         in _control/applied.jsonl, after applied or unchanged
                         (#5119)
+  workspace train cut <env> [--at <sha>] [--levels <levels>] [--yes] [--no-push] [--json]
+                        Cut a train (release.train): the members release
+                        changed lists, each labelled past every version its
+                        ledger, tags, packages and npm hold, cut at one
+                        commit, the train recorded, and the member tags and
+                        release-train/<env>/<id> pushed in one push. --levels
+                        types levels (auto, minor, core=major ...). Without
+                        --yes it plans (#5154)
+  workspace train prepare <env> [<train id|digest>] [--json]
+                        In a checkout of the train's commit: stamp each member
+                        cut here (release.version, train ranges) and build the
+                        workspace packages they depend on that the train does
+                        not publish here, once each, dependencies first
+                        (#5154)
   workspace train publish <env> [<train id|digest>] [--yes] [--allow-unsigned] [--require-provenance] [--json]
                         Publish a train as one set: every member cut from this
                         commit stages before any reveals, then each dependency

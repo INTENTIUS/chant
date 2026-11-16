@@ -811,6 +811,11 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--follow-squash") {
       // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
       result.followSquash = true;
+    } else if (arg === "--levels") {
+      // `chant workspace train cut <env> --levels "<level|member=level|auto> ..."` (#5154).
+      const value = args[++i];
+      if (value === undefined) throw new Error("--levels needs the levels: --levels auto, --levels minor, or --levels \"core=minor web=patch\"");
+      result.levels = value;
     } else if (arg === "--bump-member") {
       // `chant release changed --bump-member <member>=<level>` (#5134) is repeatable.
       const value = args[++i];

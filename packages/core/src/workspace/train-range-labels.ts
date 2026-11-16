@@ -29,15 +29,23 @@ async function environmentsOf(cwd: string): Promise<string[]> {
   return ((await loadChantConfig(cwd)).config.environments as string[] | undefined) ?? [];
 }
 
-/** Every train recorded for the environments `cwd`'s config declares, oldest first. */
+/** Every train recorded for the environments `cwd`'s config declares, and for the workspace root's `release.train` (#5154), oldest first. */
 async function trainsOf(cwd: string): Promise<{ trains: ReadTrain[]; rootOnDisk: string }> {
   const root = locateWorkspace(cwd).rootOnDisk;
   const trains: ReadTrain[] = [];
-  for (const env of await environmentsOf(cwd)) trains.push(...(await readReleaseTrains(root, env)).records);
+  const { loadChantConfig } = await import("../config");
+  const rootEnv = await loadChantConfig(root)
+    .then((c) => c.config.release?.train?.env)
+    .catch(() => undefined);
+  for (const env of new Set([...(await environmentsOf(cwd)), ...(rootEnv ? [rootEnv] : [])])) trains.push(...(await readReleaseTrains(root, env)).records);
   return { trains, rootOnDisk: root };
 }
 
 /** Package name to the train's label for the member that owns it. */
+export async function trainPackageLabels(train: ReadTrain, rootOnDisk: string): Promise<RangeLabels> {
+  return labelsOf(train, rootOnDisk);
+}
+
 async function labelsOf(train: ReadTrain, rootOnDisk: string): Promise<RangeLabels> {
   const located = locateWorkspace(rootOnDisk);
   const declaration = readDeclaration(located.tree, "", { rootChant: true });
