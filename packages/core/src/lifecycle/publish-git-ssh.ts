@@ -175,14 +175,37 @@ export class SshGitRepo {
     });
   }
 
+  /** The commit a submodule at `path` points to at a fetched commit, or null when `path` is not a submodule there (#5158). */
+  async gitlink(commit: string, path: string): Promise<string | null> {
+    const r = await this.run(["ls-tree", commit, "--", path]);
+    const m = /^160000 commit ([0-9a-f]{40,64})\t/m.exec(r.stdout);
+    return r.code === 0 && m ? m[1]! : null;
+  }
+
   /** A commit on `parent` that writes `bytes` to `path`, with `message`. Made here, not pushed. */
   async commitFile(parent: string, path: string, bytes: Uint8Array, message: string): Promise<string> {
-    const blobFile = join(this.root, "blob");
-    writeFileSync(blobFile, bytes);
-    const blob = (await this.must("writing the file", ["hash-object", "-w", blobFile])).trim();
+    return this.commitFiles(parent, [{ path, bytes }], message);
+  }
+
+  /** A commit on `parent` that writes each file, points each submodule path at its commit (#5158) and removes each `remove` path (#5163). Made here, not pushed. */
+  async commitFiles(parent: string, changes: ReadonlyArray<{ path: string; bytes: Uint8Array } | { path: string; gitlink: string } | { path: string; remove: true }>, message: string): Promise<string> {
     const index = { GIT_INDEX_FILE: join(this.root, "index") };
     await this.must("reading the tree", ["read-tree", parent], index);
-    await this.must("staging the file", ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], index);
+    for (const c of changes) {
+      if ("remove" in c) {
+        // #5163: a yank takes out a manifest the head release did not publish.
+        await this.must(`removing ${c.path}`, ["--work-tree", this.dir, "update-index", "--force-remove", "--", c.path], index);
+        continue;
+      }
+      if ("gitlink" in c) {
+        await this.must(`pointing ${c.path} at ${c.gitlink.slice(0, 12)}`, ["update-index", "--add", "--cacheinfo", `160000,${c.gitlink},${c.path}`], index);
+        continue;
+      }
+      const blobFile = join(this.root, "blob");
+      writeFileSync(blobFile, c.bytes);
+      const blob = (await this.must("writing the file", ["hash-object", "-w", blobFile])).trim();
+      await this.must("staging the file", ["update-index", "--add", "--cacheinfo", `100644,${blob},${c.path}`], index);
+    }
     const tree = (await this.must("writing the tree", ["write-tree"], index)).trim();
     rmSync(index.GIT_INDEX_FILE, { force: true });
     const who = (await this.run(["config", "user.email"])).stdout.trim() ? [] : ["-c", "user.name=chant", "-c", "user.email=chant@localhost"];

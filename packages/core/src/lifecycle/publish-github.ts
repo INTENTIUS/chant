@@ -1,7 +1,8 @@
 /**
  * The GitHub REST calls the targets that write to a repository other than the
- * release's use (#4676): the Homebrew tap's formula, and the Tauri updater's
- * rolling release. Requests go through the injectable `fetch`, with the token
+ * release's use (#4676): the Homebrew tap's formula, the Tauri updater's
+ * rolling release, and an index repository's manifests, fork and pull
+ * request (#5158). Requests go through the injectable `fetch`, with the token
  * as a bearer, and every failure is redacted before it is thrown.
  */
 
@@ -117,6 +118,82 @@ export class GitHubRepo {
     this.fail(`moving ${ref} to ${sha.slice(0, 12)}`, res);
   }
 
+  /** True when the token sees the repository. */
+  async exists(): Promise<boolean> {
+    const res = await this.call("GET", "");
+    if (res.status === 404) return false;
+    if (res.status !== 200) this.fail("reading the repository", res);
+    return true;
+  }
+
+  /** The commit a submodule at `path` points to at `ref`, or null when `path` is not a submodule there (#5158). */
+  async submodule(path: string, ref: string): Promise<string | null> {
+    const res = await this.call("GET", `/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+    if (res.status === 404) return null;
+    const body = res.json as { type?: unknown; sha?: unknown } | null;
+    if (res.status !== 200) this.fail(`reading ${path} at ${ref}`, res);
+    return body?.type === "submodule" && typeof body.sha === "string" ? body.sha : null;
+  }
+
+  /**
+   * A commit on `parent` that writes each file, points each submodule
+   * path at its commit and removes each `remove` path (#5163), made with
+   * the git data API (#5158): one commit
+   * whatever the number of files. No branch moves.
+   */
+  async commitTree(parent: string, changes: ReadonlyArray<{ path: string; bytes: Uint8Array } | { path: string; gitlink: string } | { path: string; remove: true }>, message: string): Promise<string> {
+    const base = await this.call("GET", `/git/commits/${parent}`);
+    const tree = (base.json as { tree?: { sha?: unknown } } | null)?.tree?.sha;
+    if (base.status !== 200 || typeof tree !== "string") this.fail(`reading commit ${parent.slice(0, 12)}`, base);
+    const entries: Array<Record<string, string | null>> = [];
+    for (const c of changes) {
+      if ("remove" in c) {
+        // #5163: a null sha takes the path out of the tree.
+        entries.push({ path: c.path, mode: "100644", type: "blob", sha: null });
+        continue;
+      }
+      if ("gitlink" in c) {
+        entries.push({ path: c.path, mode: "160000", type: "commit", sha: c.gitlink });
+        continue;
+      }
+      const blob = await this.call("POST", "/git/blobs", JSON.stringify({ content: Buffer.from(c.bytes).toString("base64"), encoding: "base64" }));
+      const sha = (blob.json as { sha?: unknown } | null)?.sha;
+      if (blob.status !== 201 || typeof sha !== "string") this.fail(`writing ${c.path}`, blob);
+      entries.push({ path: c.path, mode: "100644", type: "blob", sha });
+    }
+    const made = await this.call("POST", "/git/trees", JSON.stringify({ base_tree: tree, tree: entries }));
+    const madeSha = (made.json as { sha?: unknown } | null)?.sha;
+    if (made.status !== 201 || typeof madeSha !== "string") this.fail("writing the tree", made);
+    const commit = await this.call("POST", "/git/commits", JSON.stringify({ message, tree: madeSha, parents: [parent] }));
+    const commitSha = (commit.json as { sha?: unknown } | null)?.sha;
+    if (commit.status !== 201 || typeof commitSha !== "string") this.fail("committing", commit);
+    return commitSha;
+  }
+
+  /** Ask for the token's user's fork of this repository (#5158). GitHub answers with the fork it has, or makes one; it may take a moment to appear. Returns its `owner/name`. */
+  async fork(): Promise<string> {
+    const res = await this.call("POST", "/forks", JSON.stringify({ default_branch_only: true }));
+    const name = (res.json as { full_name?: unknown } | null)?.full_name;
+    if ((res.status !== 202 && res.status !== 200) || typeof name !== "string") this.fail("forking", res);
+    return name;
+  }
+
+  /** The pull request from `head` (`owner:branch`) in any state, newest first, or null (#5158). */
+  async findPull(head: string): Promise<GitHubPull | null> {
+    const res = await this.call("GET", `/pulls?state=all&per_page=100&head=${encodeURIComponent(head)}`);
+    if (res.status !== 200) this.fail(`listing pull requests from ${head}`, res);
+    const list = Array.isArray(res.json) ? (res.json as Array<Record<string, unknown>>) : [];
+    const found = list.find((p) => (p.head as { label?: unknown } | undefined)?.label === head) ?? null;
+    return found ? toPull(found) : null;
+  }
+
+  /** Open a pull request from `head` (`owner:branch`) into `base`. */
+  async openPull(title: string, body: string, head: string, base: string): Promise<GitHubPull> {
+    const res = await this.call("POST", "/pulls", JSON.stringify({ title, body, head, base, maintainer_can_modify: true }));
+    if (res.status !== 201 || !res.json) this.fail(`opening a pull request from ${head} into ${base}`, res);
+    return toPull(res.json as Record<string, unknown>);
+  }
+
   /** The published release for `tag`, or null. A draft is not found here. */
   async publishedRelease(tag: string): Promise<GitHubRelease | null> {
     const res = await this.call("GET", `/releases/tags/${encodeURIComponent(tag)}`);
@@ -163,6 +240,23 @@ export class GitHubRepo {
     const res = await this.call("DELETE", `/git/refs/${ref}`);
     if (res.status !== 204 && res.status !== 404 && res.status !== 422) this.fail(`deleting ${ref}`, res);
   }
+}
+
+/** A pull request as the index target reads it (#5158). */
+export interface GitHubPull {
+  number: number;
+  url: string;
+  state: "open" | "closed";
+  merged: boolean;
+}
+
+function toPull(body: Record<string, unknown>): GitHubPull {
+  return {
+    number: Number(body.number),
+    url: typeof body.html_url === "string" ? body.html_url : `#${String(body.number)}`,
+    state: body.state === "open" ? "open" : "closed",
+    merged: typeof body.merged_at === "string" && body.merged_at.length > 0,
+  };
 }
 
 /** A GitHub release as the targets read it. */

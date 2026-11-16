@@ -41,6 +41,7 @@ import type {
   CargoPublishDeclaration,
   ForgePublishDeclaration,
   HomebrewPublishDeclaration,
+  IndexPublishDeclaration,
   MarketplacePublishDeclaration,
   McpRegistryPublishDeclaration,
   NpmPublishDeclaration,
@@ -220,6 +221,8 @@ async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTa
       return [await checkCargo(decl, ctx)];
     case "mcp-registry":
       return [await checkMcpRegistry(decl, ctx)];
+    case "index":
+      return [await checkIndex(decl, ctx)];
   }
 }
 
@@ -672,6 +675,102 @@ async function checkHomebrew(decl: HomebrewPublishDeclaration, ctx: Ctx): Promis
     return t;
   }
   checks.push(await repoAccess(ctx, { forge: "github", api: githubApi(decl.api, ctx.env), repo: decl.tap, token: token.value, check: "homebrew-access", tokenFrom: token.from }));
+  return t;
+}
+
+/**
+ * An index target (#5158): the token is set, and may do what the target's
+ * mode needs. `commit`: write the repository. `pull-request`: read the
+ * index, push a branch to the fork (or make the fork), and open a pull
+ * request, read from the fork's `permissions.push` and a classic token's
+ * scopes. A fine-grained or app token's rights on a repository its owner
+ * does not own are not shown.
+ */
+async function checkIndex(decl: IndexPublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
+  const { indexSettings } = await import("./publish-index");
+  const { githubApi } = await import("./publish-github");
+  const checks: DoctorCheck[] = [];
+  let s: ReturnType<typeof indexSettings>;
+  try {
+    s = indexSettings(decl);
+  } catch (err) {
+    const e = err as { message?: string; fix?: string };
+    return { kind: "index", name: `index ${decl.name}`, checks: [{ check: "index-config", status: "fail", message: e.message ?? String(err), ...(e.fix ? { fix: e.fix } : {}) }] };
+  }
+  const t: DoctorTarget = { kind: "index", name: `index ${s.name} in ${s.repo}${s.mode === "pull-request" ? " (pull request)" : ""}`, checks };
+  if (s.sshKeyEnv) {
+    const key = readCredential(ctx.env, [s.sshKeyEnv], ctx.redactor);
+    if (!key) checks.push(missing(ctx, "index-credentials", `${s.sshKeyEnv} is not set`, `Set ${s.sshKeyEnv} to a deploy key of ${s.repo} with write access.`));
+    else checks.push({ check: "index-access", status: "unknown", message: `the SSH key in ${s.sshKeyEnv} is set; whether it is a deploy key with write access shows only when it pushes` });
+    return t;
+  }
+  const token = readCredential(ctx.env, [s.tokenEnv], ctx.redactor);
+  if (!token) {
+    checks.push(
+      missing(
+        ctx,
+        "index-credentials",
+        `${s.tokenEnv} is not set`,
+        s.mode === "commit" ? `Set ${s.tokenEnv} to a token that may push to ${s.repo}.` : `Set ${s.tokenEnv} to a classic token with public_repo, which may fork ${s.repo}, push to the fork and open a pull request.`,
+      ),
+    );
+    return t;
+  }
+  const api = githubApi(decl.api, ctx.env);
+  if (s.mode === "commit") {
+    checks.push(await repoAccess(ctx, { forge: "github", api, repo: s.repo, token: token.value, check: "index-access", tokenFrom: token.from }));
+    return t;
+  }
+  const headers = { authorization: `Bearer ${token.value}`, accept: "application/vnd.github+json" };
+  const up = await answer(ctx, `${api}/repos/${s.repo}`, { method: "GET", headers });
+  if (up.status === 401) {
+    checks.push({ check: "index-upstream", status: "fail", message: `${api} refused the token in ${token.from} (401)`, fix: `Check ${token.from}; it may have expired.` });
+    return t;
+  }
+  if (up.status !== 200) {
+    checks.push({ check: "index-upstream", status: "fail", message: `the token in ${token.from} can't see ${s.repo} on ${api} (${up.status})`, fix: `Fix repo in the target, or give the token access to ${s.repo}.` });
+    return t;
+  }
+  checks.push({ check: "index-upstream", status: "ok", message: `the token in ${token.from} sees ${s.repo}` });
+  const scopes = up.header("x-oauth-scopes");
+  const list = scopes === null ? null : scopes.split(",").map((x) => x.trim()).filter(Boolean);
+  const classic = list !== null && (list.includes("repo") || list.includes("public_repo"));
+  const fork = s.fork ?? null;
+  if (fork !== null) {
+    checks.push(await repoAccess(ctx, { forge: "github", api, repo: fork, token: token.value, check: "index-fork", tokenFrom: token.from }));
+  } else {
+    const me = await answer(ctx, `${api}/user`, { method: "GET", headers });
+    const login = (me.json as { login?: unknown } | null)?.login;
+    if (me.status !== 200 || typeof login !== "string") {
+      checks.push({ check: "index-fork", status: "unknown", message: `${api}/user did not name the token's user (${me.status}), so its fork of ${s.repo} can't be found; the publish asks GitHub for it` });
+    } else {
+      const repoName = s.repo.split("/")[1]!;
+      const theirs = await answer(ctx, `${api}/repos/${login}/${repoName}`, { method: "GET", headers });
+      const body = theirs.json as { fork?: unknown; permissions?: { push?: unknown } } | null;
+      if (theirs.status === 200 && body?.fork === true && body.permissions?.push !== false) {
+        checks.push({ check: "index-fork", status: "ok", message: `${login}/${repoName} is ${login}'s fork of ${s.repo}, and the token may push its branch there` });
+      } else if (theirs.status === 200 && body?.fork !== true) {
+        checks.push({ check: "index-fork", status: "warn", message: `${login}/${repoName} is a repository of ${login} that is not a fork, so GitHub names the fork it makes otherwise`, fix: `Fork ${s.repo} and set fork in the target to it.` });
+      } else if (classic) {
+        checks.push({ check: "index-fork", status: "ok", message: `${login} has no fork of ${s.repo}; the publish makes one, which the token's ${list!.includes("repo") ? "repo" : "public_repo"} scope allows` });
+      } else if (list !== null) {
+        checks.push({ check: "index-fork", status: "fail", message: `${login} has no fork of ${s.repo}, and the token in ${token.from} has scopes ${scopes || "none"}, which can't make one`, fix: "Give the token the public_repo scope, or fork the index and set fork in the target." });
+      } else {
+        checks.push({ check: "index-fork", status: "unknown", message: `${login} has no fork of ${s.repo}; whether this kind of token may make one shows only when the publish asks` });
+      }
+    }
+  }
+  checks.push(
+    classic
+      ? { check: "index-pull-request", status: "ok", message: `the token in ${token.from} has the ${list!.includes("repo") ? "repo" : "public_repo"} scope, which may open a pull request on ${s.repo}` }
+      : list !== null
+        ? { check: "index-pull-request", status: "fail", message: `the token in ${token.from} has scopes ${scopes || "none"}, and opening a pull request on ${s.repo} needs public_repo or repo`, fix: "Give the token the public_repo scope." }
+        : {
+            check: "index-pull-request",
+            status: "unknown",
+            message: `GitHub does not say what this kind of token may do on ${s.repo}, which its owner may not own; opening the pull request shows whether it can`,
+          },
+  );
   return t;
 }
 

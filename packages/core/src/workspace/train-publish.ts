@@ -379,12 +379,23 @@ async function runTrain(req: {
     const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-failed", err instanceof Error ? err.message : String(err));
     throw new TrainPublishRunError(e.code, p.plan.redactor.redact(`${shown(p, target)}: ${e.message}`), e.fix, p.m.member, step, [...stagedNames], [...revealedNames]);
   };
+  // #5158: a target whose refusals are warnings, refused: reported with its warning, not revealed, not recorded.
+  const refused = new Map<string, PublishedTarget>();
+  const refusal = (p: Prepared, t: PublishTarget, err: unknown): PublishedTarget => {
+    const why = p.plan.redactor.redact(err instanceof Error ? err.message : String(err));
+    say(`  warning: ${shown(p, t)}: ${why}`);
+    return { target: t.name, destination: t.destination, items: [{ name: t.name, destination: t.destination, refused: true }], warning: why };
+  };
   const stage = async (p: Prepared, t: PublishTarget) => {
     say(`  ${p.m.member}: staging to ${t.destination}`);
     let s: StagedTarget;
     try {
       s = await t.stage(p.ctx);
     } catch (err) {
+      if (t.refusalWarns) {
+        refused.set(keyOf(p, t), refusal(p, t, err));
+        return;
+      }
       return fail(err, p, t, "stage");
     }
     staged.set(keyOf(p, t), s);
@@ -461,12 +472,21 @@ async function runTrain(req: {
           waits.push({ p, t, done: was });
           continue;
         }
-        if (!staged.has(keyOf(p, t))) await stage(p, t);
+        if (!staged.has(keyOf(p, t)) && !refused.has(keyOf(p, t))) await stage(p, t);
+        const wasRefused = refused.get(keyOf(p, t));
+        if (wasRefused) {
+          out.push(wasRefused);
+          continue;
+        }
         say(`  ${p.m.member}: revealing ${t.name}`);
         let r: PublishedTarget;
         try {
           r = await t.reveal(p.ctx, staged.get(keyOf(p, t))!);
         } catch (err) {
+          if (t.refusalWarns) {
+            out.push(refusal(p, t, err));
+            continue;
+          }
           return fail(err, p, t, "reveal");
         }
         out.push(r);

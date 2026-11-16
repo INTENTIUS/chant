@@ -16,6 +16,7 @@
  *       { type: "homebrew", tap: "acme/homebrew-tap", formula: "Formula/api.rb", template: "packaging/api.rb", assets: ["dist/api-linux-amd64.tar.gz"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *       { type: "pypi", files: ["dist"] },
  *       { type: "cargo", crates: ["acme-core", "acme-cli"] },
+ *       { type: "index", preset: "krew", name: "api", template: "packaging/krew.yaml", assets: ["artifact:api"], url: "https://github.com/acme/api/releases/download/{tag}/{name}" },
  *     ],
  *   },
  * };
@@ -382,7 +383,73 @@ export const McpRegistryPublishSchema = z
   })
   .strict();
 
-export const PublishDeclarationSchema = z.discriminatedUnion("type", [NpmPublishSchema, OciPublishSchema, ForgePublishSchema, HomebrewPublishSchema, MarketplacePublishSchema, TauriUpdaterPublishSchema, PypiPublishSchema, CargoPublishSchema, McpRegistryPublishSchema]);
+/** The index repositories `index` has a preset for (#5158). */
+export const INDEX_PRESETS = ["krew", "winget", "scoop", "homebrew-core", "homebrew-tap", "zed", "artifacthub"] as const;
+
+/**
+ * A manifest in an index repository on GitHub (#5158), such as krew-index,
+ * winget-pkgs, a Scoop bucket, homebrew-core, a Homebrew tap, Zed's
+ * extensions or an Artifact Hub repository, rendered from templates in the
+ * member and either committed to a repository the publisher may push to
+ * (`mode: "commit"`) or proposed in a pull request from a fork
+ * (`mode: "pull-request"`). It reveals after every other target
+ * (./publish-index.ts).
+ */
+export const IndexPublishSchema = z
+  .object({
+    type: z.literal("index"),
+    /** Defaults for a known index: its repository, mode, manifest path and pull request title. */
+    preset: z.enum(INDEX_PRESETS).optional(),
+    /** The index repository, `owner/name`. Default: the preset's, where it has one (krew, winget, homebrew-core, zed). */
+    repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name").optional(),
+    /** The package's name in the index: the krew plugin, the winget `PackageIdentifier`, the Scoop app, the formula, the Zed extension id, the Artifact Hub package. */
+    name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/, "a name of letters, digits, '.', '_', '+' and '-'"),
+    /** `commit` pushes to `branch` of `repo`; `pull-request` opens a pull request on `repo` from a branch of `fork`. Default: the preset's, else `pull-request`. */
+    mode: z.enum(["commit", "pull-request"]).optional(),
+    /** One manifest template, relative to the member, written to `path`. */
+    template: z.string().min(1).optional(),
+    /** Where `template` goes in the index. Default: the preset's path. `{name}`, `{version}`, `{label}`, `{letter}` (the name's first letter, lowercased) and `{namePath}` (the name with each `.` a `/`) are filled in. */
+    path: z.string().min(1).optional(),
+    /** More manifests: each path in the index, with the same placeholders as `path`, and its template relative to the member. */
+    files: z.record(z.string().min(1), z.string().min(1)).optional(),
+    /** The release's files the manifests download: `artifact:<name>` for an entry of `release.artifacts`, or a path the release records. Each SHA-256 is the one the release records. */
+    assets: z.array(z.string().min(1)).optional(),
+    /** Where each asset is downloaded from: `{tag}`, `{label}`, `{version}` and `{name}` (its file name) are filled in. Needed with `assets`. */
+    url: z.string().min(1).optional(),
+    /** The branch of `repo` the index is read from, and the base of a pull request. Default: the repository's default branch. */
+    branch: z.string().min(1).optional(),
+    /** `pull-request` only: the repository the branch is pushed to, `owner/name`. Default: the token's user's fork of `repo`, made when it has none. `repo` itself opens the pull request from a branch of `repo`. */
+    fork: z.string().regex(/^[^/\s]+\/[^/\s]+$/, "owner/name").optional(),
+    /** The commit message and pull request title: `{name}`, `{version}`, `{label}` and `{tag}` are filled in. Default: the preset's. */
+    title: z.string().min(1).optional(),
+    /** The pull request's body, with the same placeholders. */
+    body: z.string().min(1).optional(),
+    /** The GitHub API root. Default `$GITHUB_API_URL`, else `https://api.github.com`. */
+    api: z.string().url().optional(),
+    /** The variable holding the token. Default `HOMEBREW_TAP_TOKEN` under the homebrew-tap preset, else `INDEX_TOKEN`. */
+    tokenEnv: envName.optional(),
+    /** `commit` only: the variable holding an SSH private key that may push to `repo`, such as a deploy key. Set, the target pushes with git over SSH and reads no token. */
+    sshKeyEnv: envName.optional(),
+    /** What a refusal from the index does: `warn` (the default) prints a warning and leaves the target unrecorded, so a run of the same publish tries again; `fail` fails the publish. */
+    onRefusal: z.enum(["fail", "warn"]).optional(),
+  })
+  .strict()
+  .refine((d) => d.sshKeyEnv === undefined || d.tokenEnv === undefined, { message: "keep one of tokenEnv and sshKeyEnv", path: ["sshKeyEnv"] })
+  .refine((d) => d.path === undefined || d.template !== undefined, { message: "path is where template goes; name a template", path: ["path"] })
+  .refine((d) => (d.assets?.length ?? 0) === 0 || d.url !== undefined, { message: "assets need url, the pattern each is downloaded from", path: ["url"] });
+
+export const PublishDeclarationSchema = z.discriminatedUnion("type", [
+  NpmPublishSchema,
+  OciPublishSchema,
+  ForgePublishSchema,
+  HomebrewPublishSchema,
+  MarketplacePublishSchema,
+  TauriUpdaterPublishSchema,
+  PypiPublishSchema,
+  CargoPublishSchema,
+  McpRegistryPublishSchema,
+  IndexPublishSchema,
+]);
 
 export type NpmPublishDeclaration = z.infer<typeof NpmPublishSchema>;
 export type OciPublishDeclaration = z.infer<typeof OciPublishSchema>;
@@ -393,4 +460,5 @@ export type TauriUpdaterPublishDeclaration = z.infer<typeof TauriUpdaterPublishS
 export type PypiPublishDeclaration = z.infer<typeof PypiPublishSchema>;
 export type CargoPublishDeclaration = z.infer<typeof CargoPublishSchema>;
 export type McpRegistryPublishDeclaration = z.infer<typeof McpRegistryPublishSchema>;
+export type IndexPublishDeclaration = z.infer<typeof IndexPublishSchema>;
 export type PublishDeclaration = z.infer<typeof PublishDeclarationSchema>;
