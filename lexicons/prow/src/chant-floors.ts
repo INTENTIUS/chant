@@ -4,7 +4,6 @@
  * that has it. chant core's floor table (`@intentius/chant/floor-table`)
  * lists them beside core's, with this package's name.
  */
-import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 
 /** The first prow lexicon release: `Presubmit`, `Postsubmit`, `Periodic` and `JobConfig`, `emitJobConfig` for plain job data, `forgeJobConfig` for one repository's jobs keyed by its owner/name (#5170), the generators behind `chant build --components --generate prow` and `chant run --generate prow` (#5189), `chant import` of a job config, and the PROW rules (#5169). */
-export const PROW_LEXICON_FLOOR = NEXT_RELEASE;
+export const PROW_LEXICON_FLOOR = "0.124.101";

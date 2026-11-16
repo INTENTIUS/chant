@@ -62,10 +62,9 @@ import type { Redactor } from "../lifecycle/publish-credentials";
 import { readDeclaration } from "./declaration";
 import { findTrain, readReleaseTrains, type ReadTrain, type TrainMember } from "./release-train";
 import { locateWorkspace } from "./which-chant";
-import { NEXT_RELEASE } from "../release-floors";
 
 /** The first chant whose `chant workspace train publish` orders and resumes members of every target kind (#5165): the oci, forge, homebrew, index, marketplace, pypi, cargo, mcp-registry and tauri-updater targets name what they publish and need, say whether a pinned release is published, and wait until a reveal is served before the next layer; a member's `release.dependsOn` names members a manifest doesn't show. */
-export const TRAIN_PUBLISH_TARGETS_FLOOR = NEXT_RELEASE;
+export const TRAIN_PUBLISH_TARGETS_FLOOR = "0.124.101";
 
 /** One target of a member, as planned. */
 export interface TrainPlannedTarget {
