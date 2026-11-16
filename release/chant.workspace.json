@@ -17,10 +17,17 @@
             "test"
           ],
           "build": "every"
+        },
+        "typecheck": {
+          "runs": [
+            "typecheck"
+          ],
+          "build": "every"
         }
       },
       "require": [
         "check",
+        "typecheck",
         "test"
       ],
       "mergeQueue": {

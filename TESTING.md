@@ -375,18 +375,19 @@ Every pull request gets the fast checks and nothing else. The end-to-end project
 |---|---|
 | `lexicon-artifacts` | each lexicon's `generate` and `bundle`, once, cached under a hash of their inputs |
 | `check` | typechecks, the boundary guards, lint, depcheck, and the example build, local Op run and supply-chain guards (seconds each) |
+| `typecheck` | `npx tsx scripts/typecheck.ts`: the repo-wide typecheck of tests, scripts and examples against `scripts/typecheck-baseline.json`, which can only shrink |
 | `test-shard (1/4)` to `(4/4)` | `npx vitest run --project unit --shard=N/4` |
 | `test` | passes only when all four shards passed |
 | `trust` | `chant workspace verify` against the base branch (pull requests only) |
 | `validate` | each lexicon's `validate` and `build` with the release gate armed, then the lexicon completeness contract |
 
-Branch protection requires `check`, `test` and `validate`. The `test` job is how the shards become required.
+Branch protection requires `check`, `typecheck`, `test` and `validate`. The `test` job is how the shards become required.
 
 `lexicon-artifacts` builds what the unit tests and typechecks read with `scripts/ci-lexicon-artifacts.sh --steps generate,bundle`: each lexicon's `generate` one at a time, then every `bundle` with one lexicon per CPU. It caches `lexicons/*/src/generated` and `lexicons/*/dist` under a hash of the lexicon sources, core's source, the lockfile and the script, and skips the build when a cache with that key exists. `check`, the shards and `validate` restore that cache instead of building it again. The shards keep vitest's recorded durations between runs, so a long file starts first, and each job writes its duration to the run summary.
 
 `.github/workflows/release-suites.yml` runs the e2e project in three shards on `main` every three hours, and when a person starts it. Its `suites` job is a required phase of `ci.green` in `chant.workspace.json`, beside `check`, `test` and `validate`, so `chant ci tick` tags a commit `ci/green/<sha>` only when the long suites passed on it, and `just release` tags the newest such commit. Start the workflow by hand to make main's head releasable without waiting for the schedule, or run `just release-when-green`, which starts the missing phases and the tick, waits for the green tag and then cuts (#4218).
 
-Locally the same fast gate is `just check`: the core typecheck, lint, `just test` (the unit project) and the lexicon contract. A change merges on it.
+Locally the same fast gate is `just check`: the core typecheck, the repo-wide typecheck, lint, `just test` (the unit project) and the lexicon contract. A change merges on it.
 
 ### Large suites
 

@@ -154,15 +154,21 @@ scaffold-check:
 dogwood-freshness:
     npx tsx scripts/check-dogwood-freshness.ts
 
+# The repo-wide typecheck (tests, scripts, examples) against
+# scripts/typecheck-baseline.json, which can only shrink (#5187). Reads the
+# generated lexicon files, so it builds missing ones first.
+typecheck: _ensure-gen
+    npx tsx scripts/typecheck.ts
+
 # Run linter
 lint:
     npx eslint packages/
 
-# The fast local gate: typecheck, lint, the unit tests and the lexicon
+# The fast local gate: core's typecheck, the repo-wide typecheck, lint, the unit tests and the lexicon
 # contract. A change merges on this. The large suites (test-e2e, smoke*,
 # *-e2e, helm-survey, bench) are not part of it and run only when a person
 # starts them.
-check: build lint test check-lexicons
+check: build typecheck lint test check-lexicons
 
 # Build diagram SVGs from .dot source files (requires graphviz)
 diagrams:
