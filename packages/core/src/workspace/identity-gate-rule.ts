@@ -130,15 +130,43 @@ export function releaseSealPayload(cut: Omit<SignedReleaseCut, "signature">): Bu
 }
 
 /** Why the cut's signature does not verify for its actor against the signers at base, or null when it does. */
-function releaseSignatureRefusal(signers: GateAdmissionRule["signers"], cut: SignedReleaseCut): string | null {
-  if (cut.signature === null) return `the cut by ${cut.actor} is not signed`;
-  if (!signers.active) return `there is no signers file (${signers.signersPath}) at base to check the cut's signature against`;
+function releaseSignatureRefusal(signers: GateAdmissionRule["signers"], cut: SignedReleaseCut, payload: Buffer = releaseSealPayload(cut), what = "cut"): string | null {
+  if (cut.signature === null) return `the ${what} by ${cut.actor} is not signed`;
+  if (!signers.active) return `there is no signers file (${signers.signersPath}) at base to check the ${what}'s signature against`;
   const where = `${signers.signersPath} at base`;
   const listed = signers.signers.filter((s) => normalise(s.principal) === normalise(cut.actor));
-  if (listed.length === 0) return `${cut.actor} has no key in ${where}, so the cut's signature can't count`;
+  if (listed.length === 0) return `${cut.actor} has no key in ${where}, so the ${what}'s signature can't count`;
   const keys = listed.filter((s) => namespaceAllowed(s.namespaces, RELEASE_SEAL_NAMESPACE)).map((s) => Buffer.from(s.key.split(" ")[1] ?? "", "base64"));
-  const r = verifySshSignatureWith(cut.signature, releaseSealPayload(cut), RELEASE_SEAL_NAMESPACE, keys);
-  return r.ok ? null : `the cut's signature does not verify for ${cut.actor} against ${where}: ${r.reason}`;
+  const r = verifySshSignatureWith(cut.signature, payload, RELEASE_SEAL_NAMESPACE, keys);
+  return r.ok ? null : `the ${what}'s signature does not verify for ${cut.actor} against ${where}: ${r.reason}`;
+}
+
+/** A release status change's fields its signature covers (#5163), and the signature. */
+export interface SignedReleaseStatus extends SignedReleaseCut {
+  /** The status set: `deprecated`, `yanked` or `active`. */
+  status: string;
+}
+
+/**
+ * The bytes a release status change's signature signs (#5163): the cut's
+ * four lines, then `status:<status>`, so it is never the bytes of a cut and
+ * one can't stand in for the other in the shared `chant-release` namespace.
+ */
+export function releaseStatusSealPayload(s: Omit<SignedReleaseStatus, "signature">): Buffer {
+  return Buffer.concat([releaseSealPayload(s), Buffer.from(`\nstatus:${s.status}`, "utf-8")]);
+}
+
+/**
+ * Why a status change of a release may not be made under the `release`
+ * gate's rule, or null when it may (#5163): the same rule as a cut, so whoever
+ * may cut may deprecate, yank or restore, and no one else.
+ */
+export function admitReleaseStatus(rule: GateAdmissionRule, s: SignedReleaseStatus): string | null {
+  const unknown = unknownClassRefusal(rule, "status change");
+  if (unknown !== null) return unknown;
+  const seal = releaseSignatureRefusal(rule.signers, s, releaseStatusSealPayload(s), "status change");
+  if (seal !== null) return `${seal}; identity.gates.${rule.gate} needs a status change signed with --sign`;
+  return classRefusal(rule, s.actor);
 }
 
 /**

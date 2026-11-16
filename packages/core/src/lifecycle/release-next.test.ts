@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { consumedIntents, intentNotes, parseIntent, pendingIntents, ReleaseIntentError, type ReleaseIntent } from "./release-intents";
 import { nextLabel, nextRelease, ReleaseNextError } from "./release-next";
 import { appendCut, makeRelease, persistRelease, type ReleaseCut } from "./release-store";
+import { appendReleaseStatus } from "./release-status";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -71,6 +72,12 @@ describe("nextLabel", () => {
     expect(nextLabel({ stable: "1.4.2", bump: "major", since: ["1.5.0-beta.0"], labels })).toBe("2.0.0");
   });
 
+  test("a yanked version passed over is never given again (#5163)", () => {
+    expect(nextLabel({ stable: "1.0.0", bump: "minor", since: ["1.1.0"], labels, yanked: ["1.1.0"] })).toBe("1.1.1");
+    expect(nextLabel({ stable: "1.0.0", bump: "major", since: ["1.1.0"], labels, yanked: ["1.1.0"] })).toBe("2.0.0");
+    expect(nextLabel({ stable: "v1.0.0", bump: "patch", since: ["v1.0.1"], labels, yanked: ["v1.0.1"] })).toBe("v1.0.2");
+  });
+
   test("pre counts one past the ledger's highest for that version and id", () => {
     expect(nextLabel({ stable: "1.4.2", bump: "minor", since: [], labels: [], pre: "rc" })).toBe("1.5.0-rc.0");
     expect(nextLabel({ stable: "1.4.2", bump: "minor", since: ["1.5.0-rc.1"], labels: ["1.5.0-rc.0", "1.5.0-rc.1", "1.5.0-beta.4", "1.6.0-rc.7"], pre: "rc" })).toBe("1.5.0-rc.2");
@@ -94,10 +101,11 @@ function commit(dir: string, message: string, files: Record<string, string>): st
 }
 
 let n = 0;
-async function cut(dir: string, sha: string, label: string, intents?: ReleaseCut["intents"]): Promise<void> {
+async function cut(dir: string, sha: string, label: string, intents?: ReleaseCut["intents"]): Promise<string> {
   const r = makeRelease({ member: null, commit: sha, artifactDigests: [], targets: [{ env: "dev", params: [], templates: [] }] });
   await persistRelease(r, [], { cwd: dir });
   await appendCut({ releaseDigest: r.releaseDigest, label, actor: "ci", timestamp: `2026-11-0${++n}T00:00:00.000Z`, runOrigin: null, signature: null, ...(intents ? { intents } : {}) }, { cwd: dir });
+  return r.releaseDigest;
 }
 
 function repo(): string {
@@ -149,6 +157,20 @@ describe("nextRelease", () => {
     expect((await nextRelease({ cwd: dir, pre: "rc" })).label).toBe("v2.0.0-rc.1");
     // A commit already released answers its label.
     expect(await nextRelease({ cwd: dir, at: breaking })).toMatchObject({ label: "v2.0.0-rc.0", alreadyCut: true });
+  });
+
+  test("a yanked release is not the previous release, and its version is not given again (#5163)", async () => {
+    const dir = repo();
+    const first = commit(dir, "feat: start", { "src/a.ts": "1" });
+    await cut(dir, first, "1.0.0");
+    const second = commit(dir, "feat: stream", { "src/a.ts": "2" });
+    const digest = await cut(dir, second, "1.1.0");
+    commit(dir, "fix: close the stream", { "src/a.ts": "3" });
+    expect(await nextRelease({ cwd: dir })).toMatchObject({ label: "1.1.1", from: { label: "1.1.0" } });
+    await appendReleaseStatus({ component: ".", env: "_releases", digest, releaseVersion: "1.1.0", status: "yanked", actor: "ci", timestamp: "2026-11-09T00:00:00.000Z" }, { cwd: dir });
+    const next = await nextRelease({ cwd: dir });
+    expect(next).toMatchObject({ label: "1.1.1", bump: "minor", from: { label: "1.0.0", commit: first } });
+    expect(next.commits.map((c) => c.subject)).toEqual(["fix: close the stream", "feat: stream"]);
   });
 
   test("refuses with no previous release, nothing changed, a bad intent file or a bad prerelease id", async () => {

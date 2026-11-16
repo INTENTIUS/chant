@@ -52,7 +52,7 @@ import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MED
 import { readCredential, type Credential } from "./publish-credentials";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
-import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
+import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
 const INDEX_TYPES = new Set(["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"]);
@@ -221,7 +221,7 @@ class Registry {
     private readonly repo: OciRepository,
     private readonly fetch: PublishFetch,
     private readonly cred: { username: string; password: Credential } | null,
-    private readonly ctx: PublishContext,
+    private readonly ctx: PublishContextBase,
     private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise<void>((r) => setTimeout(r, ms)),
   ) {}
 
@@ -323,6 +323,17 @@ class Registry {
   async hasManifest(digest: string, mediaType: string): Promise<boolean> {
     const res = await this.request("HEAD", `/v2/${this.repo.name}/manifests/${digest}`, { accept: mediaType });
     return res.status === 200;
+  }
+
+  /** The manifest `ref` (a tag or a digest) names, or null when the registry has none (#5163). */
+  async getManifest(ref: string): Promise<{ mediaType: string; bytes: Uint8Array; digest: string } | null> {
+    const accept = [...INDEX_TYPES, IMAGE_MANIFEST, "application/vnd.docker.distribution.manifest.v2+json"].join(", ");
+    const res = await this.request("GET", `/v2/${this.repo.name}/manifests/${ref}`, { accept });
+    if (res.status === 404) return null;
+    if (res.status !== 200 || !res.arrayBuffer) this.fail(`reading manifest ${ref}`, res.status, await res.text());
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const mediaType = res.headers.get("content-type")?.split(";")[0]?.trim() || ((JSON.parse(Buffer.from(bytes).toString("utf-8")) as { mediaType?: string }).mediaType ?? IMAGE_MANIFEST);
+    return { mediaType, bytes, digest: res.headers.get("docker-content-digest") ?? bytesDigest(bytes) };
   }
 
   /** Put a manifest. True when the registry answered with `OCI-Subject`, so its referrers API lists a manifest with a subject. */
@@ -454,6 +465,18 @@ export function ociArchiveDigest(abs: string): string {
   }
 }
 
+/**
+ * The tags a status change moves (#5163): the channel's tag when the release
+ * was cut to one, else the declared tags with no `{label}` in them, such as
+ * `latest`, without `latest` for a prerelease label, which never moved it
+ * (#5166). A tag that names the label belongs to that release and stays.
+ */
+export function ociMovingTags(decl: OciPublishDeclaration, channel: string | null, label: string | null = null): string[] {
+  if (channel) return [channel];
+  const moving = (decl.tags ?? ["{label}"]).filter((t) => !t.includes("{label}"));
+  return prereleaseOf(label) === null ? moving : moving.filter((t) => t !== "latest");
+}
+
 export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): PublishTarget {
   const repo = parseRepository(decl.repository);
   const fetchImpl: PublishFetch = deps.fetch ?? ((url, init) => fetch(url, init as RequestInit));
@@ -540,11 +563,55 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     }
     return items;
   };
-  const connect = (ctx: PublishContext) => {
+  const connect = (ctx: PublishContextBase) => {
     const cred = ociCredential(decl, repo, ctx);
     return { cred, registry: new Registry(repo, fetchImpl, cred, ctx, deps.sleep) };
   };
+  /** The image's digest among a release's recorded items: the one item that is not an attachment. */
+  const imageDigest = (items: readonly PublishItem[]): string | undefined => items.find((i) => i.attachment === undefined && i.digest)?.digest;
   return {
+    /**
+     * #5163: a registry has no deprecation, so deprecate does nothing here. A
+     * yank points each moving tag that names this release's digest at the
+     * head release's; a restore points them back when this release is the
+     * head. The label's own tag stays, since a registry need not delete a tag.
+     */
+    async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
+      if (ctx.status === "deprecated") return [{ what: `${decl.repository} unchanged: a registry has no deprecation; yank moves its tags` }];
+      const ours = imageDigest(ctx.revealed);
+      if (!ours) return [{ what: `${decl.repository} unchanged: the publish record names no image digest`, already: true }];
+      const tags = ociMovingTags(decl, ctx.tag, ctx.label);
+      if (tags.length === 0) return [{ what: `${decl.repository} unchanged: every tag the target moves names the label, so none moves`, already: true }];
+      const isHead = ctx.head?.releaseDigest === ctx.release.releaseDigest;
+      if (ctx.status === "active" && !isHead) return [{ what: `${decl.repository} ${tags.join(", ")} unchanged: a newer active release holds them`, already: true }];
+      const to = ctx.status === "active" ? ours : ctx.head ? imageDigest(ctx.head.items) : undefined;
+      const actions: StatusAction[] = [];
+      if (!to) {
+        for (const t of tags) {
+          actions.push({
+            what: `${decl.repository}:${t} stays where it is`,
+            refused: { code: "release-status-no-previous", message: `no earlier active release of this channel was pushed to ${decl.repository}, so ${t} has nowhere to move back to`, fix: "Cut and publish a release to move it to, or restore an earlier one." },
+          });
+        }
+        return actions;
+      }
+      if (!ctx.apply) return tags.map((t) => ({ what: ctx.status === "active" ? `point ${decl.repository}:${t} at ${ours}` : `point ${decl.repository}:${t} at ${to}, if it names ${ours}` }));
+      const { registry } = connect(ctx);
+      let manifest: Awaited<ReturnType<Registry["getManifest"]>> | undefined;
+      for (const t of tags) {
+        const now = await registry.getManifest(t);
+        if (now?.digest === to || (ctx.status === "yanked" && now?.digest !== ours)) {
+          actions.push({ what: `${decl.repository}:${t} names ${now?.digest ?? "nothing"}; not moved`, already: true });
+          continue;
+        }
+        manifest ??= await registry.getManifest(to);
+        if (!manifest) throw new PublishTargetError("release-status-oci-failed", `${decl.repository} no longer holds ${to}, so ${t} can't point at it`);
+        await registry.putManifest(t, manifest.mediaType, manifest.bytes);
+        ctx.log(`tagged ${to} ${t}`);
+        actions.push({ what: `point ${decl.repository}:${t} at ${to}` });
+      }
+      return actions;
+    },
     kind: "oci",
     name: `oci ${decl.repository}`,
     destination: decl.repository,

@@ -144,7 +144,7 @@ export function writeOciLayout(dir: string, content = "layer bytes"): { digest: 
 
 /** What the fake npm's registry holds: each package's versions and dist-tags. */
 export interface FakeNpmRegistry {
-  packages: Record<string, { versions: string[]; distTags: Record<string, string> }>;
+  packages: Record<string, { versions: string[]; distTags: Record<string, string>; deprecated?: Record<string, string> }>;
 }
 
 /** The registry file a fake npm writing calls to `log` keeps its state in. */
@@ -176,6 +176,8 @@ export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): voi
  *   name print nothing, as a registry whose tag has not propagated yet.
  * - `dist-tag add <name>@<version> <tag>` points the tag at a version that is
  *   there. It exits 1 when the name contains `$FAKE_NPM_FAIL_TAG`.
+ * - `deprecate <name>@<version> <message>` (#5163) keeps the message on the
+ *   version, and an empty message clears it.
  * - `install` (#4049) checks that every dependency in `./package.json` is in
  *   its registry at that version, and installs nothing.
  * - `audit signatures` (#4049) prints what npm prints for verified
@@ -253,6 +255,13 @@ if (args[0] === "publish") {
   p.distTags[args[3]] = version;
   save();
   console.log("+" + args[3] + ": " + args[2]);
+} else if (args[0] === "deprecate") {
+  const [name, version] = split(args[1]);
+  const p = reg.packages[name];
+  if (!p || !p.versions.includes(version)) { console.error("npm error 404 " + args[1] + " is not in the npm registry"); process.exit(1); }
+  p.deprecated = p.deprecated || {};
+  if (args[2]) p.deprecated[version] = args[2]; else delete p.deprecated[version];
+  save();
 } else if (args[0] === "install") {
   if (Number(process.env.FAKE_NPM_INSTALL_ETARGET || 0) > (reg.installs || 0)) {
     reg.installs = (reg.installs || 0) + 1; save();
@@ -325,7 +334,7 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
   const view = (r: FakeForgeRelease) =>
     forge === "gitlab"
       ? { tag_name: r.tag_name, assets: { links: r.assets.map((a) => ({ name: a.name })) } }
-      : { id: r.id, tag_name: r.tag_name, name: r.name ?? r.tag_name, draft: r.draft, ...(r.body !== undefined ? { body: r.body } : {}), upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
+      : { id: r.id, tag_name: r.tag_name, name: r.name ?? r.tag_name, draft: r.draft, prerelease: r.prerelease === true, ...(r.body !== undefined ? { body: r.body } : {}), upload_url: `${uploads}/repos/${repo}/releases/${r.id}/assets{?name,label}`, assets: r.assets.map((a) => ({ name: a.name, ...(forge === "github" ? { digest: a.digest } : {}) })) };
   const text = (b: Uint8Array | string | undefined) => (b === undefined ? "" : typeof b === "string" ? b : Buffer.from(b).toString("utf-8"));
   const fetch: FakeForge["fetch"] = async (url, init) => {
     calls.push({ method: init.method, url, headers: init.headers, ...(init.body !== undefined ? { body: init.body } : {}) });
@@ -394,6 +403,10 @@ export function startFakeForge(forge: "github" | "forgejo" | "gitlab", api: stri
         r.draft = false;
         if (!tags.has(r.tag_name)) tags.set(r.tag_name, r.target);
         if (b.make_latest !== undefined) r.make_latest = b.make_latest;
+      } else if (b.draft === true) {
+        r.draft = true;
+      } else if (b.make_latest !== undefined) {
+        r.make_latest = b.make_latest;
       }
       return json(200, view(r));
     }
@@ -506,8 +519,19 @@ export function startFakeGitHubRepo(api: string, repo: string, branch: string, f
       return json(201, { ref: body.ref, object: { sha: body.sha } });
     }
     const contents = path.startsWith(`${root}/contents/`) ? path.slice(`${root}/contents/`.length).split("/").map(decodeURIComponent).join("/") : null;
+    if (init.method === "GET" && path === `${root}/commits`) {
+      // #5163: the commits of a branch that touch a path, newest first.
+      const file = u.searchParams.get("path") ?? "";
+      const out: Array<{ sha: string }> = [];
+      for (let c: string | null = branches.get(u.searchParams.get("sha") ?? branch) ?? null; c; c = commits.get(c)!.parent) {
+        const parent = commits.get(c)!.parent;
+        if (commits.get(c)!.files.get(file) !== (parent ? commits.get(parent)!.files.get(file) : undefined)) out.push({ sha: c });
+      }
+      return json(200, out);
+    }
     if (contents !== null && init.method === "GET") {
-      const at = branches.get(u.searchParams.get("ref") ?? branch);
+      const r = u.searchParams.get("ref") ?? branch;
+      const at = branches.get(r) ?? (commits.has(r) ? r : undefined);
       const text = at ? commits.get(at)!.files.get(contents) : undefined;
       return text === undefined ? json(404, { message: "Not Found" }) : json(200, { sha: blob(text), encoding: "base64", content: Buffer.from(text).toString("base64") });
     }

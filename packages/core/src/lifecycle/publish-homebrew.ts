@@ -55,7 +55,7 @@ import type { HomebrewPublishDeclaration } from "./publish-declaration";
 import { SshGitRepo } from "./publish-git-ssh";
 import { GitHubRepo, githubApi } from "./publish-github";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
-import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
+import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
 /** The first chant that publishes a `homebrew` target (#4676). */
@@ -146,6 +146,75 @@ export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDe
     destination: `github ${decl.tap}`,
     credentialEnv: tokenNames,
     key: publishTargetKey(decl),
+    /**
+     * #5163: a formula has no per-version deprecation, so deprecate does
+     * nothing here. A yank puts back the formula the head release published,
+     * found by its digest among the last 100 commits of the tap branch that
+     * touch it, when the branch still holds this release's; a restore puts
+     * this release's back when it is the head. One commit either way.
+     */
+    async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
+      const where = `${decl.tap}:${decl.formula}`;
+      if (ctx.status === "deprecated") return [{ what: `${where} unchanged: a formula has no deprecation; yank reverts it` }];
+      const ours = ctx.revealed.find((i) => i.digest)?.digest;
+      if (!ours) return [{ what: `${where} unchanged: the publish record names no formula digest`, already: true }];
+      const isHead = ctx.head?.releaseDigest === ctx.release.releaseDigest;
+      if (ctx.status === "active" && !isHead) return [{ what: `${where} unchanged: a newer active release holds it`, already: true }];
+      const to = ctx.status === "active" ? ours : ctx.head?.items.find((i) => i.digest)?.digest;
+      const toName = ctx.status === "active" ? (ctx.label ?? ctx.release.releaseDigest) : (ctx.head?.label ?? ctx.head?.releaseDigest);
+      if (!to) {
+        return [{
+          what: `${where} stays at this release's formula`,
+          refused: { code: "release-status-no-previous", message: `no earlier active release published ${where}, so there is no formula to revert it to`, fix: "Cut and publish a release to move it to, or edit the formula in the tap by hand." },
+        }];
+      }
+      const what = ctx.status === "active" ? `put back ${where} as ${toName} published it` : `revert ${where} to the formula ${toName} published, if it holds this release's`;
+      if (!ctx.apply) return [{ what }];
+      const token = readCredential(ctx.env, tokenNames, ctx.redactor);
+      if (!token) throw new PublishTargetError("publish-credentials-missing", `the homebrew target reads its ${ssh ? "SSH key" : "token"} from ${tokenNames[0]}, and it is not set`, `Set ${tokenNames[0]}.`);
+      const lost = (branch: string) =>
+        new PublishTargetError("release-status-homebrew-history", `none of the last 100 commits of ${branch} in ${decl.tap} that touch ${decl.formula} holds the formula ${toName} published (${to})`, "Edit the formula in the tap by hand.");
+      const message = `${formulaName} ${releaseVersion(toName ?? null) ?? toName}`;
+      if (ssh) {
+        return withSsh(ctx, token, async (tap) => {
+          const { defaultBranch } = await tap.heads();
+          const branch = decl.branch ?? defaultBranch;
+          if (!branch) throw new PublishTargetError("publish-homebrew-failed", `${tap.remote} has no default branch`, "Set branch to the branch brew installs from.");
+          const head = await tap.fetch(branch, 100);
+          const now = await tap.file(head, decl.formula);
+          const nowDigest = now ? bytesDigest(new Uint8Array(now)) : null;
+          if (nowDigest === to || (ctx.status === "yanked" && nowDigest !== ours)) return [{ what: `${where} on ${branch} is not this release's formula; not changed`, already: true }];
+          let bytes: Buffer | null = null;
+          for (const c of await tap.history(branch, decl.formula)) {
+            const f = await tap.file(c, decl.formula);
+            if (f && bytesDigest(new Uint8Array(f)) === to) {
+              bytes = f;
+              break;
+            }
+          }
+          if (!bytes) throw lost(branch);
+          const commit = await tap.commitFile(head, decl.formula, bytes, message);
+          if ((await tap.push(commit, branch, false)) === "rejected") throw new PublishTargetError("publish-homebrew-failed", `${branch} of ${tap.remote} moved while the formula was committed onto it`, "Run the same command again.");
+          return [{ what }];
+        });
+      }
+      const tap = new GitHubRepo(githubApi(decl.api, ctx.env), decl.tap, token, fetchImpl, ctx, "publish-homebrew-failed");
+      const branch = decl.branch ?? (await tap.defaultBranch());
+      const now = await tap.file(decl.formula, branch);
+      const nowDigest = now ? bytesDigest(new Uint8Array(now.bytes)) : null;
+      if (nowDigest === to || (ctx.status === "yanked" && nowDigest !== ours)) return [{ what: `${where} on ${branch} is not this release's formula; not changed`, already: true }];
+      let bytes: Buffer | null = null;
+      for (const c of await tap.commitsTouching(decl.formula, branch)) {
+        const f = await tap.file(decl.formula, c);
+        if (f && bytesDigest(new Uint8Array(f.bytes)) === to) {
+          bytes = f.bytes;
+          break;
+        }
+      }
+      if (!bytes) throw lost(branch);
+      await tap.putFile(decl.formula, branch, new Uint8Array(bytes), message, now?.sha ?? null);
+      return [{ what }];
+    },
     async plan(ctx) {
       if (prereleaseOf(ctx.label)) return [{ name: decl.formula, destination: where(decl.branch ?? "the default branch"), notes: skipNote(ctx) }];
       const { digest } = setup(ctx);
@@ -217,7 +286,7 @@ export function homebrewTarget(decl: HomebrewPublishDeclaration, deps: PublishDe
     },
   };
 
-  async function withSsh<T>(ctx: PublishContext, key: Credential, step: (tap: SshGitRepo) => Promise<T>): Promise<T> {
+  async function withSsh<T>(ctx: PublishContextBase, key: Credential, step: (tap: SshGitRepo) => Promise<T>): Promise<T> {
     const tap = await SshGitRepo.open({ api: githubApi(decl.api, ctx.env), repo: decl.tap, key, ctx, fetch: fetchImpl, code: "publish-homebrew-failed", git: deps.git, ssh: deps.ssh });
     try {
       return await step(tap);

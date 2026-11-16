@@ -84,6 +84,13 @@ export class GitHubRepo {
     return { bytes: body.encoding === "base64" ? Buffer.from(body.content, "base64") : Buffer.from(body.content), sha: body.sha };
   }
 
+  /** The commits of `branch` that touch `path`, newest first, up to 100 (#5163). */
+  async commitsTouching(path: string, branch: string): Promise<string[]> {
+    const res = await this.call("GET", `/commits?path=${encodeURIComponent(path)}&sha=${encodeURIComponent(branch)}&per_page=100`);
+    if (res.status !== 200 || !Array.isArray(res.json)) this.fail(`listing the commits of ${branch} that touch ${path}`, res);
+    return (res.json as Array<{ sha?: unknown }>).map((c) => c.sha).filter((c): c is string => typeof c === "string");
+  }
+
   /** Commit `bytes` as `path` on `branch`, replacing the blob `sha` when the file is there. Returns the commit. */
   async putFile(path: string, branch: string, bytes: Uint8Array, message: string, sha: string | null): Promise<string> {
     const res = await this.call(

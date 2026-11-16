@@ -95,6 +95,8 @@ export const SLOW_UNIT_TEST_FILES: readonly string[] = [
     "release-verify",
     "release-workstation",
     "publish-resume",
+    // #5163: cuts two releases in a temp repo and changes their status through the fake npm, registry, forge and tap.
+    "release-status-change",
     "work-lease",
     // The ruling for ci-products (2026-10-28): two and three clones of a bare remote take, queue for and release
     // rows, each read a git fetch; 2.7 to 5.6s per test alone on a loaded Mac.

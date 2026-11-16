@@ -14,7 +14,7 @@ import { createRedactor } from "./publish-credentials";
 import { CargoPublishSchema } from "./publish-declaration";
 import { cargoAuth, cargoPublishOrder, cargoRegistryTokenVar, sparseIndexPath, type CargoCrate } from "./publish-cargo";
 import { createPublishTargets } from "./publish-targets";
-import { PublishTargetError, type PublishContext } from "./release-publish";
+import { PublishTargetError, type PublishContext, type StatusContext } from "./release-publish";
 import { makeRelease } from "./release-store";
 
 const dirs: string[] = [];
@@ -77,11 +77,19 @@ if (args[0] === "publish") {
   console.error("   Uploading " + name + " v" + c.version + " with " + process.env.CARGO_REGISTRY_TOKEN);
   process.exit(0);
 }
+if (args[0] === "yank") {
+  const name = args[args.length - 1];
+  const vers = args[args.indexOf("--version") + 1];
+  const undo = args.includes("--undo");
+  const lines = fs.readFileSync(${JSON.stringify(index)}, "utf-8").trim().split("\\n").map((l) => JSON.parse(l));
+  fs.writeFileSync(${JSON.stringify(index)}, lines.map((l) => JSON.stringify(l.name === name && l.vers === vers ? { ...l, yanked: !undo } : l)).join("\\n") + "\\n");
+  process.exit(0);
+}
 process.exit(2);
 `,
   );
   chmodSync(bin, 0o755);
-  const published = () => (existsSync(index) ? readFileSync(index, "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { name: string; vers: string; cksum: string }) : []);
+  const published = () => (existsSync(index) ? readFileSync(index, "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as { name: string; vers: string; cksum: string; yanked?: boolean }) : []);
   const runs = () => readFileSync(log, "utf-8").trim().split("\n").map((l) => JSON.parse(l) as { args: string[]; token: string });
   const calls: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
   let exchanged = 0;
@@ -93,7 +101,7 @@ process.exit(2);
     if (m && init.method === "GET") {
       const name = m[1]!.split("/").pop()!;
       const lines = published().filter((p) => p.name === name);
-      return lines.length ? reply(200, lines.map((l) => JSON.stringify({ name: l.name, vers: l.vers, cksum: l.cksum, deps: [] })).join("\n")) : reply(404);
+      return lines.length ? reply(200, lines.map((l) => JSON.stringify({ name: l.name, vers: l.vers, cksum: l.cksum, deps: [], yanked: l.yanked ?? false })).join("\n")) : reply(404);
     }
     if (url.startsWith("https://gha.test/token")) return new URL(url).searchParams.get("audience") === "crates.io" ? reply(200, JSON.stringify({ value: "gha-id-token-for-crates" })) : reply(400);
     if (url === "https://crates.test/api/v1/trusted_publishing/tokens" && init.method === "POST") {
@@ -165,6 +173,28 @@ describe("cargo (#5167)", () => {
     await target!.reveal(ctx, staged);
     expect(cargo.runs().filter((r) => r.args[0] === "publish")).toHaveLength(3);
     expect((await target!.stage(ctx)).state).toEqual({ present: "true" });
+  });
+
+  test("a yank runs cargo yank for each crate the release published, a restore undoes it, and a run again does nothing (#5163)", async () => {
+    const dir = member();
+    const cargo = fakeCargo(temp());
+    const [target] = await createPublishTargets([decl()], { fetch: cargo.fetch, cargo: cargo.bin });
+    const ctx = context(dir, { CARGO_REGISTRY_TOKEN: "cio-secret-token", PATH: process.env.PATH });
+    const revealed = (await target!.reveal(ctx, await target!.stage(ctx))).items;
+    const status = (s: StatusContext["status"], apply: boolean): StatusContext => ({ ...ctx, status: s, reason: null, replacement: null, revealed, head: null, forgeYank: "prerelease", apply });
+    expect((await target!.setStatus!(status("yanked", false))).map((a) => a.what)).toEqual([
+      "cargo yank --version 1.2.0 acme-core",
+      "cargo yank --version 1.2.0 acme-macros",
+      "cargo yank --version 1.2.0 acme-cli",
+    ]);
+    await target!.setStatus!(status("yanked", true));
+    expect(cargo.published().map((p) => p.yanked)).toEqual([true, true, true]);
+    expect((await target!.setStatus!(status("yanked", true))).every((a) => a.already)).toBe(true);
+    expect((await target!.setStatus!(status("deprecated", true)))[0]!.already).toBe(true);
+    expect((await target!.setStatus!(status("active", true)))[0]!.what).toBe("cargo yank --version 1.2.0 --undo acme-core");
+    expect(cargo.published().map((p) => p.yanked)).toEqual([false, false, false]);
+    expect(cargo.runs().filter((r) => r.args[0] === "yank").every((r) => r.token === "cio-secret-token")).toBe(true);
+    expect((await refused(target!.setStatus!({ ...status("yanked", true), env: { PATH: process.env.PATH } }))).code).toBe("publish-credentials-missing");
   });
 
   test("a failure part way names what was published, and a run again publishes only the rest", async () => {

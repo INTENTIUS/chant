@@ -42,6 +42,13 @@
  * Unset, `auth` is a token when the token's variable is set, else trusted
  * publishing when the run has an OIDC ID token.
  *
+ * A status change (#5163): `chant release yank` runs `cargo yank --version
+ * <version> <crate>` for each crate the release published, and `restore`
+ * runs it with `--undo`. A yanked version stays downloadable for lockfiles
+ * that name it, and new resolutions skip it. A registry has no deprecation,
+ * so `deprecate` changes nothing. A yank needs a token, from the same
+ * variable as a publish, that may yank the crates.
+ *
  * A registry keeps no file beside a crate, so nothing is attached. Under the
  * `supply-chain` group the target is refused (`publish-sbom-missing`) unless
  * `sbom` is `false`.
@@ -52,7 +59,7 @@ import { resolve } from "node:path";
 import { readCredential } from "./publish-credentials";
 import type { CargoPublishDeclaration } from "./publish-declaration";
 import { hasIdToken, memberFile, publishTargetKey, runIdToken } from "./publish-targets";
-import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
+import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 
 /** The first chant that publishes a `cargo` target (#5167). */
 export const PUBLISH_CARGO_FLOOR = "0.124.101";
@@ -219,7 +226,10 @@ export function cargoTarget(decl: CargoPublishDeclaration, deps: PublishDeps): P
   };
 
   /** The checksum the index records for the crate's version, null when it has no such version. */
-  const indexed = async (ctx: PublishContext, c: CargoCrate, token: string | null): Promise<string | null> => {
+  const indexed = async (ctx: PublishContextBase, c: Pick<CargoCrate, "name" | "version">, token: string | null): Promise<string | null> => (await indexEntry(ctx, c, token))?.cksum ?? null;
+
+  /** The index's line for the crate's version: its checksum and whether it is yanked; null when it has no such version. */
+  const indexEntry = async (ctx: PublishContextBase, c: Pick<CargoCrate, "name" | "version">, token: string | null): Promise<{ cksum: string; yanked: boolean } | null> => {
     const url = `${index}${sparseIndexPath(c.name)}`;
     const res = await fetchImpl(url, { method: "GET", headers: { "user-agent": "chant", ...(decl.registry && token ? { authorization: token } : {}) } });
     const text = await res.text().catch(() => "");
@@ -228,8 +238,8 @@ export function cargoTarget(decl: CargoPublishDeclaration, deps: PublishDeps): P
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       try {
-        const v = JSON.parse(line) as { vers?: unknown; cksum?: unknown };
-        if (v.vers === c.version) return typeof v.cksum === "string" ? v.cksum : "";
+        const v = JSON.parse(line) as { vers?: unknown; cksum?: unknown; yanked?: unknown };
+        if (v.vers === c.version) return { cksum: typeof v.cksum === "string" ? v.cksum : "", yanked: v.yanked === true };
       } catch {
         // A line that is not JSON names no version.
       }
@@ -338,6 +348,47 @@ export function cargoTarget(decl: CargoPublishDeclaration, deps: PublishDeps): P
         if (revoke) await revoke();
       }
       return { target: target.name, destination: target.destination, items: out };
+    },
+    /**
+     * #5163: yank each crate version the release published, or undo the yank
+     * on a restore. A version the index already shows so is left.
+     */
+    async setStatus(ctx: StatusContext): Promise<StatusAction[]> {
+      if (ctx.status === "deprecated") return [{ what: `${label} unchanged: a crate version has no deprecation; yank stops new resolutions picking it`, already: true }];
+      const undo = ctx.status === "active";
+      const crates = ctx.revealed
+        .filter((i) => i.attachment === undefined && !i.refused && i.name.lastIndexOf("@") > 0)
+        .map((i) => ({ name: i.name.slice(0, i.name.lastIndexOf("@")), version: i.name.slice(i.name.lastIndexOf("@") + 1) }));
+      const args = (c: { name: string; version: string }) => ["yank", "--version", c.version, ...(undo ? ["--undo"] : []), ...(decl.registry ? ["--registry", decl.registry] : []), c.name];
+      if (!ctx.apply) return crates.map((c) => ({ what: `cargo ${args(c).join(" ")}` }));
+      const cred = readCredential(ctx.env, [tokenName], ctx.redactor);
+      if (!cred) {
+        throw new PublishTargetError("publish-credentials-missing", `the ${label} target reads its token from ${tokenName}, and it is not set`, `Set ${tokenName} to a token of ${label} that may yank the crates${decl.registry ? "" : " (on crates.io, one with the yank scope)"}.`);
+      }
+      const actions: StatusAction[] = [];
+      for (const c of crates) {
+        const what = `cargo ${args(c).join(" ")}`;
+        const now = await indexEntry(ctx, c, cred.value);
+        if (now === null) {
+          actions.push({ what: `${c.name}@${c.version} is not in the index of ${label}; nothing to ${undo ? "restore" : "yank"}`, already: true });
+          continue;
+        }
+        if (now.yanked === !undo) {
+          actions.push({ what: `${c.name}@${c.version} is ${undo ? "not yanked" : "yanked"} already`, already: true });
+          continue;
+        }
+        ctx.log(`running ${what}`);
+        const r = await run(cargo, args(c), ctx.cwd, { ...ctx.env, [cargoVar]: cred.value }).catch((err: unknown) => {
+          throw new PublishTargetError("publish-cargo-missing", `cargo could not be run: ${err instanceof Error ? err.message : String(err)}`, "Install a Rust toolchain on the PATH.");
+        });
+        for (const l of `${r.stdout}\n${r.stderr}`.split("\n").filter((x) => x.trim())) ctx.log(`cargo: ${ctx.redactor.redact(l)}`);
+        if (r.code !== 0) {
+          const tail = ctx.redactor.redact(r.stderr.trim().split("\n").slice(-3).join(" "));
+          throw new PublishTargetError("release-status-cargo-failed", `${what} exited ${r.code}${tail ? `: ${tail}` : ""}`, `Yanking needs a token of ${label} that may yank ${c.name}.`);
+        }
+        actions.push({ what });
+      }
+      return actions;
     },
   };
   return target;

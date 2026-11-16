@@ -317,6 +317,14 @@ export async function loadQueryData(ledgers: readonly QueryLedger[]): Promise<Qu
       }
     }
     const trees = (await port.trees()).sort();
+    // #5163: the status records of releases chant release cut made sit beside them, under _releases.
+    if (trees.includes("_releases")) {
+      const { records, malformed: bad } = parseReleaseStatus(await port.read("_releases", RELEASE_STATUS_FILE));
+      malformed.release_status += bad;
+      for (const r of records) {
+        data.release_status.push({ member, env: r.env, component: r.component, digest: r.digest, release_version: str(r.releaseVersion), status: r.status, reason: str(r.reason), replacement: str(r.replacement), actor: r.actor, timestamp: r.timestamp });
+      }
+    }
     for (const env of trees.filter((t) => !t.startsWith("_"))) {
       for (const file of (await port.list(env)).sort()) {
         if (file.endsWith(".json")) {
