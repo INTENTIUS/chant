@@ -1,0 +1,35 @@
+---
+title: "chant release compose"
+description: "Picks chosen changes from trunk onto a base, on the branch chant/compose/<name>."
+diataxis: reference
+sidebar:
+  label: "compose"
+---
+
+Picks chosen changes from trunk onto a base, on the branch `chant/compose/<name>` ([#4168](https://github.com/INTENTIUS/chant/issues/4168), mode b). [Compose a Release](/chant/guide/compose-a-release/) walks through it.
+
+```bash
+chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache        # a dry run
+chant release compose hotfix-1-4 --base v1.4.0 --pr 412 --work fix-cache --yes  # composes and pushes
+```
+
+`--base` takes a release label or digest of the member, or anything git resolves to a commit. `--pr <n>` and `--work <id>` can each be given more than once. A pull request matches a first-parent commit of trunk after the base by its merge record `_merges/<sha>.json` on `chant/lifecycle`, or by `(#n)` at the end of its subject. A work item matches by a `Chant-Record: work:<id>` trailer or a merge record whose source names it. Every matching commit is cherry-picked in trunk order, a merge commit against its first parent, and each gets a `Chant-Composed-From: <sha>` trailer.
+
+The picks are made in a temporary detached worktree, so the checkout is never touched and a dry run finds a conflict too. With `--yes` the local branch moves and is pushed to `origin`, never forced.
+
+A branch that exists is only appended to. It keeps the base it has, read by walking back from its tip to the first commit on trunk, and a chosen change it already carries is listed as carried and not picked again. It refuses before any ref moves when:
+
+| Code | When |
+|---|---|
+| `compose-name-invalid` | The name is not letters, digits, dots, dashes and underscores starting with a letter or digit. |
+| `compose-nothing-chosen` | No `--pr` or `--work` is given. |
+| `compose-base-unknown` | `--base` names no release and no commit, or the branch is new and `--base` is missing. |
+| `compose-base-differs` | The branch exists on another base than `--base` names. |
+| `compose-branch-diverged` | The local branch and `origin`'s have diverged. |
+| `compose-source-unknown` | A `--pr` or `--work` matches no commit on trunk after the base. |
+| `compose-conflict` | A pick does not apply. The message names the change, its pull request and work items, and the conflicting files. |
+| `compose-push-refused` | `origin` refused the push. The local branch has moved, so push it by hand. |
+
+The `--json` document has the compose's `name` and `branch`, its `base`, and `from`, the tip before it ran or `null`. `picked` and `already` list sources, each with `commit`, `subject`, `pr`, `work` and `chosenBy`. Then come `tip`, `written`, `pushed`, `dryRun` and `next`. A refusal prints `{ "error": { "code", "message", "conflict" } }`, with `conflict` only for `compose-conflict`.
+
+[`chant ci tick`](/chant/cli/ci/#ci-tick) walks each pushed compose branch as it walks trunk, judging the composed commits in the window and tagging them. Each tag's record names the compose branch. When the tick revokes a trunk commit that a composed commit carries, it warns and names the composed commit. That commit's own tags decide its releases.

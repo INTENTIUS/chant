@@ -4,7 +4,7 @@ description: The release.publish block in chant.config.ts and the targets it dec
 diataxis: reference
 ---
 
-`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials, how a publish stages every target before any becomes visible and resumes after a failure ([#4048](https://github.com/INTENTIUS/chant/issues/4048)), the SBOM and provenance each target attaches ([#4049](https://github.com/INTENTIUS/chant/issues/4049)), and the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/#release-publish).
+`chant release publish` sends a cut release to the targets its member declares ([#4047](https://github.com/INTENTIUS/chant/issues/4047)). This page covers the declaration and each target with its credentials, how a publish stages every target before any becomes visible and resumes after a failure ([#4048](https://github.com/INTENTIUS/chant/issues/4048)), the SBOM and provenance each target attaches ([#4049](https://github.com/INTENTIUS/chant/issues/4049)), and the contract in `packages/core/src/lifecycle/release-publish.ts` that a new target implements. The command itself is on [chant release](/chant/cli/release/publish/).
 
 ## Declaring targets
 
@@ -43,7 +43,7 @@ A target never builds. It uploads the files that are there. A file that the rele
 | `sbom` | The SBOM file each package carries at its root. Default: the first of `sbom.spdx.json`, `sbom.cdx.json` and `sbom.cyclonedx.json` it holds. `false` publishes without one |
 | `stage` | `false` publishes each package straight to `latest`, or the tag the publish names, with no `next` stage and no `npm dist-tag` move. Use it when the credentials may publish but not move a dist-tag, as with trusted publishing when the package's record does not allow `npm dist-tag`. Default `true` |
 | `tokenEnv` | A variable holding an npm token. When a package's publish fails to authenticate, as with a broken trusted-publisher record, it is published again with that token from a temporary npm user config, and again without `--provenance` if the registry refuses the attestation on the token path. Unset or empty, nothing is retried |
-| `pins` | A file in each package, from its root, holding the image digests it pins, such as `dist/image-digests.json`. Every `sha256:` digest in it must be an image the release records ([`release.images`](/chant/cli/release/#images-the-package-pins)), or the plan refuses the package. Read by chant 0.124.71 and newer |
+| `pins` | A file in each package, from its root, holding the image digests it pins, such as `dist/image-digests.json`. Every `sha256:` digest in it must be an image the release records ([`release.images`](/chant/cli/release/cut/#images-the-package-pins)), or the plan refuses the package. Read by chant 0.124.71 and newer |
 | `registryWait` | A cap, in seconds, on the reveal's wait for the registry to serve every version it published before it installs them to audit. Past it the publish stops with `publish-npm-not-served`. Default: no cap |
 
 The stage runs, for each package, `npm view <name>@<version> version` to ask whether the registry already holds the version. When it doesn't, it runs `npm publish <package> --tag next` with the declared `--registry` and `--access`, and `--provenance` when the run has an OIDC token. A publish from GitHub Actions with `id-token: write` gets npm provenance this way. So does one from GitLab CI with `SIGSTORE_ID_TOKEN`, and npm trusted publishing works in both. A version under `next` is not what `latest` or a range resolves to, so a consumer sees nothing yet. A version already on the registry is not published again. When one package fails, the error names the packages staged before it.
@@ -80,10 +80,10 @@ With neither variable set, the target reads the registry's `auths` entry from th
 |---|---|
 | `forge` | `github`, `gitlab` or `forgejo` |
 | `repo` | `owner/name` on GitHub and Forgejo; the project path or numeric id on GitLab |
-| `assets` | Files to attach. Each is named by its file name, which must be unique. `artifact:<name>` names every file the release records for that [`release.artifacts`](/chant/cli/release/#files-the-release-builds) entry. May be empty when `notes` is set |
+| `assets` | Files to attach. Each is named by its file name, which must be unique. `artifact:<name>` names every file the release records for that [`release.artifacts`](/chant/cli/release/cut/#files-the-release-builds) entry. May be empty when `notes` is set |
 | `notes` | The release's notes: `{ file?, heading?, linkBase?, generate?, types?, before?, after? }`, a section of a file in the member, notes generated for the release, or both. See below. Read by chant 0.124.71 and newer; `generate` and `types` by chant 0.124.101 and newer |
 | `api` | The API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` on GitHub; `$CI_API_V4_URL`, else `https://gitlab.com/api/v4` on GitLab; `$GITHUB_API_URL` on Forgejo, which has no other default |
-| `tag` | The forge release's tag. Default: the tag the cut made, which [`release.tag`](/chant/cli/release/#the-releases-tag) names (`release/<label>` or `release/<member>/<label>` when it is unset) |
+| `tag` | The forge release's tag. Default: the tag the cut made, which [`release.tag`](/chant/cli/release/cut/#the-releases-tag) names (`release/<label>` or `release/<member>/<label>` when it is unset) |
 | `tokenEnv` | The variable holding the token. Default: `GITHUB_TOKEN` on GitHub, `GITLAB_TOKEN` then `CI_JOB_TOKEN` on GitLab, `FORGEJO_TOKEN` on Forgejo |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: `sbom.spdx.json` written from the member's lockfile. `false` attaches none |
 | `latest` | GitHub only: `true`, `false` or `"legacy"`, sent as GitHub's `make_latest` when the reveal publishes the draft. `false` keeps the repository's latest release where it is, and `"legacy"` lets GitHub pick by creation date and semantic version. Unset, the reveal sends `true`, or `false` for a release cut with `--channel`. Another forge refuses it with `publish-forge-latest-unsupported`. Read by chant 0.124.63 and newer |
@@ -116,7 +116,7 @@ The file is read when the publish plans its targets, so a missing file or sectio
 
 | `generate` | Notes |
 |---|---|
-| `commits` | chant's own, from the conventional commits in the member's directory since the member's previous release, merges left out. A `###` heading for each of breaking changes, features, fixes and other changes, and under it one line per commit: its scope, its description and its short sha. `types` lists the commit types to include, default `["feat", "fix", "perf"]`. A breaking change (`type!:` or a `BREAKING CHANGE:` footer) is listed whatever its type, and `"*"` lists every commit, conventional or not. The summaries of the [intent files](/chant/cli/release/#intent-files) the release's cut consumed come first, under `### Highlights`, the highest level first, whatever `types` says |
+| `commits` | chant's own, from the conventional commits in the member's directory since the member's previous release, merges left out. A `###` heading for each of breaking changes, features, fixes and other changes, and under it one line per commit: its scope, its description and its short sha. `types` lists the commit types to include, default `["feat", "fix", "perf"]`. A breaking change (`type!:` or a `BREAKING CHANGE:` footer) is listed whatever its type, and `"*"` lists every commit, conventional or not. The summaries of the [intent files](/chant/cli/release/next/#intent-files) the release's cut consumed come first, under `### Highlights`, the highest level first, whatever `types` says |
 | `forge` | The forge's own. GitHub: `POST /repos/{repo}/releases/generate-notes` for the tag at the release's commit, with the previous release's tag as `previous_tag_name` when the forge release uses the cut's tag; otherwise GitHub picks the release to start from. GitLab: `GET /projects/{id}/repository/changelog` with `version` (the label from its first digit), `to` the release's commit and `from` the previous release's commit; GitLab lists only the commits that carry a `Changelog:` trailer. Forgejo has no such API, so the plan refuses with `publish-forge-notes-unsupported` |
 
 ```ts
@@ -142,7 +142,7 @@ A `homebrew` target is the [index target](#index-repositories)'s `homebrew-tap` 
 | `tap` | The tap's repository, `owner/name`, such as `acme/homebrew-tap` |
 | `formula` | The formula's path in the tap, such as `Formula/api.rb` |
 | `template` | The formula with placeholders, relative to the member |
-| `assets` | The files the formula downloads, relative to the member, or `artifact:<name>` for every file the release records for that [`release.artifacts`](/chant/cli/release/#files-the-release-builds) entry. The template names each by its file name, which must be unique |
+| `assets` | The files the formula downloads, relative to the member, or `artifact:<name>` for every file the release records for that [`release.artifacts`](/chant/cli/release/cut/#files-the-release-builds) entry. The template names each by its file name, which must be unique |
 | `url` | Where each asset is downloaded from, with `{tag}` (the tag the cut made), `{label}`, `{version}` and `{name}` (the asset's file name) filled in |
 | `branch` | The tap's branch that brew installs from. Default: the repository's default branch |
 | `api` | The GitHub API root. Default: `$GITHUB_API_URL`, else `https://api.github.com` |
@@ -225,7 +225,7 @@ Manifests in an index repository on GitHub that a package manager or a directory
 | `template` | One manifest template, relative to the member |
 | `path` | Where `template` goes in the index. Default: the preset's path |
 | `files` | More manifests: each path in the index, and its template in the member |
-| `assets` | The files the manifests download: `artifact:<name>` for an entry of [`release.artifacts`](/chant/cli/release/#files-the-release-builds), or a path the release records |
+| `assets` | The files the manifests download: `artifact:<name>` for an entry of [`release.artifacts`](/chant/cli/release/cut/#files-the-release-builds), or a path the release records |
 | `url` | Where each asset is downloaded from, with `{tag}`, `{label}`, `{version}` and `{name}` filled in, as for the tap. Needed with `assets` |
 | `branch` | The branch the index is read from, and the base of the pull request. Default: the repository's default branch |
 | `fork` | `pull-request` only: the repository the pull request's branch is pushed to. Default: the token's user's fork of `repo`, made when there is none. `repo` itself opens the pull request from a branch of `repo` |
@@ -283,7 +283,7 @@ An index target never reveals before every other target has revealed. It stages 
 
 The index often belongs to someone else. So by default a refusal from it is a warning (`onRefusal: "warn"`): a stage or reveal that fails prints a warning, a stage that fails skips the target's reveal, the target comes back with a `warning` and its item `refused: true` in the `--json` document, and the publish succeeds. The target is not recorded as revealed, so the same `chant release publish` run again tries it again. A pull request the index closed without merging is such a refusal (`publish-index-pr-closed`): a run of the same publish opens no new one while it is closed. With `onRefusal: "fail"`, a refusal fails the publish with its code, such as `publish-index-failed` for a request GitHub refused: at the stage, before any target reveals; at the reveal, after every other target revealed. A run of the same publish resumes at this target. Either way, what the plan finds, such as a missing token or a template it can't fill, stops the publish before any target runs.
 
-The token must be able to do what the mode needs. For `commit`, write access to `repo`, as for the tap. For `pull-request`, a classic token with the `public_repo` scope may fork the index, push to the fork and open the pull request. [`chant release doctor`](/chant/cli/release/#release-doctor) checks each.
+The token must be able to do what the mode needs. For `commit`, write access to `repo`, as for the tap. For `pull-request`, a classic token with the `public_repo` scope may fork the index, push to the fork and open the pull request. [`chant release doctor`](/chant/cli/release/doctor/) checks each.
 
 ## Editor marketplaces
 
@@ -400,7 +400,7 @@ Python wheels and sdists on PyPI, TestPyPI, or another index that takes PyPI's u
 
 | Field | Meaning |
 |---|---|
-| `files` | The distributions, relative to the member: a `.whl`, `.tar.gz` or `.zip` file, a directory (every such file in it, in name order), or `artifact:<name>` for every file the release records for that [`release.artifacts`](/chant/cli/release/#files-the-release-builds) entry |
+| `files` | The distributions, relative to the member: a `.whl`, `.tar.gz` or `.zip` file, a directory (every such file in it, in name order), or `artifact:<name>` for every file the release records for that [`release.artifacts`](/chant/cli/release/cut/#files-the-release-builds) entry |
 | `index` | `pypi` (the default) or `testpypi` |
 | `uploadUrl` and `simpleUrl` | Another index: its upload URL and its simple API root. They go together, and not with `index` |
 | `auth` | `token` or `trusted-publishing`. Unset: a token when the token's variable is set, else trusted publishing when the run has an OIDC ID token |
@@ -447,7 +447,7 @@ Rust crates on crates.io or another Cargo registry, published with `cargo publis
 | `tokenEnv` | The variable holding the token. Default `CARGO_REGISTRY_TOKEN`, or `CARGO_REGISTRIES_<NAME>_TOKEN` with `registry`, the variables cargo reads. chant hands the token to cargo in the variable cargo reads for the registry |
 | `sbom` | `false` publishes under the `supply-chain` group, which otherwise refuses this target. See [The SBOM](#the-sbom) |
 
-The plan runs `cargo metadata --no-deps` on the manifest to read the crates, their versions and their dependencies. The version published is the one in each `Cargo.toml`; [`release.version`](/chant/cli/release/#the-label-as-the-package-version) can stamp it with the release's label. The crates go in dependency order: each after the selected crates it depends on, through normal, build and dev dependencies, ties in name order. A dev-dependency with no version is left out of the order, since cargo drops it from what it publishes. The plan refuses a crate `crates` names that the workspace does not have (`publish-cargo-unknown-crate`) or whose `publish` leaves out the registry (`publish-cargo-unpublishable`), a workspace with nothing to publish (`publish-cargo-no-crates`), a dependency on a workspace crate by path with no version, which cargo would refuse (`publish-cargo-dependency-version`), and crates that depend on each other (`publish-cargo-cycle`). With no `cargo` on `PATH` it stops with `publish-cargo-missing`.
+The plan runs `cargo metadata --no-deps` on the manifest to read the crates, their versions and their dependencies. The version published is the one in each `Cargo.toml`; [`release.version`](/chant/cli/release/cut/#the-label-as-the-package-version) can stamp it with the release's label. The crates go in dependency order: each after the selected crates it depends on, through normal, build and dev dependencies, ties in name order. A dev-dependency with no version is left out of the order, since cargo drops it from what it publishes. The plan refuses a crate `crates` names that the workspace does not have (`publish-cargo-unknown-crate`) or whose `publish` leaves out the registry (`publish-cargo-unpublishable`), a workspace with nothing to publish (`publish-cargo-no-crates`), a dependency on a workspace crate by path with no version, which cargo would refuse (`publish-cargo-dependency-version`), and crates that depend on each other (`publish-cargo-cycle`). With no `cargo` on `PATH` it stops with `publish-cargo-missing`.
 
 A registry has no draft. A crate version is visible as soon as it is published and can never be published again, so the reveal publishes, as on PyPI.
 
@@ -479,7 +479,7 @@ A `server.json` on the official [MCP Registry](https://registry.modelcontextprot
 | `auth` | `github-oidc` (the default), `github-token` or `registry-token` |
 | `tokenEnv` | The variable holding the token under `github-token` (default `MCP_GITHUB_TOKEN`) or `registry-token` (default `MCP_REGISTRY_TOKEN`). Refused beside `github-oidc` (`publish-mcp-registry-auth-invalid`) |
 
-The file must belong to the release. Its `version` must be the release's label from its first digit (`1.4.0` for `v1.4.0`), and so must the `version` of each package, and the tag of each OCI image (a digest is accepted). A file for another version is refused in the plan with `publish-mcp-registry-version-mismatch`, and a package that doesn't match with `publish-mcp-registry-package-mismatch`, so a release can't publish a listing for another version. A file that is not JSON, or has no `name` and `version`, is `publish-mcp-registry-server-invalid`. [`release.version.files`](/chant/cli/release/#other-manifests) stamps the label into `server.json` at the cut.
+The file must belong to the release. Its `version` must be the release's label from its first digit (`1.4.0` for `v1.4.0`), and so must the `version` of each package, and the tag of each OCI image (a digest is accepted). A file for another version is refused in the plan with `publish-mcp-registry-version-mismatch`, and a package that doesn't match with `publish-mcp-registry-package-mismatch`, so a release can't publish a listing for another version. A file that is not JSON, or has no `name` and `version`, is `publish-mcp-registry-server-invalid`. [`release.version.files`](/chant/cli/release/cut/#other-manifests) stamps the label into `server.json` at the cut.
 
 The registry has no draft, and a version it holds can't be replaced. So the stage sends nothing that changes the registry. It exchanges for a registry token to prove the credentials work, and reads `GET /v0.1/servers/{name}/versions/{version}`. A version already there with the packages the file names is `present`, and one with other packages is refused with `publish-mcp-registry-version-exists`. The reveal exchanges again, since a registry token lasts minutes, sends `POST /v0.1/publish` with the file as the body, and reads the version back (`publish-mcp-registry-not-served` when the registry does not serve it). A registry that refuses the publish fails with its reason (`publish-mcp-registry-failed`), and one that refuses the exchange with `publish-mcp-registry-auth`.
 
@@ -510,9 +510,9 @@ A release whose label is a semver prerelease (`1.4.0-rc.1`, `v2.0.0-beta.3`) is 
 | `cargo` | Unchanged. A semver prerelease in `Cargo.toml` is one cargo resolves only when a requirement names it |
 | `mcp-registry` | Unchanged. The registry takes a prerelease version as it takes any other |
 
-The member's floating tag (`release.tag.floating`, see [the release's tag](/chant/cli/release/#the-releases-tag)) stays where it is.
+The member's floating tag (`release.tag.floating`, see [the release's tag](/chant/cli/release/cut/#the-releases-tag)) stays where it is.
 
-A `channel` recorded on the cut wins for the tags it names: npm moves the channel, and OCI pushes only the channel. The forge release is still marked a prerelease, since the label is one. [`release cut`](/chant/cli/release/#release-cut) and [`release publish`](/chant/cli/release/#release-publish) print `prerelease` in their dry run and in `--json`.
+A `channel` recorded on the cut wins for the tags it names: npm moves the channel, and OCI pushes only the channel. The forge release is still marked a prerelease, since the label is one. [`release cut`](/chant/cli/release/cut/) and [`release publish`](/chant/cli/release/publish/) print `prerelease` in their dry run and in `--json`.
 
 ## SBOMs and provenance
 
@@ -549,7 +549,7 @@ The provenance statement is an [in-toto Statement v1](https://github.com/in-toto
 }
 ```
 
-`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/#release-verify), offline, against the signers file at the release's commit. `cut.green` is the [green gate](/chant/cli/release/#the-green-gate) the cut passed, as its cut line records it: `{ "source": "chant", "tag": ... }`, `{ "source": "forge-checks", "forge": "github", "checks": [...] }` with the checks by name, or `{ "source": "none" }`. A cut that ran under an override carries `cut.override` (who, when, why, and the tag or checks it stood in for) instead. A cut recorded before chant had either has neither field. `cut.lane` is the lane the cut checked, when it checked one. `cut.gate` is `signed` when the cut's signature verifies and covers that gate, and `unsigned` otherwise, and `cut.sealVersion` is `2` on a cut whose signature signs the gate (see [Who may cut](/chant/cli/release/#who-may-cut)). `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token. In CI, npm's provenance is the one a registry records and signs, and for images and forge assets, [Sigstore signing](#sigstore-signatures) adds a signature over it and SLSA provenance signed with the job's token. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
+`cut` is the cut whose signature verified, and `signature` is the armored ssh signature over the release digest, the label, the actor and the time, one per line. Anyone with the repository checks it with [`chant release verify`](/chant/cli/release/verify/), offline, against the signers file at the release's commit. `cut.green` is the [green gate](/chant/cli/release/cut/#the-green-gate) the cut passed, as its cut line records it: `{ "source": "chant", "tag": ... }`, `{ "source": "forge-checks", "forge": "github", "checks": [...] }` with the checks by name, or `{ "source": "none" }`. A cut that ran under an override carries `cut.override` (who, when, why, and the tag or checks it stood in for) instead. A cut recorded before chant had either has neither field. `cut.lane` is the lane the cut checked, when it checked one. `cut.gate` is `signed` when the cut's signature verifies and covers that gate, and `unsigned` otherwise, and `cut.sealVersion` is `2` on a cut whose signature signs the gate (see [Who may cut](/chant/cli/release/cut/#who-may-cut)). `provenance.kind` is `oidc` when the run had an OIDC token and `signature` when it had none, as on a workstation. The statement itself is not signed with the OIDC token. In CI, npm's provenance is the one a registry records and signs, and for images and forge assets, [Sigstore signing](#sigstore-signatures) adds a signature over it and SLSA provenance signed with the job's token. Every value comes from the release and its cut and none from the clock. The statement is then the same bytes on every run, and a resumed stage finds what an earlier run attached.
 
 ### Sigstore signatures
 
@@ -558,7 +558,7 @@ With signing on, the OCI, forge and PyPI targets sign what they stage with Sigst
 | Target | Signature | SLSA provenance |
 |---|---|---|
 | OCI | A cosign signature (an in-toto statement with predicate type `https://sigstore.dev/cosign/sign/v1`), a referrer of the image | `https://slsa.dev/provenance/v1` over the image, a referrer of the image |
-| Forge | `<file>.sigstore.json` beside each asset, including each file an `artifact:` entry attaches from [`release.artifacts`](/chant/cli/release/#files-the-release-builds), the SBOM and `release.intoto.json` | `release.slsa.sigstore.json`, over the declared assets |
+| Forge | `<file>.sigstore.json` beside each asset, including each file an `artifact:` entry attaches from [`release.artifacts`](/chant/cli/release/cut/#files-the-release-builds), the SBOM and `release.intoto.json` | `release.slsa.sigstore.json`, over the declared assets |
 | PyPI | A PEP 740 publish attestation for each file, uploaded with it, under trusted publishing only. See [Attestations on PyPI](#attestations-on-pypi) | None |
 
 Each is a Sigstore bundle (`application/vnd.dev.sigstore.bundle.v0.3+json`). An image's referrers are the ones `cosign sign` and `actions/attest-build-provenance` push: the bundle as the one layer, the artifact type the bundle's media type, and the predicate type in the `dev.sigstore.bundle.predicateType` annotation. On a registry without the referrers API, such as GHCR, chant lists them under the `sha256-<hex>` tag the OCI distribution spec falls back to, so cosign finds them:
@@ -572,7 +572,7 @@ cosign verify-blob --bundle api-linux.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/acme/api/' --certificate-oidc-issuer https://token.actions.githubusercontent.com api-linux.tar.gz
 ```
 
-[`chant release verify --sigstore`](/chant/cli/release/#checking-the-sigstore-signatures) runs these checks for every bundle the publish recorded.
+[`chant release verify --sigstore`](/chant/cli/release/verify/#checking-the-sigstore-signatures) runs these checks for every bundle the publish recorded.
 
 The SLSA predicate in GitHub Actions is the one `actions/attest-build-provenance` writes: build type `https://actions.github.io/buildtypes/workflow/v1`, the workflow, event and repository ids, the release's commit as the resolved source, and the run as the invocation. In GitLab CI its build type is `https://intentius.io/chant/release/build/gitlab-ci/v1`, naming the project, its CI config and the job. Either adds `internalParameters.chant`, the release's digest, label and member.
 
@@ -591,7 +591,7 @@ export default {
 };
 ```
 
-The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/#release-doctor) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater and cargo targets are not signed.
+The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater and cargo targets are not signed.
 
 ### A CI job that checks provenance
 
@@ -613,7 +613,7 @@ steps:
 
 ## Staging and resuming
 
-A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them. Between the two it runs the [`release.verify`](/chant/cli/release/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI, Cargo or MCP Registry target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package.
+A publish with `--yes` is all or nothing for a consumer. It stages every target in the order declared, and only when all of them have staged does it reveal them. Between the two it runs the [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands, and one that fails stops it with nothing revealed. An npm target with `stage: false` stages just before its reveal, after the others have staged and the verify commands have passed. A marketplace, PyPI, Cargo or MCP Registry target has nowhere to hold a release unseen, so its stage only checks, and its reveal uploads; the verify commands can't see it either, and the publish warns about both kinds. A failure while staging leaves nothing a consumer resolves changed, apart from the first version of a new npm package.
 
 The reveals go in three groups, each in the order declared: first the targets whose reveal moves a tag or publishes a draft (npm, OCI, forge, Homebrew, Tauri updater); then the targets that upload at reveal (marketplace, PyPI, Cargo), since an upload can't be taken back; then the targets that reveal last: the MCP Registry, whose entry names packages the other targets publish, and the [index targets](#index-repositories), whose manifests point at files the other targets make downloadable. Those last go in the order declared, so an index target declared before an `mcp-registry` target reveals before it. They stage with the rest, where no consumer resolves them. A train publish uses the same order within each member. A failure while revealing leaves the targets before it visible and the rest staged.
 
@@ -626,7 +626,7 @@ Each step is recorded as one line in `_releases/publishes.jsonl` on `chant/lifec
 | Field | Meaning |
 |---|---|
 | `target` | The target's key: its kind and the first 16 hex digits of the SHA-256 of its declaration. A declaration holds variable names and never a credential |
-| `step` | `staged` or `revealed`; for the [`release.verify`](/chant/cli/release/#verifying-the-staged-release) commands, `verified` or `verify-failed`, under the target `verify:<hex>` of kind `verify`, with the failing command's `step` and `exitCode` in `state` |
+| `step` | `staged` or `revealed`; for the [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) commands, `verified` or `verify-failed`, under the target `verify:<hex>` of kind `verify`, with the failing command's `step` and `exitCode` in `state` |
 | `items` | What the step published, with each destination and digest |
 | `state` | What the reveal needs that it can't read from the checkout, such as a draft release's `releaseId` and `releaseUrl` |
 | `runId` | The CI run, or a `local-<epoch ms>` id on a workstation |
@@ -653,7 +653,7 @@ Each step goes into the member's own `_releases/publishes.jsonl`. Run again afte
 
 ## Deprecating, yanking and restoring
 
-[`chant release deprecate`, `yank` and `restore`](/chant/cli/release/#release-deprecate-yank-and-restore) act on what a target published for a release, read from the items each target's `revealed` line holds in `_releases/publishes.jsonl`. They never read the checkout. npm deprecates and moves its dist-tag. The OCI target moves its tags with no `{label}`. A forge release becomes a prerelease, a draft, or is deleted. A tap's formula is reverted, and so are the manifests of an `index` target that commits; one that opens pull requests refuses. The cargo target yanks each crate version and a restore undoes the yank. The PyPI, marketplace and Tauri updater targets refuse. A prerelease's yank moves its own dist-tag, such as `rc`, back to the previous release with that tag, and never touches `latest`. The member's floating tag moves back too. Each target's actions are recorded in `_releases/status-actions.jsonl`, so a change that stopped part way resumes.
+[`chant release deprecate`, `yank` and `restore`](/chant/cli/release/status/) act on what a target published for a release, read from the items each target's `revealed` line holds in `_releases/publishes.jsonl`. They never read the checkout. npm deprecates and moves its dist-tag. The OCI target moves its tags with no `{label}`. A forge release becomes a prerelease, a draft, or is deleted. A tap's formula is reverted, and so are the manifests of an `index` target that commits; one that opens pull requests refuses. The cargo target yanks each crate version and a restore undoes the yank. The PyPI, marketplace and Tauri updater targets refuse. A prerelease's yank moves its own dist-tag, such as `rc`, back to the previous release with that tag, and never touches `latest`. The member's floating tag moves back too. Each target's actions are recorded in `_releases/status-actions.jsonl`, so a change that stopped part way resumes.
 
 ## Credentials
 
@@ -666,7 +666,7 @@ Every credential comes from the environment of the run, which is the shell on a 
 | The value of each variable a declaration names | `passwordEnv: "GHCR_PAT"` |
 | A token written in the forms npm and HTTP headers use | `_authToken=...`, `Authorization: Bearer ...`, `PRIVATE-TOKEN: ...` |
 
-A target that needs a credential and finds none stops the publish before anything is sent, with `publish-credentials-missing`. [`chant release doctor`](/chant/cli/release/#release-doctor) checks the same credentials before a cut, and asks each registry what it will say about them.
+A target that needs a credential and finds none stops the publish before anything is sent, with `publish-credentials-missing`. [`chant release doctor`](/chant/cli/release/doctor/) checks the same credentials before a cut, and asks each registry what it will say about them.
 
 ## The target contract
 

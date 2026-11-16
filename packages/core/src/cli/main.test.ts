@@ -2,7 +2,7 @@ import { describe, test, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { commandRegistry, parseArgs, waitForStreamDrain } from "./main";
+import { commandRegistry, helpText, parseArgs, waitForStreamDrain } from "./main";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 
 describe("parseArgs", () => {
@@ -1088,16 +1088,14 @@ describe("chant workspace check --generated (#2641)", () => {
 
 describe("chant --help", () => {
   test("lists every top-level command in the registry", () => {
-    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
-    const help = source.slice(source.indexOf("function printHelp("), source.indexOf("Options:", source.indexOf("function printHelp(")));
+    const help = helpText().slice(0, helpText().indexOf("Options:"));
     const listed = new Set([...help.matchAll(/^ {2}([a-z][a-z0-9-]*)\b/gm)].map((m) => m[1]));
     const commands = new Set(commandRegistry.map((def) => def.name.split(" ")[0]));
     expect([...commands].filter((name) => !listed.has(name))).toEqual([]);
   });
 
   test("names `sync` as the alias of `update` (#3988)", () => {
-    const source = readFileSync(join(import.meta.dirname, "main.ts"), "utf-8");
-    const help = source.slice(source.indexOf("function printHelp("), source.indexOf("Options:", source.indexOf("function printHelp(")));
+    const help = helpText().slice(0, helpText().indexOf("Options:"));
     expect(help).toMatch(/^ {2}update \(alias: sync\)/m);
   });
 });

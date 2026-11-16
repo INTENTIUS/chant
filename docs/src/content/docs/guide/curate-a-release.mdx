@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-This page picks which green sha of trunk a release ships from. Trunk can carry work that is not ready, and the person cutting the release decides what goes out. The commands are in the [`chant release`](/chant/cli/release/#release-candidates) reference, and [Trunk and Releases](/chant/concepts/trunk-and-releases/#a-green-sha-not-the-tip) explains why a release comes from a green sha and not the tip.
+This page picks which green sha of trunk a release ships from. Trunk can carry work that is not ready, and the person cutting the release decides what goes out. The commands are in the [`chant release`](/chant/cli/release/candidates/) reference, and [Trunk and Releases](/chant/concepts/trunk-and-releases/#a-green-sha-not-the-tip) explains why a release comes from a green sha and not the tip.
 
 ## Before you start
 
@@ -48,7 +48,7 @@ chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build"
 chant release cut v1.4.0 --at 3f2a9c1e0b7d --build "npm run build" --yes
 ```
 
-The label reaches the build as `CHANT_RELEASE_LABEL`, so nothing has to bump the version on trunk first. A build-time parameter declared with `env: "CHANT_RELEASE_LABEL"` reads it, and so can a build tool. [The label in the build](/chant/cli/release/#the-label-in-the-build) shows a `chant.config.ts` parameter and a Cargo crate reading it.
+The label reaches the build as `CHANT_RELEASE_LABEL`, so nothing has to bump the version on trunk first. A build-time parameter declared with `env: "CHANT_RELEASE_LABEL"` reads it, and so can a build tool. [The label in the build](/chant/cli/release/cut/#the-label-in-the-build) shows a `chant.config.ts` parameter and a Cargo crate reading it.
 
 ## Then
 

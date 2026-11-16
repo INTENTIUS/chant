@@ -35,13 +35,15 @@
  */
 
 import { readFileSync } from "node:fs";
+import { NEXT_RELEASE } from "../release-floors";
 import { readCredential } from "./publish-credentials";
 import type { McpRegistryPublishDeclaration } from "./publish-declaration";
 import { releaseVersion } from "./publish-homebrew";
 import { bytesDigest, checkReleaseDigest, memberFile, publishTargetKey } from "./publish-targets";
 import { PublishTargetError, type PublishContext, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 
-export { PUBLISH_MCP_REGISTRY_FLOOR } from "../release-floors";
+/** The first chant with the `mcp-registry` publish target: a `server.json` published to the MCP Registry after the packages it names, with GitHub OIDC, and the `mcp-registry-*` checks of `chant release doctor` (#5162). */
+export const PUBLISH_MCP_REGISTRY_FLOOR = NEXT_RELEASE;
 
 export const MCP_REGISTRY = "https://registry.modelcontextprotocol.io";
 

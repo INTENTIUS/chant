@@ -1,0 +1,115 @@
+---
+title: "chant release publish"
+description: "Publishes a cut release to the targets release.publish declares, with its provenance and SBOMs."
+diataxis: reference
+sidebar:
+  label: "publish"
+---
+
+Publishes a cut release to the targets its member declares under `release.publish` in `chant.config.ts` ([#4027](https://github.com/INTENTIUS/chant/issues/4027), [#4047](https://github.com/INTENTIUS/chant/issues/4047)): npm packages, an image in an OCI registry such as GHCR or Docker Hub, release assets on GitHub, GitLab or Forgejo, a Homebrew tap, an editor marketplace, a Tauri updater feed, Python distributions on PyPI and Rust crates on crates.io. [Publish Targets](/chant/reference/publish-targets/) lists the declaration, each target and its credentials. It is meant to run in CI, where the job's OIDC token gives what it publishes provenance, as npm trusted publishing needs.
+
+```bash
+chant release publish v1.4.0          # a dry run: prints what would be published where
+chant release publish v1.4.0 --yes    # publishes
+```
+
+After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes anything when:
+
+| Code | When |
+|---|---|
+| `release-not-found` | No cut names the label or digest in this member. |
+| `release-revoked` | The release's commit is [revoked](/chant/cli/release/cut/#revoked-releases). |
+| `release-unsigned` | No cut of the release is signed, and the workspace names a `release` gate in `identity.gates` or opts into `verified-releases` ([#4049](https://github.com/INTENTIUS/chant/issues/4049), [#4168](https://github.com/INTENTIUS/chant/issues/4168)). |
+| `release-signature-unverified` | Under the same settings, no cut's signature verifies for its actor against `.chant/allowed_signers` at base, or, under a `release` gate, the signer is not in the gate's class. |
+| `publish-provenance-missing` | `--require-provenance` is given, and the run has no OIDC token. |
+| `publish-signing-no-oidc` | The publish signs with Sigstore (`release.signing`, or the `supply-chain` group), an `oci` or `forge` target is declared, and the run has no OIDC token cosign can sign with: a GitHub Actions job without `id-token: write`, a GitLab CI job without `SIGSTORE_ID_TOKEN`, or a workstation. |
+| `publish-signing-tool-missing` | Under the same settings, cosign 3 is not on `PATH` and `CHANT_COSIGN` does not name it. |
+| `publish-config-invalid` | `release.publish` in `chant.config.ts` does not validate. |
+| `release-head-mismatch` | A target is declared, and the checkout's `HEAD` is not the release's commit. |
+| `release-worktree-dirty` | A target is declared, and the tree has a change or an untracked file git does not ignore. Under `release.version`, a file it names that is exactly the commit's stamped with this release's label is not a change ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). |
+
+A release whose cut names a `channel` moves that tag instead of `latest`: the npm target's dist-tag and the OCI target's image tag. The newest cut that names one decides.
+
+A release whose label is a semver prerelease (`1.4.0-rc.1`) needs no channel. npm reveals under a dist-tag named for the prerelease id (`rc`, `beta`, or `next` when there is none) and never moves `latest`, GitHub and Forgejo mark the release a prerelease, and OCI keeps no `latest` tag. A channel on the cut still wins for npm and OCI. The publish prints `prerelease` and, with `--json`, `prerelease: true` and `distTag`. See [Prereleases](/chant/reference/publish-targets/#prereleases).
+
+The last two hold because a target uploads files from the checkout it runs in, which are the release's only at its commit. A CI job on the release's tag passes both. A publish with no target reads nothing and checks neither.
+
+Signing is opt-in ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). With no `release` gate and no `security` group in `chant.workspace.json`, an unsigned release publishes without a word, and the `--json` document's `signature.status` says `unsigned` or `unverified`. A workspace that sets `"security": ["verified-releases"]` publishes only a release signed by a key the signers file lists, so cut it with `--sign` (see [Who may cut](/chant/cli/release/cut/#who-may-cut)). There `--allow-unsigned` publishes a release with no signature that verifies anyway. It prints a warning first, and `release verify` then fails for what was published. Under a `release` gate in `identity.gates`, `--allow-unsigned` changes nothing: the gate publishes only a signed release.
+
+The publish prefers a verified cut whose signature covers its [green gate](/chant/cli/release/cut/#the-green-gate), and the provenance statement carries that cut. Under `verified-releases` or a `release` gate, a release whose only verified cut was signed before chant signed the gate publishes with a warning on stderr, also listed in the `--json` document's `warnings`, saying its gate is not covered by the signature. Cut it again with `--sign` to sign the gate.
+
+It then checks whether the run has an OIDC token. In GitHub Actions that means `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `permissions: id-token: write` gets. In GitLab CI it means an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN` under the job's `id_tokens`. Without one, as on a workstation, the `--json` document's `provenance.oidc` is false. A workspace that opts into `supply-chain` also gets a warning on stderr before anything is published: what it publishes carries no OIDC provenance. Without that group nothing is printed. `--require-provenance` refuses such a run with `publish-provenance-missing`, with or without the group. With a token, the npm target passes `--provenance`, and after the reveal runs `npm audit signatures` over what it published.
+
+When the publish signs ([#5164](https://github.com/INTENTIUS/chant/issues/5164)), the OCI and forge targets sign what they stage with Sigstore, keylessly with the job's OIDC token: an image gets a cosign signature and SLSA provenance as referrers, and a forge release gets a `.sigstore.json` bundle beside each file and `release.slsa.sigstore.json`. Signing is off unless `release.signing` in `chant.config.ts` turns it on or the workspace opts into `supply-chain`. [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures) has the details.
+
+Next it plans every target: each reads the files it would upload, checks a file the release records as an artifact against the release's digest, and finds its credentials. A target that can't stops the publish with its own code, such as `publish-file-missing`, `publish-artifact-digest-mismatch` or `publish-credentials-missing`, before anything is sent.
+
+Without `--yes` the publish is a dry run. It prints what each target would publish and where, and uploads nothing:
+
+```
+Dry run: publish v1.4.0 (jcs1-sha256:...) from commit 3f2a9c1d0b7e
+  signed by alice@example.com, green gate signed
+What would be published where:
+  npm (2 packages), with --provenance:
+    @acme/core@1.4.0 to the registry npm's config names, dist-tag next, then latest, carrying sbom.spdx.json
+    @acme/cli@1.4.0 to the registry npm's config names, dist-tag next, then latest, carrying sbom.spdx.json
+  oci ghcr.io/acme/api:
+    dist/api.oci.tar (tag v1.4.0) to ghcr.io/acme/api@sha256:...
+    sbom.spdx.json (SBOM) to ghcr.io/acme/api@sha256:..., a referrer of the image
+    release.intoto.json (provenance) to ghcr.io/acme/api@sha256:..., a referrer of the image
+Dry run: nothing was published. Run again with --yes to publish: chant release publish v1.4.0 --yes
+```
+
+With `--yes` it publishes in two passes ([#4048](https://github.com/INTENTIUS/chant/issues/4048)). First it stages every target in the order declared, where no consumer resolves it yet: npm packages under the `next` dist-tag, images by digest, forge assets on a draft release. Only when every target has staged does it reveal them in the same order, except that the targets that upload at reveal (marketplace, PyPI, Cargo) go after the rest and the MCP Registry goes last ([the reveal order](/chant/reference/publish-targets/#all-or-nothing)). Revealing moves npm's `latest` with the first package declared going first. It also moves the OCI tags and publishes the forge release. It prints each item it published. Each step is appended to `_releases/publishes.jsonl` on `chant/lifecycle` and pushed.
+
+A target that fails stops the publish. The error says whether anything is visible yet and which targets staged, and ends with the same command to run again. Run again, the publish reads the record and skips what an earlier run staged or revealed, and a stage asks its registry first and sends nothing that is there. So a resume publishes nothing twice, from the same checkout or from a fresh CI clone of the release's commit. The dry run says which targets an earlier run staged or published. [Staging and resuming](/chant/reference/publish-targets/#staging-and-resuming) has the details. Every line a publish prints, its `--json` document and its record have their credentials masked.
+
+Each target attaches the release's provenance statement when it stages, and an SBOM when it has a source for one, so nothing is visible before they are attached ([#4049](https://github.com/INTENTIUS/chant/issues/4049)). A target with no SBOM source publishes without one, except under the `supply-chain` group, which refuses it with `publish-sbom-missing` ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). An npm package carries its SBOM in the package. An image gets both as OCI referrers, and a forge release gets both as assets. The provenance statement names the release and carries the cut's signature. [SBOMs and provenance](/chant/reference/publish-targets/#sboms-and-provenance) has the details.
+
+## Verifying the staged release
+
+`release.verify` in `chant.config.ts` lists commands the publish runs after every target has staged and before any reveals ([#5157](https://github.com/INTENTIUS/chant/issues/5157)), so the release is tested as a consumer will get it: the image by its digest, the packages under `next`, the assets on the draft.
+
+```ts
+release: {
+  publish: [
+    { type: "npm", packages: ["packages/core", "packages/cli"] },
+    { type: "oci", image: "dist/api.oci.tar", repository: "ghcr.io/acme/api" },
+  ],
+  verify: [
+    "./scripts/pack-install.sh",
+    { name: "conformance", run: "docker run --rm $CHANT_STAGED_IMAGES conformance" },
+  ],
+}
+```
+
+Each entry is a shell command, or `{ name, run }` to give it a name for messages. The commands run in the member's directory, in the order given, with the run's environment and these variables:
+
+| Variable | Value |
+|---|---|
+| `CHANT_RELEASE_LABEL`, `CHANT_RELEASE_DIGEST`, `CHANT_RELEASE_COMMIT` | The release's label, digest and commit |
+| `CHANT_RELEASE_TAG` | The tag the cut made, when the release has one |
+| `CHANT_STAGED` | The path of a JSON file holding the `release`, every staged target (`kind`, `name`, `destination`, its `items` with their digests, and its `state`, such as a draft's `releaseId`) and the `artifacts` the release records, each with its `path` and `digest`, files built on other runners among them. When the publish signs, the stage has already attached each signature and SLSA provenance, so they are among the `items`, each with its `attachment` and the subjects it `signs` |
+| `CHANT_STAGED_NPM` | Each staged npm package as `name@version`, separated by spaces |
+| `CHANT_STAGED_NPM_TAG` | The dist-tag they are staged under, `next` |
+| `CHANT_STAGED_IMAGES` | Each staged image as `repository@sha256:...`, separated by spaces |
+| `CHANT_STAGED_RELEASE_ID`, `CHANT_STAGED_RELEASE_URL` | The first forge target's draft release: its id, and its page on GitHub and Forgejo |
+
+A variable with nothing to name is not set. A command that exits other than 0 stops the publish with `publish-verify-failed`, naming the command and its exit status. Nothing has revealed, so nothing is visible, and the publish record gets a `verify-failed` line. Run the same command again once the problem is fixed: the publish stages nothing again and runs every verify command again before the first reveal. A release that should not go out can stay as it is: what staged is not where a consumer resolves it. Once an earlier run has recorded a reveal, the commands do not run, since they could no longer hold anything back, and the publish says so.
+
+An npm target with `stage: false` has no stage to hold back, so the publish stages it after the verify commands pass, in its turn to reveal, and it is never visible before them. The commands can't see it either, and the publish prints a warning naming it. `CHANT_STAGED_NPM` leaves it out. A marketplace, PyPI or Cargo target has no stage either: its stage only checks, and its reveal uploads after the commands pass. The commands can't see what it publishes, and the same warning names it.
+
+The dry run lists the verify commands after the targets, and its `--json` document has `verify` (`steps`, each `name` and `run`, and `unstaged`, the targets the commands can't see). A publish's `--json` adds `verified`: `passed`, or `skipped` after an earlier run began revealing. A member with no publish target runs no verify command.
+
+With no target declared it makes its checks and prints any warning. It then says that nothing was published and exits 0. The publish steps a component declares (`publish-image`, `publish-artifact`, `publish-asset`, `load-image-on-host`) are deploy steps. They run in each environment's deploy of the release, [`chant components promote --release`](/chant/cli/components/#promoting-a-release), and not here.
+
+The document `--json` gives for a publish holds `dryRun` and the release's digest, label and commit. Beside them sit `signature` (`status`, `actor`, `key`, `reason`, and `gate`, `signed` or `unsigned`), `provenance` (`oidc`, `ci`, `reason`), `signing` (the `identity` the certificate names and the `signer`, or `null` when the publish does not sign), the `warnings`, the `targets` (each `kind`, `name`, `destination`, its `progress` from earlier runs, `none`, `staged` or `revealed`, and its planned `items`), what was `published` (each `target`, `destination` and `items`; empty in a dry run) and the release's `environments`. A dry run adds `next`, and a publish adds `resumed`, the targets an earlier run had staged or revealed, each with its `target` and `step`. The warning is printed on stderr in either form.
+
+| Flag | Meaning |
+|---|---|
+| `--yes` | Publish. Without it the command is a dry run. |
+| `--allow-unsigned` | Under `verified-releases`, publish a release with no signature that verifies, with a warning. Never overrides a `release` gate. Without either it changes nothing. |
+| `--require-provenance` | Refuse a run with no OIDC token. A CI job that must give npm provenance passes it, so a misconfigured job fails instead of publishing without. |
+| `--json` | Print the document described above. |
+
+To publish the releases a [release train](/chant/cli/workspace-train/#publish) pins as one set, each member's packages after the packages they depend on, run `chant workspace train publish <env>` in the workspace root instead. Each member's `release.verify` runs there after the whole train has staged and before the first layer reveals. It records each member's steps in the same publish record, so either command resumes the other.

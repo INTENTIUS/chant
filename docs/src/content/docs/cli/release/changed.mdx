@@ -1,0 +1,32 @@
+---
+title: "chant release changed"
+description: "Lists the members to release at a commit, in publish order, each with why and its bump."
+diataxis: reference
+sidebar:
+  label: "changed"
+---
+
+```
+chant release changed [--at <sha>] [--bump-member <member>=major|minor|patch]... [--json]
+```
+
+Run in the root of a workspace whose `chant` members are released separately, it lists the members a release at a commit has to cut, in the order to publish them. `--at` names the commit; without it the tip of trunk is read, as [`release candidates`](/chant/cli/release/candidates/) walks it.
+
+For each `chant` member the command finds its last release: the newest cut in the member's ledger, else the newest legacy tag. Legacy tags are the prefixes `release.legacyTags` names in the workspace root's `chant.config.ts` or in the member's own, each followed by a version: with `legacyTags: ["release/npm/", "chant-v"]`, `release/npm/0.124.44` and `chant-v0.124.44` count, and `release/npm/core/0.125.0` does not. It lists the paths changed from that commit to `--at` and maps each to the member of the outermost workspace that holds it. That member has the release member's name. Paths that `changes.ignore` matches and generated files count for nothing. A member with paths left, or with no release yet, is `paths-changed`.
+
+Dependencies then pull in more members, until nothing changes. The edges are the `dependencies`, `peerDependencies` and `optionalDependencies` of each member's `package.json` at the commit.
+
+- A member of the release also releases each workspace dependency of it, direct or transitive, that has changes since its own last release (`needed-by <member>`; a changed member no other member needs keeps `paths-changed`).
+- A dependent is added when the range its last release's `package.json` gives a dependency does not admit that dependency's next label (`range-broken-by <member>`). Under `^0.124.34`, a patch of the dependency forces nothing and a minor forces the dependent.
+
+A member that an [intent file](/chant/cli/release/next/#intent-files) names, which no cut of it consumed, is in the release too (`intent-pending`), when no path of its own changed. Its next label is the last label bumped by the highest of its commits over the changed paths, classified as [`release next`](/chant/cli/release/next/) does (with the same step down on `0.x` under `release.breakingOnZero`), and its pending intent files, a patch when neither gives one. `--bump-member` sets a member's level outright.
+
+```
+chant release changed --bump-member core=minor
+layer 0  core  0.124.44 -> 0.125.0  (paths-changed)
+layer 1  lexicon-aws  0.124.44 -> 0.124.45  (range-broken-by core)
+```
+
+Members come in dependency layers: a member publishes after every member of the release it depends on, and layer 0 needs none. Within a layer they are sorted by name. A commit range that touches only `lexicons/aws/` lists `lexicon-aws`, and `core` only when core has changes of its own since its last release.
+
+`--json` prints a [read contract](/chant/reference/workspace-read-contract/) document, `release-changed.schema.json`, a read contract at version 1, written by chant 0.124.100 and newer. Each member has `member`, `layer`, `reason` (`{ code, member }`, with `code` one of `paths-changed`, `needed-by`, `range-broken-by` and `intent-pending`), `last` (`{ label, commit, source }`, or `null`), `bump`, `bumpFrom` (`flag`, `commits`, `intents`, or `default` for a patch neither gave), `next`, `paths` and `intents`, the paths of its pending intent files. A failure exits 1 with `not-a-git-repository`, `declaration-missing`, `revision-unknown`, `bump-invalid`, `ledger-unreadable` or `intent-invalid`, an intent file that can't be read or that names a member the declaration does not have. The read uses local refs and tags and never fetches.

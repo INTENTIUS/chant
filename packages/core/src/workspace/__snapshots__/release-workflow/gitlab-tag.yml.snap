@@ -1,0 +1,413 @@
+# ==== minimal ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== no install, no build ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== member root ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - cd packages/app
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== supply-chain ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --require-provenance --yes
+
+# ==== verified-releases ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release verify "${CI_COMMIT_TAG#release/}"
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== doctor on ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npx chant release doctor
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== doctor off ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== version ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npx chant release stamp "${CI_COMMIT_TAG#release/}"
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== images ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release images "${CI_COMMIT_TAG#release/}" -o "/tmp/chant-release-digests.json"
+    - export CHANT_RELEASE_DIGESTS="/tmp/chant-release-digests.json"
+    - npm run build
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== images with archives and platforms ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release images "${CI_COMMIT_TAG#release/}" -o "/tmp/chant-release-digests.json"
+    - export CHANT_RELEASE_DIGESTS="/tmp/chant-release-digests.json"
+    - npm run build
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== artifacts ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release artifacts "${CI_COMMIT_TAG#release/}"
+    - npm run build
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== artifacts with goreleaser ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release artifacts "${CI_COMMIT_TAG#release/}"
+    - npm run build
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== signing ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - curl -fsSL -o "/tmp/cosign" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign" | sha256sum -c - && chmod +x "/tmp/cosign" && export CHANT_COSIGN=/tmp/cosign
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== signing with doctor off ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - curl -fsSL -o "/tmp/cosign" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign" | sha256sum -c - && chmod +x "/tmp/cosign" && export CHANT_COSIGN=/tmp/cosign
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== lane ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== gate head ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== green forge-checks ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== green none ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== after ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+chant-release-after:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  needs: [chant-release-publish]
+  script:
+    - export CHANT_RELEASE_LABEL="${CI_COMMIT_TAG#release/}"
+    - npm ci
+    - npm run announce
+    - echo done
+
+# ==== env and setup ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  variables:
+    OCI_USERNAME: "bot"
+  script:
+    - npm ci
+    - echo setup
+    - export A="1"
+    - echo named
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== permissions ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== targets ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== toolchains ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== toolchains off ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== builds ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== everything ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  variables:
+    EXTRA: "1"
+  script:
+    - cd packages/app
+    - npm ci
+    - docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+    - echo setup
+    - curl -fsSL -o "/tmp/cosign" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign" | sha256sum -c - && chmod +x "/tmp/cosign" && export CHANT_COSIGN=/tmp/cosign
+    - npx chant release doctor
+    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - npx chant release stamp "${CI_COMMIT_TAG#release/}"
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release images "${CI_COMMIT_TAG#release/}" -o "/tmp/chant-release-digests.json"
+    - export CHANT_RELEASE_DIGESTS="/tmp/chant-release-digests.json"
+    - npx chant release artifacts "${CI_COMMIT_TAG#release/}"
+    - npm run build
+    - npx chant release verify "${CI_COMMIT_TAG#release/}"
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --require-provenance --yes
+
+chant-release-after:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  needs: [chant-release-publish]
+  script:
+    - export CHANT_RELEASE_LABEL="${CI_COMMIT_TAG#release/}"
+    - cd packages/app
+    - npm ci
+    - echo after

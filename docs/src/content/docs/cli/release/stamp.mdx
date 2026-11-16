@@ -1,0 +1,18 @@
+---
+title: "chant release stamp"
+description: "Writes the label as the version of the manifests release.version names, as the cut does before its build."
+diataxis: reference
+sidebar:
+  label: "stamp"
+---
+
+Writes the label as the `version` of each `package.json` that `release.version` names, into the lockfile's entries for them, and into each of its `files`, as the cut does before its build ([#4840](https://github.com/INTENTIUS/chant/issues/4840)). It leaves the files stamped. The publish job runs it before its build, and `chant release publish` takes the stamped files as the commit's. `git checkout -- <files>` puts them back on a workstation.
+
+```bash
+chant release stamp 1.4.0   # Stamped 1.4.0 into packages/cli/package.json, package-lock.json
+chant release stamp 1.4.0   # Stamped 1.4.0 into Cargo.toml, Cargo.lock, charts/acme/Chart.yaml
+```
+
+With `ranges` set, the workspace dependencies' ranges follow the label too. `--train <id|digest>` gives a `ranges: "train"` member the labels of the other members' packages from a recorded train (see [Workspace dependency ranges](/chant/cli/release/cut/#workspace-dependency-ranges)).
+
+It refuses a member with no `release.version` (`release-version-not-declared`), and the label, package and file problems the cut refuses.

@@ -384,7 +384,15 @@ export default defineConfig({
 								{ label: 'change-set', slug: 'cli/change-set' },
 								{ label: 'ci', slug: 'cli/ci' },
 								{ label: 'lock', slug: 'cli/lock' },
-								{ label: 'release', slug: 'cli/release' },
+								{
+									label: 'release',
+									collapsed: true,
+									items: [
+										{ label: 'Overview', slug: 'cli/release' },
+										// One page per subcommand (#5196): a new page in cli/release/ is listed with no edit here.
+										{ label: 'Subcommands', autogenerate: { directory: 'cli/release' } },
+									],
+								},
 								{ label: 'audit', slug: 'cli/audit' },
 								{ label: 'migrate', slug: 'cli/migrate' },
 								{ label: 'update', slug: 'cli/update' },

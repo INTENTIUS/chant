@@ -78,7 +78,7 @@ The value must have the parameter's type and fit its `enum`, as a value from any
 
 ## Build with it
 
-`chant build --env <env>` in the member resolves the parameter from the flag and keeps it on `BuildResult.buildParams` with `source: "flag:<id>"`. `chant run --components --env <env>` does the same, and so does each environment a [release cut](/chant/cli/release/#release-cut) compiles. A build with no `--env` reads none of them, and neither does a project outside a workspace.
+`chant build --env <env>` in the member resolves the parameter from the flag and keeps it on `BuildResult.buildParams` with `source: "flag:<id>"`. `chant run --components --env <env>` does the same, and so does each environment a [release cut](/chant/cli/release/cut/) compiles. A build with no `--env` reads none of them, and neither does a project outside a workspace.
 
 | Source | Where it sits |
 |---|---|

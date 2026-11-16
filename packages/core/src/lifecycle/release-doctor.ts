@@ -51,6 +51,10 @@ import type {
   TauriUpdaterPublishDeclaration,
 } from "./publish-declaration";
 import type { PublishFetch } from "./release-publish";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant with `chant release doctor`, which checks each `release.publish` target before a cut, and whose `chant release workflow` runs it in a dispatched release's cut job (`release.workflow.doctor`) (#5161). */
+export const RELEASE_DOCTOR_FLOOR = NEXT_RELEASE;
 
 export type DoctorStatus = "ok" | "warn" | "fail" | "unknown";
 

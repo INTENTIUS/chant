@@ -1,0 +1,16 @@
+---
+title: "chant release artifacts"
+description: "Builds the files release.artifacts declares again from the release's commit, or checks those on disk, against the digests the release records."
+diataxis: reference
+sidebar:
+  label: "artifacts"
+---
+
+Checks the files `release.artifacts` declares against the digests the release records, from the release's commit checked out here ([#5151](https://github.com/INTENTIUS/chant/issues/5151)). With no flag it builds them again, as the cut did; an entry with no `build` is checked as it is found. `--no-build` checks the files on disk, and `--from <dir>` first copies them from a directory where a cut job staged them. `-o <dir>` then stages the checked files in `<dir>` at their paths in the member, for the next job.
+
+```bash
+chant release artifacts v1.4.0 --no-build -o "$RUNNER_TEMP/chant-release-artifacts"   # in the cut job
+chant release artifacts v1.4.0 --from "$RUNNER_TEMP/chant-release-artifacts"          # in the publish job
+```
+
+It refuses a checkout at another commit (`release-artifacts-wrong-commit`), a member with no `release.artifacts` (`release-artifacts-not-declared`), an entry the release does not record (`release-artifact-not-recorded`), a file that is not there (`release-artifact-missing`), and a file whose digest is not the recorded one, or a build that writes a file the release does not record (`release-artifact-digest-mismatch`). `--json` prints `releaseDigest`, `label`, `files` (each `name`, `path` and `digest`) and `staged`.
