@@ -8,8 +8,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -18,6 +17,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -41,6 +42,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -66,6 +69,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -93,8 +99,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -103,6 +108,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -125,6 +132,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -149,6 +158,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -174,8 +186,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -184,6 +195,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: packages/app
@@ -210,6 +223,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: packages/app
@@ -238,6 +253,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: packages/app
@@ -268,8 +286,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -278,6 +295,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -301,6 +320,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -326,6 +347,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -353,8 +377,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -363,6 +386,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -386,6 +411,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -411,6 +438,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -439,8 +469,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -449,6 +478,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -472,6 +503,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -497,6 +530,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -524,8 +560,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -534,6 +569,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -557,6 +594,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -581,6 +620,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -608,8 +650,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -618,6 +659,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -641,6 +684,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -666,6 +711,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -694,8 +742,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -704,6 +751,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -727,6 +776,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -752,6 +803,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -781,8 +835,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -791,6 +844,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -814,6 +869,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -850,6 +907,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -886,8 +946,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -896,6 +955,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -919,6 +980,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -951,6 +1014,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -983,8 +1049,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -993,6 +1058,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1016,6 +1083,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1053,6 +1122,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1085,8 +1157,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1095,6 +1166,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1118,6 +1191,9 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1145,6 +1221,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1174,8 +1253,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1184,6 +1262,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1207,6 +1287,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1233,6 +1315,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1262,8 +1347,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1272,6 +1356,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1295,6 +1381,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1320,6 +1408,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1347,8 +1438,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1357,6 +1447,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1381,6 +1473,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1406,6 +1500,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1433,8 +1530,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1443,6 +1539,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1465,6 +1563,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1491,6 +1591,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1518,8 +1621,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1528,6 +1630,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1550,6 +1654,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1575,6 +1681,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1602,8 +1711,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1612,6 +1720,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1635,6 +1745,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1660,6 +1772,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1679,6 +1794,8 @@ jobs:
   after-release:
     needs: [gate, publish]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1704,8 +1821,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1714,6 +1830,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1737,6 +1855,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1768,6 +1888,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
       OCI_USERNAME: "bot"
@@ -1801,9 +1924,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
-  packages: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1812,6 +1933,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1835,6 +1958,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1860,6 +1985,10 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1887,8 +2016,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1897,6 +2025,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -1920,6 +2050,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -1945,6 +2077,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -1972,8 +2107,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1982,6 +2116,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -2005,6 +2141,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -2034,6 +2172,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -2065,8 +2206,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -2075,6 +2215,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -2094,6 +2236,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -2115,6 +2259,9 @@ jobs:
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -2138,8 +2285,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -2148,6 +2294,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
       label: ${{ steps.green.outputs.label }}
@@ -2229,6 +2377,8 @@ jobs:
   cut:
     needs: [gate, build-arm, build-mac]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -2264,6 +2414,9 @@ jobs:
   publish:
     needs: [gate, cut, build-arm, build-mac]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
     steps:
@@ -2301,8 +2454,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -2311,6 +2463,8 @@ env:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: packages/app
@@ -2366,6 +2520,9 @@ jobs:
   cut:
     needs: [gate, build-arm]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: packages/app
@@ -2426,6 +2583,9 @@ jobs:
   publish:
     needs: [gate, cut, build-arm]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: packages/app
@@ -2473,6 +2633,8 @@ jobs:
   after-release:
     needs: [gate, publish]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: packages/app

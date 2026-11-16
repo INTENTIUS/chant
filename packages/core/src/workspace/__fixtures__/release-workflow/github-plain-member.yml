@@ -3,11 +3,13 @@ on:
   push:
     tags: ["release/**"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: packages/app

@@ -49,7 +49,7 @@ describe("a config with only publish (#4656)", () => {
   });
 });
 
-type GhJob = { needs?: string | string[]; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
+type GhJob = { needs?: string | string[]; permissions?: Record<string, string>; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
 type GhDoc = { on: Record<string, unknown>; env?: Record<string, string>; permissions?: Record<string, string>; jobs: Record<string, GhJob> };
 const runs = (job: GhJob): string[] => job.steps.filter((s) => s.run).map((s) => s.run!.trim());
 
@@ -202,7 +202,10 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
 
   test("github: the scope joins the workflow's, and the cut and publish jobs get the variables and the steps after the install", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, pipeline })) as GhDoc;
-    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(doc.jobs.publish!.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
+    expect(doc.jobs.cut!.permissions).toEqual({ contents: "write" });
+    expect(doc.jobs.gate!.permissions).toEqual({ contents: "read" });
     expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
     expect(doc.jobs.publish!.env).toEqual({ CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
     expect(doc.jobs.gate!.env).toBeUndefined();
@@ -217,7 +220,8 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
 
   test("the tag trigger's publish job takes them too", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { ...pipeline, trigger: "tag" } })) as GhDoc;
-    expect(doc.permissions!.packages).toBe("write");
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(doc.jobs.publish!.permissions!.packages).toBe("write");
     expect(doc.jobs.publish!.env).toEqual(pipeline.env);
     expect(doc.jobs.publish!.steps.some((s) => s.uses?.startsWith("docker/setup-qemu-action@"))).toBe(true);
   });
@@ -478,7 +482,7 @@ describe("GHCR credentials and npm trusted publishing from the targets (#4786)",
 
   test("an oci target on ghcr.io with no credentials named: packages: write, and the job token as OCI_USERNAME and OCI_PASSWORD in the cut and the publish", () => {
     const doc = parseYAML(render([ghcr])) as GhDoc;
-    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
+    expect(doc.jobs.publish!.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
     for (const job of ["cut", "publish"]) {
       expect(doc.jobs[job]!.env, job).toMatchObject({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" });
     }
@@ -487,7 +491,7 @@ describe("GHCR credentials and npm trusted publishing from the targets (#4786)",
 
   test("an npm target on npmjs: the cut and the publish upgrade npm after the install when the runner's is older than trusted publishing needs", () => {
     const doc = parseYAML(render([npm])) as GhDoc;
-    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write" });
+    expect(doc.jobs.publish!.permissions).toEqual({ contents: "write", "id-token": "write" });
     for (const job of ["cut", "publish"]) {
       const r = runs(doc.jobs[job]!);
       expect(r[r.indexOf("npm ci") + 1], job).toBe(NPM_TRUSTED_PUBLISHING_SETUP);
@@ -515,7 +519,7 @@ describe("GHCR credentials and npm trusted publishing from the targets (#4786)",
     expect(own.jobs.publish!.env).toMatchObject({ OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ secrets.GHCR }}" });
     // A tag-triggered workflow reads the targets the same way.
     const tagged = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), publish: [ghcr, npm] })) as GhDoc;
-    expect(tagged.permissions?.packages).toBe("write");
+    expect(tagged.jobs.publish!.permissions?.packages).toBe("write");
     expect(runs(tagged.jobs.publish!)).toContain(NPM_TRUSTED_PUBLISHING_SETUP);
   });
 });
@@ -613,14 +617,17 @@ describe("release-only adoption (#5149)", () => {
     const green = doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!;
     expect(green).toContain('commit="$GITHUB_SHA"');
     expect(green).not.toContain("ci last-green");
-    expect(doc.permissions).toEqual({ contents: "write", "id-token": "write", checks: "read", statuses: "read" });
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(doc.jobs.cut!.permissions).toEqual({ contents: "write", checks: "read", statuses: "read" });
+    expect(doc.jobs.gate!.permissions).toEqual({ contents: "read" });
     expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
   });
 
   test("none: the gate names the dispatched commit and no scope or token is added; the chant gate renders as before", () => {
     const none = parseYAML(dispatch("github", { green: "none" })) as GhDoc;
     expect(none.jobs.gate!.steps.find((s) => s.id === "green")!.run!).not.toContain("ci last-green");
-    expect(none.permissions).toEqual({ contents: "write", "id-token": "write" });
+    expect(none.permissions).toEqual({ contents: "read" });
+    expect(none.jobs.cut!.permissions).toEqual({ contents: "write" });
     expect(none.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}" });
     expect(dispatch("github", { green: "chant" })).toBe(dispatch("github"));
   });
@@ -642,7 +649,7 @@ describe("release-only adoption (#5149)", () => {
       expect(await runReleaseWorkflow({ args: { forge: "github", output: join(root, "release.yml") } } as unknown as CommandContext)).toBe(0);
       const doc = parseYAML(readFileSync(join(root, "release.yml"), "utf-8")) as GhDoc;
       expect(doc.jobs.gate!.steps.find((s) => s.id === "green")!.run!).toContain('commit="$GITHUB_SHA"');
-      expect(doc.permissions?.checks).toBe("read");
+      expect(doc.jobs.cut!.permissions?.checks).toBe("read");
       expect(runs(doc.jobs.publish!)).toContain('npx chant release publish "$CHANT_RELEASE_LABEL" --yes');
       // #5161: the doctor checks the artifact release's targets before the cut.
       expect(runs(doc.jobs.cut!).some((r) => r.endsWith(" release doctor"))).toBe(true);
@@ -930,7 +937,7 @@ describe("release doctor in the workflow (#5161)", () => {
   test("under forge-checks with a GitHub forge target, the cut job gets GITHUB_TOKEN once, and the doctor runs with it", () => {
     const doc = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge })) as GhDoc;
     expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
-    expect(doc.permissions).toMatchObject({ checks: "read", statuses: "read" });
+    expect(doc.jobs.cut!.permissions).toMatchObject({ checks: "read", statuses: "read" });
     expect(runs(doc.jobs.cut!)).toContain("npx chant release doctor");
     // doctor: false keeps forge-checks' token and drops nothing else.
     const off = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge, pipeline: { trigger: "dispatch", doctor: false } })) as GhDoc;

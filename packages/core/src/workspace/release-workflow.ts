@@ -427,12 +427,11 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     "  push:",
     '    tags: ["release/**"]',
     "permissions:",
-    "  contents: write",
-    "  id-token: write",
-    ...extra.permissions,
+    "  contents: read",
     "jobs:",
     "  publish:",
     "    runs-on: ubuntu-latest",
+    ...jobPermissions(extra, { contents: "write", "id-token": "write" }, "publish"),
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     ...extra.githubEnv(forgeToken),
     "    steps:",
@@ -453,6 +452,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       "  after-release:",
       "    needs: publish",
       "    runs-on: ubuntu-latest",
+      ...jobPermissions(extra, { contents: "read" }, "after"),
       ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
       "    steps:",
       ...githubSetup(undefined, fullSetup),
@@ -573,12 +573,11 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     "  push:",
     `    tags: [${filters.globs.map((g) => JSON.stringify(g)).join(", ")}]`,
     "permissions:",
-    "  contents: write",
-    "  id-token: write",
-    ...extra.permissions,
+    "  contents: read",
     "jobs:",
     "  publish:",
     "    runs-on: ubuntu-latest",
+    ...jobPermissions(extra, { contents: "write", "id-token": "write" }, "publish"),
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     ...(after.length > 0 ? ["    outputs:", "      label: ${{ steps.label.outputs.label }}"] : []),
     ...extra.githubEnv(forgeToken),
@@ -604,6 +603,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
       "  after-release:",
       "    needs: publish",
       "    runs-on: ubuntu-latest",
+      ...jobPermissions(extra, { contents: "read" }, "after"),
       ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
       "    env:",
       "      CHANT_RELEASE_LABEL: ${{ needs.publish.outputs.label }}",
@@ -617,8 +617,8 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
 }
 
 export interface JobExtras {
-  /** Lines added under the workflow's `permissions:`. */
-  permissions: string[];
+  /** The scopes the config and the targets add, which the jobs that need them take (#5234). */
+  permissions: Array<[string, string]>;
   /** The job's `env:` block with `base` entries first, or nothing when there is neither. */
   githubEnv: (base: string[]) => string[];
   /** Steps after the install. */
@@ -627,6 +627,24 @@ export interface JobExtras {
   gitlabVariables: string[];
   /** GitLab: script lines after the install. */
   gitlabScript: string[];
+}
+
+/**
+ * A job's `permissions:` block (#5234): the scopes it needs, then the config's
+ * and targets' extras it takes, one per line at the job's indent. The workflow
+ * itself grants `contents: read`, so no job holds a scope it does not name.
+ * The cut never takes `packages` (the publish pushes the images), and the
+ * extras the config set by hand go to both.
+ */
+export function jobPermissions(extra: Pick<JobExtras, "permissions">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
+  const scopes: Record<string, string> = { ...base };
+  if (job === "cut" || job === "publish") {
+    for (const [k, v] of extra.permissions) {
+      if (job === "cut" && k === "packages") continue;
+      scopes[k] = v;
+    }
+  }
+  return [`${indent}permissions:`, ...Object.entries(scopes).map(([k, v]) => `${indent}  ${k}: ${v}`)];
 }
 
 /** `release.workflow`'s `permissions`, `env` and `setup` (#4751) as lines of the forge's file. Empty for a config without them, so its file is what it was. */
@@ -658,7 +676,7 @@ export function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge)
     ...(s.env && Object.keys(s.env).length > 0 ? ["        env:", ...map("          ", Object.entries(s.env))] : []),
   ]);
   return {
-    permissions: permissions.map(([k, v]) => `  ${k}: ${v}`),
+    permissions,
     githubEnv: (base) => (base.length + env.length > 0 ? ["    env:", ...base, ...map("      ", env)] : []),
     githubSteps,
     gitlabVariables: map("    ", env),
@@ -844,9 +862,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "        required: true",
     "        type: string",
     "permissions:",
-    "  contents: write",
-    "  id-token: write",
-    ...o.extra.permissions,
+    "  contents: read",
     "concurrency:",
     "  group: chant-release",
     "  cancel-in-progress: false",
@@ -855,6 +871,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "jobs:",
     "  gate:",
     "    runs-on: ubuntu-latest",
+    ...jobPermissions(o.extra, { contents: "read" }, "gate"),
     ...defaults,
     "    outputs:",
     "      commit: ${{ steps.green.outputs.commit }}",
@@ -870,6 +887,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "  cut:",
     `    needs: ${built.length > 0 ? `[gate, ${built.join(", ")}]` : "gate"}`,
     "    runs-on: ubuntu-latest",
+    ...jobPermissions(o.extra, { contents: "write", ...(o.context.signing && o.context.doctor ? { "id-token": "write" } : {}) }, "cut"),
     ...defaults,
     ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...cutEnvToken(o)]),
     "    steps:",
@@ -885,6 +903,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "  publish:",
     `    needs: [gate, cut${built.map((b) => `, ${b}`).join("")}]`,
     "    runs-on: ubuntu-latest",
+    ...jobPermissions(o.extra, { contents: "write", "id-token": "write" }, "publish"),
     ...defaults,
     ...o.extra.githubEnv([`      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...o.forgeToken]),
     "    steps:",
@@ -900,7 +919,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
   ];
   if (o.after.length > 0) {
-    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
+    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...jobPermissions(o.extra, { contents: "read" }, "after"), ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
   }
   return tagComments(`${lines.join("\n")}\n`);
 }

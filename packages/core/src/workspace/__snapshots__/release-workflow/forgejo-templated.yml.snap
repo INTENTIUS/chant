@@ -4,11 +4,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -35,11 +37,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -64,11 +68,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: packages/app
@@ -98,11 +104,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -129,11 +137,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -161,11 +171,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -193,11 +205,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -224,11 +238,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -256,11 +272,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -289,11 +307,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -325,11 +345,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -357,11 +379,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -394,11 +418,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -427,11 +453,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -460,11 +488,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -491,11 +521,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -522,11 +554,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -553,11 +587,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -584,11 +620,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     outputs:
       label: ${{ steps.label.outputs.label }}
     steps:
@@ -613,6 +651,8 @@ jobs:
   after-release:
     needs: publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       CHANT_RELEASE_LABEL: ${{ needs.publish.outputs.label }}
     steps:
@@ -633,11 +673,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       OCI_USERNAME: "bot"
     steps:
@@ -671,12 +713,14 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
-  packages: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -703,11 +747,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -734,11 +780,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -769,11 +817,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -796,11 +846,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -827,11 +879,13 @@ on:
   push:
     tags: ["v*", "!v[0-9]+"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: packages/app
@@ -878,6 +932,8 @@ jobs:
   after-release:
     needs: publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: packages/app
