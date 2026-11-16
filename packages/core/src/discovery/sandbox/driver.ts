@@ -35,7 +35,7 @@ import { chantModule, chantSourceDir } from "../../ts-loader";
 const HERE = chantSourceDir(import.meta.url);
 const DISCOVERY_DIR = join(HERE, "..");
 
-/** Absolute paths to chant's OWN trusted modules the generated driver imports — always resolved relative to THIS file's own location on disk, so this works whether chant is running from the monorepo or from a consumer's `node_modules` (both route runtime resolution at `src/*.ts` — see `packages/core/package.json`'s `development`/`default` export conditions). */
+/** Absolute paths to chant's OWN trusted modules the generated driver imports — always resolved relative to THIS file's own location on disk, so this works whether chant is running from the monorepo or from a consumer's `node_modules` (both route runtime resolution at `src/*.ts` — see `packages/core/package.json`'s `@intentius/chant-source`/`default` export conditions). */
 const COLLECT_MODULE = chantModule(join(DISCOVERY_DIR, "collect.ts"));
 const RESOLVE_MODULE = chantModule(join(DISCOVERY_DIR, "resolve.ts"));
 // The pure codec, NOT `entity-wire.ts` — that file also exports

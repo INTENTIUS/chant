@@ -117,7 +117,7 @@ describe("scripts/floor-table.ts (#4792)", () => {
       "lexicons/x/src/thing/index.ts": 'export { X_THING_FLOOR } from "../chant-floors";\nexport const thing = 1;\n',
       "lexicons/x/src/tool.ts": 'export const TOOL_FLOOR = "3.89.0";\n',
     };
-    const pkg = { src: "lexicons/x/src/", name: "@intentius/chant-lexicon-x", exports: { "./*": { development: "./src/*.ts", default: "./dist/*.js" }, "./thing": { development: "./src/thing/index.ts", default: "./dist/thing/index.js" } } };
+    const pkg = { src: "lexicons/x/src/", name: "@intentius/chant-lexicon-x", exports: { "./*": { "@intentius/chant-source": "./src/*.ts", default: "./dist/*.js" }, "./thing": { "@intentius/chant-source": "./src/thing/index.ts", default: "./dist/thing/index.js" } } };
     const rows = floorRows(Object.keys(lex), (f) => lex[f]!, { "./*": "./src/*.ts" }, [pkg]);
     const x = rows.find((r) => r.name === "X_THING_FLOOR")!;
     expect([x.version, x.issue, x.file, x.modules]).toEqual(["0.124.55", "#4599", "lexicons/x/src/chant-floors.ts", ["@intentius/chant-lexicon-x/chant-floors", "@intentius/chant-lexicon-x/thing", "@intentius/chant-lexicon-x/thing/index"]]);

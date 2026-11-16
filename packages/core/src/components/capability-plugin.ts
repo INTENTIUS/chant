@@ -151,7 +151,7 @@ export function isCapabilityPlugin(value: unknown): value is CapabilityPlugin {
  * on every `just release` — the aws plugin shipped `"1.0.0"` from the day it
  * was extracted from the starter set (#681), and the k8s plugin's authoring-
  * time `"0.41.0"` was stale one release later. Walking up from the module's
- * own URL survives both the `src/` (development condition) and `dist/`
+ * own URL survives both the `src/` (@intentius/chant-source condition) and `dist/`
  * layouts, and an npm install, without any build-time stamping.
  *
  * Returns `"0.0.0"` when no versioned `package.json` is found — a visible

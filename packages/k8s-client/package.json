@@ -28,12 +28,12 @@
   },
   "exports": {
     ".": {
-      "development": "./src/index.ts",
+      "@intentius/chant-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
     "./testing": {
-      "development": "./src/testing.ts",
+      "@intentius/chant-source": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
       "default": "./src/testing.ts"
     }

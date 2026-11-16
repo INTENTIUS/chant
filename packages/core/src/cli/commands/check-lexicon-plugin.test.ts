@@ -55,9 +55,9 @@ describe("pluginEntryFor", () => {
     expect(pluginEntryFor(dir)).toBe(join(dir, "src/plugin.ts"));
   });
 
-  test("prefers the development source over the compiled default (#3981)", () => {
+  test("prefers the @intentius/chant-source source over the compiled default (#3981)", () => {
     const dir = lexiconDir({
-      "package.json": JSON.stringify({ exports: { ".": { development: "./src/index.ts", default: "./dist/index.js" } } }),
+      "package.json": JSON.stringify({ exports: { ".": { "@intentius/chant-source": "./src/index.ts", default: "./dist/index.js" } } }),
       "src/index.ts": "",
       "dist/index.js": "",
     });

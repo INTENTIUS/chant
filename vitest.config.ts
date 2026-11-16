@@ -1,5 +1,6 @@
 import { cpus, totalmem } from "node:os";
 import { configDefaults, defineConfig } from "vitest/config";
+import { defaultClientConditions, defaultServerConditions } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 /**
@@ -172,6 +173,12 @@ export const E2E_INCLUDE = [
 
 export default defineConfig({
   plugins: [tsconfigPaths({ ignoreConfigErrors: true })],
+  // The packages' `exports` name `src/*.ts` under `@intentius/chant-source`, a
+  // condition no tool sets by default, so only this repository resolves source
+  // (#5130 left `development` on src/, which an installed package lacks).
+  // The names Vite adds on its own come after it.
+  resolve: { conditions: ["@intentius/chant-source", ...defaultClientConditions] },
+  ssr: { resolve: { conditions: ["@intentius/chant-source", ...defaultServerConditions] } },
   test: {
     // chant #1419 — a fresh clone has no lexicon src/generated/ or
     // dist/meta.json, and lexicon tests fail against their absence with

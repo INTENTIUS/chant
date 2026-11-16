@@ -276,9 +276,9 @@ describe("scaffold content validation", () => {
   // #2090, the scaffolded package.json failed tier 1 as generated: a bare
   // string exports["."] and a prepack that never bundled, so
   // dist/manifest.json never existed. #3981 — the package ships compiled JS.
-  test("package.json exports[\".\"] is development src, default dist JS, build keeps JS, prepack bundles (#2090, #3981)", () => {
+  test("package.json exports[\".\"] is @intentius/chant-source src, default dist JS, build keeps JS, prepack bundles (#2090, #3981)", () => {
     const pkg = JSON.parse(readFileSync(join(targetDir, "package.json"), "utf-8"));
-    expect(pkg.exports["."].development).toBe("./src/index.ts");
+    expect(pkg.exports["."]["@intentius/chant-source"]).toBe("./src/index.ts");
     expect(pkg.exports["."].default).toBe("./dist/index.js");
     expect(pkg.exports["./*"].default).toBe("./dist/*.js");
     expect(pkg.scripts.build).not.toContain("-delete");
@@ -286,10 +286,10 @@ describe("scaffold content validation", () => {
     expect(pkg.scripts.prepack).toContain("npm run build");
   });
 
-  test("tsconfig.build.json uses bundler resolution + the development condition (#749)", () => {
+  test("tsconfig.build.json uses bundler resolution + the @intentius/chant-source condition (#749)", () => {
     const cfg = JSON.parse(readFileSync(join(targetDir, "tsconfig.build.json"), "utf-8"));
     expect(cfg.compilerOptions.moduleResolution).toBe("bundler");
-    expect(cfg.compilerOptions.customConditions).toContain("development");
+    expect(cfg.compilerOptions.customConditions).toContain("@intentius/chant-source");
   });
 
   test("spec/fetch.ts matches fetchWithCache(config, force) → Map<string, Buffer> (#749)", () => {

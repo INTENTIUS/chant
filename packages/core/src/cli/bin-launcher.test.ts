@@ -7,7 +7,7 @@
  * - an installed package (dist/cli/main.js, no tsconfig.build.json), where
  *   the CLI runs in the launcher's own process (#3878);
  * - a source checkout (tsconfig.build.json), where the CLI is src/cli/main.ts
- *   in a second node under tsx's loader and `--conditions=development`
+ *   in a second node under tsx's loader and `--conditions=@intentius/chant-source`
  *   (#3981, #2481).
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -150,7 +150,7 @@ describe("bin/chant, installed package", () => {
 });
 
 describe("bin/chant, source checkout", () => {
-  test("runs src/cli/main.ts in a second node under tsx's loader and the development condition", () => {
+  test("runs src/cli/main.ts in a second node under tsx's loader and the @intentius/chant-source condition", () => {
     const { bin, main, loader } = source();
     const r = launch(bin, ["0", "with space", "--flag=a b"]);
     expect(r.stderr).toBe("");
@@ -158,7 +158,7 @@ describe("bin/chant, source checkout", () => {
     expect(r.report?.pid).not.toBe(r.pid);
     expect(r.report?.argv1).toBe(main);
     expect(r.report?.args).toEqual(["0", "with space", "--flag=a b"]);
-    expect(r.report?.execArgv).toEqual(["--conditions=development", "--import", pathToFileURL(loader).href]);
+    expect(r.report?.execArgv).toEqual(["--conditions=@intentius/chant-source", "--import", pathToFileURL(loader).href]);
     expect(r.report?.loader).toBe(true);
   });
 
@@ -166,7 +166,7 @@ describe("bin/chant, source checkout", () => {
     const { bin, loader } = source(REPORTER, "hoisted");
     const r = launch(bin, ["0"]);
     expect(r.status).toBe(0);
-    expect(r.report?.execArgv).toEqual(["--conditions=development", "--import", pathToFileURL(loader).href]);
+    expect(r.report?.execArgv).toEqual(["--conditions=@intentius/chant-source", "--import", pathToFileURL(loader).href]);
   });
 
   test("exits with the CLI's code", () => {

@@ -54,13 +54,13 @@ function runFromSource() {
   ].find((candidate) => existsSync(candidate));
 
   if (loader) {
-    relay(process.execPath, ["--conditions=development", "--import", pathToFileURL(loader).href, mainTs, ...args]);
+    relay(process.execPath, ["--conditions=@intentius/chant-source", "--import", pathToFileURL(loader).href, mainTs, ...args]);
   } else if (process.platform === "win32") {
     // npx is npx.cmd on Windows, which node starts only through a shell.
     const quote = (arg) => (/^[\w./:=@\\-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`);
-    relay("npx", ["tsx", "--conditions=development", mainTs, ...args].map(quote), { shell: true });
+    relay("npx", ["tsx", "--conditions=@intentius/chant-source", mainTs, ...args].map(quote), { shell: true });
   } else {
-    relay("npx", ["tsx", "--conditions=development", mainTs, ...args]);
+    relay("npx", ["tsx", "--conditions=@intentius/chant-source", mainTs, ...args]);
   }
 }
 

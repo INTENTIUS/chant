@@ -38,9 +38,9 @@ export interface LoadedLexicon {
 /**
  * The module a lexicon package presents to consumers, as its source.
  *
- * Tier 1 requires `exports["."].development` to be `./src/index.ts` and
+ * Tier 1 requires `exports["."]["@intentius/chant-source"]` to be `./src/index.ts` and
  * `default` to be its compiled `./dist/index.js` (#3981). The check reads the
- * lexicon's source, so `development` is the first choice: a `dist/` may be
+ * lexicon's source, so `@intentius/chant-source` is the first choice: a `dist/` may be
  * missing or older than the source. `default` and `main` come next, and the
  * conventional paths keep this usable on a lexicon that has not reached that
  * check yet.
@@ -49,10 +49,10 @@ export function pluginEntryFor(dir: string): string | undefined {
   const candidates: string[] = [];
   try {
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as {
-      exports?: { "."?: { development?: string; default?: string } };
+      exports?: { "."?: { "@intentius/chant-source"?: string; default?: string } };
       main?: string;
     };
-    for (const declared of [pkg.exports?.["."]?.development, pkg.exports?.["."]?.default, pkg.main]) {
+    for (const declared of [pkg.exports?.["."]?.["@intentius/chant-source"], pkg.exports?.["."]?.default, pkg.main]) {
       if (typeof declared === "string") candidates.push(declared);
     }
   } catch {

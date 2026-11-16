@@ -278,7 +278,7 @@ function lexiconEntry(lexiconDir: string): string | null {
     if (typeof root === "string") rel = root;
     else if (root && typeof root === "object") {
       const conds = root as Record<string, unknown>;
-      rel = conds.development ?? conds.default ?? conds.import ?? rel;
+      rel = conds["@intentius/chant-source"] ?? conds.default ?? conds.import ?? rel;
     }
     if (typeof rel !== "string") return null;
     const abs = resolve(lexiconDir, rel);

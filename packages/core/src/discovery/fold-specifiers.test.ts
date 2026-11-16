@@ -188,10 +188,10 @@ describe("packageExportsTarget (chant#3090)", () => {
     expect(packageExportsTarget("./index.js", "./sub")).toBeUndefined();
     expect(packageExportsTarget({ import: "./index.js" }, "./sub")).toBeUndefined();
   });
-  test("from source, a lexicon's development export wins over the dist/*.js its default names (#3981)", () => {
+  test("from source, a lexicon's @intentius/chant-source export wins over the dist/*.js its default names (#3981)", () => {
     const lexicon = {
-      ".": { development: "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" },
-      "./*": { development: "./src/*.ts", types: "./dist/*.d.ts", default: "./dist/*.js" },
+      ".": { "@intentius/chant-source": "./src/index.ts", types: "./dist/index.d.ts", default: "./dist/index.js" },
+      "./*": { "@intentius/chant-source": "./src/*.ts", types: "./dist/*.d.ts", default: "./dist/*.js" },
     };
     expect(packageExportsTarget(lexicon, ".")).toBe("./src/index.ts");
     expect(packageExportsTarget(lexicon, "./generated/index")).toBe("./src/generated/index.ts");

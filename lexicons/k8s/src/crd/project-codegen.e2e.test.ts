@@ -135,7 +135,7 @@ function typecheck(root: string): string[] {
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     // The workspace packages' sources, as the repo's own typecheck reads them.
-    customConditions: ["development"],
+    customConditions: ["@intentius/chant-source"],
     types: [],
   };
   const files = [join(root, "src", "app.ts"), join(root, "src", "generated", "k8s", "index.ts")];

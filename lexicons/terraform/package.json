@@ -8,63 +8,63 @@
   ],
   "exports": {
     ".": {
-      "development": "./src/index.ts",
+      "@intentius/chant-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./workspace-kinds": "./workspace-kinds.json",
     "./*": {
-      "development": "./src/*.ts",
+      "@intentius/chant-source": "./src/*.ts",
       "types": "./dist/*.d.ts",
       "default": "./dist/*.js"
     },
     "./op/activities": {
-      "development": "./src/op/activities/index.ts",
+      "@intentius/chant-source": "./src/op/activities/index.ts",
       "types": "./dist/op/activities/index.d.ts",
       "default": "./dist/op/activities/index.js"
     },
     "./op/activity-contracts": {
-      "development": "./src/op/activity-contracts.ts",
+      "@intentius/chant-source": "./src/op/activity-contracts.ts",
       "types": "./dist/op/activity-contracts.d.ts",
       "default": "./dist/op/activity-contracts.js"
     },
     "./pin": {
-      "development": "./src/pin/index.ts",
+      "@intentius/chant-source": "./src/pin/index.ts",
       "types": "./dist/pin/index.d.ts",
       "default": "./dist/pin/index.js"
     },
     "./template": {
-      "development": "./src/template/index.ts",
+      "@intentius/chant-source": "./src/template/index.ts",
       "types": "./dist/template/index.d.ts",
       "default": "./dist/template/index.js"
     },
     "./module-catalog": {
-      "development": "./src/module-catalog/index.ts",
+      "@intentius/chant-source": "./src/module-catalog/index.ts",
       "types": "./dist/module-catalog/index.d.ts",
       "default": "./dist/module-catalog/index.js"
     },
     "./terragrunt": {
-      "development": "./src/terragrunt/index.ts",
+      "@intentius/chant-source": "./src/terragrunt/index.ts",
       "types": "./dist/terragrunt/index.d.ts",
       "default": "./dist/terragrunt/index.js"
     },
     "./state": {
-      "development": "./src/state/index.ts",
+      "@intentius/chant-source": "./src/state/index.ts",
       "types": "./dist/state/index.d.ts",
       "default": "./dist/state/index.js"
     },
     "./registry": {
-      "development": "./src/registry/index.ts",
+      "@intentius/chant-source": "./src/registry/index.ts",
       "types": "./dist/registry/index.d.ts",
       "default": "./dist/registry/index.js"
     },
     "./registry/edge": {
-      "development": "./src/registry/edge/index.ts",
+      "@intentius/chant-source": "./src/registry/edge/index.ts",
       "types": "./dist/registry/edge/index.d.ts",
       "default": "./dist/registry/edge/index.js"
     },
     "./lint/post-synth": {
-      "development": "./src/lint/post-synth/index.ts",
+      "@intentius/chant-source": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
       "default": "./dist/lint/post-synth/index.js"
     },

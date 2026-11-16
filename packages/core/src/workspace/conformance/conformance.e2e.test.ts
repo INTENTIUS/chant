@@ -177,7 +177,7 @@ describe("what the package ships (#2679)", () => {
     expect(pkg.files).not.toContain("src/");
     for (const key of ["./workspace/conformance", "./workspace/conformance/vitest"]) {
       const entry = pkg.exports[key];
-      expect(existsSync(join(coreRoot, entry.development)), `${key} development`).toBe(true);
+      expect(existsSync(join(coreRoot, entry["@intentius/chant-source"])), `${key} @intentius/chant-source`).toBe(true);
       expect(entry.default, `${key} default`).toBe(entry.import);
       expect(entry.types).toMatch(/^\.\/dist\/workspace\/conformance\/.+\.d\.ts$/);
     }
