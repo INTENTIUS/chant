@@ -49,6 +49,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
 | `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
 | `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
+| `--repo <owner/name>` | `string` | origin remote | With `--generate prow`. The GitHub repository the Prow jobs are keyed by. Without it, the `owner/name` the checkout's origin remote names. See [Prow job config](#prow-job-config) |
 | `--allow-skip` | `boolean` | `false` | With `--promote-to`. Let the promote job skip a step of the member's [promotion order](/chant/cli/components/#the-promotion-order). The generated job runs `promote` with `--allow-skip`. |
 | `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. Without `--components --generate <lexicon>` the command fails rather than ignoring the flag. See [Promote job](#promote-job) |
 | `--merge auto --merge-token-env <VAR>` | `string` | `manual` | With `--pr-loop --apply-before-merge`. The generated apply job runs `pr-apply --before-merge --merge auto --merge-token-env <VAR>` and merges the pull request once its update applied, with the token in `<VAR>` alone. `--merge-method merge\|squash\|rebase` picks the merge. See [Pull-request pipeline](#pull-request-pipeline) |
@@ -145,7 +146,7 @@ The `--sandbox` flag always wins over `build.sandbox` when both are present.
 
 ## Generate mode: CI pipelines from components
 
-`--components --generate <lexicon>` switches the build to the component discovery path. It reads every `*.component.ts` under the path, orders them by `dependsOn` into waves, and asks the named lexicon's `generateComponentPipeline` to render those waves as CI stages and jobs. The github, gitlab and forgejo lexicons implement it; naming any other lexicon fails with a message saying so.
+`--components --generate <lexicon>` switches the build to the component discovery path. It reads every `*.component.ts` under the path and orders them by `dependsOn` into waves. Then the named lexicon's `generateComponentPipeline` renders those waves as CI stages and jobs. The forge lexicons implement it for GitHub Actions, GitLab CI and Forgejo Actions. The prow lexicon implements it too, and writes a [Prow job config](#prow-job-config). Naming any other lexicon fails with a message saying so.
 
 A component whose `enabled` is `false` under the bound parameters gets no job, and no other job needs it. These are the components [`chant run --components all`](/chant/cli/run/#run---components-nameallabc) runs, and a component that depends on a disabled one keeps its job with that dependency dropped.
 
@@ -224,6 +225,7 @@ Without `--output` the pipeline is written to the forge's directory at the repos
 | `github` | `.github/workflows/chant-<member>-<env>.yml` |
 | `forgejo` | `.forgejo/workflows/chant-<member>-<env>.yml` |
 | `gitlab` | `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`, which the root `.gitlab-ci.yml` includes with `include: local: .gitlab/ci/*.gitlab-ci.yml` |
+| `prow` | `prow/chant-<member>-<env>.yaml`, a job config for the installation's `job_config_path` |
 
 Its first line is chant's generated-file marker. The marker names the command that rewrites the file, which runs in the member's directory. The member lists the file in `.chant/generated.json` in its own directory, and each entry holds that command and the environment. This list is interim, and moves into the member's `generated` list in `chant.workspace.json` with [#2541](https://github.com/INTENTIUS/chant/issues/2541). Forge files at the repository root are the one kind of generated file a member may own outside its own directory, and only one member may own each of them.
 
@@ -241,6 +243,41 @@ Scheduled Ops have their own generator command, [`chant run --generate <provider
 chant build --components --generate github --env staging --output .github/workflows/components.yml
 chant run --generate github
 ```
+
+### Prow job config
+
+`--generate prow` writes the same jobs as a Prow job config for a GitHub repository whose CI is Prow ([#5189](https://github.com/INTENTIUS/chant/issues/5189)). A workspace names one with `ci.forge: github` and `ci.system: prow` ([forge and CI system](/chant/reference/workspace-declaration/#forge-and-ci-system)). The presubmits and postsubmits are keyed by the repository's `owner/name`. `--repo` names it, and without the flag chant reads the checkout's origin remote. Each job is the Prow job of the matching kind:
+
+| Generated for GitHub | On Prow |
+|---|---|
+| One job per component, and the promote job | One postsubmit that runs the components in dependency order, each seeding from its dependencies' outputs, then the promote with each recorded digest |
+| One job per wave (`--wave-gate`) | One postsubmit that runs the waves in order. A held wave stops it; rerun it from Deck once the wave is approved |
+| `plan` (`--pr-loop`) | A presubmit with no credential. It writes its note and status into its report, which it keeps in `$ARTIFACTS`, and Prow reports its result on the pull request |
+| `check` (`--check-job`) | A presubmit with no credential |
+| `record`, and `apply` with `--apply-on-merge` | Postsubmits. With `--wave-gate` the apply runs the waves in order on the commit wave 1 took |
+| `stale-notes` (`--stale-notes`) | A postsubmit |
+
+A presubmit runs the pull request's code. So it runs on the build cluster `untrusted` and holds no Secret. It mounts no service account token either. Postsubmits run on `trusted`. They read `GITHUB_TOKEN` from the Secret `chant-github-token` (key `token`), and `CHANT_RUNNER_KEY` from `chant-runner-key` when that Secret exists. The generator's `prow` option moves the clusters and the Secrets. It also names the service accounts the record and the apply run as. The jobs read Prow's own variables, such as `PULL_BASE_SHA` and `PULL_NUMBER`. The output passes the [prow lexicon's](/chant/lexicons/prow/getting-started/) PROW rules with no PROW104 or PROW105 finding.
+
+A job GitHub runs with a credential while a pull request is open would be a presubmit that holds one on Prow. So it has no Prow form, and the build refuses the option that adds it by name. Generate those jobs for GitHub Actions.
+
+| Refused on Prow | Why |
+|---|---|
+| `--apply-before-merge` | The apply would run the pull request's head with the apply credentials |
+| `--preview-comment` | Its note job holds the token, and Prow starts no job after a presubmit |
+| `--action-job` | A comment starts only presubmits on Prow, and the action holds a credential |
+| `ci.locks: plan` | The lock jobs hold the token, after the plan and on a close, and Prow has neither trigger |
+| `--pr-env` | `env-up` applies the pull request's own code with the environment's credentials |
+| `--ref-gate-status` | It sets a status with the token while the pull request is open |
+| The evidence flags | Signing takes the runner key after the pull request's code ran |
+| `--control` | The control repo's token is a repository secret this generator does not map yet |
+| `ci.identity.cloud` | A Prow job has no OIDC token to trade; name a service account in the `prow` option |
+
+```bash
+chant build --components --generate prow --env prod --pr-loop --apply-on-merge --repo acme/app --output prow/chant-prod.yaml
+```
+
+`chant run --generate prow` writes the scheduled Ops to one job config, `prow/chant-ops.yaml`. A cron is a periodic and a push a postsubmit. An Op on a pull request is a presubmit with no credential.
 
 ## Build-time parameters
 

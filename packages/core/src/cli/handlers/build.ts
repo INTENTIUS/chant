@@ -400,6 +400,17 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     control = resolved.control;
   }
 
+  // #5189: Prow keys the jobs by the GitHub repository's owner/name, from --repo or the origin remote.
+  let forgeRepo: string | undefined;
+  if (lexicon === "prow") {
+    const resolved = (await import("../../forge-remote")).prowRepoOf(resolve(args.path), args.ciRepo);
+    if ("error" in resolved) {
+      console.error(formatError({ message: resolved.error }));
+      return 1;
+    }
+    forgeRepo = resolved.repo;
+  }
+
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
@@ -427,6 +438,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
       // #4771: a workflow-level run group, which Forgejo's generator writes.
       ...(args.runGroup ? { runGroup: args.runGroup } : {}),
+      ...(forgeRepo ? { forgeRepo } : {}),
     },
     args.sandbox,
     paramsResolution.provenance,

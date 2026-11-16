@@ -11,6 +11,8 @@ import { ProwJobConfigGenerator } from "./import/generator";
 import { isJobConfig } from "./job-config";
 import { prowSkills } from "./skills";
 import { propertyEntityNames } from "./registry";
+import { generateProwPipeline } from "./components/generate-pipeline";
+import { generateProwOpPipeline } from "./components/generate-op-pipeline";
 
 /**
  * Prow lexicon plugin: the job config Prow loads (presubmits, postsubmits
@@ -20,6 +22,10 @@ import { propertyEntityNames } from "./registry";
 export const prowPlugin: LexiconPlugin = {
   name: "prow",
   serializer: prowSerializer,
+  // #5189: the jobs chant generates for a component project, as Prow presubmits and postsubmits.
+  generateComponentPipeline: (components, options) => generateProwPipeline(components, options),
+  // #5189: scheduled Ops as periodics, postsubmits and presubmits, in one job config.
+  generateOpPipeline: (ops, options) => generateProwOpPipeline(ops, options),
 
   async generate(options?: { verbose?: boolean }): Promise<void> {
     const { generate, writeGeneratedFiles } = await import("./codegen/generate");

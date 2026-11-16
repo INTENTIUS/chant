@@ -10,10 +10,13 @@
  * `go mod download` in lexicons/prow/tools.
  *
  * The loader's refusals are the positive fixtures of PROW101 to PROW103 and PROW106, so the
- * checks and the loader agree on them.
+ * checks and the loader agree on them. It also loads what `chant build
+ * --components --generate prow` writes for a component project, and what the
+ * prow generators write for each kind of job chant generates for GitHub
+ * (#5189).
  */
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -21,6 +24,26 @@ import Ajv from "ajv";
 import { prowJobSpecSchema } from "./spec/schema";
 import { fixture, TESTDATA } from "./testdata/build";
 import { builtConfigs } from "./testdata/built-configs";
+import { generatedConfigs } from "./testdata/generated-configs";
+
+const CHANT = join(TESTDATA, "..", "..", "..", "..", "packages", "core", "bin", "chant");
+
+/**
+ * `chant build --components --generate prow` in a component project of its
+ * own: a new git repository whose origin remote names acme/app on GitHub,
+ * outside this checkout, so the build reads that remote and writes nothing
+ * here.
+ */
+function cliConfig(flags: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "chant-prow-generate-"));
+  execFileSync("git", ["init", "-q"], { cwd: dir });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/app.git"], { cwd: dir });
+  const step = '[{ phase: "Apply", steps: [{ kind: "shell", reason: "t" }] }]';
+  writeFileSync(join(dir, "db.component.ts"), `export const db = { name: "db", dependsOn: [], deploy: ${step} };\n`);
+  writeFileSync(join(dir, "api.component.ts"), `export const api = { name: "api", dependsOn: ["db"], deploy: ${step} };\n`);
+  execFileSync("node", [CHANT, "build", ".", "--components", "--generate", "prow", "--env", "prod", ...flags, "-o", "jobs.yaml"], { cwd: dir, stdio: ["ignore", "ignore", "pipe"], timeout: 300_000 });
+  return readFileSync(join(dir, "jobs.yaml"), "utf-8");
+}
 
 const TOOLS = join(TESTDATA, "..", "..", "tools");
 const PROW_CONFIG = join(TESTDATA, "prow-config.yaml");
@@ -60,6 +83,35 @@ describe.skipIf(!prowCached)("Prow's own strict config loader", () => {
       for (const j of made) expect({ job: j.spec.job, ok: prowJobSpec(j.spec), errors: prowJobSpec.errors }).toEqual({ job: j.spec.job, ok: true, errors: null });
     }
   }, 600_000);
+
+  test("loads the job config chant build --components --generate prow writes for a component project (#5189)", () => {
+    const want: Record<string, string[]> = {
+      "deploy pipeline": ["postsubmit chant-components-prod trusted"],
+      "pull request loop": ["postsubmit chant-apply-prod trusted", "postsubmit chant-record-prod trusted", "postsubmit chant-stale-notes-prod trusted", "presubmit chant-check-prod untrusted", "presubmit chant-plan-prod untrusted"],
+    };
+    const cli: Array<[string, string]> = [
+      ["deploy pipeline", cliConfig([])],
+      ["pull request loop", cliConfig(["--pr-loop", "--apply-on-merge", "--wave-gate", "pr-apply", "--check-job", "--stale-notes"])],
+    ];
+    for (const [what, text] of cli) {
+      expect(text.startsWith("# Written by chant build --components --generate prow for acme/app, environment prod.\n")).toBe(true);
+      const r = load(text);
+      expect({ what, err: r.err, status: r.status }).toEqual({ what, err: "", status: 0 });
+      const made = r.out.trim().split("\n").map((l) => JSON.parse(l) as { spec: Record<string, unknown> & { job: string; type: string; cluster: string } });
+      expect({ what, jobs: made.map((j) => `${j.spec.type} ${j.spec.job} ${j.spec.cluster}`).sort() }).toEqual({ what, jobs: want[what] });
+      for (const j of made) expect({ job: j.spec.job, ok: prowJobSpec(j.spec), errors: prowJobSpec.errors }).toEqual({ job: j.spec.job, ok: true, errors: null });
+    }
+  }, 900_000);
+
+  test("loads the job config the prow generators write for each kind of job chant generates for GitHub (#5189)", () => {
+    for (const [what, text] of generatedConfigs()) {
+      const r = load(text);
+      expect({ what, err: r.err, status: r.status }).toEqual({ what, err: "", status: 0 });
+      const made = r.out.trim().split("\n").map((l) => JSON.parse(l) as { spec: Record<string, unknown> & { job: string } });
+      expect(made.length).toBeGreaterThan(0);
+      for (const j of made) expect({ what, job: j.spec.job, ok: prowJobSpec(j.spec), errors: prowJobSpec.errors }).toEqual({ what, job: j.spec.job, ok: true, errors: null });
+    }
+  }, 900_000);
 
   test("refuses what PROW101, PROW102, PROW103 and PROW106 flag, and a field it does not know", () => {
     for (const [id, needle] of [

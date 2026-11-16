@@ -97,7 +97,7 @@ export async function generateOpsPipeline(
   if (!plugin?.generateOpPipeline) {
     return {
       success: false,
-      error: `Lexicon "${lexicon}" does not support Op generate mode (no generateOpPipeline). GitLab, GitHub, and Forgejo are supported today.`,
+      error: `Lexicon "${lexicon}" does not support Op generate mode (no generateOpPipeline). GitLab, GitHub, Forgejo and Prow are supported today.`,
     };
   }
 
