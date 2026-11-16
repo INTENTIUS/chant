@@ -60,8 +60,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { canonicalJson } from "../effect-receipt";
 import { getHeadCommit } from "./git";
 import { resolveMemberLedger } from "./member-ledger";
@@ -621,14 +621,13 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   }
 
   // #5230: a package npm has never had can't be published by trusted publishing, so the cut stops before the label is spent.
-  // A config that never says "npm" has no npm target, so it is not evaluated here.
-  const configText = ["chant.config.ts", "chant.config.json"].map((f) => join(cwd, f)).filter((f) => existsSync(f)).map((f) => readFileSync(f, "utf-8")).join("\n");
-  if (/\bnpm\b/.test(configText)) {
+  // The config is loaded fresh through the normal loader every time, so a target that comes from an imported preset is seen too.
+  {
     const { loadChantConfig } = await import("../config");
     const { checkPackagesPublished, npmPublishedLookup } = await import("./publish-npm");
     const { PublishTargetError } = await import("./release-publish");
     try {
-      checkPackagesPublished((await loadChantConfig(cwd)).config.release?.publish ?? [], cwd, req.npmPublished ?? npmPublishedLookup());
+      checkPackagesPublished((await loadChantConfig(cwd, { fresh: true })).config.release?.publish ?? [], cwd, req.npmPublished ?? npmPublishedLookup());
     } catch (err) {
       if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
       throw err;

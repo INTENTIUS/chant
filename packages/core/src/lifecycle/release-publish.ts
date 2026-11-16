@@ -450,7 +450,7 @@ export function statusMessage(ctx: Pick<StatusContext, "status" | "reason" | "re
 export async function releasePublishTargets(cwd: string, deps: PublishDeps = {}): Promise<PublishTarget[]> {
   const { loadChantConfig } = await import("../config");
   const { createPublishTargets } = await import("./publish-targets");
-  const { config } = await loadChantConfig(cwd);
+  const { config } = await loadChantConfig(cwd, { fresh: true });
   return createPublishTargets(config.release?.publish ?? [], deps);
 }
 
