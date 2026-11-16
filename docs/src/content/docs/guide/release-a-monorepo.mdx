@@ -1,0 +1,97 @@
+---
+title: Release a Monorepo
+description: "Release each package of a monorepo at its own version: one release member per package, a train cut from every package that changed, and one generated workflow that publishes it in dependency order"
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/release-a-monorepo/.
+  Set up one release member per publishable package of this repository's workspaces, add release.train and release.workflow to the workspace root's chant.config.ts, and render the workflow with chant release workflow, in a pull request.
+  Run `npx chant workspace train cut <env>` without `--yes` and show me what it prints; do not run it with `--yes`, push a tag, or run `chant workspace train publish` yourself.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes`, `chant workspace train cut --yes`, `chant release publish` or `chant workspace train publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A monorepo whose packages ship at their own versions releases each package separately and publishes the ones that changed together. In chant each package is a release member with its own ledger, labels and tags, and one run cuts every member that changed and records them as a [release train](/chant/cli/workspace-train/). The train is what publishes: each package goes out in dependency order, and each range on a sibling names the version the train gives that sibling.
+
+## One member per package
+
+Give every publishable package a `chant.config.ts` of its own and declare each package directory as a `chant` member of the workspace:
+
+```json
+// chant.workspace.json
+{
+  "name": "acme",
+  "schema": 1,
+  "members": [
+    { "name": "core", "dir": "packages/core", "kind": "chant" },
+    { "name": "web", "dir": "packages/web", "kind": "chant" }
+  ]
+}
+```
+
+```ts
+// packages/web/chant.config.ts
+export default {
+  release: {
+    version: { packages: ["."], ranges: "train" },
+    publish: [{ type: "npm", packages: ["."] }],
+  },
+};
+```
+
+`release.version` stamps the release's label into the package's `package.json` when it is built, so the committed version never moves (see [The label as the package version](/chant/cli/release/cut/#the-label-as-the-package-version)). `ranges: "train"` sets each workspace dependency's range to `^` and the label the train gives that dependency. A package with no `environments` is cut as an artifact release, gated on its forge checks unless the workspace declares [green commits](/chant/guide/green-commits/).
+
+The packages can also stay where they are, with the release members in a nested workspace of their own (`release/<member>`, each naming `../../packages/<name>`). A release member then takes the name of the outer member that owns the package's directory, so [`chant release changed`](/chant/cli/release/changed/) maps a change to the package to it.
+
+## The train
+
+Declare the train in the workspace root's `chant.config.ts`, with the workflow that runs it:
+
+```ts
+// chant.config.ts at the workspace root
+export default {
+  release: {
+    train: { env: "npm" },
+    workflow: { trigger: "dispatch" },
+  },
+};
+```
+
+Then render the workflow:
+
+```bash
+chant release workflow
+```
+
+The file it writes starts by hand with one input, `levels`. The default, `auto`, lets each package's conventional commits and intent files decide its level; `minor` gives every package one, and `web=major` names one. The run picks the newest green commit, and [`chant workspace train cut`](/chant/cli/workspace-train/#cut) takes it from there:
+
+- `chant release changed` lists the packages that changed since their last release, and the packages they need that changed too, in publish order.
+- Each package's label is past every version it already has: its ledger, its tags, its `package.json`, and what npm already holds. A label is never one the registry has.
+- Each package is cut at that commit, the train is recorded, and the package tags and `release-train/npm/<id>` go out in one push.
+
+The publish job then stamps every package the train cut (`chant workspace train prepare`), builds the workspace packages they build against once, and runs `chant workspace train publish`, which publishes the packages in dependency layers, waiting for each layer to resolve on npm before the next. A package the train pins at an earlier release must already be on npm. Each package's `release.verify` commands run after every package has staged and before any reveals, and `stage: true` keeps every package under `next` until the whole train has staged.
+
+## Try it first
+
+Plan the train from your machine; nothing is cut, recorded or pushed without `--yes`:
+
+```bash
+$ chant workspace train cut npm
+Release train for npm from 9deea68907d3:
+  core                     0.1.1        needed-by web; patch from default; floor 0.1.0
+  web                      0.1.1        paths-changed; patch from default; floor 0.1.0
+Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cut the train.
+```
+
+`chant workspace train cut npm --yes` from a workstation cuts and pushes the same train, and the workflow's publish job runs on its `release-train/npm/*` tag.
+
+## Packages that shared one version
+
+A monorepo that released every package at one version until now has each package's history at that version. `first: "together"` cuts the first train at one label for every member, one past the highest version any package has, so the packages start from the same place; every later train labels each one on its own. `release.legacyTags` names the old tags (`v`, `release/`), so `release changed` reads the last shared release as each member's last release.
+
+```ts
+release: {
+  train: { env: "npm", first: "together" },
+  legacyTags: ["v"],
+},
+```
+
+`release.train.check` runs commands once the labels are known and before anything is cut, with the plan in `CHANT_TRAIN_PLAN`, such as a check that a constant in the source names the version being released.

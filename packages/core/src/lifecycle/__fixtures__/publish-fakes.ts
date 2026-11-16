@@ -171,6 +171,8 @@ export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): voi
  *   registry does, a package's first version is also `latest`. It exits 1
  *   when the package path contains `$FAKE_NPM_FAIL`.
  * - `view <name>@<version> version` prints the version when it is there.
+ * - `view <name> versions --json` (#5154) prints every version it holds, as
+ *   npm does: a string for one, an array for several; E404 for none.
  * - `view <name> dist-tags.<tag>` (#5136) prints the version the tag names.
  *   `$FAKE_NPM_TAG_LAG`, `<name>=<n>[,...]`: the first `n` such views of that
  *   name print nothing, as a registry whose tag has not propagated yet.
@@ -236,6 +238,11 @@ if (args[0] === "publish") {
   if (lag && reg.tagViews[name] <= Number(lag.slice(lag.lastIndexOf("=") + 1))) process.exit(0);
   const tag = p.distTags[args[2].slice("dist-tags.".length)];
   if (tag) console.log(tag);
+} else if (args[0] === "view" && args[2] === "versions") {
+  // #5154: every version the registry holds, as npm prints it with --json.
+  const p = reg.packages[args[1]];
+  if (!p) { console.error("npm error code E404"); console.error("npm error 404 Not Found - " + args[1]); process.exit(1); }
+  console.log(JSON.stringify(p.versions.length === 1 ? p.versions[0] : p.versions));
 } else if (args[0] === "view") {
   const [name, version] = split(args[1]);
   const p = reg.packages[name];

@@ -607,7 +607,7 @@ async function promoteAcrossRepos(query: TrainPromoteQuery, train: ReadTrain, no
 }
 
 const USAGE =
-  "chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json] | chant workspace train list <env> [--json] | chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json] | chant workspace train publish <env> [<train id|digest>] [--yes] [--json]";
+  "chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json] | chant workspace train list <env> [--json] | chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json] | chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--yes] [--no-push] [--json] | chant workspace train prepare <env> [<train id|digest>] [--json] | chant workspace train publish <env> [<train id|digest>] [--yes] [--json]";
 
 /** The workspace runs that promoted each train, as `train list --json` gives them (#4037). */
 export interface TrainPromotion {
@@ -642,6 +642,14 @@ export async function runWorkspaceTrain(ctx: CommandContext): Promise<number> {
   const words = ctx.args.positionals ?? [];
   const rest = words[0] === "train" ? words.slice(1) : words;
   if (rest[0] === "promote") return runTrainPromote(ctx, rest.slice(1));
+  if (rest[0] === "cut") {
+    const { runTrainCut } = await import("./train-cut");
+    return runTrainCut(ctx, rest.slice(1));
+  }
+  if (rest[0] === "prepare") {
+    const { runTrainPrepare } = await import("./train-prepare");
+    return runTrainPrepare(ctx, rest.slice(1));
+  }
   if (rest[0] === "publish") {
     const { runTrainPublish } = await import("./train-publish");
     return runTrainPublish(ctx, rest.slice(1));

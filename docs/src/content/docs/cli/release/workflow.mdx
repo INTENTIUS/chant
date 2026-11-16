@@ -101,6 +101,36 @@ With `release.images` (see [Images the package pins](/chant/cli/release/cut/#ima
 
 With `release.tag` (see [The release's tag](/chant/cli/release/cut/#the-releases-tag)), the tag trigger runs on the tags the template makes, with `{member}` and `{path}` filled in: `v{version}` runs on `v*`. A `floating` tag is left out with a negated pattern (`!v[0-9]+`), so moving it starts nothing; on GitLab the rule is a regular expression with the same effect. The publish job fetches `chant/lifecycle` right after the install, reads the label with `chant release tag "$GITHUB_REF_NAME" --json`, and exits 1 for a tag that names no release of the member. Every later step uses `CHANT_RELEASE_LABEL`, and the after-release job gets it from the publish job. Under `doctor: true` the publish job runs `chant release doctor` once the label is read. A floating tag is pushed by the publish job with git: GitHub and Forgejo jobs can, with `contents: write`; a GitLab job token can't, so `chant release workflow` says so, and a dispatched release on GitLab pushes it with `CHANT_RELEASE_TOKEN`. A dispatched release pushes whatever tag the cut made. A member with no `release.tag` renders the `release/**` file it did.
 
+## A release train
+
+In the root of a workspace whose members release separately, such as one member per package of a monorepo, `release.train` (see [`chant workspace train cut`](/chant/cli/workspace-train/#cut)) makes the workflow release the members as a train rather than the root as one member:
+
+```ts
+// release/chant.config.ts
+export default {
+  release: {
+    train: { env: "npm" },
+    workflow: {
+      trigger: "dispatch",
+      file: ".github/workflows/publish.yml",
+      env: { NPM_TOKEN: "${{ secrets.NPM_TOKEN }}" },
+    },
+  },
+};
+```
+
+With `trigger: "dispatch"` it starts by hand with one input, `levels`: `auto` (the default: each member's conventional commits and intent files decide), a level for every member, or `<member>=<level>` pairs separated by spaces. Three jobs follow:
+
+| Job | What it runs |
+|---|---|
+| `gate` | Picks the commit as a dispatched release does: `chant ci last-green`, or the dispatched commit under `gate: "head"` |
+| `cut` | `chant workspace train cut <env> --at <commit> --levels <levels> --yes`: the members `release changed` lists, each labelled past every version its ledger, tags, packages and npm hold, cut, the train recorded, and the member tags and `release-train/<env>/<id>` pushed in one push. A commit with nothing to release ends the run here |
+| `publish` | In a checkout of the commit: `chant workspace train prepare <env> <id>` (stamp each member, build the packages they build against), the build, and `chant workspace train publish <env> <id> --yes`, which stages every member, runs each member's `release.verify`, and reveals layer by layer, core first |
+
+The publish job also runs on a pushed `release-train/<env>/*` tag, which a train cut from a workstation with `chant workspace train cut <env> --yes` pushes. With the tag trigger, the default, that job is the whole file. The job's own token pushes the tags of a dispatched run, and a tag pushed with it starts no workflow, so a dispatched train publishes in its own publish job.
+
+The members' `release.publish` targets decide what the jobs need, as a root's targets do for one release: npm's trusted publishing setup, `packages: write` for GHCR, and cosign when a member signs. `supply-chain` adds `--require-provenance` to the train publish. `release.workflow.builds`, and `release.images` or `release.artifacts` at the root or in a member, are refused: the train workflow hands no file from its cut job to its publish job. GitLab is refused too; run `chant workspace train cut`, `prepare` and `publish` from your own jobs there. [Releasing a monorepo](/chant/guide/release-a-monorepo/) walks through the setup.
+
 ## Builds on other runners
 
 `release.workflow.builds` adds a job per platform that builds on its own runner, such as a native arm64 runner, macOS or Windows, after the gate and before the cut:

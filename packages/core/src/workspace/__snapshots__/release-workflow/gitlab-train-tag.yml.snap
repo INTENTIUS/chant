@@ -1,0 +1,44 @@
+# ==== minimal ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== no install, no build ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== member root ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== supply-chain ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== signing ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== lane ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== gate head ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== green forge-checks ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== green none ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== after ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== env and setup ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== permissions ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== targets ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== images ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+
+# ==== builds ====
+throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs

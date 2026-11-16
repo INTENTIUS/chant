@@ -216,6 +216,36 @@ export function trainDependencies(members: ReadonlyArray<{ member: string; provi
 /** The name a member provides for `release.dependsOn` (#5165). */
 const memberName = (member: string) => `member:${member}`;
 
+/**
+ * The paths (as `git status --porcelain` prints them) that are a member's
+ * `release.version` file stamped with its label in `train` (#5154), across
+ * the members this checkout publishes.
+ */
+async function trainStamps(root: string, head: string | null, train: ReadTrain, here: ReadonlyArray<{ member: string; label: string | null; dir: string }>): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (head === null || here.length === 0) return out;
+  let status: string;
+  let top: string;
+  try {
+    status = execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+    top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return out;
+  }
+  if (status.trim() === "") return out;
+  const { loadChantConfig } = await import("../config");
+  const { stampedChanges } = await import("../lifecycle/release-version");
+  const { trainPackageLabels } = await import("./train-range-labels");
+  let labels: import("../lifecycle/release-version").RangeLabels | undefined;
+  for (const m of here) {
+    const version = (await loadChantConfig(m.dir).catch(() => null))?.config.release?.version;
+    if (!version || m.label === null) continue;
+    labels ??= await trainPackageLabels(train, root).catch(() => ({}));
+    for (const p of stampedChanges({ cwd: m.dir, top, commit: head, config: version, label: m.label, status, trains: [labels] })) out.add(p);
+  }
+  return out;
+}
+
 /** Plan, and with `yes` publish, a release train (#5136). */
 export async function publishTrain(query: TrainPublishQuery): Promise<TrainPublishOutcome> {
   const { preparePublish, publishContext, releasePublishTargets, detectProvenance } = await import("../lifecycle/release-publish");
@@ -288,9 +318,11 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
   // Cut from this commit: prepared and planned, every one, before anything stages.
   const prepared: Array<Omit<Prepared, "layer">> = [];
   const warnings: string[] = [];
+  // #5154: `chant workspace train prepare` stamps every member cut here in one checkout; each takes the others' stamps as the commit's.
+  const stampedHere = await trainStamps(root, head, train, train.members.filter((x) => x.commit === head).map((m) => ({ member: m.member, label: m.label, dir: dirOf.get(m.member)! })));
   for (const m of train.members.filter((x) => x.commit === head)) {
     const dir = dirOf.get(m.member)!;
-    const plan = await preparePublish({ cwd: dir, ref: m.releaseDigest, env, ...(query.deps ? { deps: query.deps } : {}), allowUnsigned: query.allowUnsigned === true, requireProvenance: query.requireProvenance === true });
+    const plan = await preparePublish({ cwd: dir, ref: m.releaseDigest, env, ...(query.deps ? { deps: query.deps } : {}), allowUnsigned: query.allowUnsigned === true, requireProvenance: query.requireProvenance === true, alsoStamped: stampedHere });
     if ("refusal" in plan) return refuse(plan.refusal.code, `${m.member}: ${plan.refusal.message}. Nothing was published.`, plan.refusal.fix);
     credentialEnv.push(...plan.targets.flatMap((t) => t.credentialEnv));
     for (const w of [plan.signatureWarning, plan.warning]) if (w && !warnings.includes(`${m.member}: ${w}`)) warnings.push(`${m.member}: ${w}`);

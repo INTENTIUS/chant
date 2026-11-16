@@ -33,6 +33,10 @@
  * dispatched release, unless `doctor: false`, and in the tag-triggered
  * publish job before the build under `doctor: true`.
  *
+ * `release.train` at the root (#5154) renders a train instead: the root's
+ * members cut together by `chant workspace train cut` and published by
+ * `chant workspace train publish` (./release-train-workflow.ts).
+ *
  * The cut and publish jobs here are a frame of named slots (#5196). Each
  * feature's steps (doctor, goreleaser, stamp, images, artifacts, builds,
  * verify, signing, QEMU, the targets' setup) come from its own file under
@@ -52,6 +56,7 @@ import { releaseJobSteps, releaseSetupSteps, type ReleaseStepItem, type ReleaseS
 import { packLine } from "./release-steps/builds";
 import { RELEASE_BINFMT_IMAGE, qemuArchitectures } from "./release-steps/qemu";
 import { targetExtras } from "./release-steps/targets";
+import { renderTrainWorkflow } from "./release-train-workflow";
 
 export const RELEASE_WORKFLOW_FORGES = ["github", "forgejo", "gitlab"] as const;
 export type ReleaseWorkflowForge = (typeof RELEASE_WORKFLOW_FORGES)[number];
@@ -216,6 +221,12 @@ export interface ReleaseWorkflowInput {
    * token unless `release.workflow.env` sets it.
    */
   publish?: ReadonlyArray<ReleaseWorkflowTarget>;
+  /**
+   * `release.train` at the workspace root (#5154): the workflow releases the
+   * root's members as a train, recorded for `env`, rather than the root as
+   * one member. See ./release-train-workflow.ts.
+   */
+  train?: { env: string };
 }
 
 /** What the generator reads of a `release.publish` target: enough to know which credentials and tools its job needs. */
@@ -318,6 +329,31 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     input.forge === "github" && p.env?.GITHUB_TOKEN === undefined && (input.publish ?? []).some((t) => t.type === "forge" && t.forge === "github" && !t.tokenEnv)
       ? ["      GITHUB_TOKEN: ${{ github.token }}"]
       : [];
+  // #5154: the root's members released as a train.
+  if (input.train) {
+    if (input.forge === "gitlab") throw new Error("release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs");
+    if (builds.length > 0) throw new Error("release.workflow.builds: a train cuts each member in one job, and per-platform builds are not handed to it; leave builds out of a train's workflow");
+    if (images || input.artifacts) throw new Error("release.images and release.artifacts at the root: a train releases its members, and the workflow hands no image or file between its jobs; declare them in a member and release that member on its own");
+    return renderTrainWorkflow({
+      forge: input.forge,
+      env: input.train.env,
+      trigger: p.trigger === "dispatch" ? "dispatch" : "tag",
+      chant,
+      install,
+      build,
+      root,
+      flags,
+      after,
+      chantSetup,
+      fullSetup,
+      extra: jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps({ forge: input.forge, shape: "dispatch", input, pipeline: p, chant, root, verify: false, images: false, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, green, builds: [] }) }, input.forge),
+      forgeToken,
+      cutToken: green === "forge-checks" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [],
+      green,
+      gate: p.gate ?? "last-green",
+      ...(input.lane ? { lane: input.lane } : {}),
+    });
+  }
   if (shape === "dispatch") {
     const cutToken = green === "forge-checks" && input.forge !== "gitlab" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [];
     const buildJobs = builds.map((b) => ({ ...b, setup: toolchainLines(resolveToolchains(b.toolchains !== undefined ? b.toolchains : p.toolchains, files, root, false)) }));
@@ -571,7 +607,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
   return tagComments(`${lines.join("\n")}\n`);
 }
 
-interface JobExtras {
+export interface JobExtras {
   /** Lines added under the workflow's `permissions:`. */
   permissions: string[];
   /** The job's `env:` block with `base` entries first, or nothing when there is neither. */
@@ -585,7 +621,7 @@ interface JobExtras {
 }
 
 /** `release.workflow`'s `permissions`, `env` and `setup` (#4751) as lines of the forge's file. Empty for a config without them, so its file is what it was. */
-function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge): JobExtras {
+export function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge): JobExtras {
   const permissions = Object.entries(p.permissions ?? {});
   const env = Object.entries(p.env ?? {});
   const setup = p.setup ?? [];
@@ -622,7 +658,7 @@ function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge): JobEx
 }
 
 /** The checkout and toolchain setup a GitHub or Forgejo job starts with (#5152); `ref` checks out that commit. */
-function githubSetup(ref: string | undefined, setup: readonly string[], persist = true): string[] {
+export function githubSetup(ref: string | undefined, setup: readonly string[], persist = true): string[] {
   return [
     `      - uses: ${usesRef(ACTION_PINS.checkout4)}`,
     "        with:",
@@ -670,7 +706,7 @@ function cutEnvToken(o: DispatchInput): string[] {
 const DISPATCH_LABEL = '"$CHANT_RELEASE_LABEL"';
 
 /** The node one-liner that prints a JSON document's field from stdin, or from the file its argument names. */
-const field = (path: string): string =>
+export const field = (path: string): string =>
   `node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(${path}??""))'`;
 
 /**
@@ -692,7 +728,7 @@ function workflowFilesCheck(dispatched: string): string[] {
 }
 
 /** The gate's shell: the commit to cut, from `ci last-green`, refused when there is none or, under `head`, when it is not the dispatched one. */
-function gateScript(o: DispatchInput, dispatched: string): string[] {
+export function gateScript(o: Pick<DispatchInput, "green" | "chant" | "lane" | "gate" | "forge">, dispatched: string): string[] {
   // #5149: with no ci/green tags to search, the gate names the dispatched commit and the cut checks it.
   if (o.green !== "chant") return [`commit="${dispatched}"`];
   return [
@@ -736,7 +772,7 @@ function cutScript(o: DispatchInput, out: string): string[] {
  * the branch is not an error here; any other failure of git still stops the
  * job. The publish job runs after the cut has pushed it and fetches it plainly.
  */
-const LEDGER_FETCH_FIRST =
+export const LEDGER_FETCH_FIRST =
   'rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi';
 
 /** The label the gate decided (#5159): the dispatched one, or the one `auto` resolved to. */
@@ -1044,8 +1080,31 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     console.error(formatError({ message: `${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`, hint: usage }));
     return 1;
   }
+  // #5154: a train publishes its members' targets, so their credentials, tools and signing are the workflow's.
+  const memberReleases: Array<NonNullable<typeof release>> = [];
+  if (release?.train) {
+    const { locateWorkspace } = await import("./which-chant");
+    const { readDeclaration } = await import("./declaration");
+    const { loadChantConfig } = await import("../config");
+    const located = locateWorkspace(root);
+    for (const m of readDeclaration(located.tree, "", { rootChant: true }).members.filter((x) => x.kind === "chant" && x.dir !== ".")) {
+      try {
+        const r = (await loadChantConfig(join(root, m.dir))).config.release;
+        if (r) memberReleases.push(r);
+      } catch (err) {
+        console.error(formatError({ message: `member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
+        return 1;
+      }
+    }
+    const shipped = memberReleases.find((r) => (r.images?.length ?? 0) > 0 || (r.artifacts?.length ?? 0) > 0);
+    if (shipped) {
+      console.error(formatError({ message: "release.train: a member declares release.images or release.artifacts, and the train workflow hands no image or file from its cut job to its publish job", hint: "Release that member with its own workflow, or publish its images and files from its npm package." }));
+      return 1;
+    }
+  }
+  const allTargets = [...(release?.publish ?? []), ...memberReleases.flatMap((r) => r.publish ?? [])];
   const { resolveSigning } = await import("../lifecycle/publish-signing");
-  const signs = resolveSigning(release?.signing, groups).on && (release?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi");
+  const signs = [release, ...memberReleases].some((r) => resolveSigning(r?.signing, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi"));
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
   const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
@@ -1090,7 +1149,8 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     })(),
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
-    ...(release?.publish ? { publish: release.publish } : {}),
+    ...(allTargets.length > 0 ? { publish: allTargets } : {}),
+    ...(release?.train ? { train: { env: release.train.env } } : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
@@ -1114,8 +1174,11 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
   const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null].filter(Boolean);
-  const what =
-    release?.workflow?.trigger === "dispatch"
+  const what = release?.train
+    ? release.workflow?.trigger === "dispatch"
+      ? `cuts and publishes a release train for ${release.train.env} started by hand, from a green commit, and publishes one a release-train/${release.train.env}/* tag names`
+      : `publishes the release train a release-train/${release.train.env}/* tag names`
+    : release?.workflow?.trigger === "dispatch"
       ? "cuts and publishes a release started by hand with its label, from a green commit"
       : `publishes the release a ${tags.template.legacy ? "release/**" : releaseTagFilters(tags).globs[0]} tag names`;
   console.log(formatSuccess(`Wrote ${shown}: ${what}${extras.length > 0 ? `, and ${extras.join(" and ")}` : ""}.`));

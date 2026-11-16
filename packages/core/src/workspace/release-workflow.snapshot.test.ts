@@ -107,3 +107,47 @@ describe("release workflow snapshots (#5196)", () => {
     }
   }
 });
+
+/** #5154: a workspace root's members released as a train, dispatched or on its release-train tag. */
+function trainCases(forge: Forge, trigger: "tag" | "dispatch"): Array<[string, Partial<ReleaseWorkflowInput>]> {
+  const gitlab = forge === "gitlab";
+  return [
+    ["minimal", {}],
+    ["no install, no build", { install: null, build: null }],
+    ["member root", { workspaceRoot: "release" }],
+    ["supply-chain", { groups: new Set<SecurityGroup>(["supply-chain"]) }],
+    ["signing", { signing: true }],
+    ["lane", { lane: "fast" }],
+    ["gate head", { pipeline: { gate: "head" } }],
+    ["green forge-checks", { green: "forge-checks" }],
+    ["green none", { green: "none" }],
+    ["after", { pipeline: { after: ["npm run announce"] } }],
+    ["env and setup", { pipeline: { env: { CHANT_RELEASE_GATE: "1", NPM_TOKEN: "${{ secrets.NPM_TOKEN }}" }, setup: [{ run: "echo setup" }] } }],
+    ["permissions", gitlab ? {} : { pipeline: { permissions: { packages: "write" } } }],
+    ["targets", { publish: [{ type: "npm" }, { type: "forge", forge: "github" }] }],
+    ["images", { images: true }],
+    ["builds", trigger === "dispatch" ? { pipeline: { builds: [{ name: "arm", runner: "arm64", build: "make", outputs: ["dist/arm"] }] } } : {}],
+  ];
+}
+
+describe("release train workflow snapshots (#5154)", () => {
+  for (const forge of FORGES) {
+    for (const trigger of ["tag", "dispatch"] as const) {
+      test(`${forge} train ${trigger}`, async () => {
+        const text = trainCases(forge, trigger)
+          .map(([name, over]) => {
+            const input: ReleaseWorkflowInput = { forge, groups: new Set(), ...over, pipeline: { ...(over.pipeline ?? {}), ...(trigger === "dispatch" ? { trigger: "dispatch" as const } : {}) }, train: { env: "npm" } };
+            let out: string;
+            try {
+              out = renderReleaseWorkflow(input);
+            } catch (err) {
+              out = `throws: ${err instanceof Error ? err.message : String(err)}\n`;
+            }
+            return `# ==== ${name} ====\n${out}`;
+          })
+          .join("\n");
+        await expect(text).toMatchFileSnapshot(join(__dirname, "__snapshots__", "release-workflow", `${forge}-train-${trigger}.yml.snap`));
+      });
+    }
+  }
+});

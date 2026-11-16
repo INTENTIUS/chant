@@ -532,6 +532,13 @@ export async function preparePublish(req: {
   deps?: PublishDeps;
   allowUnsigned?: boolean;
   requireProvenance?: boolean;
+  /**
+   * Paths (as `git status --porcelain` prints them) other members of a
+   * release train stamped with their own labels (#5154): a train publish
+   * stamps every member it publishes in one checkout, so each member takes
+   * the others' stamps as the commit's too.
+   */
+  alsoStamped?: ReadonlySet<string>;
 }): Promise<PublishPlan | { refusal: PublishRefusal }> {
   const { resolveRelease, readCuts } = await import("./release-store");
   const { readRevokedCommits, revocationOf, describeRevocation } = await import("./release-revocation");
@@ -634,7 +641,7 @@ export async function preparePublish(req: {
     // #4840: the files release.version names may carry the label, as the publish job's `chant release stamp` writes them.
     const version = releaseConfig?.version;
     const trains = version?.ranges === "train" && label !== null ? (await import("../workspace/train-range-labels")).trainLabelCandidates(cwd, label) : undefined;
-    const refused = checkCheckoutIsRelease(cwd, release.commit, name, version ? { version, label, ...(trains ? { trains: await trains } : {}) } : {});
+    const refused = checkCheckoutIsRelease(cwd, release.commit, name, { ...(version ? { version, label, ...(trains ? { trains: await trains } : {}) } : {}), ...(req.alsoStamped ? { alsoStamped: req.alsoStamped } : {}) });
     if (refused) return { refusal: refused };
   }
 
@@ -728,7 +735,7 @@ export function checkCheckoutIsRelease(
   cwd: string,
   commit: string,
   name: string,
-  o: { version?: ReleaseVersionConfig; label?: string | null; trains?: readonly import("./release-version").RangeLabels[] } = {},
+  o: { version?: ReleaseVersionConfig; label?: string | null; trains?: readonly import("./release-version").RangeLabels[]; alsoStamped?: ReadonlySet<string> } = {},
 ): PublishRefusal | null {
   const head = tryGit(cwd, ["rev-parse", "HEAD"]);
   if (head !== commit) {
@@ -739,7 +746,8 @@ export function checkCheckoutIsRelease(
     };
   }
   let status = tryGit(cwd, ["status", "--porcelain", "--untracked-files=normal"]);
-  if (status && o.version) status = withoutStamps(cwd, commit, o.version, o.label ?? null, status, o.trains);
+  // #5154: what the train's other members stamped is the commit's too.
+  if (status && (o.version || (o.alsoStamped && o.alsoStamped.size > 0))) status = withoutStamps(cwd, commit, o.version, o.label ?? null, status, o.trains, o.alsoStamped);
   if (status) {
     const n = status.split("\n").length;
     return {
@@ -752,7 +760,7 @@ export function checkCheckoutIsRelease(
 }
 
 /** The porcelain status without the files {@link stampedChanges} takes as the commit's stamped with the label. */
-function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfig, label: string | null, status: string, trains?: readonly import("./release-version").RangeLabels[]): string {
+function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfig | undefined, label: string | null, status: string, trains?: readonly import("./release-version").RangeLabels[], alsoStamped?: ReadonlySet<string>): string {
   let raw: string;
   let top: string;
   try {
@@ -761,10 +769,10 @@ function withoutStamps(cwd: string, commit: string, version: ReleaseVersionConfi
   } catch {
     return status;
   }
-  const stamped = stampedChanges({ cwd, top, commit, config: version, label, status: raw, ...(trains ? { trains } : {}) });
+  const stamped = version ? stampedChanges({ cwd, top, commit, config: version, label, status: raw, ...(trains ? { trains } : {}) }) : new Set<string>();
   return raw
     .split("\n")
-    .filter((l) => l.length > 0 && !stamped.has(l.slice(3)))
+    .filter((l) => l.length > 0 && !stamped.has(l.slice(3)) && !alsoStamped?.has(l.slice(3)))
     .join("\n")
     .trim();
 }
