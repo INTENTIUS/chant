@@ -36,6 +36,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { parseYAML } from "../yaml";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
 import type {
   CargoPublishDeclaration,
@@ -643,6 +644,9 @@ async function repoAccess(ctx: Ctx, req: { forge: "github" | "forgejo"; api: str
   if (res.status !== 200) return { check: req.check, status: "unknown", message: `${req.api}/repos/${req.repo} answered ${res.status}` };
   const push = (res.json as { permissions?: { push?: unknown } } | null)?.permissions?.push;
   if (push === true) return { check: req.check, status: "ok", message: `the token in ${req.tokenFrom} may write ${req.repo}` };
+  // A job's GITHUB_TOKEN is an installation token: the repository API reports no push right for it
+  // (absent, or false), whatever the job's permissions grant. The workflow file says what it grants.
+  if (ctx.environment.ci === "github" && req.tokenFrom === "GITHUB_TOKEN" && req.forge === "github") return jobTokenAccess(ctx, req);
   if (push === false) return { check: req.check, status: "fail", message: `the token in ${req.tokenFrom} may read ${req.repo} and not write it`, fix: `Give the token write access to ${req.repo}${req.forge === "github" ? " (contents: write)" : ""}.` };
   const scopes = res.header("x-oauth-scopes");
   if (scopes !== null) {
@@ -656,6 +660,47 @@ async function repoAccess(ctx: Ctx, req: { forge: "github" | "forgejo"; api: str
     status: "unknown",
     message: `the token in ${req.tokenFrom} sees ${req.repo}; ${req.api} does not say what this kind of token may write${ctx.environment.ci === "github" && req.tokenFrom === "GITHUB_TOKEN" ? ", and a job token gets contents: write from the workflow's permissions" : ""}`,
   };
+}
+
+type ContentsRight = "write" | "read" | "none";
+
+/** The `contents` right the running job's declared `permissions` give its GITHUB_TOKEN, read from the workflow file in the checkout; null when it can't be told. */
+function jobContentsPermission(ctx: Ctx): { right: ContentsRight | null; why: string; where: string } {
+  const file = ctx.environment.workflow;
+  const job = ctx.env.GITHUB_JOB;
+  if (!file || !job) return { right: null, where: "the workflow file", why: "GITHUB_WORKFLOW_REF or GITHUB_JOB is not set" };
+  const abs = join(ctx.env.GITHUB_WORKSPACE || ctx.cwd, file);
+  const where = `${file}, job ${job}`;
+  let doc: { permissions?: unknown; jobs?: Record<string, { permissions?: unknown; uses?: unknown }> };
+  try {
+    doc = parseYAML(readFileSync(abs, "utf-8")) as typeof doc;
+  } catch {
+    return { right: null, where, why: `${file} is not in the checkout, or does not parse` };
+  }
+  const j = doc.jobs?.[job];
+  if (!j || typeof j !== "object") return { right: null, where, why: `${file} has no job ${job}` };
+  // A job's own `permissions` replaces the workflow's whole; with neither, the repository's default decides.
+  const declared = j.permissions !== undefined ? j.permissions : doc.permissions;
+  if (declared === undefined || declared === null) return { right: null, where, why: "neither the job nor the workflow declares permissions, so the repository's default token permissions apply" };
+  if (declared === "write-all") return { right: "write", where, why: "" };
+  if (declared === "read-all") return { right: "read", where, why: "" };
+  if (typeof declared !== "object") return { right: null, where, why: "its permissions are an expression" };
+  const contents = (declared as Record<string, unknown>).contents;
+  if (contents === "write") return { right: "write", where, why: "" };
+  if (contents === "read") return { right: "read", where, why: "" };
+  if (contents === undefined || contents === "none") return { right: "none", where, why: "" };
+  return { right: null, where, why: "its contents permission is an expression" };
+}
+
+/** What the job's GITHUB_TOKEN may do on the repository: ok or fail from the declared permissions, unknown when they can't be read. Never fail on the API's silence. */
+function jobTokenAccess(ctx: Ctx, req: { repo: string; check: string; tokenFrom: string }): DoctorCheck {
+  const p = jobContentsPermission(ctx);
+  if (p.right === "write") return { check: req.check, status: "ok", message: `the job's ${req.tokenFrom} may write ${req.repo}: ${p.where} declares contents: write` };
+  if (ctx.environment.from === "cut" && p.right !== null)
+    return { check: req.check, status: "unknown", message: `this is the cut job, whose ${req.tokenFrom} has contents: ${p.right} (${p.where}); the publish job holds the write the forge target needs, so only a run of the publish job can test this` };
+  if (p.right === "read" || p.right === "none")
+    return { check: req.check, status: "fail", message: `${p.where} declares contents: ${p.right}, so the job's ${req.tokenFrom} may read ${req.repo} and not write it`, fix: "Give the job permissions: contents: write." };
+  return { check: req.check, status: "unknown", message: `the job's ${req.tokenFrom} sees ${req.repo}; the API does not report what an Actions token may write, and ${p.why}` };
 }
 
 async function checkForge(decl: ForgePublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
