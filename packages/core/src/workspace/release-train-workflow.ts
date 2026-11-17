@@ -35,7 +35,7 @@
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import type { ReleaseGreenSource } from "../lifecycle/release-green";
-import { field, gateScript, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
+import { field, gateScript, GIT_TOKEN_ENV, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
 import { RELEASE_ARTIFACTS_ARTIFACT } from "./release-steps/artifacts";
 import { packLine, unpackLine } from "./release-steps/builds";
 import { releaseBuildArchive, releaseBuildArtifact, type ReleaseBuildConfig } from "./release-toolchains";
@@ -264,9 +264,10 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       ...defaults,
       "    outputs:",
       "      train: ${{ steps.cut.outputs.train }}",
-      ...o.extra.githubEnv(["      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}", ...(builds.length > 0 ? ["      CHANT_TRAIN_PLANNED: ${{ needs.gate.outputs.planned }}"] : []), ...new Set([...(o.cutToken ?? []), ...(o.doctor ? o.forgeToken : [])])]),
+      ...o.extra.githubEnv(["      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}", ...(builds.length > 0 ? ["      CHANT_TRAIN_PLANNED: ${{ needs.gate.outputs.planned }}"] : []), ...new Set([...(o.cutToken ?? []), ...(o.doctor ? o.forgeToken : [])]), ...(o.files ? GIT_TOKEN_ENV : [])]),
       "    steps:",
-      ...githubSetup("${{ needs.gate.outputs.commit }}", o.fullSetup),
+      // #5268: a cut that hands files on keeps no token in .git/config.
+      ...githubSetup("${{ needs.gate.outputs.commit }}", o.fullSetup, !o.files),
       ...installLines,
       ...o.extra.githubSteps,
       ...(o.goreleaser ?? []),

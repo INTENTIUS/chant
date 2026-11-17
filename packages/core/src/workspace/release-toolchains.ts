@@ -111,6 +111,15 @@ export function resolveToolchains(decl: readonly ReleaseToolchainDecl[] | false 
   return list.map((d) => toolchainStep(d, files, root));
 }
 
+/**
+ * The toolchains a job that builds sets up (#5152): `release.workflow.toolchains`,
+ * or those the project's root files name, with Node first. A caller that
+ * knows no project files sets up Node alone.
+ */
+export function buildJobToolchains(decl: readonly ReleaseToolchainDecl[] | false | undefined, projectFiles: readonly string[] | undefined, root: string | null): ToolchainStep[] {
+  return resolveToolchains(decl, new Set(projectFiles ?? (decl === undefined ? ["package.json"] : [])), root, true);
+}
+
 /** A step's lines in a GitHub or Forgejo job. Node renders as it always has: its inputs unquoted. */
 export function toolchainLines(steps: readonly ToolchainStep[]): string[] {
   return steps.flatMap((s) => [

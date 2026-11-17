@@ -300,12 +300,19 @@ const HEX_ONLY_RE = /^[0-9a-f]+$/i;
  * line up with dictionary-shaped alphabetic chunks. Requires at least two
  * separators so a single hyphen (common inside genuine tokens) doesn't
  * trigger it.
+ *
+ * All-digit chunks (a version's numbers, the `64` of `x86_64`) count for
+ * neither side, so a release asset's name in a download URL
+ * (`0/goreleaser_Linux_x86_64`, the tail of `.../v2.19.0/goreleaser_Linux_x86_64.tar.gz`)
+ * reads as the identifier it is (#5268); at least two wordy chunks are still
+ * required.
  */
 export function looksLikeIdentifierSlug(value: string): boolean {
   const parts = value.split(/[-_/]/).filter(Boolean);
   if (parts.length < 3) return false;
-  const wordy = parts.filter((p) => /^[a-zA-Z]+$/.test(p) && p.length >= 3).length;
-  return wordy / parts.length >= 0.5;
+  const counted = parts.filter((p) => !/^[0-9]+$/.test(p));
+  const wordy = counted.filter((p) => /^[a-zA-Z]+$/.test(p) && p.length >= 3).length;
+  return wordy >= 2 && wordy / counted.length >= 0.5;
 }
 
 /** At least 3 of {lower, upper, digit, symbol} present — cuts plain-word / all-hex false positives. */

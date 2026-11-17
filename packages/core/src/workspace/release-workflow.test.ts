@@ -1030,7 +1030,7 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
     const { cut, publish } = jobs("github", { goreleaser: true, workspaceRoot: "cli" });
     const go = cut!.steps.find((s) => s.uses?.startsWith("actions/setup-go@"));
     expect(go!.uses).toContain(ACTION_PINS.setupGo7.sha);
-    expect(go!.with).toEqual({ "go-version-file": "cli/go.mod" });
+    expect(go!.with).toEqual({ "go-version-file": "cli/go.mod", cache: false });
     const install = cut!.steps.find((s) => s.name?.startsWith("goreleaser "))!;
     expect(install.run).toContain(TOOL_PINS.goreleaser.platforms["linux/amd64"]!.sha256);
     expect(install.run).toContain("sha256sum -c -");
@@ -1039,6 +1039,9 @@ describe("the cut hands the files release.artifacts built to the publish job (#5
     // The publish job of a dispatched release builds nothing, so it installs nothing.
     expect(publish!.steps.some((s) => s.name?.startsWith("goreleaser "))).toBe(false);
     expect(jobs("github", { goreleaser: true }, "tag").publish!.steps.some((s) => s.name?.startsWith("goreleaser "))).toBe(true);
+    // #5268: a Go project's toolchains set Go up already, so the goreleaser entry adds no second setup-go.
+    const goProject = jobs("github", { goreleaser: true, projectFiles: ["go.mod"] });
+    expect(goProject.cut!.steps.filter((s) => s.uses?.startsWith("actions/setup-go@"))).toHaveLength(1);
     // A config that names its own setup-go and goreleaser gets neither.
     const own = jobs("github", { goreleaser: true, pipeline: { trigger: "dispatch", setup: [{ uses: "actions/setup-go@abc" }], env: { CHANT_GORELEASER: "/usr/bin/goreleaser" } } });
     expect(own.cut!.steps.filter((s) => s.uses?.startsWith("actions/setup-go@")).map((s) => s.uses)).toEqual(["actions/setup-go@abc"]);
