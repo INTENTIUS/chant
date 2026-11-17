@@ -656,7 +656,7 @@ describe("release-only adoption (#5149)", () => {
       expect(doc.jobs.cut!.permissions?.checks).toBe("read");
       expect(runs(doc.jobs.publish!)).toContain('npx chant release publish "$CHANT_RELEASE_LABEL" --yes');
       // #5161: the doctor checks the artifact release's targets before the cut.
-      expect(runs(doc.jobs.cut!).some((r) => r.endsWith(" release doctor"))).toBe(true);
+      expect(runs(doc.jobs.cut!).some((r) => r.endsWith(" release doctor --from cut"))).toBe(true);
       // No build script in package.json, so no build step that would fail.
       expect(runs(doc.jobs.publish!)).not.toContain("npm run build");
     } finally {
@@ -912,20 +912,31 @@ describe("release doctor in the workflow (#5161)", () => {
   test("a dispatched release runs it in the cut job before the cut, on every forge, and doctor: false leaves it out", () => {
     for (const forge of ["github", "forgejo"] as const) {
       const cut = runs((parseYAML(dispatch(forge)) as GhDoc).jobs.cut!);
-      const at = cut.indexOf("npx chant release doctor");
+      const at = cut.indexOf("npx chant release doctor --from cut");
       expect(at, forge).toBeGreaterThan(0);
       expect(at).toBeLessThan(cut.findIndex((r) => r.includes("release cut")));
       expect(cut.indexOf("npm ci")).toBeLessThan(at);
       const off = runs((parseYAML(dispatch(forge, { pipeline: { trigger: "dispatch", doctor: false } })) as GhDoc).jobs.cut!);
-      expect(off).not.toContain("npx chant release doctor");
+      expect(off).not.toContain("npx chant release doctor --from cut");
       // The publish job does not run it again.
       expect(runs((parseYAML(dispatch(forge)) as GhDoc).jobs.publish!)).not.toContain("npx chant release doctor");
     }
     const gl = parseYAML(dispatch("gitlab")) as Record<string, { script: string[] }>;
     const script = gl["chant-release-cut"]!.script;
-    expect(script.indexOf("npx chant release doctor")).toBeGreaterThan(0);
-    expect(script.indexOf("npx chant release doctor")).toBeLessThan(script.findIndex((l) => l.includes("release cut")));
-    expect((parseYAML(dispatch("gitlab", { pipeline: { trigger: "dispatch", doctor: false } })) as Record<string, { script: string[] }>)["chant-release-cut"]!.script).not.toContain("npx chant release doctor");
+    expect(script.indexOf("npx chant release doctor --from cut")).toBeGreaterThan(0);
+    expect(script.indexOf("npx chant release doctor --from cut")).toBeLessThan(script.findIndex((l) => l.includes("release cut")));
+    expect((parseYAML(dispatch("gitlab", { pipeline: { trigger: "dispatch", doctor: false } })) as Record<string, { script: string[] }>)["chant-release-cut"]!.script).not.toContain("npx chant release doctor --from cut");
+  });
+
+  test("the cut job has no id-token: write, so its doctor is told it is the cut job (--from cut); the publish job holds the permission and runs none", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      const doc = parseYAML(dispatch(forge)) as GhDoc;
+      expect(doc.jobs.cut!.permissions).not.toHaveProperty("id-token");
+      expect(doc.jobs.publish!.permissions).toMatchObject({ "id-token": "write" });
+      expect(runs(doc.jobs.cut!)).toContain("npx chant release doctor --from cut");
+    }
+    const gl = parseYAML(dispatch("gitlab")) as Record<string, { script: string[] }>;
+    expect(gl["chant-release-cut"]!.script).toContain("npx chant release doctor --from cut");
   });
 
   test("the tag trigger runs it in the publish job before the build only under doctor: true", () => {
@@ -942,7 +953,7 @@ describe("release doctor in the workflow (#5161)", () => {
     const doc = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge })) as GhDoc;
     expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
     expect(doc.jobs.cut!.permissions).toMatchObject({ checks: "read", statuses: "read" });
-    expect(runs(doc.jobs.cut!)).toContain("npx chant release doctor");
+    expect(runs(doc.jobs.cut!)).toContain("npx chant release doctor --from cut");
     // doctor: false keeps forge-checks' token and drops nothing else.
     const off = parseYAML(dispatch("github", { green: "forge-checks", publish: ghForge, pipeline: { trigger: "dispatch", doctor: false } })) as GhDoc;
     expect(off.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
@@ -952,7 +963,7 @@ describe("release doctor in the workflow (#5161)", () => {
 
   test("GitLab forge-checks: the doctor runs after the cut's token for the pipelines is set, and before the cut", () => {
     const script = (parseYAML(dispatch("gitlab", { green: "forge-checks" })) as Record<string, { script: string[] }>)["chant-release-cut"]!.script;
-    const at = script.indexOf("npx chant release doctor");
+    const at = script.indexOf("npx chant release doctor --from cut");
     expect(at).toBeGreaterThan(script.indexOf('export CHANT_GITLAB_TOKEN="${CHANT_GITLAB_TOKEN:-$CHANT_RELEASE_TOKEN}"'));
     expect(at).toBeLessThan(script.findIndex((l) => l.includes("release cut")));
   });
@@ -963,11 +974,11 @@ describe("release doctor in the workflow (#5161)", () => {
     expect(runs(doc.jobs["build-linux-arm64"]!)).not.toContain("npx chant release doctor");
     const cut = doc.jobs.cut!;
     const stepAt = (pred: (s: GhJob["steps"][number]) => boolean) => cut.steps.findIndex(pred);
-    const doctor = stepAt((s) => s.run?.trim() === "npx chant release doctor");
+    const doctor = stepAt((s) => s.run?.trim() === "npx chant release doctor --from cut");
     expect(doctor).toBeGreaterThan(stepAt((s) => !!s.uses?.startsWith("actions/setup-go@")));
     expect(doctor).toBeGreaterThan(stepAt((s) => s.run?.trim() === "npm ci"));
     expect(doctor).toBeLessThan(stepAt((s) => !!s.run?.includes("release cut")));
-    expect(Object.values(doc.jobs).flatMap(runs).filter((r) => r === "npx chant release doctor")).toHaveLength(1);
+    expect(Object.values(doc.jobs).flatMap(runs).filter((r) => r === "npx chant release doctor --from cut")).toHaveLength(1);
   });
 
   test("a release.tag template's workflow runs it under doctor: true after the label is read and before the stamp", () => {

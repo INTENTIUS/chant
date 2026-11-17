@@ -96,6 +96,22 @@ describe("npm", () => {
     expect(report.counts.fail).toBe(0);
   });
 
+  test("in the release workflow's cut job, which has no id-token: write, the OIDC checks can't tell instead of failing (--from cut)", async () => {
+    const cutEnv = { GITHUB_ACTIONS: "true", CI: "true", GITHUB_REPOSITORY: "acme/app", GITHUB_WORKFLOW_REF: `acme/app/${WORKFLOW}@refs/heads/main` };
+    const routes = [packument("@acme/core"), provenance("acme/app", WORKFLOW)];
+    // Without the flag the cut job fails, as it did in a dispatched release.
+    const before = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: cutEnv, releaseWorkflow: WORKFLOW, deps: { fetch: fakeFetch(routes).fetch, run: fakeRun({}) } });
+    expect(statuses(before.targets[0]!.checks)).toMatchObject({ "npm-trusted-publisher": "fail", "npm-token": "fail" });
+    const report = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: cutEnv, releaseWorkflow: WORKFLOW, from: "cut", deps: { fetch: fakeFetch(routes).fetch, run: fakeRun({}) } });
+    expect(report.environment.from).toBe("cut");
+    expect(statuses(report.targets[0]!.checks)).toEqual({ "npm-registry": "ok", "npm-last-publisher": "ok", "npm-trusted-publisher": "unknown", "npm-token": "unknown", "npm-dist-tag": "unknown" });
+    expect(report.targets[0]!.checks.find((c) => c.check === "npm-trusted-publisher")!.message).toContain("the publish job's id-token: write");
+    expect(report.counts.fail).toBe(0);
+    // Other checks still run: a package that is private still fails in the cut job.
+    const priv = await releaseDoctor({ cwd: member({ "packages/core": { name: "@acme/core", version: "0.0.0", private: true } }), publish: [npmDecl()], env: cutEnv, releaseWorkflow: WORKFLOW, from: "cut", deps: { fetch: fakeFetch(routes).fetch, run: fakeRun({}) } });
+    expect(priv.counts.fail).toBeGreaterThan(0);
+  });
+
   test("the last version published from another workflow file is a warning naming the fix, not a failure", async () => {
     const { fetch } = fakeFetch([packument("@acme/core"), provenance("acme/app", ".github/workflows/publish.yml")]);
     const report = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: { GITHUB_REPOSITORY: "acme/app" }, releaseWorkflow: WORKFLOW, deps: { fetch, run: fakeRun({}) } });

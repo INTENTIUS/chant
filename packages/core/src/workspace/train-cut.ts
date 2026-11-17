@@ -467,10 +467,10 @@ export interface TrainCutOutcome extends TrainCutPlan {
 // A check's stdout goes to stderr: under --json, stdout is the cut's JSON document alone.
 const defaultCheck = (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<number> => runToStderr(line, o);
 
-/** This chant's `release doctor` in a member's directory, its stdout sent to stderr. */
+/** This chant's `release doctor` in a member's directory, its stdout sent to stderr. In CI it is the train's cut job, which has no OIDC token (`--from cut`). */
 const defaultDoctor = (dir: string): number => {
   const [bin, ...pre] = ownChant();
-  return spawnSync(bin!, [...pre, "release", "doctor"], { cwd: dir, stdio: ["ignore", 2, 2] }).status ?? 1;
+  return spawnSync(bin!, [...pre, "release", "doctor", ...(process.env.CI ? ["--from", "cut"] : [])], { cwd: dir, stdio: ["ignore", 2, 2] }).status ?? 1;
 };
 
 /**

@@ -282,8 +282,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--from") {
       // Shared by `migrate --from <lexicon>`, `import --from <env>`,
       // `components promote --from <env>`, `init --from <repo>@<ref>` and
-      // `ci last-green --from <rev>` (#4031); the commands never run
-      // together, so one field carries all five.
+      // `ci last-green --from <rev>` (#4031) and `release doctor --from cut`; the commands never run
+      // together, so one field carries all six.
       result.migrateFrom = args[++i];
     } else if (arg === "--kustomize") {
       // `chant import --kustomize <dir>` (#1548): render the overlay, import
