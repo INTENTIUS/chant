@@ -242,6 +242,29 @@ describe("reading a forge's checks", () => {
     expect(await missing("abc", "main")).toMatchObject({ green: false, why: "the branch requires test, which github does not report on it" });
   });
 
+  test("GitHub: a check is judged by its newest run, per name and app, and a status by its newest per context", async () => {
+    const read = (runs: unknown[], statuses: unknown[] = []) => forgeChecksReader(target("github", "https://api.github.com"), {}, fakeFetch({ "/check-runs": { check_runs: runs }, "/status": { statuses } }))("abc", null);
+    const failed = { name: "uat", app: { id: 1 }, status: "completed", conclusion: "failure", completed_at: "2026-11-15T10:00:00Z", id: 10 };
+    const passed = { name: "uat", app: { id: 1 }, status: "completed", conclusion: "success", completed_at: "2026-11-15T10:05:00Z", id: 11 };
+    expect(await read([failed, passed])).toEqual({ green: true, forge: "github", checks: ["uat"] });
+    expect(await read([passed, failed])).toEqual({ green: true, forge: "github", checks: ["uat"] });
+    const late = { ...failed, completed_at: "2026-11-15T10:10:00Z" };
+    expect(await read([passed, late])).toMatchObject({ green: false, why: "a check did not pass on github: uat (failure)" });
+    expect(await read([late, passed])).toMatchObject({ green: false });
+    expect(await read([{ ...failed, completed_at: passed.completed_at, id: 12 }, passed])).toMatchObject({ green: false });
+    expect(await read([{ ...failed, completed_at: passed.completed_at, id: 9 }, passed])).toMatchObject({ green: true });
+    expect(await read([{ ...failed, app: { id: 2 } }, passed])).toMatchObject({ green: false });
+    const st = (state: string, id: number, updated_at: string) => ({ context: "ci/lint", state, id, updated_at });
+    expect(await read([passed], [st("failure", 1, "2026-11-15T09:00:00Z"), st("success", 2, "2026-11-15T09:30:00Z")])).toMatchObject({ green: true });
+    expect(await read([passed], [st("success", 1, "2026-11-15T09:00:00Z"), st("failure", 2, "2026-11-15T09:30:00Z")])).toMatchObject({ green: false });
+  });
+
+  test("Forgejo: the newest status of a context speaks for it", async () => {
+    const read = (statuses: unknown[]) => forgeChecksReader(target("forgejo", "https://code.example/api/v1"), {}, fakeFetch({ "/status": { statuses } }))("abc", null);
+    expect(await read([{ context: "t", status: "failure", id: 1 }, { context: "t", status: "success", id: 2 }])).toMatchObject({ green: true });
+    expect(await read([{ context: "t", status: "success", id: 1 }, { context: "t", status: "failure", id: 2 }])).toMatchObject({ green: false });
+  });
+
   test("Forgejo: commit statuses; GitLab: the newest pipeline of each source, the release pipeline left out", async () => {
     const fj = forgeChecksReader(target("forgejo", "https://code.example/api/v1"), {}, fakeFetch({ "/status": { statuses: [{ context: "ci / test", status: "failure" }] } }));
     expect(await fj("abc", null)).toMatchObject({ green: false, forge: "forgejo", why: "a check did not pass on forgejo: ci / test (failure)" });

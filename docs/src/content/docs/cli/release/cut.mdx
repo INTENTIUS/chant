@@ -168,8 +168,8 @@ Under `forge-checks` the cut asks the forge the CI job runs on, or, outside CI, 
 
 | Forge | Checks | Required |
 |---|---|---|
-| GitHub | Every check run and commit status on the commit, by name. A run that passed, was skipped or was neutral counts as passed. | The checks a branch rule (ruleset) of trunk requires. A required check that is not reported refuses the cut. |
-| Forgejo | Every commit status on the commit. | The status contexts trunk's branch protection requires, when the token can read it. |
+| GitHub | Every check run and commit status on the commit, by name. A check with several runs (a rerun, or a `merge_group` run and a later `push` run) is judged by its newest run per name and app, and a status by its newest per context. A run that passed, was skipped or was neutral counts as passed. | The checks a branch rule (ruleset) of trunk requires. A required check that is not reported refuses the cut. |
+| Forgejo | Every commit status on the commit, the newest of each context. | The status contexts trunk's branch protection requires, when the token can read it. |
 | GitLab | The newest pipeline of each source (`push`, `merge_request_event`, `schedule`, ...) on the commit. | |
 
 A check that failed or has not finished refuses the cut, and so does a commit with no check at all. The release workflow's own runs are left out: on GitHub every run of the workflow file the cut runs in (`GITHUB_WORKFLOW_REF`), on Forgejo the cut's own run, and on GitLab the pipelines started the way the cut's was, from the web or the API. The token needs read access to checks and statuses (`checks: read` and `statuses: read` on GitHub), which a [dispatched release workflow](/chant/cli/release/workflow/#the-whole-release-from-the-config) grants its cut job.
