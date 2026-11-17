@@ -1,33 +1,67 @@
 ---
 title: Agents and approvals
-description: 'An agent can propose a change. A person approves, merges and deploys.'
+description: 'An agent can open or update a pull request. A person approves, merges and deploys.'
 diataxis: explanation
 ---
 
-| Agent jobs do | Stays with people |
-|---|---|
-| Push a commit to a change when asked | Approve a plan |
-| Open a change that follows a drift check | Merge |
-| Post a review note | Cut or publish a release |
-| Start an Op and report that it waits at a gate | Override a policy denial, and deploy to a shared environment |
+import AgentFlow from '../../../components/AgentFlow.astro';
 
-A change an agent pushes plans like any other and needs the same approval. The generated agent jobs never apply, approve or merge. An approval recorded as an agent's counts toward no quorum, and passes a gate only through a policy permit in `enforce` mode.
+Coding agents handle small, well-described changes well: add a tag to a bucket, bump a version, put back a setting someone changed in the console. chant lets an agent do that work inside your pull requests, and keeps every step that touches real infrastructure with people.
 
-## Ask for a change
+An agent's change arrives as a commit on a pull request. It gets the same plan, the same review and the same approval as a change a person wrote.
 
-Add this to a scheduled Op spec and render it with `chant run --generate <forge> --spec <file>`:
+<AgentFlow />
 
-```json
-{ "ops": [{ "name": "chant-agent", "agent": { "on": "comment", "comment": "/chant agent", "maxRuns": 10, "timeout": 30 }, "runner": "ubuntu-latest" }] }
+## Four ways to work with an agent
+
+| You want | Use | The agent |
+|---|---|---|
+| A change on a pull request you already have | [A comment agent](/chant/guide/agent-jobs/#answer-a-comment) | Pushes one commit to the pull request when someone writes `/chant agent <ask>` |
+| Drift fixed for you | [A drift agent](/chant/guide/agent-jobs/#follow-a-drift-check) | Opens a pull request after a drift check finds the cloud has moved, and updates it on the next drift |
+| A second reader on every pull request | [The review agent](/chant/guide/review-agent/) | Posts a note naming the risk it sees, which a [gate policy](/chant/guide/gate-policy/) can read |
+| Your own agent, in an editor or a harness | [The MCP server's propose tier](/chant/cli/mcp/#propose-tier) | Opens pull requests and comments through a CI product's tools |
+
+## Asking on a pull request
+
+Anyone who can write to the repository comments on the pull request:
+
+```text
+/chant agent add a cost-center tag to the bucket
 ```
 
-A comment such as `/chant agent add a cost-center tag to the bucket` starts it. For drift, set `"agent": { "on": "drift", "maxRuns": 2 }` on the drift check's spec.
+The pull request then has one new commit, with `Requested-by:` and the commenter's login in its message. The plan runs on the new commit, and you review and approve it as you would any other change.
 
-## The limits
+## Guardrails
 
-- The model's job holds a read token. A separate job holds the write token and lands the change.
-- That job [refuses changes](/chant/guide/agent-jobs/#paths-an-agent-may-not-change) to CI files, `.chant/` and agent instructions.
-- [`maxRuns` and `maxCostUsd`](/chant/guide/agent-jobs/#the-spend-limit) cap a day's runs.
-- A gate an agent's own `op-run` reached [cannot be resolved over MCP](/chant/guide/agent-integration/#mcp-tools).
+- The model runs in one job with a read token. A second job holds the write token, checks the change and pushes it.
+- That second job keeps CI files, `.chant/`, the chant config and agent instructions (`CLAUDE.md`, `AGENTS.md`, `.claude/`) as they are, and refuses a change to any of them. The [full list](/chant/guide/agent-jobs/#paths-an-agent-may-not-change).
+- `maxRuns` and `maxCostUsd` set a daily budget, and `timeout` bounds each run. [The spend limit](/chant/guide/agent-jobs/#the-spend-limit).
+- Each run leaves a record on the workspace ledger naming who asked, the cost and the commit it made.
+- Quorum counts people's approvals. An approval recorded as an agent's passes a gate only through a policy permit in `enforce` mode.
+- A gate an agent's own `op-run` reached is resolved by a person, [outside MCP](/chant/guide/agent-integration/#mcp-tools).
 
-[Agent jobs](/chant/guide/agent-jobs/) has the setup.
+## People keep
+
+- Approving a plan
+- Merging
+- Cutting and publishing a release
+- Overriding a policy denial
+- Deploying to a shared environment
+
+## Set it up
+
+Add the agent to a scheduled Op spec and render it with `chant run --generate <forge> --spec <file>`:
+
+```json
+{
+  "ops": [
+    {
+      "name": "chant-agent",
+      "agent": { "on": "comment", "comment": "/chant agent", "maxRuns": 10, "timeout": 30 },
+      "runner": "ubuntu-latest"
+    }
+  ]
+}
+```
+
+For drift, set `"agent": { "on": "drift", "maxRuns": 2 }` on the drift check's spec. On GitHub, give the push job a user's or an app's token (`tokenEnv`) so the new commit gets its plan. [Let an Agent Change Code on Request](/chant/guide/agent-jobs/) has the secrets each job needs and every option.
