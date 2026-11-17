@@ -57,7 +57,7 @@ describe("an ExternalSecret and its store (#5098)", () => {
     const graph = { version: 1, workspace: { name: "w", root: "." }, members: [], nodes: [], edges: [], groups: { byMember: {} }, exports: [], imports: [], links: [], collectors: [], records: [] } as unknown as WorkspaceGraph;
     placeCatalogPass(graph, pass([gcpStore(), externalSecret(uses("gcp", "app-token")), gcpSecret("app-token")]));
     expect(graph.catalog?.rules[STORE_RULE]).toMatchObject({ from: ES, path: "spec.secretStoreRef.name", targetKinds: [CSS, SS], label: "reads through" });
-    expect(graph.catalog?.rules[KEY_RULE]).toMatchObject({ from: ES, path: "spec.data[].remoteRef.key", targetKinds: ["aws_secretsmanager_secret", "google_secret_manager_secret"], label: "reads secret" });
+    expect(graph.catalog?.rules[KEY_RULE]).toMatchObject({ from: ES, path: "spec.data[].remoteRef.key", targetKinds: ["AWS::SecretsManager::Secret", "GCP::Secretmanager::Secret", "aws_secretsmanager_secret", "google_secret_manager_secret"], label: "reads secret" });
   });
 
   it("gives a SecretStore of that name in another namespace no edge", () => {

@@ -44,6 +44,8 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     // workload's env var carries (behold#166, ../../k8s/src/reference-catalog.ts).
     { kind: "AWS::Route53::RecordSet", ids: ["Name"] },
     { kind: "AWS::S3::Bucket", ids: ["BucketName"] },
+    // #5245: a secret by its name, which is what an ExternalSecret's key carries (../../k8s/src/reference-catalog.ts).
+    { kind: "AWS::SecretsManager::Secret", ids: ["Name"] },
   ],
   refs: [
     // ── containment (→ boundary boxes, #779) ──
