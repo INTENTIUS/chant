@@ -1,0 +1,624 @@
+{
+  "listing": "v1",
+  "source": {
+    "name": "chant-lister",
+    "version": "0.0.0-fixture"
+  },
+  "scope": {
+    "substrate": "azure",
+    "scopeId": "00000000-0000-0000-0000-000000004538",
+    "locations": "*",
+    "types": "*"
+  },
+  "startedAt": "2026-11-16T12:00:00.000Z",
+  "completedAt": "2026-11-16T12:00:00.000Z",
+  "resources": [
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/eastus/microsoft.network%2Fnetworksecuritygroups//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg",
+      "listedType": "microsoft.network/networksecuritygroups",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.network/networksecuritygroups/ladybug-nsg"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg",
+        "name": "ladybug-nsg",
+        "type": "microsoft.network/networksecuritygroups",
+        "kind": "",
+        "location": "eastus",
+        "resourceGroup": "ladybug-rg",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": null,
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "securityRules": [],
+          "defaultSecurityRules": [
+            {
+              "name": "AllowVnetInBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowVnetInBound",
+              "properties": {
+                "description": "Allow inbound traffic from all VMs in VNET",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "VirtualNetwork",
+                "destinationAddressPrefix": "VirtualNetwork",
+                "access": "Allow",
+                "priority": 65000,
+                "direction": "Inbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "AllowAzureLoadBalancerInBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowAzureLoadBalancerInBound",
+              "properties": {
+                "description": "Allow inbound traffic from azure load balancer",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "AzureLoadBalancer",
+                "destinationAddressPrefix": "*",
+                "access": "Allow",
+                "priority": 65001,
+                "direction": "Inbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "DenyAllInBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/DenyAllInBound",
+              "properties": {
+                "description": "Deny all inbound traffic",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Deny",
+                "priority": 65500,
+                "direction": "Inbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "AllowVnetOutBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowVnetOutBound",
+              "properties": {
+                "description": "Allow outbound traffic from all VMs to all VMs in VNET",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "VirtualNetwork",
+                "destinationAddressPrefix": "VirtualNetwork",
+                "access": "Allow",
+                "priority": 65000,
+                "direction": "Outbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "AllowInternetOutBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowInternetOutBound",
+              "properties": {
+                "description": "Allow outbound traffic from all VMs to Internet",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "Internet",
+                "access": "Allow",
+                "priority": 65001,
+                "direction": "Outbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "DenyAllOutBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/DenyAllOutBound",
+              "properties": {
+                "description": "Deny all outbound traffic",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Deny",
+                "priority": 65500,
+                "direction": "Outbound",
+                "provisioningState": "Succeeded"
+              }
+            }
+          ],
+          "provisioningState": "Succeeded"
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.network/networksecuritygroups/ladybug-nsg"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/eastus/microsoft.network%2Fnetworksecuritygroups//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg",
+      "listedType": "microsoft.network/networksecuritygroups",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg2/providers/microsoft.network/networksecuritygroups/ladybug-nsg"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg",
+        "name": "ladybug-nsg",
+        "type": "microsoft.network/networksecuritygroups",
+        "kind": "",
+        "location": "eastus",
+        "resourceGroup": "ladybug-rg2",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": null,
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "securityRules": [],
+          "defaultSecurityRules": [
+            {
+              "name": "AllowVnetInBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowVnetInBound",
+              "properties": {
+                "description": "Allow inbound traffic from all VMs in VNET",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "VirtualNetwork",
+                "destinationAddressPrefix": "VirtualNetwork",
+                "access": "Allow",
+                "priority": 65000,
+                "direction": "Inbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "AllowAzureLoadBalancerInBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowAzureLoadBalancerInBound",
+              "properties": {
+                "description": "Allow inbound traffic from azure load balancer",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "AzureLoadBalancer",
+                "destinationAddressPrefix": "*",
+                "access": "Allow",
+                "priority": 65001,
+                "direction": "Inbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "DenyAllInBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/DenyAllInBound",
+              "properties": {
+                "description": "Deny all inbound traffic",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Deny",
+                "priority": 65500,
+                "direction": "Inbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "AllowVnetOutBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowVnetOutBound",
+              "properties": {
+                "description": "Allow outbound traffic from all VMs to all VMs in VNET",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "VirtualNetwork",
+                "destinationAddressPrefix": "VirtualNetwork",
+                "access": "Allow",
+                "priority": 65000,
+                "direction": "Outbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "AllowInternetOutBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/AllowInternetOutBound",
+              "properties": {
+                "description": "Allow outbound traffic from all VMs to Internet",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "Internet",
+                "access": "Allow",
+                "priority": 65001,
+                "direction": "Outbound",
+                "provisioningState": "Succeeded"
+              }
+            },
+            {
+              "name": "DenyAllOutBound",
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg/defaultSecurityRules/DenyAllOutBound",
+              "properties": {
+                "description": "Deny all outbound traffic",
+                "protocol": "*",
+                "sourcePortRange": "*",
+                "destinationPortRange": "*",
+                "sourceAddressPrefix": "*",
+                "destinationAddressPrefix": "*",
+                "access": "Deny",
+                "priority": 65500,
+                "direction": "Outbound",
+                "provisioningState": "Succeeded"
+              }
+            }
+          ],
+          "provisioningState": "Succeeded"
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2/providers/Microsoft.Network/networkSecurityGroups/ladybug-nsg"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg2/providers/microsoft.network/networksecuritygroups/ladybug-nsg"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/eastus/microsoft.network%2Fvirtualnetworks//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet",
+      "listedType": "microsoft.network/virtualnetworks",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.network/virtualnetworks/ladybug-vnet"
+        }
+      ],
+      "tags": {
+        "env": "test"
+      },
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet",
+        "name": "ladybug-vnet",
+        "type": "microsoft.network/virtualnetworks",
+        "kind": "",
+        "location": "eastus",
+        "resourceGroup": "ladybug-rg",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": null,
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "addressSpace": {
+            "addressPrefixes": [
+              "10.0.0.0/16"
+            ]
+          },
+          "subnets": [
+            {
+              "name": "apps",
+              "properties": {
+                "addressPrefix": "10.0.1.0/24",
+                "provisioningState": "Succeeded"
+              },
+              "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps"
+            }
+          ],
+          "provisioningState": "Succeeded"
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.network/virtualnetworks/ladybug-vnet"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/eastus/microsoft.resources%2Fsubscriptions%2Fresourcegroups//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg",
+      "listedType": "microsoft.resources/subscriptions/resourcegroups",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg"
+        }
+      ],
+      "tags": {
+        "env": "test"
+      },
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg",
+        "name": "ladybug-rg",
+        "type": "microsoft.resources/subscriptions/resourcegroups",
+        "kind": "",
+        "location": "eastus",
+        "resourceGroup": "ladybug-rg",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": null,
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "provisioningState": "Succeeded"
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/eastus/microsoft.resources%2Fsubscriptions%2Fresourcegroups//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2",
+      "listedType": "microsoft.resources/subscriptions/resourcegroups",
+      "location": "eastus",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg2"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2",
+        "name": "ladybug-rg2",
+        "type": "microsoft.resources/subscriptions/resourcegroups",
+        "kind": "",
+        "location": "eastus",
+        "resourceGroup": "ladybug-rg2",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": null,
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "provisioningState": "Succeeded"
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg2"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg2"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/global/microsoft.network%2Fvirtualnetworks%2Fsubnets//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps",
+      "listedType": "microsoft.network/virtualnetworks/subnets",
+      "location": "global",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.network/virtualnetworks/ladybug-vnet/subnets/apps"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps",
+        "name": "apps",
+        "type": "microsoft.network/virtualnetworks/subnets",
+        "kind": "",
+        "location": "",
+        "resourceGroup": "ladybug-rg",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": null,
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "addressPrefix": "10.0.1.0/24",
+          "provisioningState": "Succeeded"
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.network/virtualnetworks/ladybug-vnet/subnets/apps"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "azure/00000000-0000-0000-0000-000000004538/westeurope/microsoft.storage%2Fstorageaccounts//subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Storage/storageAccounts/ladybug4538sa",
+      "listedType": "microsoft.storage/storageaccounts",
+      "location": "westeurope",
+      "nativeId": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Storage/storageAccounts/ladybug4538sa",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Storage/storageAccounts/ladybug4538sa"
+        },
+        {
+          "kind": "provider-id",
+          "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.storage/storageaccounts/ladybug4538sa"
+        }
+      ],
+      "tags": {
+        "env": "test"
+      },
+      "properties": {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Storage/storageAccounts/ladybug4538sa",
+        "name": "ladybug4538sa",
+        "type": "microsoft.storage/storageaccounts",
+        "kind": "StorageV2",
+        "location": "westeurope",
+        "resourceGroup": "ladybug-rg",
+        "subscriptionId": "00000000-0000-0000-0000-000000004538",
+        "managedBy": "",
+        "sku": {
+          "name": "Standard_LRS",
+          "tier": "Standard"
+        },
+        "plan": null,
+        "identity": null,
+        "zones": null,
+        "extendedLocation": null,
+        "properties": {
+          "provisioningState": "Succeeded",
+          "isHnsEnabled": false,
+          "primaryEndpoints": {
+            "table": "http://ladybug4538sa.table.core.windows.net/",
+            "blob": "http://ladybug4538sa.blob.core.windows.net/",
+            "queue": "http://ladybug4538sa.queue.core.windows.net/",
+            "dfs": "http://ladybug4538sa.dfs.core.windows.net/"
+          },
+          "primaryLocation": "westeurope",
+          "statusOfPrimary": "available",
+          "supportsHttpsTrafficOnly": false,
+          "accessTier": "Hot",
+          "allowBlobPublicAccess": false,
+          "encryption": {
+            "keySource": "Microsoft.Storage",
+            "services": {
+              "table": {
+                "keyType": "Account",
+                "enabled": true
+              },
+              "blob": {
+                "keyType": "Account",
+                "enabled": true
+              },
+              "file": {
+                "keyType": "Account",
+                "enabled": true
+              },
+              "queue": {
+                "keyType": "Account",
+                "enabled": true
+              }
+            }
+          }
+        }
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourceGroups/ladybug-rg/providers/Microsoft.Storage/storageAccounts/ladybug4538sa"
+          },
+          {
+            "kind": "provider-id",
+            "value": "/subscriptions/00000000-0000-0000-0000-000000004538/resourcegroups/ladybug-rg/providers/microsoft.storage/storageaccounts/ladybug4538sa"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "listedType": "*",
+      "location": "*",
+      "verdict": "listed"
+    }
+  ],
+  "notes": []
+}

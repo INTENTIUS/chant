@@ -1,0 +1,275 @@
+{
+  "listing": "v1",
+  "source": {
+    "name": "chant-lister",
+    "version": "0.0.0-fixture"
+  },
+  "scope": {
+    "substrate": "gcp",
+    "scopeId": "ladybug-4538",
+    "locations": "*",
+    "types": "*"
+  },
+  "startedAt": "2026-11-16T12:00:00.000Z",
+  "completedAt": "2026-11-16T12:00:00.000Z",
+  "resources": [
+    {
+      "id": "gcp/ladybug-4538/global/compute.googleapis.com%2FNetwork///compute.googleapis.com/projects/ladybug-4538/global/networks/ladybug-net",
+      "listedType": "compute.googleapis.com/Network",
+      "location": "global",
+      "nativeId": "//compute.googleapis.com/projects/ladybug-4538/global/networks/ladybug-net",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//compute.googleapis.com/projects/ladybug-4538/global/networks/ladybug-net"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "name": "//compute.googleapis.com/projects/ladybug-4538/global/networks/ladybug-net",
+        "assetType": "compute.googleapis.com/Network",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-net",
+        "location": "global",
+        "createTime": "2026-11-17T04:18:39.094413293Z"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//compute.googleapis.com/projects/ladybug-4538/global/networks/ladybug-net"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/global/iam.googleapis.com%2FServiceAccount///iam.googleapis.com/projects/ladybug-4538/serviceAccounts/163127394470040438069",
+      "listedType": "iam.googleapis.com/ServiceAccount",
+      "location": "global",
+      "nativeId": "//iam.googleapis.com/projects/ladybug-4538/serviceAccounts/163127394470040438069",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//iam.googleapis.com/projects/ladybug-4538/serviceAccounts/163127394470040438069"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "name": "//iam.googleapis.com/projects/ladybug-4538/serviceAccounts/163127394470040438069",
+        "assetType": "iam.googleapis.com/ServiceAccount",
+        "project": "projects/101087468015",
+        "displayName": "ladybug",
+        "location": "global"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//iam.googleapis.com/projects/ladybug-4538/serviceAccounts/163127394470040438069"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/global/pubsub.googleapis.com%2FSubscription///pubsub.googleapis.com/projects/ladybug-4538/subscriptions/ladybug-sub",
+      "listedType": "pubsub.googleapis.com/Subscription",
+      "location": "global",
+      "nativeId": "//pubsub.googleapis.com/projects/ladybug-4538/subscriptions/ladybug-sub",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//pubsub.googleapis.com/projects/ladybug-4538/subscriptions/ladybug-sub"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "name": "//pubsub.googleapis.com/projects/ladybug-4538/subscriptions/ladybug-sub",
+        "assetType": "pubsub.googleapis.com/Subscription",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-sub"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//pubsub.googleapis.com/projects/ladybug-4538/subscriptions/ladybug-sub"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/global/pubsub.googleapis.com%2FTopic///pubsub.googleapis.com/projects/ladybug-4538/topics/ladybug-topic",
+      "listedType": "pubsub.googleapis.com/Topic",
+      "location": "global",
+      "nativeId": "//pubsub.googleapis.com/projects/ladybug-4538/topics/ladybug-topic",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//pubsub.googleapis.com/projects/ladybug-4538/topics/ladybug-topic"
+        }
+      ],
+      "tags": {
+        "env": "test"
+      },
+      "properties": {
+        "name": "//pubsub.googleapis.com/projects/ladybug-4538/topics/ladybug-topic",
+        "assetType": "pubsub.googleapis.com/Topic",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-topic"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//pubsub.googleapis.com/projects/ladybug-4538/topics/ladybug-topic"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/us-central1-a/compute.googleapis.com%2FDisk///compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/disks/ladybug-disk",
+      "listedType": "compute.googleapis.com/Disk",
+      "location": "us-central1-a",
+      "nativeId": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/disks/ladybug-disk",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/disks/ladybug-disk"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "name": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/disks/ladybug-disk",
+        "assetType": "compute.googleapis.com/Disk",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-disk",
+        "location": "us-central1-a",
+        "createTime": "2026-11-17T04:18:39.156478918Z"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/disks/ladybug-disk"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/us-central1-a/compute.googleapis.com%2FInstance///compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/instances/ladybug-vm",
+      "listedType": "compute.googleapis.com/Instance",
+      "location": "us-central1-a",
+      "nativeId": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/instances/ladybug-vm",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/instances/ladybug-vm"
+        }
+      ],
+      "tags": {
+        "role": "web"
+      },
+      "properties": {
+        "name": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/instances/ladybug-vm",
+        "assetType": "compute.googleapis.com/Instance",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-vm",
+        "location": "us-central1-a",
+        "createTime": "2026-11-17T04:18:42.683109045Z"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//compute.googleapis.com/projects/ladybug-4538/zones/us-central1-a/instances/ladybug-vm"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/us-central1/compute.googleapis.com%2FSubnetwork///compute.googleapis.com/projects/ladybug-4538/regions/us-central1/subnetworks/ladybug-subnet",
+      "listedType": "compute.googleapis.com/Subnetwork",
+      "location": "us-central1",
+      "nativeId": "//compute.googleapis.com/projects/ladybug-4538/regions/us-central1/subnetworks/ladybug-subnet",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//compute.googleapis.com/projects/ladybug-4538/regions/us-central1/subnetworks/ladybug-subnet"
+        }
+      ],
+      "tags": {},
+      "properties": {
+        "name": "//compute.googleapis.com/projects/ladybug-4538/regions/us-central1/subnetworks/ladybug-subnet",
+        "assetType": "compute.googleapis.com/Subnetwork",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-subnet",
+        "location": "us-central1",
+        "createTime": "2026-11-17T04:18:39.130774793Z"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//compute.googleapis.com/projects/ladybug-4538/regions/us-central1/subnetworks/ladybug-subnet"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    {
+      "id": "gcp/ladybug-4538/us/storage.googleapis.com%2FBucket///storage.googleapis.com/ladybug-4538-data",
+      "listedType": "storage.googleapis.com/Bucket",
+      "location": "us",
+      "nativeId": "//storage.googleapis.com/ladybug-4538-data",
+      "cloudIds": [
+        {
+          "kind": "provider-id",
+          "value": "//storage.googleapis.com/ladybug-4538-data"
+        }
+      ],
+      "tags": {
+        "env": "test"
+      },
+      "properties": {
+        "name": "//storage.googleapis.com/ladybug-4538-data",
+        "assetType": "storage.googleapis.com/Bucket",
+        "project": "projects/101087468015",
+        "displayName": "ladybug-4538-data",
+        "location": "us",
+        "createTime": "2026-11-17T04:18:30.904761Z",
+        "updateTime": "2026-11-17T04:18:30.904761Z"
+      },
+      "observedAt": "2026-11-16T12:00:00.000Z",
+      "facts": {
+        "cloudIds": [
+          {
+            "kind": "provider-id",
+            "value": "//storage.googleapis.com/ladybug-4538-data"
+          }
+        ],
+        "observedAt": "2026-11-16T12:00:00.000Z"
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "listedType": "*",
+      "location": "*",
+      "verdict": "listed"
+    }
+  ],
+  "notes": []
+}

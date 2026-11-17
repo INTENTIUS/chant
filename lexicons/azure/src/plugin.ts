@@ -16,6 +16,7 @@ import { fileURLToPath } from "url";
 import { moduleSourceDir } from "@intentius/chant/module-source";
 import { azureSerializer } from "./serializer";
 import { azureListedTypes } from "./listed-types";
+import { azureIndexIdentity } from "./index-identity";
 import { azureReferenceCatalog } from "./reference-catalog";
 import { azureGraphEdges } from "./graph-edges";
 import { hardcodedLocationRule } from "./lint/rules/hardcoded-location";
@@ -499,6 +500,10 @@ export const tags = defaultTags([
 
   // Cloud inventory type names to kinds, for an indexed resource (#4521).
   listedTypes: azureListedTypes,
+
+  // The identifier a declaration spells, for `chant search --index` and the
+  // identity edges over an index (#4538).
+  indexIdentity: azureIndexIdentity,
 
   // How its resources reference each other, for chant's catalog pass over an
   // index and a declared graph (#4535; behold#1005 retires behold's matcher on it).

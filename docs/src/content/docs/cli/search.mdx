@@ -575,9 +575,26 @@ namespace as `<namespace>/<name>`, and a cluster-scoped one at `cluster` by
 name. The kind is matched at any version, so an index that listed
 `apps/v1beta2` still binds a declared `apps/v1` Deployment. The uid is
 assigned by the API server, so no declaration can match by it. A k8s
-declaration with no `metadata.namespace` reads `no-binding`. Every row gets
-one verdict, and a row that did not bind prints its verdict where the
-physical id would go:
+declaration with no `metadata.namespace` reads `no-binding`.
+
+For gcp the match is the asset type and the name Config Connector gives the
+resource (`resourceID`, else `metadata.name`), compared with the last segment
+of the Cloud Asset resource name. A declaration with a literal `location`,
+`region` or `zone` is looked for there, lowercased as Cloud Asset spells it.
+One with no location, or one spelled with a reference, is looked for at every
+location in the project. A service account reads `no-binding`, because Cloud
+Asset names it by its unique id, which the service assigns.
+
+For azure the match is the ARM type and name, compared case-insensitively with
+the part of the ARM id after `/providers/`. A child declared on its own spells
+its parent in its name (`vnet/apps`). The resource group is not part of the
+match, so one name in two resource groups reads `ambiguous`. A literal
+`location` is looked for there (`East US` and `eastus` are the same). A
+declaration with no literal location is looked for at every location. A name
+written as an ARM expression reads `no-binding`.
+
+Every row gets one verdict, and a row that did not bind prints its verdict
+where the physical id would go:
 
 | Verdict | Printed | Meaning |
 |---|---|---|
@@ -588,8 +605,8 @@ physical id would go:
 | `ambiguous` | `(ambiguous: N candidates)` | two or more indexed resources carry the identity, and none is bound |
 
 An indexed resource that no declared row binds is not a row, just as an
-undeclared resource is not a row of a `--live` answer. The aws and k8s
-lexicons have an index match today. Rows of the other lexicons read
+undeclared resource is not a row of a `--live` answer. The aws, k8s, gcp and
+azure lexicons have an index match today. Rows of the other lexicons read
 `not observed: unsupported-kind`.
 
 With no project (no lexicon in a `chant.config` or in source), the index is
