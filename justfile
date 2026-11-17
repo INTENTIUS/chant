@@ -392,8 +392,10 @@ release *args:
     fi
 
 # Check that every contract floor names a released version or a local build
-# stamp, or set the next release's number (#4480), or after <v> is published
-# turn its floors into literals and move NEXT_RELEASE on (#4501)
+# stamp, or set the next release's number (#4480). A floor still NEXT_RELEASE
+# after a release is read from the release tags and packed at that release by
+# core's prepack (#5260), so no freeze is needed; --freeze <v> writes those
+# literals into the sources and moves NEXT_RELEASE on (#4501)
 # (just release-floors [--npm] [--release <v>] [--rev <sha>] | just release-floors --set <v>
 #  | just release-floors --freeze <v> [--next <n>])
 release-floors *args:

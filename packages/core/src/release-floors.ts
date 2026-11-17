@@ -13,11 +13,15 @@
  * cut a version when any floor names a version that is neither a published
  * release nor the one being cut.
  *
- * After the cut, a floor stays at the value it was released with. Once the
- * release is published, `just release-floors --freeze <version>` writes the
- * version into every floor that names this constant as a literal, and moves
- * this constant to the next patch (#4501). The check fails while a floor
- * still names this constant after its version shipped.
+ * After the cut, a floor stays at the value it was released with. The
+ * release tags say which release first carried a floor still on this
+ * constant, and core's prepack (`scripts/release-floors.ts --pack`) builds
+ * with each such floor written as that release, every other one and this
+ * constant as the version being packed, then puts the sources back (#5260).
+ * So a release train needs no commit between releases, and this constant can
+ * name a release that already shipped. `just release-floors --freeze
+ * <version>` writes those literals into the sources and moves this constant
+ * to the next patch (#4501), for a tree that reads plainly.
  *
  * A new floor is declared next to the code it gates, in that feature's own
  * file, as `export const <NAME>_FLOOR = NEXT_RELEASE;` with NEXT_RELEASE

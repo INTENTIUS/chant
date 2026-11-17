@@ -25,7 +25,7 @@
  * {@link resetLocalChant} goes back: `npm ci`, then a check that every
  * installed chant package is the version the lock pins, with no mark.
  */
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -159,13 +159,36 @@ function compareCore(a: string, b: string): number {
  * hand (0.124.34 while 0.124.87 was out), which failed a product's floor and
  * `minReader` checks that pass on a published chant. Every floor the checkout
  * declares is at or below `NEXT_RELEASE`, so the local build passes each one.
+ * A checkout's NEXT_RELEASE can name a release that already shipped, since a
+ * release train needs no commit to move it on (#5260), so the version is at
+ * least the patch after core's newest release tag in the checkout.
  * The build is marked local by the `chantLocal` field on each installed copy,
  * not in the version, because a prerelease of `NEXT_RELEASE` sorts below it.
  */
 export function localChantVersion(chantDir: string, coreVersion: string): string {
   const f = join(chantDir, "packages/core/src/release-floors.ts");
   const next = existsSync(f) ? /export const NEXT_RELEASE = "(\d+\.\d+\.\d+)"/.exec(readFileSync(f, "utf8"))?.[1] : undefined;
-  return next !== undefined && compareCore(next, coreVersion) > 0 ? next : coreVersion;
+  const released = newestCoreRelease(chantDir);
+  const afterRelease = released === undefined ? undefined : released.replace(/\d+$/, (p) => String(Number(p) + 1));
+  let out = coreVersion;
+  for (const v of [next, afterRelease]) if (v !== undefined && compareCore(v, out) > 0) out = v;
+  return out;
+}
+
+/** The newest core release a chant checkout's tags name (`release/npm/core/<v>`, `release/npm/<v>`, `chant-v<v>`), or undefined. */
+function newestCoreRelease(chantDir: string): string | undefined {
+  let tags: string;
+  try {
+    tags = execFileSync("git", ["tag", "-l", "release/npm/core/*", "release/npm/[0-9]*", "chant-v*"], { cwd: chantDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return undefined;
+  }
+  let out: string | undefined;
+  for (const t of tags.split("\n")) {
+    const v = /^(?:release\/npm\/core\/|release\/npm\/|chant-v)(\d+\.\d+\.\d+)$/.exec(t.trim())?.[1];
+    if (v !== undefined && (out === undefined || compareCore(v, out) > 0)) out = v;
+  }
+  return out;
 }
 
 /**
