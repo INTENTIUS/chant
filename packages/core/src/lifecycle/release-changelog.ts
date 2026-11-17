@@ -80,20 +80,40 @@ const NOTES_GROUPS: Array<[ChangelogKind, string]> = [
   ["other", "Other changes"],
 ];
 
+/** Which commits a forge release's notes generated from commits list (#5153, #5270). */
+export interface NotesFilter {
+  /** The conventional types listed. Default `feat`, `fix` and `perf`; `*` lists every type. */
+  types?: readonly string[];
+  /** The conventional types left out, every other commit listed: goreleaser's `changelog.filters.exclude`. Not with `types`. */
+  exclude?: readonly string[];
+  /** List the commits whose subject is not conventional. Default: with `exclude` or `*` yes, with a list of types no. */
+  nonConventional?: boolean;
+}
+
+/** Whether the notes list `message` under `filter` (#5270). A breaking change is listed whatever its type. */
+export function notesListCommit(message: string, filter: NotesFilter = {}): boolean {
+  const { kind, type } = classifyCommit(message);
+  if (kind === "breaking") return true;
+  const types = filter.types ?? (filter.exclude ? ["*"] : DEFAULT_NOTES_TYPES);
+  const all = types.includes("*");
+  if (type === undefined) return filter.nonConventional ?? all;
+  if (filter.exclude?.includes(type)) return false;
+  return all || types.includes(type);
+}
+
 /**
  * Release notes from `commits` (#5153), newest first as `git log` lists
- * them: the commits whose conventional type is in `types`, grouped by
+ * them: the commits {@link notesListCommit} lists, grouped by
  * {@link releaseChangelog} under a `###` heading each, one line per commit
- * with its scope and short sha. A breaking change is listed whatever its
- * type; `*` in `types` lists every commit, conventional or not. Empty when
- * no commit is listed.
+ * with its scope and short sha. `types` (default `feat`, `fix` and `perf`)
+ * lists those types, `*` every commit; `exclude` lists every commit but those
+ * types (#5270). Commits that are not conventional are listed with `*` or
+ * `exclude` and not with a list of types, unless `nonConventional` says
+ * otherwise. Empty when no commit is listed.
  */
-export function changelogNotes(commits: readonly ChangelogCommit[], types: readonly string[] = DEFAULT_NOTES_TYPES): string {
-  const all = types.includes("*");
-  const listed = commits.filter((c) => {
-    const { kind, type } = classifyCommit(c.message);
-    return all || kind === "breaking" || (type !== undefined && types.includes(type));
-  });
+export function changelogNotes(commits: readonly ChangelogCommit[], filter: NotesFilter | readonly string[] = {}): string {
+  const f: NotesFilter = Array.isArray(filter) ? { types: filter as readonly string[] } : (filter as NotesFilter);
+  const listed = commits.filter((c) => notesListCommit(c.message, f));
   const { groups } = releaseChangelog(listed);
   const out: string[] = [];
   for (const [kind, title] of NOTES_GROUPS) {

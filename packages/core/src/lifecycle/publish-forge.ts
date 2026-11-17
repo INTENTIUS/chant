@@ -67,6 +67,7 @@ import { SIGSTORE_BUNDLE_SUFFIX, SLSA_BUNDLE_FILE, SLSA_PROVENANCE_PREDICATE, sl
 import { releaseVersion } from "./publish-homebrew";
 import { readCredential, type Credential } from "./publish-credentials";
 import type { ForgePublishDeclaration } from "./publish-declaration";
+import { NEXT_RELEASE } from "../release-floors";
 import { changelogNotes, type ChangelogCommit } from "./release-changelog";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
@@ -81,6 +82,9 @@ export const PUBLISH_FORGE_NOTES_FLOOR = "0.124.71";
 
 /** The first chant whose forge target generates notes, `notes.generate` (#5153). Products feature-detect on it. */
 export const PUBLISH_FORGE_GENERATED_NOTES_FLOOR = "0.124.101";
+
+/** The first chant whose forge target's notes from commits take `exclude` and `nonConventional` (#5270). */
+export const PUBLISH_FORGE_NOTES_EXCLUDE_FLOOR = NEXT_RELEASE;
 
 /** `text` with `{label}`, `{version}` and `{tag}` filled in. */
 function fillNotesText(text: string, values: { label: string; version: string; tag: string }): string {
@@ -534,7 +538,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
       const previous = await previousMemberRelease(ctx, decl.forge);
       if (n.generate === "commits") {
         // #5159: the summaries of the intent files the cut consumed come first.
-        generated = [await consumedIntentNotes(ctx), changelogNotes(memberCommits(ctx, previous?.commit ?? null, decl.forge), n.types)].filter((p) => p.length > 0).join("\n\n");
+        generated = [await consumedIntentNotes(ctx), changelogNotes(memberCommits(ctx, previous?.commit ?? null, decl.forge), { ...(n.types ? { types: n.types } : {}), ...(n.exclude ? { exclude: n.exclude } : {}), ...(n.nonConventional !== undefined ? { nonConventional: n.nonConventional } : {}) })].filter((p) => p.length > 0).join("\n\n");
       } else {
         // #5150: the previous release's tag is the one release.tag gives its label, as the cut made it.
         const previousTag = previous && previous.label !== null && !decl.tag ? previousReleaseTag(ctx, previous.label) : null;

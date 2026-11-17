@@ -23,6 +23,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, posix, relative, sep } from "node:path";
 import { GENERATED_MARKER } from "../discovery/files";
 import { forgeOfRemote } from "../forge-remote";
+import { parseYAML } from "../yaml";
 import { detectRegistryProjects, planRegistryTargets, type RegistryProjectFacts } from "./release-init-registries";
 
 export type ReleaseInitCode =
@@ -119,6 +120,8 @@ export interface ProjectFacts {
     snapshot: boolean;
     /** The config builds images (`dockers:` or `kos:`). */
     images: boolean;
+    /** Its `changelog.filters` (#5270): the types left out, or the patterns no commit type names. */
+    changelog?: { exclude: string[] } | { unread: string[] } | null;
   } | null;
   /** Helm charts (#5233): each directory holding a `Chart.yaml`, from the project root, and the chart's name. A chart inside another's directory is its subchart and is not listed. */
   charts?: Array<{ dir: string; name: string | null }>;
@@ -341,6 +344,35 @@ export function goreleaserFacts(text: string): { labelTemplate: boolean; snapsho
   };
 }
 
+/**
+ * A goreleaser config's `changelog` (#5270), as generated notes: the commit
+ * types its `filters.exclude` leaves out, when each pattern names one type
+ * (`^docs:`, `^chore(\(.*\))?:`), or the patterns that name none. `null` when the
+ * config generates no changelog of its own filtering.
+ */
+export function goreleaserChangelog(text: string): { exclude: string[] } | { unread: string[] } | null {
+  let doc: Record<string, unknown>;
+  try {
+    doc = parseYAML(text);
+  } catch {
+    return null;
+  }
+  const changelog = doc?.changelog as { disable?: unknown; filters?: { exclude?: unknown; include?: unknown } } | undefined;
+  if (!changelog || typeof changelog !== "object" || changelog.disable === true) return null;
+  const patterns = Array.isArray(changelog.filters?.exclude) ? changelog.filters.exclude.filter((p): p is string => typeof p === "string") : [];
+  const include = Array.isArray(changelog.filters?.include) ? changelog.filters.include.filter((p): p is string => typeof p === "string") : [];
+  if (patterns.length === 0 && include.length === 0) return null;
+  const types: string[] = [];
+  const unread: string[] = [...include];
+  for (const p of patterns) {
+    const m = /^\^(\w+)(?:\(\\\(\.\*\\\)\)\?)?:$/.exec(p.trim());
+    if (m) {
+      if (!types.includes(m[1]!)) types.push(m[1]!);
+    } else unread.push(p);
+  }
+  return unread.length > 0 ? { unread } : { exclude: types };
+}
+
 /** The lines a goreleaser config needs so its snapshot build carries the release's label. */
 export const GORELEASER_SNAPSHOT = 'snapshot:\n  version_template: "{{ .Env.CHANT_RELEASE_LABEL }}"\n';
 
@@ -431,7 +463,7 @@ export function detectProject(root: string): ProjectFacts {
   const python = pyproject === null ? (existsSync(join(root, "setup.py")) ? { name: null, pyproject: false, version: false } : null) : pyprojectFacts(pyproject);
 
   const grFile = GORELEASER_FILES.find((f) => existsSync(join(root, f)));
-  const goreleaser = grFile ? { file: grFile, ...goreleaserFacts(readText(join(root, grFile)) ?? "") } : null;
+  const goreleaser = grFile ? { file: grFile, ...goreleaserFacts(readText(join(root, grFile)) ?? ""), changelog: goreleaserChangelog(readText(join(root, grFile)) ?? "") } : null;
 
   const nfpmFile = NFPM_FILES.find((f) => existsSync(join(root, f)));
   const nfpmVersion = nfpmFile ? /^version:[ \t]*["']?[^\n]*\$\{?CHANT_RELEASE_(VERSION|LABEL)/m.test(readText(join(root, nfpmFile)) ?? "") : false;
@@ -714,8 +746,16 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
     release.artifacts = [{ name: "goreleaser", goreleaser: {} }];
     reasons.push(`release.artifacts: ${gr.file} builds the binaries and archives once at the cut with goreleaser release --snapshot, and the release records each file`);
     if (facts.origin) {
-      publish.push({ type: "forge", forge: facts.origin.kind, repo: facts.origin.repo, assets: ["artifact:goreleaser"], notes: { generate: "forge" } });
-      reasons.push(`forge target: the goreleaser files as assets of the ${facts.origin.kind} release ${facts.origin.repo}, with generated notes`);
+      // #5270: a changelog that filters commit types keeps its filters as notes from commits.
+      const cl = gr.changelog;
+      const exclude = cl && "exclude" in cl ? cl.exclude : null;
+      publish.push({ type: "forge", forge: facts.origin.kind, repo: facts.origin.repo, assets: ["artifact:goreleaser"], notes: exclude ? { generate: "commits", exclude } : { generate: "forge" } });
+      reasons.push(
+        exclude
+          ? `forge target: the goreleaser files as assets of the ${facts.origin.kind} release ${facts.origin.repo}, with notes from the commits since the previous release except ${exclude.join(", ")}, as ${gr.file}'s changelog filters left them out`
+          : `forge target: the goreleaser files as assets of the ${facts.origin.kind} release ${facts.origin.repo}, with generated notes`,
+      );
+      if (cl && "unread" in cl) notes.push(`${gr.file}'s changelog filters ${cl.unread.map((p) => JSON.stringify(p)).join(", ")} name no commit type, so the forge release's notes are the forge's own: set notes to { generate: "commits", types: [...] } or { generate: "commits", exclude: [...] } to filter them.`);
     } else notes.push(`No forge release is declared for ${gr.file}'s files: origin names no GitHub, GitLab or Forgejo repository.`);
   }
 

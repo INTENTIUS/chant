@@ -145,6 +145,10 @@ export const ForgePublishSchema = z
         generate: z.enum(["forge", "commits"]).optional(),
         /** With `generate: "commits"`: the commit types listed. Default `feat`, `fix` and `perf`. A breaking change is listed whatever its type; `*` lists every commit. */
         types: z.array(z.string().min(1)).min(1).optional(),
+        /** With `generate: "commits"`, instead of `types` (#5270): the commit types left out, such as `docs`, `test` and `chore`; every other commit is listed, conventional or not. */
+        exclude: z.array(z.string().regex(/^\w+$/, "a commit type, such as docs")).min(1).optional(),
+        /** With `generate: "commits"` (#5270): list the commits whose subject is not conventional. Default `true` with `exclude` or `types: ["*"]`, `false` with a list of types. */
+        nonConventional: z.boolean().optional(),
         /** A paragraph before the notes, with the same placeholders. */
         before: z.string().min(1).optional(),
         /** A paragraph after the notes, with the same placeholders. */
@@ -154,6 +158,9 @@ export const ForgePublishSchema = z
       .refine((n) => (n.file === undefined) === (n.heading === undefined), { message: "notes.file and notes.heading go together", path: ["heading"] })
       .refine((n) => n.file !== undefined || n.generate !== undefined, { message: "notes need a file section, generate, or both", path: ["generate"] })
       .refine((n) => n.types === undefined || n.generate === "commits", { message: 'notes.types applies to generate: "commits"', path: ["types"] })
+      .refine((n) => n.exclude === undefined || n.generate === "commits", { message: 'notes.exclude applies to generate: "commits"', path: ["exclude"] })
+      .refine((n) => n.nonConventional === undefined || n.generate === "commits", { message: 'notes.nonConventional applies to generate: "commits"', path: ["nonConventional"] })
+      .refine((n) => n.exclude === undefined || n.types === undefined, { message: "notes.types lists types and notes.exclude leaves them out: name one", path: ["exclude"] })
       .optional(),
     /** The forge release's tag. Default: the tag the cut made, from `release.tag` (#5150; `release/<label>` or `release/<member>/<label>` when unset). */
     tag: z.string().min(1).optional(),
