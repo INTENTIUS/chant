@@ -832,6 +832,15 @@ export interface NodeIdentityValue {
   /** `native-id`, or the cloud id's kind (`arn`, `provider-id`, ...). */
   kind: string;
   value: string;
+  /**
+   * The attribute paths this value names the node at (#5250): a holder's
+   * string at `path` joins only when `path` is one of these or ends in `.`
+   * plus one. For a name that is unique only among objects of one kind (a
+   * Kubernetes cluster-scoped name), where the same string at another field
+   * names something else. Absent: the value names the node wherever it
+   * appears.
+   */
+  paths?: readonly string[];
 }
 
 /** The lexicon whose nodes can be identity-matched, and the values that name each one. */
@@ -931,8 +940,8 @@ export function reconstructIdentityEdges(
   const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
   const ownerBy = new Map(owners.map((o) => [o.lexicon, o]));
   const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${value}`;
-  // key -> node id -> the rule that names it
-  const index = new Map<string, Map<string, string>>();
+  // key -> node id -> the rule that names it, and the paths it names the node at
+  const index = new Map<string, Map<string, { rule: string; paths?: readonly string[] }>>();
   const own = new Map<string, Set<string>>();
   for (const node of sorted) {
     const owner = ownerBy.get(node.lexicon);
@@ -940,13 +949,13 @@ export function reconstructIdentityEdges(
     const scope = scopeOf(node);
     const values = (owner.identities ?? defaultNodeIdentities)(node);
     own.set(node.id, new Set(values.map((v) => v.value)));
-    for (const { kind, value } of values) {
+    for (const { kind, value, paths } of values) {
       if (!identityCandidateValue(value)) continue;
       const k = keyOf(scope, value);
       const m = index.get(k) ?? index.set(k, new Map()).get(k)!;
       const rule = identityMatchRuleId(owner.lexicon, node.kind, kind);
       const prev = m.get(node.id);
-      if (prev === undefined || byString(rule, prev) < 0) m.set(node.id, rule);
+      if (prev === undefined || byString(rule, prev.rule) < 0) m.set(node.id, { rule, paths });
     }
   }
 
@@ -961,7 +970,11 @@ export function reconstructIdentityEdges(
     for (const { path, value } of stringLeaves(holder.attrs ?? {})) {
       if (!identityCandidateValue(value) || mine.has(value)) continue;
       const found = new Map<string, string>();
-      for (const k of keys(value)) for (const [id, rule] of index.get(k) ?? []) if (id !== holder.id) found.set(id, rule);
+      for (const k of keys(value)) {
+        for (const [id, { rule, paths }] of index.get(k) ?? []) {
+          if (id !== holder.id && (paths === undefined || paths.some((p) => path === p || path.endsWith(`.${p}`)))) found.set(id, rule);
+        }
+      }
       if (found.size === 0) continue;
       if (found.size > 1) {
         ambiguous.set(`${holder.id}|${path}|${value}`, { from: holder.id, path, value, candidates: [...found.keys()].sort(byString) });

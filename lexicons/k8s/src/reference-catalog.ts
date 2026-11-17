@@ -204,6 +204,29 @@ const ref = (from: string, path: string, targetKind: string, label: string, rela
 const anyOf = (from: string, path: string, targetKinds: readonly string[], label: string): RefRule[] =>
   targetKinds.map((targetKind) => ({ from, path, targetKind, relation: "reference" as const, label, optional: true }));
 
+/**
+ * A binding's `roleRef` names a role by `kind` and `name` (#5250), so a Role and
+ * a ClusterRole of one name are two objects and the binding reaches the one its
+ * `kind` says. One rule per role kind, each reading only the references of its
+ * own kind; a `roleRef` with no kind names neither.
+ */
+function roleRefRules(from: string, roleKinds: readonly string[]): RefRule[] {
+  return roleKinds.map((targetKind): RefRule => ({
+    from,
+    path: "roleRef.name",
+    targetKind,
+    relation: "reference",
+    label: "binds",
+    optional: true,
+    join(holder, find) {
+      const name = first(holder, "roleRef.name");
+      const kind = first(holder, "roleRef.kind");
+      if (name === undefined || kind === undefined || `K8s::Rbac::${kind}` !== targetKind) return [];
+      return [{ value: name, targets: find(name).filter((n) => n.kind === targetKind) }];
+    },
+  }));
+}
+
 /** What a pod spec names: its service account, mounted config and secrets, claims, pull secrets. */
 function podSpecRules(kind: string, p: string): RefRule[] {
   const containers = [`${p}.containers[]`, `${p}.initContainers[]`];
@@ -396,9 +419,9 @@ const refs: RefRule[] = [
   ref("K8s::Core::PersistentVolumeClaim", "spec.volumeName", "K8s::Core::PersistentVolume", "bound to"),
   ref("K8s::Core::PersistentVolumeClaim", "spec.storageClassName", "K8s::Storage::StorageClass", "class"),
   ref("K8s::Core::PersistentVolume", "spec.storageClassName", "K8s::Storage::StorageClass", "class"),
-  ...anyOf("K8s::Rbac::RoleBinding", "roleRef.name", ["K8s::Rbac::Role", "K8s::Rbac::ClusterRole"], "binds"),
+  ...roleRefRules("K8s::Rbac::RoleBinding", ["K8s::Rbac::Role", "K8s::Rbac::ClusterRole"]),
   ...anyOf("K8s::Rbac::RoleBinding", "subjects[].name", ["K8s::Core::ServiceAccount"], "grants"),
-  ...anyOf("K8s::Rbac::ClusterRoleBinding", "roleRef.name", ["K8s::Rbac::ClusterRole"], "binds"),
+  ...roleRefRules("K8s::Rbac::ClusterRoleBinding", ["K8s::Rbac::ClusterRole"]),
   ...anyOf("K8s::Rbac::ClusterRoleBinding", "subjects[].name", ["K8s::Core::ServiceAccount"], "grants"),
   ref("K8s::Core::ServiceAccount", "secrets[].name", "K8s::Core::Secret", "token"),
   ref("K8s::Core::ServiceAccount", "imagePullSecrets[].name", "K8s::Core::Secret", "pulls with"),
