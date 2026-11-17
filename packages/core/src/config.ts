@@ -211,6 +211,8 @@ export const ChantConfigSchema = z.object({
     lane: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a ci.green lane name: lowercase letters, digits and dashes").optional(),
     // #5149: what says a commit may be released.
     green: z.enum(["chant", "forge-checks", "none"]).optional(),
+    // #5261: shell lines a single release's cut runs once the label is stamped and before anything is recorded or tagged.
+    check: z.array(z.string().min(1)).optional(),
     // #5157: commands a publish runs after every target has staged and before any reveals.
     verify: z.array(z.union([z.string().min(1), z.object({ name: z.string().min(1).optional(), run: z.string().min(1) }).strict()])).optional(),
     // #5165: workspace members a train publish reveals before this one, beside what the targets' names say.
@@ -576,6 +578,15 @@ export interface ChantConfig {
      * the repository holds `ci/green/` tags, else `forge-checks`. See ./lifecycle/release-green.ts.
      */
     green?: import("./lifecycle/release-green").ReleaseGreenSource;
+    /**
+     * Shell lines `chant release cut` runs (#5261), with or without `--yes`,
+     * once the label is stamped and the release's builds have run, and before
+     * any environment is compiled or anything recorded or tagged, with
+     * `CHANT_RELEASE_LABEL` and `CHANT_RELEASE_COMMIT` set. One that fails
+     * refuses the cut with `release-check-failed`. A train's checks are
+     * `release.train.check`.
+     */
+    check?: string[];
     /**
      * Commands `chant release publish` and `chant workspace train publish`
      * run after every target has staged and before any reveals (#5157), with

@@ -26,6 +26,9 @@ Releases:
                         trunk from a temporary worktree instead of HEAD, so
                         the checkout need not be clean. The label reaches
                         every compile and build as CHANT_RELEASE_LABEL.
+                        release.check's lines run once the label is stamped
+                        and before anything is recorded, in a dry run too;
+                        one that fails refuses the cut.
                         --image, repeatable, hands the cut a component's image
                         built elsewhere, by digest: the release records it and
                         the cut builds nothing for that component (#4694).
