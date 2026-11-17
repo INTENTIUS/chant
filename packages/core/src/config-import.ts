@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 let freshLoads = 0;
@@ -33,10 +33,29 @@ export type ConfigModuleNamespace = Record<string, unknown>;
  * evaluate the file once — the behavior `loadChantConfig` has always had.
  */
 export async function importConfigModule(configPath: string, fresh = false): Promise<ConfigModuleNamespace> {
-  ensureTypeScriptLoader();
+  // #5263: with no tsx in chant's install or the project's, node's own type stripping (22.18+, 23.6+) may still read the file.
+  let noTsx: Error | null = null;
+  try {
+    ensureTypeScriptLoader(dirname(configPath));
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.startsWith("chant needs tsx") || !nativeTypeScript()) throw err;
+    noTsx = err;
+  }
   // `fresh` re-evaluates the config file itself: a query string makes the specifier a new module. Files it imports stay cached.
   const specifier = fresh ? `${pathToFileURL(configPath).href}?fresh=${++freshLoads}` : configPath;
-  return (await import(specifier)) as ConfigModuleNamespace;
+  try {
+    return (await import(specifier)) as ConfigModuleNamespace;
+  } catch (err) {
+    if (noTsx === null) throw err;
+    const why = String(err instanceof Error ? err.message : err).split("\n")[0];
+    throw Object.assign(new Error(`${noTsx.message} (node's own type stripping could not read ${configPath} either: ${why})`), { cause: err });
+  }
+}
+
+/** Whether this node strips TypeScript types itself, so an `import()` of a `.ts` file needs no loader. */
+function nativeTypeScript(): boolean {
+  const ts = (process.features as { typescript?: unknown }).typescript;
+  return ts === "strip" || ts === "transform";
 }
 
 /**
@@ -46,6 +65,6 @@ export async function importConfigModule(configPath: string, fresh = false): Pro
  */
 export function requireConfigModule(configPath: string, dir: string): ConfigModuleNamespace {
   const req = createRequire(join(dir, "package.json"));
-  ensureTypeScriptLoader();
+  ensureTypeScriptLoader(dir);
   return req(configPath) as ConfigModuleNamespace;
 }

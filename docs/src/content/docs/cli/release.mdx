@@ -57,6 +57,12 @@ Each subcommand has a page of its own.
 | <span id="release-verify"></span>[release verify](/chant/cli/release/verify/) | Checks, offline, that a release was signed by a key `.chant/allowed_signers` lists, and with `--sigstore` its Sigstore signatures and provenance. |
 | <span id="release-workflow"></span>[release workflow](/chant/cli/release/workflow/) | Writes the release workflow: the publish job on a release tag, or the whole release started by hand. |
 
+## Reading the config
+
+Every subcommand but `init` reads the `release` block of the member's `chant.config.ts` or `chant.config.json`, and of the workspace root's when the member sits in a workspace. A config that is there and can't be loaded refuses the command with `release-config-unreadable`, naming the file and the error, before it reads anything else ([#5263](https://github.com/INTENTIUS/chant/issues/5263)). It is never read as a config with no `release` block, which would give `release next` no `release.tag` to find the previous release by.
+
+A `chant.config.ts` is TypeScript, which chant reads with `tsx`, an optional dependency. chant takes it from its own install, else from the project's `node_modules`, so a chant run with `npx @intentius/chant@<version>` uses the `tsx` the project has installed. With neither, a node that strips types itself (22.18 and newer) reads a config written in the TypeScript it can strip, such as `export default { release: { ... } }` with type-only imports. When none of that works, the refusal says what to do: install `tsx` in the project (`npm i -D tsx`), run chant beside it (`npx -p tsx -p @intentius/chant@<version> chant release ...`), or write the config as `chant.config.json`, which needs no `tsx`. `RELEASE_CONFIG_UNREADABLE_FLOOR` in `@intentius/chant/cli/handlers/release-config` is the first chant that does this.
+
 ## Joining a release to its commit, gates and deploys
 
 The records name one another through the release digest ([#4043](https://github.com/INTENTIUS/chant/issues/4043)). From a commit, a release, a release gate or a deploy record, the others are one lookup away:

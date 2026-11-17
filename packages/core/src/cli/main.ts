@@ -2226,6 +2226,14 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceUnknown(ctx) },
 ];
 
+// #5263: every release command but init, which writes the config, refuses a chant.config it can't load
+// instead of reading it as one with no release block.
+for (const def of commandRegistry) {
+  if (!def.name.startsWith("release ") || def.name === "release init") continue;
+  const run = def.handler;
+  def.handler = async (ctx) => (await (await import("./handlers/release-config")).refuseUnreadableReleaseConfig(resolve("."))) ?? run(ctx);
+}
+
 /**
  * Main entry point
  */
