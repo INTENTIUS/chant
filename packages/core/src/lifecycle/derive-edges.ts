@@ -57,11 +57,12 @@ export interface EdgeLexicon {
 const GLOBAL_LOCATIONS: ReadonlySet<string> = new Set(["global", "cluster", ""]);
 
 /** The scope an indexed node's identifiers are unique in, from its document's stamp and its own location. */
-export function indexedNodeScope(doc: IndexDocument, node: IRNode): IndexedNodeScope {
+export function indexedNodeScope(doc: IndexDocument, node: IRNode, ids?: ReferenceCatalog["indexIds"]): IndexedNodeScope {
   const scope = doc.stamp.scope;
   const account = scope.kind === "cloud" ? `${scope.substrate}/${scope.scopeId}` : doc.stamp.scopeKey;
   const location = node.location ?? "";
-  return GLOBAL_LOCATIONS.has(location) ? { account } : { account, region: location };
+  const fold = ids?.caseInsensitive ? { foldCase: true } : {};
+  return GLOBAL_LOCATIONS.has(location) || ids?.regionless ? { account, ...fold } : { account, region: location, ...fold };
 }
 
 const byString = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -104,6 +105,7 @@ export function deriveEdgesAcross(docs: readonly IndexDocument[], lexicons: read
     .sort((a, b) => byString(a.name, b.name))
     .map((l) => ({ lexicon: l.name, catalog: l.referenceCatalog }));
   const withCatalog = new Set(named.map((c) => c.lexicon));
+  const idsOf = new Map(named.map((c) => [c.lexicon, c.catalog.indexIds]));
 
   const holderDoc = new Map<string, number>();
   const scopes = new Map<string, IndexedNodeScope>();
@@ -111,7 +113,7 @@ export function deriveEdgesAcross(docs: readonly IndexDocument[], lexicons: read
   docs.forEach((d, i) => {
     for (const n of d.graph.nodes) {
       holderDoc.set(n.id, i);
-      scopes.set(n.id, indexedNodeScope(d, n));
+      scopes.set(n.id, indexedNodeScope(d, n, idsOf.get(n.lexicon)));
       all.push(n);
     }
   });

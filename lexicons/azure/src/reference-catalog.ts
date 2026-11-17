@@ -1,4 +1,31 @@
-import type { ReferenceCatalog } from "@intentius/chant/graph-refs";
+import type { FindNodes, JoinedRef, ReferenceCatalog } from "@intentius/chant/graph-refs";
+import type { IRNode } from "@intentius/chant/graph-ir";
+
+/**
+ * The id of the node an ARM id sits in (#5286): a child resource names its
+ * parent resource (`.../virtualNetworks/v/subnets/s` is in
+ * `.../virtualNetworks/v`), and a top-level resource names its resource group.
+ * The id is cut as written, so the caller compares case-insensitively. A
+ * resource group's own id has no `/providers/`, and has no parent here.
+ */
+export function armParentId(id: string): string | undefined {
+  const at = id.toLowerCase().lastIndexOf("/providers/");
+  if (at < 0) return undefined;
+  const segments = id.slice(at + "/providers/".length).split("/").filter((x) => x !== "");
+  // namespace, type, name, then child type and name pairs
+  if (segments.length < 3) return undefined;
+  if (segments.length > 3) return id.replace(/\/+$/, "").split("/").slice(0, -2).join("/");
+  const rg = /^(\/subscriptions\/[^/]+\/resourcegroups\/[^/]+)\//i.exec(id);
+  return rg?.[1];
+}
+
+/** Containment drawn from the id itself (#5286): no attribute names the parent. */
+function parentInId(holder: IRNode, find: FindNodes): JoinedRef[] {
+  if (!holder.nativeId) return [];
+  const parent = armParentId(holder.nativeId);
+  if (parent === undefined) return [];
+  return [{ value: parent, targets: find(parent), via: "id" }];
+}
 
 /**
  * Azure reference catalog (#4535): how Azure resources name each other, so
@@ -30,17 +57,25 @@ import type { ReferenceCatalog } from "@intentius/chant/graph-refs";
  *
  * ## What this does not do
  *
- * - Matching is exact. ARM compares ids case-insensitively, and a reference
- *   can spell `resourceGroups` where the target's id spells
- *   `resourcegroups`. Such a reference is dangling, never joined to the
- *   wrong node.
+ * - Ids are compared case-insensitively over an index, as ARM compares them
+ *   (`indexIds`). Over a declared graph a path holds ARM expressions, which
+ *   match no node either way.
  * - `identity.userAssignedIdentities` names its identities in object keys,
  *   which `readPath` cannot read. A Container App's identity edge comes from
  *   `graphEdges` on a declared graph and from nothing over an index.
- * - A subnet's parent VNet is in the subnet's own id. No attribute names it,
- *   so there is no containment rule for it.
+ *
+ * ## Scope and parents in the id
+ *
+ * An ARM id names its subscription, so an id is unique in the whole account
+ * the index reads and a row's location never partitions a join: a row with no
+ * location (a subnet listed on its own, a global resource) is reached from a
+ * holder in any region and reaches any region (`indexIds.regionless`). The
+ * rule `azure:*:id` draws containment from the id itself: every top-level
+ * resource is in its resource group, and every child resource (a subnet) is in
+ * its parent resource. A parent that is not in the listing draws nothing.
  */
 export const azureReferenceCatalog: ReferenceCatalog = {
+  indexIds: { regionless: true, caseInsensitive: true },
   identities: [
     { kind: "Microsoft.OperationalInsights/workspaces", ids: ["customerId"] },
     { kind: "Microsoft.App/containerApps", ids: ["configuration.ingress.fqdn", "latestRevisionFqdn"] },
@@ -61,6 +96,9 @@ export const azureReferenceCatalog: ReferenceCatalog = {
     { from: "Microsoft.ContainerInstance/containerGroups", path: "subnetIds[].id", targetKind: "Microsoft.Network/virtualNetworks_subnets", relation: "containment", label: "in subnet" },
     { from: "Microsoft.Network/applicationGateways", path: "gatewayIPConfigurations[].properties.subnet.id", targetKind: "Microsoft.Network/virtualNetworks_subnets", relation: "containment", label: "in subnet" },
     { from: "Microsoft.Network/loadBalancers", path: "frontendIPConfigurations[].properties.subnet.id", targetKind: "Microsoft.Network/virtualNetworks_subnets", relation: "containment", label: "in subnet" },
+
+    // ── containment from the id ──
+    { from: "*", path: "id", relation: "containment", label: "in", optional: true, join: parentInId },
 
     // ── references (→ edges) ──
     // A managed environment names its workspace by the workspace's customer

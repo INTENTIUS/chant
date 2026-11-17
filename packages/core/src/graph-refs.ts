@@ -184,6 +184,14 @@ export interface ReferenceCatalog {
   refs: RefRule[];
   /** Typed tag rules, used over indexed nodes only (#4522). */
   tagRefs?: TagRefRule[];
+  /**
+   * How this lexicon's ids are unique in an index (#5286). `regionless`: an id
+   * is unique in the whole account, so a node with no location, or in any
+   * location, joins with every node of its account (an ARM id names its
+   * subscription). `caseInsensitive`: two ids that differ only in case are one
+   * (ARM compares ids that way). Over an index only.
+   */
+  indexIds?: { regionless?: boolean; caseInsensitive?: boolean };
   /** Kinds whose names are scoped by a value on the node, on a declared graph (#5097). */
   scopes?: ScopeRule[];
   /**
@@ -603,6 +611,8 @@ export interface IndexedNodeScope {
    * holder scoped by namespace.
    */
   member?: string;
+  /** Compare values case-insensitively in this scope (#5286). */
+  foldCase?: boolean;
 }
 
 /** The region of a node held by one member (a `ScopeRule` with no `path`). */
@@ -669,7 +679,7 @@ export function reconstructIndexedEdges(
   scopeOf: (node: IRNode) => IndexedNodeScope,
 ): IndexedEdges {
   const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
-  const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${value}`;
+  const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${scope.foldCase ? value.toLowerCase() : value}`;
   const index = new Map<string, Map<string, string>>();
   // The same nodes by the name of the scope they sit in (the text after the
   // first `:` of a region), for a join that names a scope itself.
@@ -775,7 +785,8 @@ export function reconstructIndexedEdges(
     for (const { lexicon, catalog } of catalogs) {
       if (node.lexicon !== lexicon) continue;
       for (const rule of catalog.refs) {
-        if (rule.from !== node.kind) continue;
+        // `from: "*"` is a rule that reads every node of the lexicon (#5286); its `join` picks the nodes.
+        if (rule.from !== node.kind && !(rule.from === "*" && rule.join)) continue;
         const spec = {
           id: refRuleId(lexicon, rule.from, rule.path),
           path: rule.path,
@@ -939,7 +950,7 @@ export function reconstructIdentityEdges(
 ): IdentityEdges {
   const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
   const ownerBy = new Map(owners.map((o) => [o.lexicon, o]));
-  const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${value}`;
+  const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${scope.foldCase ? value.toLowerCase() : value}`;
   // key -> node id -> the rule that names it, and the paths it names the node at
   const index = new Map<string, Map<string, { rule: string; paths?: readonly string[] }>>();
   const own = new Map<string, Set<string>>();

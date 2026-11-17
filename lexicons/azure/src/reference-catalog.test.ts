@@ -48,7 +48,7 @@ describe("azure reference catalog", () => {
   });
 
   it("names a target kind on every rule (behold#1023's ruling)", () => {
-    expect(azureReferenceCatalog.refs.filter((r) => !(r.targetKind ?? r.indexedTargetKind))).toEqual([]);
+    expect(azureReferenceCatalog.refs.filter((r) => !(r.targetKind ?? r.indexedTargetKind) && !r.join)).toEqual([]);
   });
 
   it("has no two rules for one holder kind, path and target kind", () => {
@@ -58,6 +58,7 @@ describe("azure reference catalog", () => {
 
   describe("each rule draws its edge", () => {
     for (const [i, rule] of azureReferenceCatalog.refs.entries()) {
+      if (rule.join) continue; // the id rule, in ./derived-edges.test.ts
       const to = rule.targetKind ?? rule.indexedTargetKind!;
       it(`${rule.from} ${rule.path} -> ${to}`, () => {
         // An `.id` or `*Id` path holds an ARM id; anything else (a customer
@@ -107,10 +108,12 @@ describe("azure reference catalog", () => {
         "containerApps/web -> managedEnvironments/three-cloud [managedEnvironmentId] containment",
         "managedEnvironments/three-cloud -> subnets/apps [vnetConfiguration] containment",
         "managedEnvironments/three-cloud -> workspaces/three-cloud-logs [appLogsConfiguration] reference",
+        "subnets/apps -> virtualNetworks/three-cloud-vnet [id] containment",
       ]);
       expect(out.containment.map((c) => `${short(c.child)} in ${short(c.parent)}`)).toEqual([
         "containerApps/web in managedEnvironments/three-cloud",
         "managedEnvironments/three-cloud in subnets/apps",
+        "subnets/apps in virtualNetworks/three-cloud-vnet",
       ]);
     });
 
