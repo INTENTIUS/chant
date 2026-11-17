@@ -467,7 +467,9 @@ describe("a workspace released as a train (#5154)", () => {
   });
 
   test("a workspace with something the train can't carry gets one release, and says why", () => {
-    expect(trainFit(detectProject(mono({ Dockerfile: "FROM scratch\n" })))).toMatchObject({ train: false, why: expect.stringContaining("Dockerfile") });
+    expect(trainFit(detectProject(mono({ ".goreleaser.yaml": "builds:\n  - main: ./cmd/x\n" })))).toMatchObject({ train: false, why: expect.stringContaining(".goreleaser.yaml runs goreleaser at the repository root") });
+    expect(trainFit(detectProject(mono({ "nfpm.yaml": "name: x\n" })))).toMatchObject({ train: false, why: expect.stringContaining("nfpm.yaml") });
+    expect(trainFit(detectProject(mono({ "pom.xml": "<project><groupId>a</groupId><artifactId>b</artifactId></project>" })))).toMatchObject({ train: false, why: expect.stringContaining("pom.xml") });
     expect(trainFit(detectProject(mono({ "package.json": JSON.stringify({ name: "acme-mono", workspaces: ["packages/*"] }) })))).toMatchObject({ train: false, why: expect.stringContaining("root package acme-mono") });
     // #5216: GitLab renders the train too, so a GitLab project gets one, with the token its jobs push with.
     const gitlab = detectProject(mono());
@@ -479,6 +481,132 @@ describe("a workspace released as a train (#5154)", () => {
     expect(plan.registry.at(-1)).toContain("CHANT_RELEASE_TOKEN");
     // One publishable package is no train, and nothing to explain.
     expect(trainFit(detectProject(repo({ "package.json": JSON.stringify({ name: "solo" }) })))).toEqual({ train: false, why: null });
+  });
+});
+
+describe("a train with images, charts, extensions, Python and Rust (#5271)", () => {
+  const mono = (extra: Record<string, string> = {}) =>
+    repo({
+      "package.json": JSON.stringify({ name: "acme-mono", private: true, workspaces: ["packages/*", "apps/*"] }),
+      "package-lock.json": "{}",
+      ".gitignore": "dist/\nbuild/\n",
+      ".github/workflows/ci.yml": "on: push\n",
+      "packages/core/package.json": JSON.stringify({ name: "@acme/core", version: "0.0.0", files: ["dist"] }),
+      "packages/web/package.json": JSON.stringify({ name: "@acme/web", version: "0.0.0", files: ["dist"], dependencies: { "@acme/core": "*" } }),
+      ...extra,
+    }, { origin: "git@github.com:acme/mono.git" });
+  const member = (plan: ReturnType<typeof planTrain>, name: string) => {
+    const m = plan.members.find((x) => x.name === name);
+    if (!m) throw new Error(`no member ${name} in ${plan.members.map((x) => x.name).join(", ")}`);
+    return m;
+  };
+
+  test("a VS Code extension in the workspace is a member published to both marketplaces at its own version", () => {
+    const facts = detectProject(mono({ "packages/ext/package.json": JSON.stringify({ name: "acme-vscode", publisher: "acme", version: "0.0.0", engines: { vscode: "^1.90.0" }, dependencies: { "@acme/core": "*" } }) }));
+    expect(trainFit(facts)).toEqual({ train: true });
+    const plan = planTrain(facts, PLAN);
+    expect(plan.members.map((m) => [m.name, m.dir, m.package])).toEqual([
+      ["core", "packages/core", "@acme/core"],
+      ["acme-vscode", "packages/ext", "acme-vscode"],
+      ["web", "packages/web", "@acme/web"],
+    ]);
+    expect(member(plan, "acme-vscode").release).toEqual({
+      tag: "{member}/v{version}",
+      green: "forge-checks",
+      version: { packages: ["."], ranges: "train" },
+      publish: [
+        { type: "marketplace", marketplace: "vscode", vsix: "dist/acme-vscode.vsix" },
+        { type: "marketplace", marketplace: "openvsx", vsix: "dist/acme-vscode.vsix", auth: "trusted-publishing" },
+      ],
+    });
+    expect(plan.release.workflow).toEqual({ trigger: "dispatch", chant: "npx --yes @intentius/chant@0.124.101", env: { VSCE_PAT: "${{ secrets.VSCE_PAT }}" } });
+    expect(plan.registry.filter((r) => r.startsWith("npm "))).toHaveLength(2);
+    expect(plan.registry.join("\n")).toContain("VS Code Marketplace acme.acme-vscode");
+    expect(plan.registry.join("\n")).toContain("Open VSX acme.acme-vscode");
+    expect(plan.notes.join("\n")).toContain("The build must write packages/ext/dist/acme-vscode.vsix");
+  });
+
+  test("a Dockerfile in a member's directory is that member's image; one at the root gets release/<name> pointing back", () => {
+    const plan = planTrain(detectProject(mono({ Dockerfile: "FROM scratch\n", "packages/web/Dockerfile": "FROM scratch\n", "apps/server/package.json": JSON.stringify({ name: "server", private: true }), "apps/server/Dockerfile": "FROM scratch\n" })), PLAN);
+    expect(plan.members.map((m) => [m.name, m.dir])).toEqual([
+      ["core", "packages/core"],
+      ["web", "packages/web"],
+      ["mono", "release/mono"],
+      ["server", "release/server"],
+    ]);
+    // web publishes to npm, so its archive is written outside the dist npm packs.
+    expect(member(plan, "web").release.images).toEqual([{ name: "web", dockerfile: "Dockerfile", archive: "build/images/web.tar" }]);
+    expect(member(plan, "web").release.publish).toContainEqual({ type: "oci", image: "build/images/web.tar", repository: "ghcr.io/acme/mono/web" });
+    expect(member(plan, "mono").release).toEqual({
+      tag: "{member}/v{version}",
+      green: "forge-checks",
+      sources: ["../.."],
+      images: [{ name: "mono", dockerfile: "../../Dockerfile", context: "../.." }],
+      publish: [{ type: "oci", image: "dist/images/mono.tar", repository: "ghcr.io/acme/mono/mono" }],
+    });
+    // A private package is no member, so its Dockerfile's directory gets a member of its own.
+    expect(member(plan, "server").release).toMatchObject({ sources: ["../../apps/server"], images: [{ name: "server", dockerfile: "../../apps/server/Dockerfile", context: "../../apps/server" }] });
+    expect(plan.reasons.join("\n")).toContain("what no member's directory holds gets a member of its own at release/<name>");
+    expect(plan.reasons.join("\n")).toContain('release/mono/chant.config.ts, member mono, a member of its own for the repository root (release.sources ["../.."])');
+  });
+
+  test("a chart outside the packages gets release/<name>; one inside a package is that member's, packed outside its dist", () => {
+    const chart = (name: string) => `apiVersion: v2\nname: ${name}\nversion: 0.1.0\n`;
+    const plan = planTrain(detectProject(mono({ "charts/api/Chart.yaml": chart("api"), "packages/web/chart/Chart.yaml": chart("web") })), PLAN);
+    expect(member(plan, "api").dir).toBe("release/api");
+    expect(member(plan, "api").release).toMatchObject({
+      sources: ["../../charts/api"],
+      artifacts: [{ name: "chart", helm: { chart: "../../charts/api" } }],
+      publish: [{ type: "helm", charts: ["artifact:chart"], oci: { repository: "ghcr.io/acme/mono/charts" } }],
+    });
+    expect(member(plan, "web").release.artifacts).toEqual([{ name: "chart", helm: { chart: "chart", dir: "build" } }]);
+    expect(plan.registry.filter((r) => r.startsWith("ghcr.io/acme/mono/charts"))).toHaveLength(1);
+  });
+
+  test("a Python package at the root is a member of its own: built into its dist, published to PyPI, its pyproject.toml stamped", () => {
+    const facts = detectProject(mono({ "pyproject.toml": '[project]\nname = "acme-py"\nversion = "0.1.0"\n', Dockerfile: "FROM python\n" }));
+    expect(trainFit(facts)).toEqual({ train: true });
+    const plan = planTrain(facts, PLAN);
+    // The root's Dockerfile builds from the same directory, so it goes to the same member.
+    expect(member(plan, "acme-py").release).toEqual({
+      tag: "{member}/v{version}",
+      green: "forge-checks",
+      sources: ["../.."],
+      artifacts: [{ name: "python", build: "python -m pip install build && python -m build --outdir dist ../..", outputs: ["dist/*"] }],
+      publish: [
+        { type: "pypi", files: ["artifact:python"], auth: "trusted-publishing" },
+        { type: "oci", image: "dist/images/mono.tar", repository: "ghcr.io/acme/mono" },
+      ],
+      version: { files: ["../../pyproject.toml"] },
+      images: [{ name: "mono", dockerfile: "../../Dockerfile", context: "../.." }],
+    });
+    expect(plan.registry.join("\n")).toContain("PyPI acme-py: on pypi.org add a trusted publisher");
+  });
+
+  test("a Rust crate at the root is a member of its own that publishes the root's Cargo.toml", () => {
+    const facts = detectProject(mono({ "Cargo.toml": '[package]\nname = "acme-rs"\nversion = "0.1.0"\n' }));
+    expect(trainFit(facts)).toEqual({ train: true });
+    const plan = planTrain(facts, PLAN);
+    expect(member(plan, "acme-rs").release).toMatchObject({ sources: ["../.."], publish: [{ type: "cargo", manifest: "../../Cargo.toml" }], version: { files: ["../../Cargo.toml"] } });
+    expect(member(plan, "acme-rs").dir).toBe("release/acme-rs");
+    expect(plan.registry.join("\n")).toContain("crates.io acme-rs");
+  });
+
+  test("init --yes writes release/<name>, which chant loads, and a train workflow that builds its image", async () => {
+    const root = mono({ Dockerfile: "FROM scratch\n" });
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await runReleaseInit({ args: { yes: true } } as unknown as CommandContext)).toBe(0);
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      err.mockRestore();
+    }
+    expect(JSON.parse(readFileSync(join(root, "chant.workspace.json"), "utf-8")).members).toContainEqual({ name: "mono", dir: "release/mono", kind: "chant" });
+    expect((await loadChantConfig(join(root, "release/mono"))).config.release).toMatchObject({ sources: ["../.."], images: [{ name: "mono", dockerfile: "../../Dockerfile", context: "../.." }] });
+    expect(readFileSync(join(root, ".github/workflows/chant-release.yml"), "utf-8")).toContain("workspace train artifacts");
   });
 });
 

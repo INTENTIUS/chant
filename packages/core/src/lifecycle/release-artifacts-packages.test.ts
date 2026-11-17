@@ -66,12 +66,22 @@ describe("helm entries (#5233)", () => {
     expect(again[0]!.digest).toBe(file!.digest);
   });
 
+  test("a member at release/<name> packs a chart outside its directory into its own dist (#5271)", () => {
+    const top = member({ "charts/api/Chart.yaml": CHART, "charts/api/values.yaml": "a: 1\n", "release/api/chant.config.ts": "export default {};\n" });
+    const [file] = buildReleaseArtifacts({ artifacts: [{ name: "chart", helm: { chart: "../../charts/api" } }], cwd: join(top, "release/api"), sourceDateEpoch: EPOCH, label: "v2.0.0" });
+    expect(file).toMatchObject({ component: "chart", path: "dist/api-2.0.0.tgz" });
+    expect(execFileSync("tar", ["-tzf", join(top, "release/api", file!.path)], { encoding: "utf-8" }).trim().split("\n")).toEqual(["api/Chart.yaml", "api/values.yaml"]);
+  });
+
   test("refuses a directory with no Chart.yaml, a cut with no label, and a ** in .helmignore", () => {
     const cwd = member({ "chart/values.yaml": "a: 1\n", "c2/Chart.yaml": CHART, "c2/.helmignore": "**/x\n" });
     expect(refusal(() => buildReleaseArtifacts({ artifacts: [{ name: "c", helm: { chart: "chart" } }], cwd, sourceDateEpoch: EPOCH, label: "v1.0.0" })).code).toBe("release-artifact-no-output");
     expect(refusal(() => buildReleaseArtifacts({ artifacts: [{ name: "c", helm: { chart: "c2" } }], cwd, sourceDateEpoch: EPOCH, label: null })).code).toBe("release-artifact-no-label");
     expect(refusal(() => buildReleaseArtifacts({ artifacts: [{ name: "c", helm: { chart: "c2" } }], cwd, sourceDateEpoch: EPOCH, label: "v1.0.0" })).message).toMatch(/\*\*/);
-    expect(refusal(() => checkReleaseArtifacts([{ name: "c", helm: { chart: "../elsewhere" } }])).code).toBe("release-artifact-outside");
+    // #5271: the chart is only read, so it may leave the member; the archive directory may not.
+    expect(() => checkReleaseArtifacts([{ name: "c", helm: { chart: "../elsewhere" } }])).not.toThrow();
+    expect(refusal(() => checkReleaseArtifacts([{ name: "c", helm: { chart: "/elsewhere" } }])).code).toBe("release-artifact-outside");
+    expect(refusal(() => checkReleaseArtifacts([{ name: "c", helm: { chart: "c2", dir: "../out" } }])).code).toBe("release-artifact-outside");
   });
 
   test("helm's ignore rules: a bare name matches the last segment, a path the whole path, a trailing / only directories", () => {

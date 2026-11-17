@@ -6,7 +6,7 @@ sidebar:
   label: "init"
 ---
 
-Sets up `chant release` in a project that has never used chant. It reads the project, writes a `release` block into `chant.config.ts`, writes the release workflow with [`release workflow`](/chant/cli/release/workflow/), and lists what has to be set up by hand on the registries. An npm, pnpm or yarn workspace with more than one publishable package gets a [release train](#a-workspace-of-several-packages) instead: each package released at its own version.
+Sets up `chant release` in a project that has never used chant. It reads the project, writes a `release` block into `chant.config.ts`, writes the release workflow with [`release workflow`](/chant/cli/release/workflow/), and lists what has to be set up by hand on the registries. An npm, pnpm or yarn workspace with more than one publishable package or VS Code extension gets a [release train](#a-workspace-of-several-packages) instead: each package released at its own version.
 
 ```bash
 chant release init          # a dry run: prints the block and why
@@ -50,7 +50,7 @@ The output ends with the steps to take by hand, such as an npm trusted publisher
 
 ## A workspace of several packages
 
-When the workspaces hold more than one package not marked `private`, `init` sets up a [release train](/chant/guide/release-a-monorepo/): each package is a release member with its own labels and tags, and one run releases every package that changed.
+When the workspaces hold more than one package not marked `private` (npm packages and VS Code extensions), `init` sets up a [release train](/chant/guide/release-a-monorepo/): each package is a release member with its own labels and tags, and one run releases every package that changed.
 
 ```bash
 $ chant release init
@@ -61,9 +61,10 @@ It writes:
 
 | File | Holds |
 |---|---|
-| `chant.workspace.json` | A `chant` member per package, named after the package without its scope (`@acme/core` is `core`). An existing file keeps what it has and gets the members added; an entry with the same name or directory that is not that member is refused with `release-init-member-exists` unless `--force` |
-| `<package>/chant.config.ts` | The member's `release`: `version: { packages: ["."] }`, with `ranges: "train"` when it depends on another package of the train, an `npm` target for the package (`access: "public"` for a scoped package with no `publishConfig.access`), the gate, and `tag: "{member}/v{version}"`. A package whose own tags are already in the repository, such as `web-v0.3.0`, keeps that prefix, and one whose prefix no template can hold (`@acme/core@1.2.0`) has it in `legacyTags` |
-| `chant.config.ts` at the root | `release.train: { env: "npm" }`, the gate, and `release.workflow: { trigger: "dispatch" }`. Tags that name releases of every package together (`v1.4.0`) go in `release.legacyTags`, with `first: "together"`, so the first train starts every package one past the highest version any has |
+| `chant.workspace.json` | A `chant` member per package, named after the package without its scope (`@acme/core` is `core`), and one per directory that holds what no package's directory does (see [Images, charts, Python and Rust](#images-charts-python-and-rust)). An existing file keeps what it has and gets the members added; an entry with the same name or directory that is not that member is refused with `release-init-member-exists` unless `--force` |
+| `<package>/chant.config.ts` | The member's `release`: `version: { packages: ["."] }`, with `ranges: "train"` when it depends on another package of the train, an `npm` target for the package (`access: "public"` for a scoped package with no `publishConfig.access`), or for a VS Code extension the two `marketplace` targets from `dist/<name>.vsix`, the gate, and `tag: "{member}/v{version}"`. A package whose own tags are already in the repository, such as `web-v0.3.0`, keeps that prefix, and one whose prefix no template can hold (`@acme/core@1.2.0`) has it in `legacyTags` |
+| `release/<name>/chant.config.ts` | A member of its own for a directory no package holds, such as the repository root (see below) |
+| `chant.config.ts` at the root | `release.train: { env: "npm" }`, the gate, and `release.workflow: { trigger: "dispatch" }`, with `VSCE_PAT` from the repository's secrets in its `env` when a member is a VS Code extension. Tags that name releases of every package together (`v1.4.0`) go in `release.legacyTags`, with `first: "together"`, so the first train starts every package one past the highest version any has |
 | The release workflow | The train workflow [`release workflow`](/chant/cli/release/workflow/#a-release-train) renders: started by hand with `levels`, it runs [`workspace train cut`](/chant/cli/workspace-train/#cut) and publishes the train |
 
 Each config is refused with `release-init-release-exists` when it already has a `release` block, unless `--force`. The registry steps name a trusted publisher on npmjs.com for each package, all naming the same workflow file, and a package that is not on npm yet needs its first version published by hand from its directory before it has settings; the train labels its next version past that one. The output also says when a package has neither `files` in its `package.json` nor an `.npmignore`, since npm then packs the member's `chant.config.ts` with it. The steps that follow:
@@ -76,4 +77,17 @@ gh workflow run chant-release.yml -f levels=auto
 
 `levels=auto` takes each package's level from its commits and intent files since its last release; `minor` gives every package one, and `web=major` names one.
 
-A workspace gets one release under one label instead, with a note saying why, when a train from `init` would leave part of it out: the root `package.json` is published too, a package is a VS Code extension, or the project builds images, goreleaser files, Helm charts, nfpm packages or a Python or Rust package. `init` makes a train's members of the npm packages alone, so such a project gets one release; a train whose members build images or files can be set up by hand (see [Releasing a monorepo](/chant/guide/release-a-monorepo/#packages-that-build-images-or-files)). `--one-release` asks for the one release on any workspace. On GitLab the train is written to `.gitlab/chant-release.yml`, the trusted publishers name `.gitlab-ci.yml`, and the first train starts from a pipeline run with `CHANT_RELEASE_LEVELS=auto`.
+A workspace gets one release under one label instead, with a note saying why, when a train from `init` would leave part of it out: the root `package.json` is published too, or the project has a goreleaser config, an nfpm config, a `pom.xml`, a `.csproj` or a `.gemspec` at its root. goreleaser and nfpm read their paths from the directory they run in, and a train member runs them in its own; such a train can be set up by hand with the config in the member's directory (see [Releasing a monorepo](/chant/guide/release-a-monorepo/#packages-that-build-images-or-files)). `--one-release` asks for the one release on any workspace. On GitLab the train is written to `.gitlab/chant-release.yml`, the trusted publishers name `.gitlab-ci.yml`, and the first train starts from a pipeline run with `CHANT_RELEASE_LEVELS=auto`.
+
+### Images, charts, Python and Rust
+
+A Dockerfile, a Helm chart, a Python package or a Rust crate belongs to the member whose directory holds its file. What no member's directory holds, such as the root's `Dockerfile`, `pyproject.toml` or `Cargo.toml`, a chart under `charts/`, or a Dockerfile in a `private` package, gets a member of its own at `release/<name>`, one per directory. That member's entries name the files with `../..`, and its `release.sources` names the directory, so [`release changed`](/chant/cli/release/changed/) releases it when those files change. The plan prints this rule among its reasons.
+
+| Found | The member gets |
+|---|---|
+| A Dockerfile | A `release.images` entry and an `oci` target on the forge's registry, as for one release. In a package npm publishes, the archive is `build/images/<name>.tar`, outside the `dist` npm packs. At the root: `{ name, dockerfile: "../../Dockerfile", context: "../.." }` in `release/<name>`, named after the repository |
+| A `Chart.yaml` | A `helm` entry in `release.artifacts` (`chart`, or `chart-<name>` for a member with several) and a `helm` target that pushes to `<registry>/charts`. In a package npm publishes, the archive goes to `build/`. Under `charts/api`: `chart: "../../charts/api"` in `release/api` |
+| `pyproject.toml` with a name | In `release/<name>`, named after the Python package: a `python` entry whose build is `python -m pip install build && python -m build --outdir dist ../..`, a `pypi` target for it, and `version.files: ["../../pyproject.toml"]` when its version is static |
+| `Cargo.toml` with a `[package]` name or a `[workspace]` | In `release/<name>`, named after the crate: a `cargo` target with `manifest: "../../Cargo.toml"`, and `version.files: ["../../Cargo.toml"]` when it has a version |
+
+A root Dockerfile beside a root `pyproject.toml` goes to the Python package's member, since both come from the root. `release.sources: ["../.."]` counts every path in the repository, so such a member is in every train with a change; narrow it to the directories it is built from. The registry steps are the ones a single release prints for the same targets: the PyPI trusted publisher, crates.io trusted publishing or `CARGO_REGISTRY_TOKEN`, the GHCR package's visibility, `VSCE_PAT` and the Open VSX trusted publisher.

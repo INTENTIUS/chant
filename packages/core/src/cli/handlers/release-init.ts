@@ -7,8 +7,8 @@
  * ../../lifecycle/release-init.ts.
  */
 
-import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -241,7 +241,7 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
   // Each member's config, then the root's.
   const { typeScriptLoaderAvailable } = await import("../../ts-loader");
   const canLoadTs = typeScriptLoaderAvailable();
-  const members: Array<{ name: string; dir: string; package: string; release: (typeof plan.members)[number]["release"]; path: string; text: string; created: boolean }> = [];
+  const members: Array<{ name: string; dir: string; package: string | null; release: (typeof plan.members)[number]["release"]; path: string; text: string; created: boolean }> = [];
   for (const m of plan.members) {
     const prepared = await prepareConfig(join(root, m.dir), m.release, force, canLoadTs);
     const block = lib.releaseBlockSource(m.release, "  ");
@@ -326,7 +326,7 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
     return 0;
   }
   if (!json) {
-    console.log(formatBold(`${write ? "" : "Dry run: "}a release train of ${members.length} packages, each released at its own version`));
+    console.log(formatBold(`${write ? "" : "Dry run: "}a release train of ${members.length} ${members.every((m) => m.package !== null) ? "packages" : "members"}, each released at its own version`));
     console.log(formatBold(`\nchant.workspace.json${wsCreated ? " (a new file)" : added.length > 0 ? ` (adds ${added.join(", ")})` : ""}`));
     console.log(`\n${wsText.replace(/^/gm, "  ").trimEnd()}\n`);
     console.log(formatBold(`${prepared.configName}${prepared.created ? " (a new file)" : ""}`));
@@ -345,7 +345,11 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
 
   if (write) {
     writeFileSync(wsPath, wsText);
-    for (const m of members) writeFileSync(m.path, m.text);
+    for (const m of members) {
+      // #5271: a member of its own at release/<name> is a new directory.
+      mkdirSync(dirname(m.path), { recursive: true });
+      writeFileSync(m.path, m.text);
+    }
     writeFileSync(prepared.configPath, prepared.configText);
     if (!json) console.log(formatSuccess(`Wrote chant.workspace.json, ${prepared.configName} and ${members.length} member configs.`));
     const { runReleaseWorkflow } = await import("../../workspace/release-workflow");

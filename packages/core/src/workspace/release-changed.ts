@@ -405,12 +405,12 @@ function legacyRelease(top: string, prefixes: readonly string[]): LastRelease | 
 }
 
 /** The `release` settings of the `chant.config.ts` (or `.json`) in `dir` that pick a next label; empty when it has none or can't be read. */
-export async function releaseSettingsAt(dir: string): Promise<{ legacyTags: string[]; breakingOnZero?: "minor" | "major" }> {
+export async function releaseSettingsAt(dir: string): Promise<{ legacyTags: string[]; breakingOnZero?: "minor" | "major"; sources?: string[] }> {
   if (!existsSync(join(dir, "chant.config.ts")) && !existsSync(join(dir, "chant.config.json"))) return { legacyTags: [] };
   try {
     const { loadChantConfig } = await import("../config");
     const release = (await loadChantConfig(dir)).config.release;
-    return { legacyTags: [...(release?.legacyTags ?? [])], ...(release?.breakingOnZero ? { breakingOnZero: release.breakingOnZero } : {}) };
+    return { legacyTags: [...(release?.legacyTags ?? [])], ...(release?.breakingOnZero ? { breakingOnZero: release.breakingOnZero } : {}), ...(release?.sources ? { sources: [...release.sources] } : {}) };
   } catch {
     return { legacyTags: [] };
   }
@@ -422,7 +422,7 @@ export async function releaseSettingsAt(dir: string): Promise<{ legacyTags: stri
  * own `release.breakingOnZero`, else the root's. A project with no
  * workspace reads its own config alone.
  */
-export async function memberReleaseSettings(memberDir: string, root?: { dir: string; settings: Awaited<ReturnType<typeof releaseSettingsAt>> }): Promise<{ legacyTags: string[]; breakingOnZero: "minor" | "major" }> {
+export async function memberReleaseSettings(memberDir: string, root?: { dir: string; settings: Awaited<ReturnType<typeof releaseSettingsAt>> }): Promise<{ legacyTags: string[]; breakingOnZero: "minor" | "major"; sources: string[] }> {
   const own = await releaseSettingsAt(memberDir);
   let outer = root;
   if (outer === undefined) {
@@ -434,6 +434,8 @@ export async function memberReleaseSettings(memberDir: string, root?: { dir: str
   return {
     legacyTags: [...new Set([...own.legacyTags, ...rootSettings.legacyTags])],
     breakingOnZero: own.breakingOnZero ?? rootSettings.breakingOnZero ?? "minor",
+    // #5271: the member's own; a root's sources are not its members'.
+    sources: own.sources ?? [],
   };
 }
 
@@ -555,13 +557,16 @@ async function read(query: ReleaseChangedQuery): Promise<{ at: string; members: 
     const settings = await memberReleaseSettings(memberDir, { dir: rootDir, settings: rootSettings });
     const last = ledger.last ?? (settings.legacyTags.length > rootSettings.legacyTags.length ? legacyRelease(top, settings.legacyTags) : legacyLast);
     let paths: string[] = [];
+    // #5271: release.sources, as paths from the outermost root; "" is the whole of it.
+    const sources = settings.sources.map((s) => posix(relative(outerDir, resolve(memberDir, s)))).filter((s) => s !== ".." && !s.startsWith("../")).map((s) => (s === "." ? "" : s));
+    const fromSources = (path: string) => sources.some((s) => s === "" || path === s || path.startsWith(`${s}/`));
     if (last) {
       if (tryGit(top, ["cat-file", "-e", `${last.commit}^{commit}`]) === null) throw new ReadFailure("ledger-unreadable", `the last release of ${m.name} is at ${last.commit.slice(0, 12)}, which this clone does not have`);
       const diff = tryGit(top, ["diff", "--name-only", "--no-renames", last.commit, at]) ?? "";
       for (const file of diff.split("\n").filter(Boolean)) {
         const path = outerFromTop === "." || outerFromTop === "" ? file : file.startsWith(`${outerFromTop}/`) ? file.slice(outerFromTop.length + 1) : null;
         if (path === null) continue;
-        if (memberHolding(path, outer.members) !== m.name && !(outerMemberOf(m.name) === undefined && memberHolding(path, declaration.members) === m.name)) continue;
+        if (memberHolding(path, outer.members) !== m.name && !(outerMemberOf(m.name) === undefined && memberHolding(path, declaration.members) === m.name) && !fromSources(path)) continue;
         if (ignore.some((match) => match(path))) continue;
         if (isGeneratedPath(outer, path)) continue;
         paths.push(path);

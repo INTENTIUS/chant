@@ -39,7 +39,7 @@
 
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { relative } from "node:path";
+import { relative, resolve } from "node:path";
 import { classifyCommit } from "./release-changelog";
 import { consumedIntents, maxBump, pendingIntents, readIntents, type ReleaseBumpLevel } from "./release-intents";
 import type { ReleaseCutIntent } from "./release-store";
@@ -153,8 +153,10 @@ function git(top: string, args: string[]): string | null {
 }
 
 /** The commits in `from..to` touching `path` (from the repository root), newest first, merges left out. */
-export function commitsTouching(top: string, from: string, to: string, path: string): NextCommit[] {
-  const out = git(top, ["log", "--no-merges", "--format=%H%x00%B%x1e", `${from}..${to}`, "--", path === "" ? "." : `:(top,literal)${path}`]);
+export function commitsTouching(top: string, from: string, to: string, path: string | readonly string[]): NextCommit[] {
+  const paths = typeof path === "string" ? [path] : path;
+  const specs = paths.includes("") ? ["."] : paths.map((p) => `:(top,literal)${p}`);
+  const out = git(top, ["log", "--no-merges", "--format=%H%x00%B%x1e", `${from}..${to}`, "--", ...specs]);
   if (out === null) throw new ReleaseNextError("revision-unknown", `git could not list the commits ${from.slice(0, 12)}..${to.slice(0, 12)}`, "Fetch the full history of the branch.");
   return out
     .split("\x1e")
@@ -259,8 +261,11 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
   }
 
   const intents = await memberPendingIntents(req.cwd, top, at, names, cuts);
-  const path = relative(realpathSync(top), realpathOr(memberSourcePath(req.cwd))).split("\\").join("/");
-  const commits = stable ? shiftOnZero(commitsTouching(top, stable.commit, at, path), stable.label, settings.breakingOnZero) : [];
+  const fromTop = (abs: string) => relative(realpathSync(top), abs).split("\\").join("/");
+  const path = fromTop(realpathOr(memberSourcePath(req.cwd)));
+  // #5271: release.sources count beside the member's own directory.
+  const sources = settings.sources.map((s) => fromTop(resolve(realpathOr(req.cwd), s))).filter((s) => s !== ".." && !s.startsWith("../"));
+  const commits = stable ? shiftOnZero(commitsTouching(top, stable.commit, at, [path, ...sources]), stable.label, settings.breakingOnZero) : [];
 
   if (here) {
     return { label: here.label!, at, bump: null, alreadyCut: true, from: stable ?? { label: here.label!, commit: at, source: "ledger" }, commits, intents: [] };
