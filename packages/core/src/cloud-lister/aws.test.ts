@@ -121,6 +121,33 @@ describe("listing aws", () => {
     expect(result.coverage).toEqual([{ listedType: "AWS::IAM::Role", location: "global", verdict: "listed" }]);
   });
 
+  it("gives an SQS queue its ARN, built from the account, region and name (#5285)", async () => {
+    const fake = fakeFetcher((call) => {
+      const { TypeName } = typeOf(call);
+      if (TypeName !== "AWS::SQS::Queue") return undefined;
+      return json(200, {
+        TypeName,
+        ResourceDescriptions: [
+          { Identifier: "app-jobs", Properties: JSON.stringify({ QueueName: "app-jobs" }) },
+          { Identifier: "https://sqs.eu-west-1.amazonaws.com/000000000000/by-url", Properties: "{}" },
+          { Identifier: "has-arn", Properties: JSON.stringify({ QueueName: "has-arn", Arn: "arn:aws:sqs:eu-west-1:000000000000:has-arn" }) },
+        ],
+      });
+    });
+    const result = await listCloud(
+      { substrate: "aws", scopeId: "000000000000", locations: ["eu-west-1"], types: ["AWS::SQS::Queue"] },
+      target(),
+      { fetcher: fake.fetcher, chains: refusingChains(), now: steppingClock(), retryDelays: [] },
+    );
+    const ids = (native: string) => result.resources.find((r) => r.nativeId === native)!.cloudIds;
+    expect(ids("app-jobs")).toEqual([
+      { kind: "arn", value: "arn:aws:sqs:eu-west-1:000000000000:app-jobs" },
+      { kind: "import-id", value: "app-jobs" },
+    ]);
+    expect(ids("https://sqs.eu-west-1.amazonaws.com/000000000000/by-url")[0]).toEqual({ kind: "arn", value: "arn:aws:sqs:eu-west-1:000000000000:by-url" });
+    expect(ids("has-arn").filter((c) => c.kind === "arn")).toEqual([{ kind: "arn", value: "arn:aws:sqs:eu-west-1:000000000000:has-arn" }]);
+  });
+
   it("puts a type it cannot list in the notes, with its reason", async () => {
     const fake = fakeFetcher((call) => {
       const { TypeName } = typeOf(call);
