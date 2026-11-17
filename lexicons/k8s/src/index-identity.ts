@@ -100,10 +100,40 @@ export function k8sDeclaredIdentity(entityType: string, props: Record<string, un
   return { kind: "identifier", listedType, identifier: `${namespace}/${name}`, global: false, location: namespace, entityKind: entityType };
 }
 
-/** The values that name an indexed k8s object: its `<namespace>/<name>` and its uid. */
+/**
+ * The fields a cluster-scoped kind's bare name is a reference at (#5250). A
+ * name is unique only among objects of its kind, so the same string at any
+ * other field names something else: a ServiceAccount called `default` is not
+ * the Namespace `default`, and a ServiceCIDR called `kubernetes` is not the
+ * Service. A kind absent here has no bare-name identity; its references are
+ * the catalog's, which name the kind.
+ */
+const CLUSTER_NAME_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  "K8s::Core::Namespace": ["namespace"],
+  "K8s::Core::Node": ["nodeName"],
+  "K8s::Scheduling::PriorityClass": ["priorityClassName"],
+  "K8s::Flowcontrol::PriorityLevelConfiguration": ["priorityLevelConfiguration.name"],
+};
+
+/** Cluster-scoped kinds whose names are unambiguous values (an address) and so name the object at any field. */
+const CLUSTER_NAME_ANYWHERE: ReadonlySet<string> = new Set(["K8s::Networking::IPAddress"]);
+
+/**
+ * The values that name an indexed k8s object: its `<namespace>/<name>` and
+ * its uid. A cluster-scoped object's bare name names it only at the field of
+ * its kind ({@link CLUSTER_NAME_FIELDS}).
+ */
 export function k8sNodeIdentities(node: IRNode): NodeIdentityValue[] {
   const out: NodeIdentityValue[] = [];
-  if (node.nativeId) out.push({ kind: "native-id", value: node.nativeId });
+  if (node.nativeId) {
+    if (!node.nativeId.includes("/") && node.location === K8S_CLUSTER_LOCATION) {
+      const paths = CLUSTER_NAME_FIELDS[node.kind];
+      if (paths) out.push({ kind: "native-id", value: node.nativeId, paths });
+      else if (CLUSTER_NAME_ANYWHERE.has(node.kind)) out.push({ kind: "native-id", value: node.nativeId });
+    } else {
+      out.push({ kind: "native-id", value: node.nativeId });
+    }
+  }
   for (const c of node.facts?.cloudIds ?? []) if (c.kind === K8S_UID_CLOUD_ID) out.push({ kind: c.kind, value: c.value });
   return out;
 }
