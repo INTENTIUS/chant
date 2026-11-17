@@ -74,6 +74,8 @@ Before a project can be searched, its Cloud Asset API has to be enabled. Enablin
 gcloud services enable cloudasset.googleapis.com --project=<project>
 ```
 
+The command line prints that command under the note, and `--json` carries it in `noteDetails` next to the note's kind. When one kind of note repeats more than three times, the command line prints one line with the count and an example. The stored version and `--json` keep every note.
+
 ### Kubernetes
 
 A token or client certificate whose user can `list` the kinds you want to index. Discovery (`/api`, `/apis`) is open to every authenticated user through `system:discovery`. A ClusterRole for every kind except Secrets:

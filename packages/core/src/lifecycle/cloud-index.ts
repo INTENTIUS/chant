@@ -568,6 +568,31 @@ export interface IndexSummary {
   derivedEdges: number;
   coverage: { listed: number; notObserved: number };
   notes: string[];
+  /** The same notes with their kind and, where there is one, the command to run yourself. */
+  noteDetails: Array<{ kind?: string; message: string; command?: string }>;
+}
+
+/** A kind that repeats more than this many times prints as one line with a count. */
+const NOTE_REPEAT_LIMIT = 3;
+
+/** The note lines the CLI prints: a command goes under its note, a long run of one kind collapses to a count. */
+function noteLines(details: IndexSummary["noteDetails"]): string[] {
+  const byKind = new Map<string, number>();
+  for (const n of details) if (n.kind) byKind.set(n.kind, (byKind.get(n.kind) ?? 0) + 1);
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const n of details) {
+    const count = n.kind ? (byKind.get(n.kind) ?? 0) : 0;
+    if (n.kind && count > NOTE_REPEAT_LIMIT) {
+      if (seen.has(n.kind)) continue;
+      seen.add(n.kind);
+      lines.push(`  note: ${count} ${n.kind} notes, for example: ${n.message}\n  (all ${count} are in the stored version and in --json)\n`);
+      continue;
+    }
+    lines.push(`  note: ${n.message}\n`);
+    if (n.command) lines.push(`    run: ${n.command}\n`);
+  }
+  return lines;
 }
 
 export interface RunCloudIndexOptions extends IndexCloudDeps {
@@ -690,9 +715,10 @@ export async function runCloudIndex(argv: readonly string[], opts: RunCloudIndex
     return 1;
   }
   const { doc, write } = result;
-  const notes: string[] = [];
-  if (lex.note) notes.push(lex.note);
-  for (const n of doc.notes ?? []) notes.push(n.message);
+  const noteDetails: IndexSummary["noteDetails"] = [];
+  if (lex.note) noteDetails.push({ message: lex.note });
+  for (const n of doc.notes ?? []) noteDetails.push({ kind: n.kind, message: n.message, ...(n.command ? { command: n.command } : {}) });
+  const notes = noteDetails.map((n) => n.message);
 
   const version = write.path ? basename(write.path) : undefined;
   const summary: IndexSummary = {
@@ -708,6 +734,7 @@ export async function runCloudIndex(argv: readonly string[], opts: RunCloudIndex
     ...(write.reason ? { reason: write.reason } : {}),
     ...summarize(doc),
     notes,
+    noteDetails,
   };
 
   if (args.json) {
@@ -715,7 +742,7 @@ export async function runCloudIndex(argv: readonly string[], opts: RunCloudIndex
   } else {
     out(`${args.substrate} ${scope.scopeId}: ${summary.nodes} nodes (${summary.typed} typed, ${summary.unmapped} of unknown kind), ${summary.derivedEdges} derived edges\n`);
     out(`coverage: ${summary.coverage.listed} (type, location) listed, ${summary.coverage.notObserved} not observed\n`);
-    for (const n of notes) out(`  note: ${n}\n`);
+    for (const line of noteLines(noteDetails)) out(line);
     if (write.written) out(`${command}: wrote ${version} under ${summary.scopeKey} in ${store.where}\n`);
     else out(`${command}: wrote nothing to ${store.where}: ${write.reason ?? "the store kept nothing"}\n`);
   }
