@@ -76,11 +76,36 @@ const ownedStackTags = (stack: string, env: string) => ({
 const queryErrorXml = (code: string, message: string) =>
   `<ErrorResponse><Error><Code>${code}</Code><Message>${message}</Message></Error></ErrorResponse>`;
 
-/** Route a CloudFormation Query call by its `Action`, and answer as CFN would. */
-const stubCfn = (route: (action: string) => { status?: number; text: string }): void => {
-  vi.spyOn(globalThis, "fetch").mockImplementation((async (_url: string, init: { body: string }) => {
-    const action = new URLSearchParams(init.body).get("Action") ?? "";
-    const res = route(action);
+type StubResponse = { status?: number; text: string };
+
+/** A Cloud Control call: the operation from `x-amz-target`, and the JSON payload. */
+type CloudControlRoute = (operation: string, payload: Record<string, unknown>) => StubResponse;
+
+/** Cloud Control's answer for one resource whose model is `properties`. */
+const ccDescription = (identifier: string, properties: Record<string, unknown>) => ({
+  Identifier: identifier,
+  Properties: JSON.stringify(properties),
+});
+
+/** The default Cloud Control answer: a bucket whose model is its name (#4525). */
+const ccBucketByName: CloudControlRoute = (operation, payload) =>
+  operation === "GetResource"
+    ? { text: JSON.stringify({ ResourceDescription: ccDescription(String(payload.Identifier), { BucketName: payload.Identifier }) }) }
+    : { text: JSON.stringify({ ResourceDescriptions: [] }) };
+
+/**
+ * Route a CloudFormation Query call by its `Action`, and answer as CFN would.
+ * A Cloud Control call (JSON, named by `x-amz-target`) goes to `cloudControl`.
+ */
+const stubCfn = (route: (action: string) => StubResponse, cloudControl: CloudControlRoute = ccBucketByName): void => {
+  vi.spyOn(globalThis, "fetch").mockImplementation((async (
+    _url: string,
+    init: { body: string; headers: Record<string, string> },
+  ) => {
+    const target = init.headers?.["x-amz-target"];
+    const res = target
+      ? cloudControl(target.split(".").pop() ?? "", JSON.parse(init.body) as Record<string, unknown>)
+      : route(new URLSearchParams(init.body).get("Action") ?? "");
     return { status: res.status ?? 200, text: () => Promise.resolve(res.text) };
   }) as unknown as typeof fetch);
 };
@@ -494,6 +519,111 @@ describe("aws lifecycle integration (#163)", () => {
       await awsPlugin.describeResources!({ environment: "prod", buildOutput: "", entityNames: ["MyBucket"], entities: new Map() }),
     );
     expect(observed.notes).toEqual([]);
+  });
+
+  // --- Each stack member's own properties through Cloud Control (#4525) ---
+
+  const roleModel = {
+    RoleName: "a6-worker",
+    Path: "/",
+    Arn: "arn:aws:iam::000000000000:role/a6-worker",
+    RoleId: "AROAEXAMPLE",
+    MaxSessionDuration: 3600,
+    AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [] },
+  };
+  const roleStack = (action: string): StubResponse =>
+    action === "DescribeStackResources"
+      ? { text: stackResourcesXml([{ logicalId: "worker", type: "AWS::IAM::Role", physicalId: "a6-worker" }]) }
+      : { text: stackOutputsXml() };
+
+  test("a role read through the stack carries its own properties, as an index of the same account does", async () => {
+    const asked: Array<{ operation: string; payload: Record<string, unknown> }> = [];
+    stubCfn(roleStack, (operation, payload) => {
+      asked.push({ operation, payload });
+      return { text: JSON.stringify({ ResourceDescription: ccDescription("a6-worker", roleModel) }) };
+    });
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({
+        environment: "dev",
+        buildOutput: "",
+        entityNames: ["worker"],
+        entities: new Map(),
+        stack: "a6-dev",
+        region: "us-east-1",
+      }),
+    );
+    expect(asked).toEqual([{ operation: "GetResource", payload: { TypeName: "AWS::IAM::Role", Identifier: "a6-worker" } }]);
+    const attrs = observed.resources.worker?.attributes ?? {};
+    expect(attrs.Path).toBe("/");
+    expect(attrs.RoleName).toBe("a6-worker");
+    expect(observed.resources.worker?.physicalId).toBe("a6-worker");
+    expect(observed.notes).toEqual([]);
+
+    // The index path: the same Cloud Control model through typeListing. Every
+    // attribute agrees; the live read adds only the region it was read in.
+    const { typeListingNodes } = await import("@intentius/chant/lifecycle/type-listing");
+    const [indexed] = typeListingNodes(
+      {
+        listing: "v1",
+        scope: { substrate: "aws", scopeId: "000000000000", locations: ["us-east-1"], types: ["AWS::IAM::Role"] },
+        startedAt: "2026-11-17T00:00:00.000Z",
+        completedAt: "2026-11-17T00:00:00.000Z",
+        resources: [
+          {
+            listedType: "AWS::IAM::Role",
+            location: "us-east-1",
+            nativeId: "a6-worker",
+            cloudIds: [],
+            tags: {},
+            properties: roleModel,
+            observedAt: "2026-11-17T00:00:00.000Z",
+          },
+        ],
+        coverage: [],
+        notes: [],
+      },
+      [awsPlugin],
+    );
+    const { region, ...live } = attrs;
+    expect(region).toBe("us-east-1");
+    expect(live).toEqual(indexed.attrs);
+  });
+
+  test("an endpoint without GetResource is read with one ListResources, joined by identifier", async () => {
+    const asked: string[] = [];
+    stubCfn(roleStack, (operation) => {
+      asked.push(operation);
+      if (operation === "GetResource") {
+        return { status: 400, text: JSON.stringify({ __type: "UnsupportedOperation", message: "not supported" }) };
+      }
+      return {
+        text: JSON.stringify({
+          ResourceDescriptions: [
+            ccDescription("someone-elses-role", { ...roleModel, RoleName: "someone-elses-role", Path: "/other/" }),
+            ccDescription("a6-worker", roleModel),
+          ],
+        }),
+      };
+    });
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({ environment: "dev", buildOutput: "", entityNames: ["worker"], entities: new Map(), stack: "a6-dev" }),
+    );
+    expect(asked).toEqual(["GetResource", "ListResources"]);
+    expect(observed.resources.worker?.attributes?.Path).toBe("/");
+    expect(observed.resources.worker?.attributes?.RoleName).toBe("a6-worker");
+  });
+
+  test("a failed Cloud Control read keeps the stack's identity, says so in a note, and is no hole", async () => {
+    stubCfn(roleStack, () => ({ status: 400, text: JSON.stringify({ __type: "AccessDeniedException", message: "denied" }) }));
+    const observed = normalizeObservation(
+      await awsPlugin.describeResources!({ environment: "dev", buildOutput: "", entityNames: ["worker"], entities: new Map(), stack: "a6-dev" }),
+    );
+    expect(observed.resources.worker?.physicalId).toBe("a6-worker");
+    expect(observed.resources.worker?.attributes?.Path).toBeUndefined();
+    expect(observed.unobserved ?? {}).toEqual({});
+    expect(observed.notes).toEqual([
+      "[aws] Cloud Control read of AWS::IAM::Role failed: AccessDeniedException: denied; those resources carry their stack identity without their properties",
+    ]);
   });
 });
 

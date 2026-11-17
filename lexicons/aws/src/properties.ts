@@ -23,6 +23,7 @@
  */
 
 import { applyAwsEndpointArgv } from "./components/cloud-executor";
+import type { AwsReadClientOptions } from "./api/read-client";
 import type { ResourceMetadata } from "@intentius/chant/lexicon";
 
 /**
@@ -190,4 +191,85 @@ export async function describeOwnProperties(
   }
 
   return { resources: merged, transportFailed: failures.size === wanted.size, failures };
+}
+
+/** What {@link describeCloudControlProperties} read, and why each kind it could not read failed. */
+export interface CloudControlPropertiesResult {
+  resources: Record<string, ResourceMetadata>;
+  /** Why each failed kind failed, keyed by CloudFormation type. */
+  failures: Map<string, string>;
+}
+
+/**
+ * Every other stack member's own properties, through Cloud Control (#4525).
+ *
+ * {@link DESCRIBE} covers four EC2 kinds, so a bucket or a role read through
+ * the stack carried no properties at all, and `chant search "attr:Path=/"
+ * --live` matched nothing that the same query over an index of the same
+ * account matched. The index lists through Cloud Control and normalizes each
+ * model with the deep-observe hooks (`typeListing`, chant#4521). This reads
+ * the same model for the same resource and normalizes it the same way, so a
+ * bound row has the same attributes on both paths.
+ *
+ * A kind is read when its primary identifier is one part: CloudFormation's
+ * physical id for it is then the Cloud Control identifier. `GetResource` per
+ * resource; an endpoint that answers `UnsupportedOperation` (floci) gets one
+ * `ListResources` for the kind, joined back by identifier. Best-effort per
+ * kind: a kind that fails keeps the stack's identity and status, and its
+ * failure is reported for the caller to note.
+ */
+export async function describeCloudControlProperties(
+  resources: Record<string, ResourceMetadata>,
+  client: AwsReadClientOptions,
+): Promise<CloudControlPropertiesResult> {
+  const { primaryIdentifierParts } = await import("./identity-observe");
+  const wanted = new Map<string, Map<string, string[]>>();
+  for (const [name, meta] of Object.entries(resources)) {
+    if (!meta.physicalId || canDescribe(meta.type)) continue;
+    if (primaryIdentifierParts(meta.type)?.length !== 1) continue;
+    const byId = wanted.get(meta.type) ?? new Map<string, string[]>();
+    byId.set(meta.physicalId, [...(byId.get(meta.physicalId) ?? []), name]);
+    wanted.set(meta.type, byId);
+  }
+  const failures = new Map<string, string>();
+  if (wanted.size === 0) return { resources, failures };
+
+  const { normalizeDeepProperties } = await import("@intentius/chant/deep-observation");
+  const { awsDeepNormalizationHooks } = await import("./deep-observe");
+  const { AwsReadError, getResource, listResources } = await import("./api/read-client");
+  const merged = { ...resources };
+  const detail = (err: unknown) =>
+    err instanceof AwsReadError && err.code ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+
+  for (const [kind, byId] of wanted) {
+    const found = new Map<string, Record<string, unknown>>();
+    try {
+      let listed = false;
+      for (const id of byId.keys()) {
+        try {
+          const d = await getResource(kind, id, client);
+          if (d) found.set(id, d.properties);
+        } catch (err) {
+          if (!(err instanceof AwsReadError) || err.code !== "UnsupportedOperation") throw err;
+          listed = true;
+          break;
+        }
+      }
+      if (listed) {
+        for (const d of await listResources(kind, client)) {
+          if (byId.has(d.identifier)) found.set(d.identifier, d.properties);
+        }
+      }
+    } catch (err) {
+      failures.set(kind, `Cloud Control read of ${kind} failed: ${detail(err)}`);
+      continue;
+    }
+    for (const [id, properties] of found) {
+      const attrs = normalizeDeepProperties(properties, { entityType: kind, side: "live", hooks: awsDeepNormalizationHooks });
+      for (const name of byId.get(id) ?? []) {
+        merged[name] = { ...merged[name], attributes: { ...(merged[name].attributes ?? {}), ...attrs } };
+      }
+    }
+  }
+  return { resources: merged, failures };
 }

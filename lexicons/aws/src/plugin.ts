@@ -35,7 +35,7 @@ import { awsDeepNormalizationHooks, observeResourcesDeepAws } from "./deep-obser
 import { awsDisruption } from "./disruption";
 import { awsReferenceCatalog } from "./reference-catalog";
 import { AMBIENT_KINDS } from "./ambient";
-import { canDescribe, describeOwnProperties, stampRegion } from "./properties";
+import { canDescribe, describeCloudControlProperties, describeOwnProperties, stampRegion } from "./properties";
 import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
@@ -757,7 +757,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const stackOwnership: ResourceMetadata["ownership"] =
       stackTags === undefined ? "unknown" : stackMarker ? "owned" : "foreign";
     // `owned: true` withheld nothing, so say why whenever the marker did not resolve.
-    const notes = options.owned && stackMarker === undefined ? unresolvedNotes : undefined;
+    let notes = options.owned && stackMarker === undefined ? unresolvedNotes : undefined;
 
     // The outputs are the stack's, not any member's (#1279). They used to be
     // copied onto every resource's `attributes`, so a VPC carried the stack's
@@ -800,7 +800,17 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // the stack's exports replicated onto every member, so no instance carried
     // its own `VpcId`.
     const own = await describeOwnProperties(resources, options.region);
-    const withProperties = stampProviderDefaults(stampRegion(own.resources, options.region));
+    // The other kinds' own properties (#4525), read through Cloud Control and
+    // normalized as an index of the same account is, so `attr:` answers the
+    // same under `search --live` and `search --index`. A kind it could not
+    // read keeps its identity and gets a note, not a hole: before this read
+    // existed those resources carried no properties and were observed.
+    const cc = await describeCloudControlProperties(own.resources, client);
+    const ccNotes = [...cc.failures.values()].map(
+      (detail) => `[aws] ${detail}; those resources carry their stack identity without their properties`,
+    );
+    if (ccNotes.length > 0) notes = [...(notes ?? []), ...ccNotes];
+    const withProperties = stampProviderDefaults(stampRegion(cc.resources, options.region));
 
     // The own-property read is still a CLI shell-out while the stack reads are
     // not (#1206), so the two halves can now fail independently. When the
