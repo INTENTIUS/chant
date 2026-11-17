@@ -12,7 +12,9 @@
  * rows are written by scripts/floor-table.ts from the constants themselves
  * (./floor-table.data.ts), and scripts/release-floors.ts fails while a floor
  * is missing from them. A floor added since the last release has the version
- * of the next one, NEXT_RELEASE, which the release moves on. Each name is
+ * of the next one, NEXT_RELEASE; core's prepack writes each floor still on
+ * NEXT_RELEASE as the release that first carried it, read from the release
+ * tags, or as the version being packed (#5260). Each name is
  * declared once (#4916), and scripts/floor-table.ts fails on a second.
  *
  * `chant dev dead-guards` (./dead-guards.ts) reads this table against a

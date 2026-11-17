@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import config from "../release/chant.config";
-import { coreLabelOfPlan, freezeFloorSource, freezeTextList, listReleaseTags, nextPatch, releaseCommit, releasedVersions, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
+import { compareVersions, coreLabelOfPlan, freezeFloorSource, freezeTextList, listReleaseTags, missingTags, nextPatch, packVersion, releaseCommit, releasedVersions, resolveFloorSource, shippedIn, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
 
 const root = join(import.meta.dirname, "..");
 
@@ -287,6 +287,102 @@ describe("release floors read member tags as that member's only (#5135)", () => 
       expect(releaseCommit("0.125.0", repo)).toBe(b);
       expect(releaseCommit("0.126.0", repo)).toBeUndefined();
       expect(releaseCommit("0.127.0", repo)).toBeUndefined();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("release floors resolve from the release tags, with no freeze between releases (#5260)", () => {
+  const declared: Record<string, string[]> = {
+    "0.124.103": ["OLD_FLOOR", "TRAIN_ARTIFACTS_FLOOR", "K8S_FLOOR"],
+    "0.124.102": ["OLD_FLOOR", "K8S_FLOOR"],
+    "0.124.101": ["OLD_FLOOR"],
+  };
+  const at = (v: string) => (declared[v] ? new Set(declared[v]) : undefined);
+
+  it("gives a symbolic floor the oldest release in the run back from the newest that declares it", () => {
+    const releases = ["0.124.103", "0.124.102", "0.124.101"];
+    const out = shippedIn(["TRAIN_ARTIFACTS_FLOOR", "K8S_FLOOR", "NEW_FLOOR"], releases, at);
+    expect(Object.fromEntries(out)).toEqual({ TRAIN_ARTIFACTS_FLOOR: "0.124.103", K8S_FLOOR: "0.124.102" });
+  });
+
+  it("passes over a release it can't read, and a floor the newest release lacks ships next", () => {
+    const out = shippedIn(["K8S_FLOOR"], ["0.125.0", "0.124.103", "0.124.102", "0.124.101"], at);
+    expect(Object.fromEntries(out)).toEqual({ K8S_FLOOR: "0.124.102" });
+    expect(shippedIn(["K8S_FLOOR"], ["0.124.101", "0.124.102"], at).size).toBe(0);
+  });
+
+  it("packs at the stamp, else past the newest release when NEXT_RELEASE already shipped", () => {
+    expect(packVersion("0.124.103", "0.125.0", "0.124.103")).toBe("0.125.0");
+    expect(packVersion("0.124.103", undefined, "0.124.103")).toBe("0.124.104");
+    expect(packVersion("0.124.105", undefined, "0.124.103")).toBe("0.124.105");
+    expect(packVersion("0.124.1", undefined, undefined)).toBe("0.124.1");
+    expect(compareVersions("0.124.10", "0.124.9")).toBeGreaterThan(0);
+  });
+
+  it("writes each floor at the release it shipped in, the rest at the version packed", () => {
+    const src = ['import { NEXT_RELEASE } from "./release-floors";', "export const SHIPPED_FLOOR = NEXT_RELEASE;", "export const LATER_FLOOR = NEXT_RELEASE;", 'export const OLD_FLOOR = "0.124.30";', ""].join("\n");
+    expect(resolveFloorSource(src, new Map([["SHIPPED_FLOOR", "0.124.103"]]), "0.124.104")).toBe(
+      ['export const SHIPPED_FLOOR = "0.124.103";', 'export const LATER_FLOOR = "0.124.104";', 'export const OLD_FLOOR = "0.124.30";', ""].join("\n"),
+    );
+  });
+
+  it("refuses when npm has a core release newer than every tag in the checkout", () => {
+    expect(missingTags("0.124.103", "0.124.103")).toEqual([]);
+    expect(missingTags("0.124.103", undefined)).toHaveLength(1);
+    expect(missingTags("0.124.104", "0.124.103")[0]).toContain("@intentius/chant 0.124.104 is on npm and this checkout has no release tag for it");
+  });
+
+  it("checks a cut and packs a repository after a release with no freeze commit, and puts the sources back", () => {
+    const repo = mkdtempSync(join(tmpdir(), "chant-release-floors-pack-"));
+    try {
+      const write = (file: string, text: string) => {
+        mkdirSync(dirname(join(repo, file)), { recursive: true });
+        writeFileSync(join(repo, file), text);
+      };
+      const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], { cwd: repo, encoding: "utf-8" });
+      const tsx = join(root, "node_modules", ".bin", "tsx");
+      const run = (...args: string[]) => execFileSync(tsx, args, { cwd: repo, encoding: "utf-8", stdio: "pipe" });
+      git("init", "-q");
+      write("scripts/release-floors.ts", readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+      write("scripts/floor-table.ts", readFileSync(join(root, "scripts/floor-table.ts"), "utf8"));
+      write("packages/core/package.json", JSON.stringify({ exports: { "./*": "./src/*.ts" } }));
+      write("packages/core/src/release-floors.ts", 'export const NEXT_RELEASE = "0.124.54";\n');
+      write("packages/core/src/a.ts", 'import { NEXT_RELEASE } from "./release-floors";\nexport const SHIPPED_FLOOR = NEXT_RELEASE;\n');
+      // The table lists files in git's order, untracked ones last: add them first.
+      git("add", "-A");
+      run("scripts/floor-table.ts");
+      git("add", "-A");
+      git("commit", "-q", "-m", "cut");
+      git("tag", "release/npm/core/0.124.54");
+      write("packages/core/src/b.ts", 'import { NEXT_RELEASE } from "./release-floors";\nexport const LATER_FLOOR = NEXT_RELEASE;\n');
+      git("add", "-A");
+      run("scripts/floor-table.ts");
+      git("add", "-A");
+      git("commit", "-q", "-m", "after the cut");
+
+      // The next cut's check passes with SHIPPED_FLOOR still NEXT_RELEASE and NEXT_RELEASE on the shipped 0.124.54.
+      expect(run("scripts/release-floors.ts", "--rev", "HEAD", "--release", "0.124.55")).toContain("packed at their release: SHIPPED_FLOOR 0.124.54");
+      expect(run("scripts/release-floors.ts", "--rev", "HEAD", "--release", "0.125.0")).toContain("NEXT_RELEASE is 0.124.54");
+      // With no label, LATER_FLOOR packs past 0.124.54, which shipped without it, and that has no release yet.
+      expect(() => run("scripts/release-floors.ts", "--rev", "HEAD")).toThrow(/LATER_FLOOR names 0\.124\.55, which has no release tag/);
+
+      const files = ["packages/core/src/a.ts", "packages/core/src/b.ts", "packages/core/src/release-floors.ts", "packages/core/src/floor-table.data.ts"];
+      const before = files.map((f) => readFileSync(join(repo, f), "utf8"));
+      const copy = `for (const f of ${JSON.stringify(files)}) require("fs").copyFileSync(f, "out-" + require("path").basename(f))`;
+      expect(run("scripts/release-floors.ts", "--pack", process.execPath, "-e", copy)).toContain("packing with NEXT_RELEASE 0.124.55; shipped earlier: SHIPPED_FLOOR 0.124.54");
+      expect(readFileSync(join(repo, "out-a.ts"), "utf8")).toBe('export const SHIPPED_FLOOR = "0.124.54";\n');
+      expect(readFileSync(join(repo, "out-b.ts"), "utf8")).toBe('export const LATER_FLOOR = "0.124.55";\n');
+      expect(readFileSync(join(repo, "out-release-floors.ts"), "utf8")).toBe('export const NEXT_RELEASE = "0.124.55";\n');
+      const table = readFileSync(join(repo, "out-floor-table.data.ts"), "utf8");
+      expect(table).toContain('{ name: "SHIPPED_FLOOR", version: "0.124.54",');
+      expect(table).toContain('{ name: "LATER_FLOOR", version: "0.124.55",');
+      expect(files.map((f) => readFileSync(join(repo, f), "utf8"))).toEqual(before);
+
+      // A failing build still puts the sources back, and its status is the pack's.
+      expect(() => run("scripts/release-floors.ts", "--pack", process.execPath, "-e", "process.exit(3)")).toThrow();
+      expect(files.map((f) => readFileSync(join(repo, f), "utf8"))).toEqual(before);
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

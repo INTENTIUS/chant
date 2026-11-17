@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -75,6 +76,18 @@ describe("localChantVersion (#4921)", () => {
     write(join(chant, "packages/core/src/release-floors.ts"), 'export const NEXT_RELEASE = "2.1.0";\n');
     expect(localChantVersion(chant, "2.0.0")).toBe("2.1.0");
     expect(localChantVersion(chant, "2.2.0")).toBe("2.2.0");
+  });
+
+  it("is past core's newest release tag when NEXT_RELEASE already shipped (#5260)", () => {
+    const chant = checkout();
+    write(join(chant, "packages/core/src/release-floors.ts"), 'export const NEXT_RELEASE = "2.1.0";\n');
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], { cwd: chant, stdio: "ignore" });
+    git("init", "-q");
+    git("commit", "-q", "--allow-empty", "-m", "a");
+    git("tag", "release/npm/core/2.1.0");
+    git("tag", "release/npm/lexicon-k8s/3.0.0");
+    expect(localChantVersion(chant, "2.0.0")).toBe("2.1.1");
+    expect(localChantVersion(chant, "2.3.0")).toBe("2.3.0");
   });
 });
 

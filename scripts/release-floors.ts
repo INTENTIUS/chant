@@ -11,7 +11,9 @@
  *                                                      with core not in the train, check nothing (#5154)
  *   npx tsx scripts/release-floors.ts --set <v>        set the next release's number
  *   npx tsx scripts/release-floors.ts --freeze <v> [--next <n>] [--rev <sha>]
- *                                                      after <v> shipped: its floors become literals
+ *                                                      after <v> shipped: its floors become literals (optional)
+ *   npx tsx scripts/release-floors.ts --pack <cmd...>  run <cmd> (core's build) with every floor at the
+ *                                                      version it ships with, then put the sources back
  *
  * The one place the number is set is NEXT_RELEASE in
  * packages/core/src/release-floors.ts. Each floor constant added since the
@@ -60,14 +62,32 @@
  * already published.
  *
  * After a release ships, its floors stay at the version they shipped with
- * (#4501). `--freeze <v>`, run once <v> is published and while NEXT_RELEASE
- * is still <v>, writes "<v>" in place of NEXT_RELEASE in each floor constant
- * that <v> shipped (dropping an import of NEXT_RELEASE the file no longer
- * uses), drops those floors' entries from NEXT_RELEASE_TEXT (the texts
- * already carry "<v>"), and sets NEXT_RELEASE to `--next`, or <v> with its
- * patch number raised. The check fails while a floor is still NEXT_RELEASE
- * and NEXT_RELEASE names a version that has a release, so a shipped floor
- * can't stay symbolic and move with the next `--set`.
+ * (#4501). The release tags say which: a core floor still NEXT_RELEASE
+ * shipped in the oldest of core's releases, walking back from the newest,
+ * whose release commit already declared it (#5260), and a floor no release
+ * declares ships in the next one. Core's `prepack` runs its build under
+ * `--pack`, which writes each floor as that literal, NEXT_RELEASE as the
+ * version being packed (core's stamped package.json version, or else
+ * NEXT_RELEASE or the patch after core's newest release, whichever is
+ * newer), and the floor table again, then puts the sources back. So a
+ * release train needs no commit between releases: a floor that shipped in
+ * 0.124.103 packs as "0.124.103" in every later release, and a floor merged
+ * after that cut packs as the next release's label. The check reads floors
+ * the same way, and a cut's check (`--release`, `--train-plan`) gives the
+ * floors no release declares the label being cut. With `--npm` it refuses
+ * when npm lists a core version newer than every core release tag in the
+ * checkout, since its tags would be missing from the walk.
+ *
+ * `--freeze <v>` writes those literals into the sources, for a tree that
+ * reads plainly; the build no longer needs it. Run once <v> is published and
+ * while NEXT_RELEASE is still <v>, it writes "<v>" in place of NEXT_RELEASE
+ * in each floor constant that <v> shipped (dropping an import of
+ * NEXT_RELEASE the file no longer uses), drops those floors' entries from
+ * NEXT_RELEASE_TEXT (the texts already carry "<v>"), and sets NEXT_RELEASE
+ * to `--next`, or <v> with its patch number raised. A lexicon floor still
+ * NEXT_RELEASE is not resolved from core's tags, so the check still fails
+ * while one is NEXT_RELEASE and NEXT_RELEASE names a version that has a
+ * release.
  *
  * A floor shipped in <v> when it was already NEXT_RELEASE at <v>'s release
  * commit (#4540): the commit `release/npm/<v>`, `chant-v<v>` or core's member
@@ -84,7 +104,7 @@
  * scripts/floor-table.ts writes from the floors, and `--freeze` writes it
  * again once the floors are literals.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -114,6 +134,8 @@ interface Args {
   next?: string;
   /** `--train-plan <file>`: a train without core checks nothing. */
   trainWithoutCore?: boolean;
+  /** `--pack <cmd...>`: the command to run with the floors resolved. */
+  pack?: string[];
 }
 
 /** Core's label in a `chant workspace train cut` plan (#5154), or null when the train does not release core. */
@@ -132,6 +154,11 @@ function parseArgs(argv: string[]): Args {
       if (!v) throw new Error(`${a} needs a value`);
       return v;
     };
+    if (a === "--pack") {
+      args.pack = argv.slice(i + 1);
+      if (args.pack.length === 0) throw new Error("--pack needs a command");
+      break;
+    }
     if (a === "--rev") args.rev = value();
     else if (a === "--release") args.release.push(value());
     else if (a === "--npm") args.npm = true;
@@ -203,7 +230,9 @@ function floorFiles(rev: string | undefined): string[] {
 /**
  * NEXT_RELEASE and each floor still set to it, as problem lines, when
  * NEXT_RELEASE names a version that has a release (#4501): those floors
- * shipped and must be literals before NEXT_RELEASE moves on.
+ * shipped and must be literals before NEXT_RELEASE moves on. The check
+ * passes it lexicon floors only; a core floor is resolved from the release
+ * tags (#5260).
  */
 export function shippedSymbolic(next: string, named: Floor[], known: Set<string>, stamp?: string): string[] {
   // A working tree stamped with NEXT_RELEASE is a local pack of that
@@ -304,6 +333,104 @@ export function nextPatch(v: string): string {
   return `${major}.${minor}.${patch + 1}`;
 }
 
+/** `a` against `b` as `x.y.z` versions: negative when `a` is older. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  return 0;
+}
+
+/**
+ * The release each symbolic floor shipped in (#5260). `releases` is core's
+ * releases, newest first; `declaredAt` gives the floor names a release's
+ * commit declares, or undefined for a release to pass over (no tag, or a
+ * commit that is not an ancestor of the one read). A floor the newest
+ * release declares shipped in it or an earlier one, so the walk goes back
+ * until a release does not declare it: the last release that did is its
+ * first. A floor the newest release does not declare is not in the map; it
+ * ships in the next release.
+ */
+export function shippedIn(symbolic: readonly string[], releases: readonly string[], declaredAt: (version: string) => ReadonlySet<string> | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  const pending = new Set(symbolic);
+  for (const version of releases) {
+    if (pending.size === 0) break;
+    const declared = declaredAt(version);
+    if (declared === undefined) continue;
+    for (const name of [...pending]) {
+      if (declared.has(name)) out.set(name, version);
+      else pending.delete(name);
+    }
+  }
+  return out;
+}
+
+/** The floor names a commit declares under packages/core/src. */
+function declaredFloorsAt(commit: string): Set<string> {
+  let out = "";
+  try {
+    out = git(["grep", "-h", "-o", "-E", "export const [A-Z0-9_]+_FLOOR = ", commit, "--", "packages/core/src"]);
+  } catch {
+    // git grep exits 1 when nothing matches.
+  }
+  return new Set([...out.matchAll(/export const ([A-Z0-9_]+_FLOOR) = /g)].map((m) => m[1]));
+}
+
+function isAncestor(commit: string, of: string): boolean {
+  try {
+    git(["merge-base", "--is-ancestor", commit, of]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The release each core floor still NEXT_RELEASE at `head` shipped in, from the checkout's release tags (#5260). */
+function shippedFromTags(symbolic: readonly string[], head: string): Map<string, string> {
+  if (symbolic.length === 0) return new Map();
+  const releases = [...releasedVersions(releaseTags())].sort((a, b) => compareVersions(b, a));
+  return shippedIn(symbolic, releases, (version) => {
+    const commit = releaseCommit(version);
+    return commit && isAncestor(commit, head) ? declaredFloorsAt(commit) : undefined;
+  });
+}
+
+/** The newest version in a set, or undefined for none. */
+function newest(versions: Iterable<string>): string | undefined {
+  let out: string | undefined;
+  for (const v of versions) if (out === undefined || compareVersions(v, out) > 0) out = v;
+  return out;
+}
+
+/**
+ * The version a pack gives NEXT_RELEASE and the floors no release declares
+ * (#5260): the stamp core's package.json carries (the train's label), or
+ * else NEXT_RELEASE or the patch after core's newest release, whichever is
+ * newer, so a checkout whose NEXT_RELEASE already shipped packs past it.
+ */
+export function packVersion(next: string, stamp: string | undefined, newestRelease: string | undefined): string {
+  if (stamp) return stamp;
+  if (newestRelease && compareVersions(next, newestRelease) <= 0) return nextPatch(newestRelease);
+  return next;
+}
+
+/**
+ * One source file with each `<NAME>_FLOOR = NEXT_RELEASE;` written as the
+ * version it ships with: `shipped`'s release for a floor in it, else
+ * `version`. The import of NEXT_RELEASE goes when nothing else names it.
+ */
+export function resolveFloorSource(src: string, shipped: ReadonlyMap<string, string>, version: string): string {
+  const byVersion = new Map<string, Set<string>>();
+  for (const m of src.matchAll(/export const ([A-Z0-9_]+_FLOOR) = NEXT_RELEASE;/g)) {
+    const v = shipped.get(m[1]) ?? version;
+    byVersion.set(v, (byVersion.get(v) ?? new Set()).add(m[1]));
+  }
+  let out = src;
+  for (const [v, names] of byVersion) out = freezeFloorSource(out, v, names);
+  return out;
+}
+
 /**
  * The versions with a release of one package, from a tag list (`git tag -l`
  * output) and, when given, npm's list of that package's published versions.
@@ -365,6 +492,19 @@ export function unreleasedFloors(
       (f) =>
         `${f.file}: ${f.name} names ${f.version}, which has no ${f.lexicon ? `@intentius/chant-lexicon-${f.lexicon} ` : ""}release tag${npm ? " or npm version" : ""} and no local build stamp`,
     );
+}
+
+/**
+ * A problem line when npm lists a core version newer than every core release
+ * tag in the checkout (#5260): the floors that release shipped would be read
+ * as unreleased and packed at the next label.
+ */
+export function missingTags(newestPublished: string | undefined, newestTagged: string | undefined): string[] {
+  if (newestPublished === undefined || (newestTagged !== undefined && compareVersions(newestPublished, newestTagged) <= 0)) return [];
+  return [
+    `@intentius/chant ${newestPublished} is on npm and this checkout has no release tag for it, so the floors it shipped can't be found; ` +
+      `fetch the tags (git fetch origin 'refs/tags/release/*:refs/tags/release/*' 'refs/tags/chant-v*:refs/tags/chant-v*')`,
+  ];
 }
 
 /** The working tree's stamp: a package's package.json version (core's by default) when it differs from HEAD's. */
@@ -433,6 +573,61 @@ function freeze(version: string, next: string | undefined, rev: string | undefin
   }
 }
 
+/**
+ * Core's sources with every core floor at the version it ships with
+ * (#5260), as a map of file to text: the floor files, NEXT_RELEASE_TEXT's
+ * files, and the constant. The floor table follows from them.
+ */
+function packSources(version: string, shipped: ReadonlyMap<string, string>): Map<string, string> {
+  const read = reader(undefined);
+  const next = nextRelease(read);
+  const out = new Map<string, string>();
+  for (const file of floorFiles(undefined)) {
+    if (LEXICON_FLOORS_FILE.test(file)) continue;
+    const src = read(file);
+    const resolved = resolveFloorSource(src, shipped, version);
+    if (resolved !== src) out.set(file, resolved);
+  }
+  for (const t of NEXT_RELEASE_TEXT) {
+    const src = out.get(t.file) ?? read(t.file);
+    const to = shipped.get(t.floor) ?? version;
+    out.set(t.file, src.replaceAll(t.text.replaceAll("{v}", next), t.text.replaceAll("{v}", to)));
+  }
+  const constant = out.get(CONSTANT_FILE) ?? read(CONSTANT_FILE);
+  out.set(CONSTANT_FILE, constant.replace(CONSTANT_RE, `export const NEXT_RELEASE = "${version}";`));
+  return out;
+}
+
+/**
+ * `--pack <cmd...>` (#5260): core's prepack. Writes every core floor as the
+ * version it ships with, NEXT_RELEASE as the version being packed, and the
+ * floor table, runs the command (the build), and puts every file back as it
+ * was, whatever the command did.
+ */
+function pack(command: string[]): number {
+  const read = reader(undefined);
+  const next = nextRelease(read);
+  const symbolic = floors(read, undefined, next).filter((f) => f.symbolic && !f.lexicon).map((f) => f.name);
+  const shipped = shippedFromTags(symbolic, "HEAD");
+  const version = packVersion(next, localStamp(), newest(releasedVersions(releaseTags())));
+  const files = packSources(version, shipped);
+  const saved = new Map<string, string>();
+  for (const file of [...files.keys(), TABLE_FILE]) saved.set(file, read(file));
+  let status = 1;
+  try {
+    for (const [file, text] of files) writeFileSync(join(ROOT, file), text);
+    writeTable(ROOT);
+    const shown = [...shipped].map(([n, v]) => `${n} ${v}`);
+    console.log(`release floors: packing with NEXT_RELEASE ${version}${shown.length > 0 ? `; shipped earlier: ${shown.join(", ")}` : ""}`);
+    const run = spawnSync(command[0]!, command.slice(1), { stdio: "inherit" });
+    if (run.error) throw run.error;
+    status = run.status ?? 1;
+  } finally {
+    for (const [file, text] of saved) writeFileSync(join(ROOT, file), text);
+  }
+  return status;
+}
+
 function set(version: string): void {
   const read = reader(undefined);
   const old = nextRelease(read);
@@ -478,9 +673,22 @@ function check(args: Args): number {
     }
     return set;
   };
-  const named = [{ name: "NEXT_RELEASE", file: CONSTANT_FILE, version: next }, ...floors(read, args.rev, next)];
+  // #5260: a core floor still NEXT_RELEASE packs as the release that first
+  // declared it, and one no release declares as the version being cut (the
+  // last --release or the train's core label), or else as `--pack` would pack it.
+  const declared = floors(read, args.rev, next);
+  const symbolicCore = declared.filter((f) => f.symbolic && !f.lexicon).map((f) => f.name);
+  const shipped = shippedFromTags(symbolicCore, args.rev ?? "HEAD");
+  const cutting = args.release.at(-1);
+  const unshipped = cutting ?? packVersion(next, stamp, newest(releasedVersions(releaseTags())));
+  const named = [
+    { name: "NEXT_RELEASE", file: CONSTANT_FILE, version: cutting ?? next },
+    ...declared.map((f) => (f.symbolic && !f.lexicon ? { ...f, version: shipped.get(f.name) ?? unshipped } : f)),
+  ];
   problems.push(...unreleasedFloors(named, allowed, args.npm));
-  problems.push(...shippedSymbolic(next, named, known, stamp));
+  // A lexicon floor is not resolved from core's tags, so it must still be frozen.
+  problems.push(...shippedSymbolic(next, declared.filter((f) => f.lexicon), known, stamp));
+  if (args.npm && symbolicCore.length > 0) problems.push(...missingTags(newest(known), newest(releasedVersions(releaseTags()))));
   // #4792: the floor table a product reads lists every floor, at its version.
   const table = tableAgainst(ROOT, args.rev);
   if (table.want !== table.have) problems.push(`${TABLE_FILE}: ${table.have === undefined ? "missing" : "does not list every floor at its version"}; run \`npx tsx scripts/floor-table.ts\``);
@@ -493,7 +701,8 @@ function check(args: Args): number {
     console.error(`  (checked against ${sources.join(", ")})`);
     return 1;
   }
-  console.log(`release floors ${where}: ${named.length} floors and ${NEXT_RELEASE_TEXT.length} texts agree; NEXT_RELEASE is ${next}`);
+  const fromTags = [...shipped].map(([n, v]) => `${n} ${v}`);
+  console.log(`release floors ${where}: ${named.length} floors and ${NEXT_RELEASE_TEXT.length} texts agree; NEXT_RELEASE is ${next}${fromTags.length > 0 ? `; on NEXT_RELEASE and shipped, packed at their release: ${fromTags.join(", ")}` : ""}`);
   return 0;
 }
 
@@ -501,6 +710,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = parseArgs(process.argv.slice(2));
   if (args.set) set(args.set);
   else if (args.freeze) freeze(args.freeze, args.next, args.rev);
+  else if (args.pack) process.exit(pack(args.pack));
   else if (args.trainWithoutCore) console.log("release floors: the train does not release core, so no core floor ships with it");
   else process.exit(check(args));
 }

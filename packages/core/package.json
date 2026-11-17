@@ -175,7 +175,7 @@
   },
   "scripts": {
     "build": "../../scripts/tsc7.sh -p tsconfig.build.json --sourceMap false && tsc-alias -p tsconfig.build.json && node scripts/copy-assets.mjs && node scripts/build-wave-runtime.mjs",
-    "prepack": "npm run build"
+    "prepack": "tsx ../../scripts/release-floors.ts --pack npm run build"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
