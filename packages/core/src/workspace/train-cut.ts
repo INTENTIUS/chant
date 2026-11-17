@@ -26,6 +26,8 @@
  * 4. `release.train.check`: shell lines run once the labels are known and
  *    before anything is cut, with `CHANT_RELEASE_COMMIT`, `CHANT_TRAIN_ENV`
  *    and `CHANT_TRAIN_PLAN` (a JSON file of the members and labels).
+ *    With `--doctor` (#5216), `chant release doctor` then runs in each
+ *    member, and a failed check stops the train with nothing cut.
  * 5. `chant release cut <label> --at <commit> --yes` in each member's
  *    directory, in publish order. Each cut pushes its record and tags the
  *    commit locally.
@@ -385,7 +387,7 @@ export interface MemberCutResult {
 export type MemberCutter = (m: TrainCutMember, commit: string, o: { root: string; yes: boolean }) => Promise<MemberCutResult>;
 
 /** The chant this process runs, as a command line. */
-function ownChant(): string[] {
+export function ownChant(): string[] {
   return [process.execPath, ...process.execArgv, process.argv[1]!];
 }
 
@@ -419,6 +421,14 @@ export interface TrainCutRun extends TrainCutQuery {
   remote?: string;
   actor?: string;
   cutter?: MemberCutter;
+  /**
+   * Run `chant release doctor` in each member of the train before anything is
+   * cut (#5216): a target that can't publish from here stops the train with
+   * nothing cut, tagged or pushed.
+   */
+  doctor?: boolean;
+  /** Runs the doctor in a member's directory and returns its exit code. Default: this chant's `release doctor`, its stdout sent to stderr. */
+  runDoctor?: (dir: string) => number | Promise<number>;
   /** Runs the `release.train.check` lines. Default: `sh -c` each one, its stdout sent to stderr. */
   runCheck?: (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }) => number | Promise<number>;
   /** A line of progress. */
@@ -440,6 +450,12 @@ export interface TrainCutOutcome extends TrainCutPlan {
 
 // A check's stdout goes to stderr: under --json, stdout is the cut's JSON document alone.
 const defaultCheck = (line: string, o: { cwd: string; env: NodeJS.ProcessEnv }): Promise<number> => runToStderr(line, o);
+
+/** This chant's `release doctor` in a member's directory, its stdout sent to stderr. */
+const defaultDoctor = (dir: string): number => {
+  const [bin, ...pre] = ownChant();
+  return spawnSync(bin!, [...pre, "release", "doctor"], { cwd: dir, stdio: ["ignore", 2, 2] }).status ?? 1;
+};
 
 /** Plan, and with `yes` cut, record, tag and push, a release train (#5154). */
 export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
@@ -478,6 +494,17 @@ export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
         throw err;
       }
     }
+  }
+
+  // #5216: each member's doctor, after the checks and before the first cut.
+  if (q.doctor) {
+    const failed: string[] = [];
+    for (const m of plan.members) {
+      say(`doctor: ${m.member}`);
+      const code = await (q.runDoctor ?? defaultDoctor)(resolve(root, m.dir));
+      if (code !== 0) failed.push(m.member);
+    }
+    if (failed.length > 0) throw new TrainCutError("train-doctor-failed", `release doctor found a target that can't publish from here in ${failed.join(", ")}`, "Nothing was cut. Fix what the doctor reports and run the train again.");
   }
 
   const cutter = q.cutter ?? spawnMemberCut;
@@ -525,7 +552,7 @@ export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
   return { ...out, pushed: true };
 }
 
-const CUT_USAGE = "chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--yes] [--no-push] [--json]";
+const CUT_USAGE = "chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--doctor] [--yes] [--no-push] [--json]";
 
 /** `chant workspace train cut <env>` (#5154). */
 export async function runTrainCut(ctx: import("../cli/registry").CommandContext, words: string[]): Promise<number> {
@@ -552,6 +579,7 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
       levels: parseTrainLevels(args.levels),
       yes: args.yes === true && args.dryRun !== true,
       noPush: args.noPush === true,
+      doctor: args.doctor === true,
       ...(args.actor ? { actor: args.actor } : {}),
       say: (line) => (json ? undefined : console.error(line)),
     });

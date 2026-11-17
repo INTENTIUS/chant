@@ -55,6 +55,11 @@ export default {
       // dependency an earlier run published, so nothing else would generate
       // them: generate every lexicon after the install.
       setup: [{ run: "cd .. && npm run generate" }],
+      // #5216: no release doctor before the train's cut. A package whose npm
+      // trusted-publisher record fails publishes with NPM_TOKEN (tokenEnv
+      // below), and the doctor's trusted-publisher check would stop the train
+      // for it before that fallback is reached.
+      doctor: false,
       env: {
         CHANT_RELEASE_GATE: "1",
         NPM_TOKEN: "${{ secrets.NPM_TOKEN }}",
