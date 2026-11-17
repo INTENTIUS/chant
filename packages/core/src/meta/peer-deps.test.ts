@@ -13,15 +13,15 @@ import { join } from "path";
  * core's version for every peer alike. Two providers exist: core backs
  * `@intentius/chant`, and `lexicons/github` backs
  * `@intentius/chant-lexicon-github` (forgejo and gitlab both peer on it).
- * `just release-lexicon` writes exactly that — `^$core` for the core peer,
- * `^$github_lexicon` for the github one — because a single-lexicon release
- * moves one package without moving the others, so pinning every peer to core
- * would demand a version that was never published.
+ * A release train writes exactly that: each `@intentius/*` range gets `^` and
+ * the label the train gives its provider. Packages release at their own
+ * versions, so pinning every peer to core would demand a version that was
+ * never published.
  *
  * Asserting against core for both passed only while the whole workspace
- * happened to sit on one version. `just release-lexicon github patch` alone is
- * enough to separate them, and the old assertion then failed on a tree the
- * release recipe had written correctly.
+ * happened to sit on one version. A train that releases github without core
+ * is enough to separate them, and the old assertion then failed on a tree the
+ * release had written correctly.
  */
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
@@ -89,8 +89,8 @@ function rangeViolations(
 }
 
 describe("the provider-aware rule, over fixtures", () => {
-  // `just release-lexicon github patch`: github moves, core does not, and the
-  // recipe rewrites forgejo's github peer to the new github version.
+  // A train that releases github and not core: github moves, core does not,
+  // and the train rewrites forgejo's github peer to the new github version.
   const skewed = { "@intentius/chant": "0.38.0", "@intentius/chant-lexicon-github": "0.38.1" };
 
   test("accepts a provider ahead of core when its dependents track it", () => {
@@ -100,7 +100,7 @@ describe("the provider-aware rule, over fixtures", () => {
       }),
     ).toEqual([]);
     // This is the case the old core-for-everything assertion rejected: it
-    // demanded ^0.38.0 for the github peer, on a tree release-lexicon wrote.
+    // demanded ^0.38.0 for the github peer, on a tree a release wrote.
     expect(`^${skewed["@intentius/chant-lexicon-github"]}`).not.toBe(`^${skewed["@intentius/chant"]}`);
   });
 

@@ -21,7 +21,7 @@ The command modifies 6 files:
 | `package.json` (root) | Adds `@intentius/chant-lexicon-<name>: "workspace:*"` to dependencies |
 | `tsconfig.json` (root) | Adds `paths` entries for `@intentius/chant-lexicon-<name>` and `@intentius/chant-lexicon-<name>/*`. The repo-wide typecheck uses `moduleResolution: node`, which ignores package exports maps, so without these the lexicon's example fails to resolve |
 | `.github/workflows/chant.yml` | Adds prepack lines to check/test jobs + a validate step |
-| `.github/workflows/publish.yml` | Adds prepack line to test job (publishing needs no per-lexicon step — `scripts/publish-packages.sh` enumerates the workspace) |
+| `.github/workflows/publish.yml` | Adds prepack line to test job (publishing needs no per-lexicon step: `publish.yml` publishes the release members `scripts/generate-release-members.ts` writes) |
 | `test/Dockerfile.smoke` | Adds `<name>` to the `for lex in ...` lexicon list |
 | `test/Dockerfile.smoke-npm` | Adds `<name>` to both `for lex in ...` lexicon lists |
 
@@ -54,7 +54,7 @@ After running `dev onboard`, you still need to:
 1. Create an example workspace under `lexicons/<name>/examples/`
 2. Add smoke tests to `test/integration.sh`
 3. Run `npm install` to update workspace links
-4. Run `just release-lexicon <name> patch` for the first release
+4. Run `npx tsx scripts/generate-release-members.ts`, commit the new `release/lexicon-<name>/` member, and release it with `just release`
 
 See [CI & Distribution](/chant/lexicon-authoring/ci-integration/) for details.
 

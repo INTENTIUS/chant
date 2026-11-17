@@ -1,8 +1,8 @@
 /**
  * The floors check against origin's tag list, which lacks chant-v0.81.0
  * (#4503). MEMBER_LEDGER_FLOOR and READ_CONTRACT_FLOOR name 0.81.0, which npm
- * lists, so the check passes only when it asks npm, and the lockstep publish
- * path (scripts/release-pack.sh) and the release train's check must ask it.
+ * lists, so the check passes only when it asks npm, and the release train's
+ * check must ask it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -52,8 +52,7 @@ describe("release floors (#4503)", () => {
     expect([...releasedVersions(["release/npm/1.2.3", "chant-v4.5.6", "ci/abc", "release/npm/x", ""])].sort()).toEqual(["1.2.3", "4.5.6"]);
   });
 
-  it("release-pack.sh and the release train's check run it with --npm", () => {
-    expect(readFileSync(join(root, "scripts/release-pack.sh"), "utf8")).toMatch(/^npx tsx scripts\/release-floors\.ts --npm\b/m);
+  it("the release train's check runs it with --npm", () => {
     // #5154: `chant workspace train cut npm` runs release.train.check with the plan, before any cut.
     expect(config.release.train?.check).toEqual(['npx tsx ../scripts/release-floors.ts --npm --rev "$CHANT_RELEASE_COMMIT" --train-plan "$CHANT_TRAIN_PLAN"']);
   });

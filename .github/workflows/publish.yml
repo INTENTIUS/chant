@@ -76,7 +76,6 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: cd .. && npm ci
-      - run: "cd .. && npm run generate"
       - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
       - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
@@ -111,13 +110,11 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: cd .. && npm ci
-      - run: "cd .. && npm run generate"
       - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
       - run: git fetch origin chant/lifecycle:chant/lifecycle
       - run: echo "CHANT_RELEASE_TRAIN=${CHANT_RELEASE_TRAIN:-${GITHUB_REF_NAME#release-train/npm/}}" >> "$GITHUB_ENV"
       - run: npx tsx ../packages/core/src/cli/main.ts workspace train prepare npm "$CHANT_RELEASE_TRAIN"
-      - run: cd .. && npm run generate --workspaces --if-present
       - run: git config user.name "chant release"
       - run: git config user.email "chant-release@localhost"
       - run: npx tsx ../packages/core/src/cli/main.ts workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes

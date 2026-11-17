@@ -40,5 +40,3 @@ lexicons/fountain/.init-template-*/
 .tsad/
 .import-roundtrip-tmp/
 
-# chant release tarballs (scripts/release-pack.sh, #4040)
-.release/

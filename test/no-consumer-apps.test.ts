@@ -35,7 +35,7 @@ describe("consumer applications stay out of the monorepo", () => {
   });
 
   test("the release and publish plumbing never touches a warden", () => {
-    for (const file of ["justfile", "scripts/publish-packages.sh", "scripts/audit-trusted-publishers.sh"]) {
+    for (const file of ["justfile", "scripts/audit-trusted-publishers.sh"]) {
       const content = readFileSync(join(repoRoot, file), "utf-8");
       expect(content, `${file} references wardens`).not.toMatch(/wardens\//);
     }

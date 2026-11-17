@@ -66,8 +66,7 @@ export const NpmPublishSchema = z
     stage: z.boolean().optional(),
     /**
      * A variable holding an npm token to retry with when a package's publish
-     * fails to authenticate (#4040), as chant's own publish-packages.sh does:
-     * a package whose trusted-publisher record is broken publishes with the
+     * fails to authenticate (#4040): a package whose trusted-publisher record is broken publishes with the
      * token rather than failing the release. Unset or empty, there is no retry.
      */
     tokenEnv: envName.optional(),

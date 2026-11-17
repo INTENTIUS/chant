@@ -22,9 +22,9 @@ depth, it links out. Do the steps in order: later ones assume earlier ones.
 <Aside type="danger" title="The step that is not automatable">
 Step 6 creates an npm trusted-publisher record by hand on npmjs.com. No
 command in this repo can do it, and skipping it produces a lexicon that
-builds, tests, and merges cleanly, then stops the release at the publish
-workflow's `audit` job. Two packages have already shipped this
-way. If you do nothing else on this page, do step 6.
+builds, tests, and merges cleanly, then fails to publish with `ENEEDAUTH`
+unless the `NPM_TOKEN` fallback covers it. Two packages have already shipped
+this way. If you do nothing else on this page, do step 6.
 </Aside>
 
 ## What you are building
@@ -115,9 +115,8 @@ is versioned in lockstep with core.
    `v<version>`; that tag matches no workflow trigger. Step 7 has the real
    commands.
 
-   You do **not** add a publish step. `scripts/publish-packages.sh` enumerates
-   every non-private workspace package, so a new lexicon is published the
-   moment it exists.
+   You do **not** add a publish step. `publish.yml` publishes every release
+   member under `release/`, and step 7 adds yours.
 
 5. **Verify locally**
 
@@ -188,26 +187,17 @@ is versioned in lockstep with core.
 
 ## When the publish run goes red
 
-The `audit` job checks every package's trusted-publisher record first, and
-nothing publishes while one is missing. Its summary names the packages. Fix
-them (step 6), then push the release tag again at the same commit.
-
-Past the audit, `scripts/publish-packages.sh` never stops at the first
-failure. Every package gets its attempt, the summary table names the ones that
-failed, and the run exits non-zero at the end. Once any package of the release
-is on npm the tag is kept. Re-running is safe: a package already at its
-version is skipped, so a partial release is recovered with
-`gh run rerun <publish-run-id> --failed` or by dispatching the workflow again.
+The publish job runs `chant workspace train publish`, core first. A package
+already on the registry at its train label is not published again, so a
+partial train is recovered by dispatching `publish.yml` with the train's id in
+its `train` input, which skips the gate and the cut and resumes the publish.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `audit` fails with `MISSING` for your package, nothing published | No trusted-publisher record, or the package is not on npm yet | Step 6, then push the tag again |
-| `audit` fails with `UNKNOWN` | The registry did not answer the check | Re-run the failed jobs |
-| `ENEEDAUTH` on your package while others publish | No trusted-publisher record | Step 6 |
-| `registry REFUSED the OIDC exchange: HTTP 404` | The registry saying the same thing outright | Step 6 |
-| `registry ACCEPTED the OIDC exchange` but publish still fails | The record is fine | Read the npm error; the auth path is not the problem |
+| `ENEEDAUTH` on your package | No trusted-publisher record | Step 6 |
+| `could not authenticate; publishing again with NPM_TOKEN`, then a failure | No working record, and the `NPM_TOKEN` fallback failed too | Step 6, or check the secret |
 | `EOTP` on the `NPM_TOKEN` fallback | The secret is a publish or granular token, so npm wants a one-time password | Replace it with an npm **automation** token |
-| Your package sits a version behind the others | An earlier run failed on it | Fix its auth, then re-dispatch publish |
+| Your package sits a version behind the others | An earlier run failed on it | Fix its auth, then publish the train again |
 
 ### Why `ENEEDAUTH` is misleading here
 
@@ -216,10 +206,6 @@ logs at verbose level and returns undefined, so `npm publish` falls through to
 ordinary auth and reports a bare `ENEEDAUTH`. That one error covers both "no
 record at all" and "a record that does not match this workflow", and it reads
 like having no credentials.
-
-`scripts/publish-packages.sh` replays the exchange and prints the registry's
-own status and message, so read that line instead of inferring. A successful
-exchange answers **201**, not 200.
 
 Because the record is matched against the workflow *filename*, a probe run
 from any workflow other than `publish.yml` returns 404 for every package and
