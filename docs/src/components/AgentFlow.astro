@@ -1,0 +1,119 @@
+---
+// The path an agent's change takes on ci/agents: the ask, the model's job
+// with a read token, the landing job with the write token, the pull request
+// and its plan, then the person who approves and merges. The last two boxes
+// sit on the accent band, since everything from review on stays with people.
+const boxes = [
+	{ x: 10, t: 'An ask', s: ['a comment, or', 'a drift check'] },
+	{ x: 186, t: 'Agent job', s: ['runs the model', 'read token'] },
+	{ x: 362, t: 'Landing job', s: ['checks the paths', 'write token'] },
+	{ x: 538, t: 'Pull request', s: ['one commit', 'the plan runs'] },
+	{ x: 714, t: 'A person', s: ['reviews, approves', 'merges'] },
+];
+const W = 156;
+// On a phone the same five boxes stack, one under the other.
+const VW = 300;
+const VH = 62;
+// The people band opens a gap above the pull request for its label.
+const vy = (i: number) => 40 + i * 86 + (i >= 3 ? 34 : 0);
+---
+<figure class="agent-flow not-content">
+	<svg class="af-wide" viewBox="0 0 880 150" role="img" aria-label="An ask, a comment or a drift check, starts the agent job, which runs the model with a read token. The landing job holds the write token, checks the paths and pushes one commit to a pull request, where the plan runs. A person reviews, approves and merges.">
+		<defs>
+			<marker id="af-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+				<path d="M0,0 L10,5 L0,10 z" class="af-head" />
+			</marker>
+		</defs>
+		<rect class="af-band" x="528" y="4" width="352" height="142" rx="14" />
+		<text class="af-band-label" x="704" y="26" text-anchor="middle">people</text>
+		{boxes.map((b) => (
+			<g>
+				<rect class="af-box" x={b.x} y="38" width={W} height="96" rx="10" />
+				<text class="af-title" x={b.x + W / 2} y="68" text-anchor="middle">{b.t}</text>
+				<text class="af-sub" x={b.x + W / 2} y="93" text-anchor="middle">{b.s[0]}</text>
+				<text class="af-sub" x={b.x + W / 2} y="114" text-anchor="middle">{b.s[1]}</text>
+			</g>
+		))}
+		{boxes.slice(0, -1).map((b) => (
+			<line class="af-line" x1={b.x + W + 2} y1="86" x2={b.x + 176 - 3} y2="86" marker-end="url(#af-arrow)" />
+		))}
+	</svg>
+	<svg class="af-tall" viewBox="0 0 320 456" role="img" aria-label="An ask, a comment or a drift check, starts the agent job, which runs the model with a read token. The landing job holds the write token, checks the paths and pushes one commit to a pull request, where the plan runs. A person reviews, approves and merges.">
+		<defs>
+			<marker id="af-arrow-v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+				<path d="M0,0 L10,5 L0,10 z" class="af-head" />
+			</marker>
+		</defs>
+		<rect class="af-band" x="0" y={vy(3) - 64} width="320" height={vy(4) + 42 - (vy(3) - 64)} rx="14" />
+		<text class="af-band-label" x="22" y={vy(3) - 40} text-anchor="start">people</text>
+		{boxes.map((b, i) => (
+			<g>
+				<rect class="af-box" x="10" y={vy(i) - 30} width={VW} height={VH} rx="10" />
+				<text class="af-title" x="26" y={vy(i) + 6} text-anchor="start">{b.t}</text>
+				<text class="af-sub" x="300" y={vy(i) - 4} text-anchor="end">{b.s[0]}</text>
+				<text class="af-sub" x="300" y={vy(i) + 16} text-anchor="end">{b.s[1]}</text>
+			</g>
+		))}
+		{boxes.slice(0, -1).map((_, i) => (
+			<line class="af-line" x1="160" y1={vy(i) + 34} x2="160" y2={vy(i + 1) - 33} marker-end="url(#af-arrow-v)" />
+		))}
+	</svg>
+	<figcaption>The agent proposes. Review, approval and merge stay with a person.</figcaption>
+</figure>
+
+<style>
+	.agent-flow {
+		margin: 1.5rem 0;
+	}
+	.agent-flow svg {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+	.af-tall {
+		display: none !important;
+		max-width: 22rem;
+		margin: 0 auto;
+	}
+	@media (max-width: 40rem) {
+		.af-wide { display: none !important; }
+		.af-tall { display: block !important; }
+	}
+	.agent-flow figcaption {
+		margin-top: 0.5rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+		text-align: center;
+	}
+	.af-band {
+		fill: var(--sl-color-accent-low);
+	}
+	.af-band-label {
+		font-size: 13px;
+		font-weight: 600;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		fill: var(--sl-color-accent-high);
+	}
+	.af-box {
+		fill: var(--sl-color-bg);
+		stroke: var(--sl-color-gray-4);
+		stroke-width: 1.5;
+	}
+	.af-title {
+		font-size: 18px;
+		font-weight: 600;
+		fill: var(--sl-color-white);
+	}
+	.af-sub {
+		font-size: 15px;
+		fill: var(--sl-color-gray-2);
+	}
+	.af-line {
+		stroke: var(--sl-color-gray-3);
+		stroke-width: 1.5;
+	}
+	.af-head {
+		fill: var(--sl-color-gray-3);
+	}
+</style>
