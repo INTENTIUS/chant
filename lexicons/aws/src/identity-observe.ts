@@ -44,6 +44,16 @@ function manifestByType(): Map<string, LexiconEntry> {
 }
 
 /**
+ * The primary identifier's parts for a resource type, or undefined when the
+ * type is not a generated resource or has no primary identifier on record.
+ */
+export function primaryIdentifierParts(entityType: string): readonly string[] | undefined {
+  const entry = manifestByType().get(entityType);
+  if (!entry || entry.kind !== "resource" || !entry.primaryIdentifier || entry.primaryIdentifier.length === 0) return undefined;
+  return entry.primaryIdentifier;
+}
+
+/**
  * The Cloud Control identifier the declared props spell, or undefined when the
  * type has no primary identifier on record or any part of it is absent or
  * non-scalar (a Ref, an intrinsic, a server-assigned name). Multi-part
