@@ -35,8 +35,10 @@
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import type { ReleaseGreenSource } from "../lifecycle/release-green";
-import { gateScript, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
+import { field, gateScript, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
 import { RELEASE_ARTIFACTS_ARTIFACT } from "./release-steps/artifacts";
+import { packLine, unpackLine } from "./release-steps/builds";
+import { releaseBuildArchive, releaseBuildArtifact, type ReleaseBuildConfig } from "./release-toolchains";
 
 export interface TrainWorkflowInput {
   forge: ReleaseWorkflowForge;
@@ -78,7 +80,33 @@ export interface TrainWorkflowInput {
   doctor?: boolean;
   /** `verified-releases`: `chant workspace train verify` before the publish (#5216). */
   verify?: boolean;
+  /**
+   * The members' per-platform builds (#5237), with `trigger: "dispatch"`
+   * only. The gate plans the train (`train cut --plan-only`) and gives each
+   * build job the label its member is planned at; a member not in the train
+   * builds nothing. The cut job unpacks each archive into its member and
+   * cuts with `--planned`, so a train labelled otherwise than the builds
+   * were is refused with nothing cut. The publish job of the same run
+   * unpacks them again.
+   */
+  builds?: TrainBuild[];
 }
+
+/** A member's build job (#5237): the member, its directory from the workspace root, the directory it runs in from the checkout, and its toolchain steps. */
+export type TrainBuild = ReleaseBuildConfig & { member: string; memberDir: string; path: string; setup: string[] };
+
+/** The gate's output, and GitLab variable, that carries the label a build job's member is planned at. */
+const labelOutput = (b: TrainBuild) => `label-${b.name}`;
+const labelVariable = (b: TrainBuild) => `CHANT_TRAIN_LABEL_${b.name.toUpperCase().replaceAll("-", "_")}`;
+
+/** The plan's label of a build's member, read from the plan file: empty when the member is not in the train. */
+const plannedLabel = (b: TrainBuild, file: string) => `${field(`d.members.find((m)=>m.member===${JSON.stringify(b.member)})?.label`)} ${file}`;
+
+/** The gate's plan (#5237): the train's members and labels at the gate's commit, with no member's dry run. */
+const planLine = (o: TrainWorkflowInput, file: string) => `${o.chant} workspace train cut ${o.env} --at "$commit" --levels "\${CHANT_RELEASE_LEVELS:-auto}" --plan-only --json > ${file}`;
+
+/** A shell word for a directory. */
+const sq = (s: string): string => (/^[A-Za-z0-9_./@+-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
 
 /** Where the cut job stages the members' images and files, and the publish job finds them (#5216): outside the checkout. */
 const TRAIN_STAGE = "$RUNNER_TEMP/chant-release-artifacts";
@@ -125,6 +153,53 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
   const ledgerFetch = run("git fetch origin chant/lifecycle:chant/lifecycle");
   const dispatch = o.trigger === "dispatch";
   const env = o.env;
+  const builds = dispatch ? (o.builds ?? []) : [];
+  const download = usesRef(o.forge === "forgejo" ? ACTION_PINS.downloadArtifact3 : ACTION_PINS.downloadArtifact4);
+  const built = (b: TrainBuild) => `needs.build-${b.name}.result == 'success'`;
+  // #5237: each build's archive, from the run's build job, unpacked into its member: in the cut with -k, so it replaces no file of the commit.
+  const unpackSteps = (cut: boolean): string[] =>
+    builds.flatMap((b) => [
+      `      - if: ${built(b)}`,
+      `        uses: ${download}`,
+      "        with:",
+      `          name: ${releaseBuildArtifact(b.name)}`,
+      "          path: ${{ runner.temp }}/chant-release-builds",
+      `      - if: ${built(b)}`,
+      `        run: ${unpackLine(`"$RUNNER_TEMP/chant-release-builds/${releaseBuildArchive(b.name)}"`, cut)} -C ${sq(b.memberDir)}`,
+    ]);
+  const q = (v: string): string => JSON.stringify(v);
+  const buildJobs = builds.flatMap((b) => {
+    const install = b.install === false ? [] : b.install !== undefined ? [run(b.install)] : o.install ? [run(o.install), `        working-directory: ${o.root ?? "."}`] : [];
+    const runner = Array.isArray(b.runner) ? `[${b.runner.map(q).join(", ")}]` : q(b.runner);
+    const vars = Object.entries(b.env ?? {});
+    for (const [k] of vars) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`release.workflow.builds.${b.name}.env: ${JSON.stringify(k)} is not a variable name`);
+    return [
+      `  build-${b.name}:`,
+      "    needs: gate",
+      `    if: needs.gate.outputs.${labelOutput(b)} != ''`,
+      `    runs-on: ${runner}`,
+      "    permissions:",
+      "      contents: read",
+      "    defaults:",
+      "      run:",
+      "        shell: bash",
+      `        working-directory: ${b.path}`,
+      "    env:",
+      `      CHANT_RELEASE_LABEL: \${{ needs.gate.outputs.${labelOutput(b)} }}`,
+      ...vars.map(([k, v]) => `      ${k}: ${q(v)}`),
+      "    steps:",
+      ...githubSetup("${{ needs.gate.outputs.commit }}", b.setup, false),
+      ...install,
+      `      - run: ${q(b.build)}`,
+      `      - run: ${q(packLine(b))}`,
+      `      - uses: ${usesRef(o.forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4)}`,
+      "        with:",
+      `          name: ${releaseBuildArtifact(b.name)}`,
+      `          path: ${b.path === "." ? "" : `${b.path}/`}${releaseBuildArchive(b.name)}`,
+      "          if-no-files-found: error",
+      "          retention-days: 1",
+    ];
+  });
   const lines = [
     "name: chant release train",
     "on:",
@@ -162,20 +237,34 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       ...defaults,
       "    outputs:",
       "      commit: ${{ steps.green.outputs.commit }}",
+      ...(builds.length > 0 ? ["      planned: ${{ steps.green.outputs.planned }}", ...builds.map((b) => `      ${labelOutput(b)}: \${{ steps.green.outputs.${labelOutput(b)} }}`)] : []),
+      ...(builds.length > 0 ? ["    env:", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}"] : []),
       "    steps:",
       ...githubSetup(undefined, o.chantSetup),
       ...installLines,
       ciFetch,
       "      - id: green",
-      ...block([...gateScript(o, "$GITHUB_SHA"), 'echo "commit=$commit" >> "$GITHUB_OUTPUT"']),
+      ...block([
+        ...gateScript(o, "$GITHUB_SHA"),
+        'echo "commit=$commit" >> "$GITHUB_OUTPUT"',
+        // #5237: the plan, so each build job builds with the label its member is cut at.
+        ...(builds.length > 0
+          ? [
+              planLine(o, '"$RUNNER_TEMP/chant-train-plan.json"'),
+              `echo "planned=$(${field("d.planned")} "$RUNNER_TEMP/chant-train-plan.json")" >> "$GITHUB_OUTPUT"`,
+              ...builds.map((b) => `echo "${labelOutput(b)}=$(${plannedLabel(b, '"$RUNNER_TEMP/chant-train-plan.json"')})" >> "$GITHUB_OUTPUT"`),
+            ]
+          : []),
+      ]),
+      ...buildJobs,
       "  cut:",
-      "    needs: gate",
+      ...(builds.length > 0 ? [`    needs: [gate, ${builds.map((b) => `build-${b.name}`).join(", ")}]`, "    if: ${{ !cancelled() && needs.gate.result == 'success' && !contains(needs.*.result, 'failure') }}"] : ["    needs: gate"]),
       "    runs-on: ubuntu-latest",
       ...jobPermissions(o.extra, { contents: "write" }, "cut"),
       ...defaults,
       "    outputs:",
       "      train: ${{ steps.cut.outputs.train }}",
-      ...o.extra.githubEnv(["      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}", ...new Set([...(o.cutToken ?? []), ...(o.doctor ? o.forgeToken : [])])]),
+      ...o.extra.githubEnv(["      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}", ...(builds.length > 0 ? ["      CHANT_TRAIN_PLANNED: ${{ needs.gate.outputs.planned }}"] : []), ...new Set([...(o.cutToken ?? []), ...(o.doctor ? o.forgeToken : [])])]),
       "    steps:",
       ...githubSetup("${{ needs.gate.outputs.commit }}", o.fullSetup),
       ...installLines,
@@ -183,11 +272,12 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       ...(o.goreleaser ?? []),
       ciFetch,
       run(LEDGER_FETCH_FIRST),
+      ...unpackSteps(true),
       "      - id: cut",
       ...block([
         'git config user.name "chant release"',
         'git config user.email "chant-release@localhost"',
-        `${o.chant} workspace train cut ${env} --at "$CHANT_RELEASE_COMMIT" --levels "\${CHANT_RELEASE_LEVELS:-auto}"${o.doctor ? " --doctor" : ""} --yes --json > "$RUNNER_TEMP/chant-train.json"`,
+        `${o.chant} workspace train cut ${env} --at "$CHANT_RELEASE_COMMIT" --levels "\${CHANT_RELEASE_LEVELS:-auto}"${builds.length > 0 ? ' --planned "$CHANT_TRAIN_PLANNED"' : ""}${o.doctor ? " --doctor" : ""} --yes --json > "$RUNNER_TEMP/chant-train.json"`,
         `train="$(${trainIdScript("$RUNNER_TEMP/chant-train.json")})" || exit 1`,
         'echo "train=$train" >> "$GITHUB_OUTPUT"',
       ]),
@@ -213,7 +303,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
   const trainFromRef = `echo "CHANT_RELEASE_TRAIN=\${CHANT_RELEASE_TRAIN:-\${GITHUB_REF_NAME#release-train/${env}/}}" >> "$GITHUB_ENV"`;
   lines.push(
     "  publish:",
-    ...(dispatch ? ["    needs: [gate, cut]", publishIf!] : []),
+    ...(dispatch ? [`    needs: [gate, cut${builds.map((b) => `, build-${b.name}`).join("")}]`, publishIf!] : []),
     "    runs-on: ubuntu-latest",
     ...jobPermissions(o.extra, { contents: "write", "id-token": "write" }, "publish"),
     ...defaults,
@@ -226,6 +316,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
     ciFetch,
     ledgerFetch,
     run(trainFromRef),
+    ...unpackSteps(false),
     run(`${o.chant} workspace train prepare ${env} "$CHANT_RELEASE_TRAIN"`),
     ...(o.build ? [run(o.build)] : []),
     ...(o.files
@@ -311,7 +402,46 @@ function renderGitlabTrainWorkflow(o: TrainWorkflowInput): string {
     "git checkout --detach FETCH_HEAD",
   ];
   const lines: string[] = [];
+  const builds = dispatch ? (o.builds ?? []) : [];
+  const archiveIn = (b: TrainBuild) => `${b.memberDir === "." ? "" : `${b.memberDir}/`}${releaseBuildArchive(b.name)}`;
+  // #5237: GitLab hands each build's archive into the project directory, in its member; it is unpacked there and moved out, from the workspace root.
+  const unpack = (b: TrainBuild, cut: boolean) =>
+    `if [ ${cut ? `-n "$${labelVariable(b)}"` : `-f ${sq(archiveIn(b))}`} ]; then ${unpackLine(sq(archiveIn(b)), cut)} -C ${sq(b.memberDir)}; mv ${sq(archiveIn(b))} /tmp/; fi`;
+  const buildJobs = builds.flatMap((b) => {
+    const install = b.install === false ? [] : b.install !== undefined ? [b.install] : o.install ? [o.install] : [];
+    const vars = Object.entries(b.env ?? {});
+    for (const [k] of vars) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`release.workflow.builds.${b.name}.env: ${JSON.stringify(k)} is not a variable name`);
+    const tags = Array.isArray(b.runner) ? b.runner : [b.runner];
+    const cdMember = b.memberDir === "." ? [] : [`cd ${sq(b.memberDir)}`];
+    return [
+      `chant-release-build-${b.name}:`,
+      "  rules:",
+      `    - if: ${cutRule}`,
+      ...variables(vars.map(([k, v]) => `    ${k}: ${JSON.stringify(v)}`)),
+      "  needs: [chant-release-gate]",
+      `  tags: [${tags.map((t) => JSON.stringify(t)).join(", ")}]`,
+      "  artifacts:",
+      "    paths:",
+      `      - ${JSON.stringify(`${b.path === "." ? "" : `${b.path}/`}${releaseBuildArchive(b.name)}`)}`,
+      "    expire_in: 1 day",
+      "  script:",
+      ...[
+        `export CHANT_RELEASE_LABEL="$${labelVariable(b)}"`,
+        `if [ -z "$CHANT_RELEASE_LABEL" ]; then echo "${b.member} is not in this train, so build-${b.name} builds nothing"; exit 0; fi`,
+        'git checkout --detach "$CHANT_RELEASE_COMMIT"',
+        ...cd,
+        // The workflow's install runs at the workspace root, a build's own in its member.
+        ...(b.install === undefined ? install : []),
+        ...cdMember,
+        ...(b.install !== undefined ? install : []),
+        b.build,
+        packLine(b),
+      ].map(q),
+      "",
+    ];
+  });
   if (dispatch) {
+    const plan = "/tmp/chant-train-plan.json";
     lines.push(
       "chant-release-gate:",
       "  rules:",
@@ -321,13 +451,28 @@ function renderGitlabTrainWorkflow(o: TrainWorkflowInput): string {
       "    reports:",
       "      dotenv: chant-release-gate.env",
       "  script:",
-      ...[...cd, ...install, ciFetch, ...gateScript(o, "$CI_COMMIT_SHA"), 'printf \'CHANT_RELEASE_COMMIT=%s\\n\' "$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"'].map(q),
+      ...[
+        ...cd,
+        ...install,
+        ciFetch,
+        ...gateScript(o, "$CI_COMMIT_SHA"),
+        'printf \'CHANT_RELEASE_COMMIT=%s\\n\' "$commit" > "$CI_PROJECT_DIR/chant-release-gate.env"',
+        // #5237: the plan, so each build job builds with the label its member is cut at.
+        ...(builds.length > 0
+          ? [
+              planLine(o, plan),
+              `printf 'CHANT_TRAIN_PLANNED=%s\\n' "$(${field("d.planned")} ${plan})" >> "$CI_PROJECT_DIR/chant-release-gate.env"`,
+              ...builds.map((b) => `printf '${labelVariable(b)}=%s\\n' "$(${plannedLabel(b, plan)})" >> "$CI_PROJECT_DIR/chant-release-gate.env"`),
+            ]
+          : []),
+      ].map(q),
       "",
+      ...buildJobs,
       "chant-release-cut:",
       "  rules:",
       `    - if: ${cutRule}`,
       ...variables(o.extra.gitlabVariables),
-      "  needs: [chant-release-gate]",
+      `  needs: [chant-release-gate${builds.map((b) => `, chant-release-build-${b.name}`).join("")}]`,
       "  artifacts:",
       ...(o.files ? ["    paths:", '      - ".chant-release-artifacts/"', "    expire_in: 1 day"] : []),
       "    reports:",
@@ -343,9 +488,10 @@ function renderGitlabTrainWorkflow(o: TrainWorkflowInput): string {
         ciFetch,
         ...auth,
         LEDGER_FETCH_FIRST,
+        ...builds.map((b) => unpack(b, true)),
         'git config user.name "chant release"',
         'git config user.email "chant-release@localhost"',
-        `${o.chant} workspace train cut ${env} --at "$CHANT_RELEASE_COMMIT" --levels "\${CHANT_RELEASE_LEVELS:-auto}"${o.doctor ? " --doctor" : ""} --yes --json > /tmp/chant-train.json`,
+        `${o.chant} workspace train cut ${env} --at "$CHANT_RELEASE_COMMIT" --levels "\${CHANT_RELEASE_LEVELS:-auto}"${builds.length > 0 ? ' --planned "$CHANT_TRAIN_PLANNED"' : ""}${o.doctor ? " --doctor" : ""} --yes --json > /tmp/chant-train.json`,
         `train="$(${trainIdScript("/tmp/chant-train.json", "gitlab")})" || exit 1`,
         'printf \'CHANT_TRAIN_CUT=%s\\n\' "$train" > "$CI_PROJECT_DIR/chant-release-train.env"',
         ...(o.files ? [`if [ -n "$train" ]; then ${o.chant} workspace train artifacts ${env} "$train" -o "${GITLAB_TRAIN_STAGE}"; fi`] : []),
@@ -364,6 +510,7 @@ function renderGitlabTrainWorkflow(o: TrainWorkflowInput): string {
     ciFetch,
     ledgerFetch,
     ...(dispatch ? auth : []),
+    ...(handed ? builds.map((b) => unpack(b, false)) : []),
     `${o.chant} workspace train prepare ${env} "$CHANT_RELEASE_TRAIN"`,
     ...(o.build ? [o.build] : []),
     ...(o.files ? [`${o.chant} workspace train artifacts ${env} "$CHANT_RELEASE_TRAIN"${handed ? ` --from ${GITLAB_TRAIN_FROM}` : ""}`] : []),
@@ -373,7 +520,7 @@ function renderGitlabTrainWorkflow(o: TrainWorkflowInput): string {
     `${o.chant} workspace train publish ${env} "$CHANT_RELEASE_TRAIN" ${o.flags}`,
   ];
   const publishRules = dispatch ? [`    - if: $CHANT_RELEASE_TRAIN && ${manual}`, `    - if: ${cutRule}`] : [`    - if: ${tagRule}`];
-  const publishNeeds = dispatch ? ["  needs:", "    - job: chant-release-cut", "      optional: true"] : [];
+  const publishNeeds = dispatch ? ["  needs:", "    - job: chant-release-cut", "      optional: true", ...builds.flatMap((b) => [`    - job: chant-release-build-${b.name}`, "      optional: true"])] : [];
   lines.push(
     "chant-release-publish:",
     "  rules:",

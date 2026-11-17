@@ -133,6 +133,22 @@ function trainCases(forge: Forge, trigger: "tag" | "dispatch"): Array<[string, P
     ["member goreleaser", { train: { env: "npm", artifacts: true, goreleaser: true, goreleaserDir: "cli" } }],
     ["verified-releases", { groups: new Set<SecurityGroup>(["verified-releases"]) }],
     ["doctor off", { pipeline: { doctor: false } }],
+    // #5237: the members' per-platform builds, each run with the label the gate's plan gives its member.
+    [
+      "member builds",
+      {
+        workspaceRoot: "release",
+        train: {
+          env: "npm",
+          artifacts: true,
+          builds: [
+            { member: "cli", dir: "packages/cli", files: ["go.mod"], build: { name: "cli-arm", runner: gitlab ? "arm64" : "ubuntu-24.04-arm", build: "make", outputs: ["dist/cli"], env: { GOARCH: "arm64" } } },
+            { member: "web", dir: "packages/web", build: { name: "web-mac", runner: ["macos-14"], build: "make mac", outputs: ["dist/mac"], install: "make deps" } },
+          ],
+        },
+      },
+    ],
+    ["member builds named twice", { train: { env: "npm", builds: ["a", "b"].map((member) => ({ member, dir: member, build: { name: "arm", runner: "arm64", build: "make", outputs: ["dist/arm"] } })) } }],
   ];
 }
 

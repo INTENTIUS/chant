@@ -120,6 +120,9 @@ export interface ReleasePipelineConfig {
    * hands its `outputs` to the cut and publish jobs, where they land at the
    * same paths in the checkout before `chant release cut` runs. `dispatch`
    * only: with the tag trigger the release was cut before the workflow ran.
+   * In a train (#5237) each member declares its own, in its directory, and
+   * the root's train workflow runs them with the label the gate plans for
+   * that member; the root itself declares none.
    */
   builds?: ReleaseBuildConfig[];
   /** Where the workflow is written, from the repository root, such as `.github/workflows/publish.yml` for an npm trusted publisher that names that file. Default {@link RELEASE_WORKFLOW_FILES}. */
@@ -246,6 +249,14 @@ export interface ReleaseWorkflowInput {
     goreleaser?: boolean;
     /** The directory, from the workspace root, of the member whose goreleaser build Go is set up for: its `go.mod` names the Go. */
     goreleaserDir?: string;
+    /**
+     * The members' `release.workflow.builds` (#5237): each a per-platform
+     * build job of the member at `dir` (from the workspace root), run with
+     * the label the gate's plan gives that member. `files` are the toolchain
+     * marker files in the member's directory, which a build with no
+     * `toolchains` sets up from.
+     */
+    builds?: Array<{ member: string; dir: string; files?: string[]; build: ReleaseBuildConfig }>;
   };
 }
 
@@ -356,9 +367,27 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       : [];
   // #5154: the root's members released as a train.
   if (input.train) {
-    if (builds.length > 0) throw new Error("release.workflow.builds: a train cuts each member in one job, and per-platform builds are not handed to it; leave builds out of a train's workflow");
+    if (builds.length > 0) throw new Error("release.workflow.builds at the root: a train releases its members, not the root; declare each build in the release.workflow.builds of the member whose files it builds");
     if (images || input.artifacts) throw new Error("release.images and release.artifacts at the root: a train releases its members, not the root; declare them in the member that publishes them");
     const t = input.train;
+    // #5237: the members' per-platform builds, each run with the label the gate's plan gives its member.
+    const memberBuilds = t.builds ?? [];
+    if (memberBuilds.length > 0) {
+      if (p.trigger !== "dispatch") throw new Error('release.workflow.builds in a member: the tag trigger publishes a train cut before the workflow ran, so nothing built here would be in it; use trigger: "dispatch"');
+      try {
+        checkBuilds(memberBuilds.map((b) => b.build));
+      } catch (err) {
+        throw new Error(`${err instanceof Error ? err.message : String(err)} (a train runs every member's builds in one workflow, so each job name is used once across the members)`);
+      }
+      if (input.forge === "gitlab" && memberBuilds.some((b) => b.build.toolchains && b.build.toolchains.length > 0)) throw new Error("release.workflow.builds: toolchains: a GitLab job runs in its runner's image, which brings the toolchain; leave toolchains out");
+    }
+    const trainBuilds = memberBuilds.map((b) => {
+      const dir = [root, b.dir].filter((d): d is string => !!d && d !== ".").join("/") || ".";
+      // The toolchains the build names, else those the member's files name, else the root's.
+      const own = (b.files ?? []).length > 0;
+      const setup = toolchainLines(resolveToolchains(b.build.toolchains !== undefined ? b.build.toolchains : p.toolchains === false ? false : own ? undefined : p.toolchains, own ? new Set(b.files) : files, own ? (dir === "." ? null : dir) : root, false));
+      return { ...b.build, member: b.member, memberDir: b.dir, path: dir, setup };
+    });
     const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, green, builds: [] };
     return renderTrainWorkflow({
       forge: input.forge,
@@ -385,6 +414,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(input.forge === "gitlab" ? { idTokens: stepLines(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("idTokens"), (l) => l) } : {}),
       doctor: p.trigger === "dispatch" && p.doctor !== false,
       verify: input.groups.has("verified-releases"),
+      ...(trainBuilds.length > 0 ? { builds: trainBuilds } : {}),
     });
   }
   if (shape === "dispatch") {
@@ -1135,6 +1165,8 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   // #5154: a train publishes its members' targets, so their credentials, tools and signing are the workflow's.
   const memberReleases: Array<NonNullable<typeof release>> = [];
   let goreleaserDir: string | undefined;
+  // #5237: the members' per-platform builds, each with its member.
+  const memberBuilds: Array<{ member: string; dir: string; files: string[]; build: import("./release-toolchains").ReleaseBuildConfig }> = [];
   if (release?.train) {
     const { locateWorkspace } = await import("./which-chant");
     const { readDeclaration } = await import("./declaration");
@@ -1144,21 +1176,26 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
       try {
         const r = (await loadChantConfig(join(root, m.dir))).config.release;
         if (r) memberReleases.push(r);
+        if ((r?.workflow?.builds?.length ?? 0) > 0) {
+          const { TOOLCHAIN_MARKERS } = await import("./release-toolchains");
+          const files = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, m.dir, f)));
+          for (const build of r!.workflow!.builds!) memberBuilds.push({ member: m.name, dir: m.dir.split(sep).join("/"), files, build });
+        }
         if (r?.artifacts && goreleaserDir === undefined && (await import("../lifecycle/release-artifacts")).usesGoreleaser(r.artifacts)) goreleaserDir = m.dir.split(sep).join("/");
       } catch (err) {
         console.error(formatError({ message: `member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
         return 1;
       }
     }
-    // #5216: a member's files are built by its cut, in the train's cut job; a train has no per-platform build jobs for builtBy to name.
+    // #5216: a member's files are built by its cut, in the train's cut job; #5237: or by the member's own release.workflow.builds, which builtBy names.
     const { checkReleaseArtifacts, ReleaseArtifactError } = await import("../lifecycle/release-artifacts");
     for (const r of memberReleases) {
       if ((r.artifacts?.length ?? 0) === 0) continue;
       try {
-        checkReleaseArtifacts(r.artifacts!, { builds: [] });
+        checkReleaseArtifacts(r.artifacts!, { builds: r.workflow?.builds ?? [] });
       } catch (err) {
         if (!(err instanceof ReleaseArtifactError)) throw err;
-        console.error(formatError({ message: `release.train: a member's ${err.message} [${err.code}]`, hint: "A train's members build their files in the train's cut job: build them there rather than in release.workflow.builds." }));
+        console.error(formatError({ message: `release.train: a member's ${err.message} [${err.code}]`, hint: err.fix ?? "Fix release.artifacts in the member's chant.config.ts." }));
         return 1;
       }
     }
@@ -1219,6 +1256,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
             env: release.train.env,
             ...(memberImages.length > 0 ? { images: true, imagePlatforms: releaseImagePlatforms(memberImages) } : {}),
             ...(memberArtifacts.length > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(memberArtifacts) ? { goreleaser: true, ...(goreleaserDir ? { goreleaserDir } : {}) } : {}) } : {}),
+            ...(memberBuilds.length > 0 ? { builds: memberBuilds } : {}),
           },
         }
       : {}),

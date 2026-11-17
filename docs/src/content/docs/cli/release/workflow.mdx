@@ -142,7 +142,32 @@ The publish job also runs on a pushed `release-train/<env>/*` tag, which a train
 
 The members' `release.publish` targets decide what the jobs need, as a root's targets do for one release: npm's trusted publishing setup, `packages: write` for GHCR, and cosign when a member signs. `supply-chain` adds `--require-provenance` to the train publish.
 
-A member that declares `release.images` or `release.artifacts` builds them in its cut, in the cut job. The cut job stages them, per member directory, in the workflow artifact `chant-release-artifacts`, and the publish job copies them back after its build and checks each against the digests its release records, so what the cut built is what publishes. The publish job of a pushed `release-train/<env>/*` tag, or of a dispatched `train`, has no cut job to hand it anything, and builds each member's images and files again from the train's commit; a build that does not reproduce the recorded digests stops the publish. The jobs set up QEMU for the platforms the members' images build, and goreleaser (with Go from that member's `go.mod`) for a member whose files goreleaser builds. A member with images gets its own recorded digests in `CHANT_RELEASE_DIGESTS` when its targets publish, so a package it packs can pin them. `release.workflow.builds`, an artifact's `builtBy`, and `release.images` or `release.artifacts` at the train's root are refused: a train's members build their files in its cut job. [Releasing a monorepo](/chant/guide/release-a-monorepo/) walks through the setup.
+A member that declares `release.images` or `release.artifacts` builds them in its cut, in the cut job. The cut job stages them, per member directory, in the workflow artifact `chant-release-artifacts`, and the publish job copies them back after its build and checks each against the digests its release records, so what the cut built is what publishes. The publish job of a pushed `release-train/<env>/*` tag, or of a dispatched `train`, has no cut job to hand it anything, and builds each member's images and files again from the train's commit; a build that does not reproduce the recorded digests stops the publish. The jobs set up QEMU for the platforms the members' images build, and goreleaser (with Go from that member's `go.mod`) for a member whose files goreleaser builds. A member with images gets its own recorded digests in `CHANT_RELEASE_DIGESTS` when its targets publish, so a package it packs can pin them. `release.images`, `release.artifacts` and `release.workflow.builds` at the train's root are refused: a train releases its members, so each declares its own. [Releasing a monorepo](/chant/guide/release-a-monorepo/) walks through the setup.
+
+### A member's builds on other runners
+
+A member can build on other runners too: its own `release.workflow.builds` (see [Builds on other runners](#builds-on-other-runners)) declares the jobs, and a `release.artifacts` entry's `builtBy` names them, as for one release. The train's root keeps `trigger: "dispatch"`; the rest of the member's `release.workflow` is not read.
+
+```ts
+// cli/chant.config.ts, a member of the train
+export default {
+  release: {
+    workflow: {
+      builds: [
+        { name: "cli-darwin-arm64", runner: "macos-14", build: "go build -o dist/cli-darwin-arm64 ./cmd/cli", outputs: ["dist/cli-darwin-arm64"] },
+      ],
+    },
+    artifacts: [{ name: "cli", builtBy: "cli-darwin-arm64", archive: true }],
+    publish: [{ type: "forge", forge: "github", repo: "acme/acme", assets: ["artifact:cli"] }],
+  },
+};
+```
+
+A build job needs its member's label before the cut, and a train decides its labels inside the cut, so the gate plans the train first. After it picks the commit it runs `chant workspace train cut <env> --at <commit> --levels <levels> --plan-only --json`, which prints each member the train would cut and its label without cutting anything, and hands each build job the label of its member as `CHANT_RELEASE_LABEL`. A build job whose member is not in the train is skipped (on GitLab it runs and builds nothing). Each job builds in its member's directory, after the workflow's `install` at the workspace root, or its own `install` in the member; its outputs are paths in the member. With no `toolchains` it sets up those the member's files name, else the workspace root's.
+
+The cut job waits for every build and runs only when none failed. It unpacks each archive into its member with `tar -k` before the cut, and cuts with `--planned`, the members and labels the gate planned: a train that would now cut another member, or a member at another label, because a release or tag landed in between, is refused with `train-plan-changed` before any check, doctor or cut, and nothing is cut. So the files the build jobs made carry the labels the cut records. Each member's cut records them as for one release, `train artifacts -o` stages them with the rest of its files, and the publish job of the same run unpacks the archives into the members again before `train prepare`. A train whose members build on other runners publishes in the run that cut it: a pushed `release-train/<env>/*` tag or a dispatched `train` has no build jobs, and its `train artifacts` stops at a file it can't build again. `TRAIN_BUILDS_FLOOR` is the first chant with `--plan-only` and `--planned`.
+
+Build job names are used once across the train, since every member's builds are jobs of one workflow, and `builds` in a member needs the root's `trigger: "dispatch"`.
 
 ### A release train on GitLab
 

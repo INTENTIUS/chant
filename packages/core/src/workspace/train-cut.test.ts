@@ -19,7 +19,7 @@ import { stampReleaseVersion } from "../lifecycle/release-version";
 import { ChantConfigSchema } from "../config";
 import { TestRepo } from "./trust/test-repo";
 import { readReleaseTrains } from "./release-train";
-import { cutTrain, highestVersion, npmVersions, parseTrainLevels, planTrainCut, TrainCutError, type MemberCutter } from "./train-cut";
+import { cutTrain, highestVersion, npmVersions, parseTrainLevels, parseTrainPlanned, planTrainCut, plannedText, TrainCutError, type MemberCutter } from "./train-cut";
 import { prepareTrain } from "./train-prepare";
 import { runToStderr } from "./train-shell";
 import { publishTrain } from "./train-publish";
@@ -209,6 +209,37 @@ describe("release.train.check", () => {
     expect(result).toBe(3);
     expect(stdout).toBe("");
     expect(stderr).toContain("built");
+  });
+});
+
+describe("a plan the build jobs built for (#5237)", () => {
+  test("--planned takes <member>=<label> words, or none, and refuses anything else", () => {
+    expect(parseTrainPlanned("core=1.0.8,lex=1.0.1")).toEqual({ core: "1.0.8", lex: "1.0.1" });
+    expect(parseTrainPlanned("core=1.0.8 lex=1.0.1")).toEqual({ core: "1.0.8", lex: "1.0.1" });
+    expect(parseTrainPlanned("none")).toEqual({});
+    for (const bad of ["", "core", "core=", "=1.0.0", "core=1 core=2"]) expect(() => parseTrainPlanned(bad)).toThrow(TrainCutError);
+    expect(plannedText({ members: [] })).toBe("none");
+  });
+
+  test("a cut whose plan matches runs; one that differs is refused before any check, doctor or cut", async () => {
+    const x = setup();
+    const registry = npmVersions(x.npm);
+    const plan = await planTrainCut({ cwd: x.nested, env: "npm", at: x.head, registry });
+    expect(plannedText(plan)).toBe("core=1.0.8,lex=1.0.1");
+    let cuts = 0;
+    const cutter = async () => ({ tag: (cuts++, null) });
+    const doctored: string[] = [];
+    const runDoctor = (dir: string) => (doctored.push(dir), 0);
+    for (const planned of ["core=1.0.9,lex=1.0.1", "core=1.0.8", "core=1.0.8,lex=1.0.1,web=1.0.0", "none"]) {
+      const run = cutTrain({ cwd: x.nested, env: "npm", at: x.head, registry, planned: parseTrainPlanned(planned), yes: true, noPush: true, doctor: true, runDoctor, cutter });
+      await expect(run).rejects.toMatchObject({ code: "train-plan-changed" });
+    }
+    await expect(cutTrain({ cwd: x.nested, env: "npm", at: x.head, registry, planned: parseTrainPlanned("core=1.0.9,lex=1.0.1"), cutter })).rejects.toThrow(/core was planned at 1.0.9 and is labelled 1.0.8 now/);
+    expect(cuts).toBe(0);
+    expect(doctored).toEqual([]);
+    // The plan the gate made: the cut goes ahead (a dry run here).
+    await cutTrain({ cwd: x.nested, env: "npm", at: x.head, registry, planned: parseTrainPlanned(plannedText(plan)), cutter });
+    expect(cuts).toBe(2);
   });
 });
 
