@@ -2179,11 +2179,16 @@ jobs:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
       CHANT_TRAIN_PLANNED: ${{ needs.gate.outputs.planned }}
+      CHANT_RELEASE_GIT_TOKEN: ${{ github.token }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper
+      GIT_CONFIG_VALUE_0: "!f() { test \"$1\" = get && echo username=x-access-token && echo \"password=$CHANT_RELEASE_GIT_TOKEN\"; }; f"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.gate.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
