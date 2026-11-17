@@ -25,6 +25,8 @@ export interface LexiconEntry {
   createOnly?: string[];
   writeOnly?: string[];
   primaryIdentifier?: string[];
+  /** The schema's top-level `required` properties, sorted (#4524: `chant import --index` names those a listing left out). */
+  required?: string[];
   deprecatedProperties?: string[];
   /**
    * Subset of `deprecatedProperties` that only a regex over the property
@@ -37,6 +39,13 @@ export interface LexiconEntry {
   /** The registry schema's handler operations, sorted (#4536). Absent for a legacy type. */
   handlers?: string[];
   runtimeDeprecations?: Record<string, string>;
+}
+
+function requiredOf(r: SchemaParseResult): string[] {
+  return r.resource.properties
+    .filter((p) => p.required)
+    .map((p) => p.name)
+    .sort();
 }
 
 /**
@@ -78,6 +87,7 @@ export function generateLexiconJSON(
         ...(r.resource.createOnly.length > 0 && { createOnly: r.resource.createOnly }),
         ...(r.resource.writeOnly.length > 0 && { writeOnly: r.resource.writeOnly }),
         ...(r.resource.primaryIdentifier.length > 0 && { primaryIdentifier: r.resource.primaryIdentifier }),
+        ...(requiredOf(r).length > 0 && { required: requiredOf(r) }),
         ...(r.resource.deprecatedProperties?.length && { deprecatedProperties: r.resource.deprecatedProperties }),
         ...(r.resource.inferredDeprecations?.length && { inferredDeprecations: r.resource.inferredDeprecations }),
         ...(r.resource.conditionalCreateOnly?.length && { conditionalCreateOnly: r.resource.conditionalCreateOnly }),

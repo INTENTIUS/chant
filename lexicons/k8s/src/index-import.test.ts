@@ -194,7 +194,7 @@ describe("chant import --index on the k8s fixture", () => {
     const cm = report.get("shop/app")!;
     expect(cm.status).toBe("imported");
     expect(cm.parameters).toHaveLength(1);
-    expect(plan.report.parameters).toEqual([{ name: cm.parameters![0], node: cm.node, path: "data.db.password", group: expect.any(String) }]);
+    expect(plan.report.parameters).toEqual([{ name: cm.parameters![0], node: cm.node, path: "data.db.password", group: expect.any(String), cause: "masked" }]);
     expect(node("shop/app").attrs.data).toEqual({ "db.host": "db.shop.svc", "db.password": MASKED });
   });
 

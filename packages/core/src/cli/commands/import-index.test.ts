@@ -73,7 +73,7 @@ describe("importFromIndex", () => {
     const report = JSON.parse(readFileSync(join(out, INDEX_IMPORT_REPORT_FILE), "utf-8"));
     expect(report.report).toBe("chant-index-import/v1");
     expect(report.resources.map((r: { status: string }) => r.status)).toEqual(["imported", "imported"]);
-    expect(report.parameters).toEqual([{ name: "Db1Password", node: nodes[1].id, path: "Password", group: "" }]);
+    expect(report.parameters).toEqual([{ name: "Db1Password", node: nodes[1].id, path: "Password", group: "", cause: "masked" }]);
   });
 
   test("the same index and selection give byte-identical files", async () => {
@@ -99,6 +99,13 @@ describe("importFromIndex", () => {
     const result = await importFromIndex({ index: p, selection: { all: true }, output: join(scratch(), "o"), plugins: [plugin], declaredEntities: new Map() });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/does not hold index documents/);
+  });
+
+  test("an output with no chant.config.ts above it says the declared check did not run", async () => {
+    const out = join(scratch(), "out");
+    const result = await importFromIndex({ index: indexFile(), selection: { all: true }, output: out, plugins: [plugin] });
+    expect(result.success).toBe(true);
+    expect(result.warnings).toContainEqual(expect.stringMatching(/^no chant\.config\.ts at or above .*no indexed resource was checked against declarations/));
   });
 
   test("--adopt-out writes the adoption file for what was imported, valid against the index (#4536)", async () => {
