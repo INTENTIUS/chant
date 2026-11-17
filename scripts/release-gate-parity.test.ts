@@ -1,20 +1,14 @@
 /**
  * The `chant` workflow must run the lexicon prepacks under the same release
- * gate `npm publish` arms (#1481).
+ * gate the publish arms (#1481).
  *
- * release-preflight.sh refuses to tag a commit whose `chant` run is not green,
- * on the premise that green means publishable. That premise held only if the
- * checks publish performs are a subset of the checks CI performs. They were
- * not: CHANT_RELEASE_GATE=1 was set solely on the publish step, so the
+ * A release train publishes the newest green commit, on the premise that
+ * green means publishable. That premise holds only if the checks publish
+ * performs are a subset of the checks CI performs. They were not:
+ * CHANT_RELEASE_GATE=1 was set solely on the publish step, so the
  * surface-snapshot check and the pinned-spec refusal ran in exactly the one
  * place a green build had never exercised. This pins the workflows to each
  * other so the gap cannot reopen without a failing test.
- *
- * Since #2817 publish does not re-run the suite: its gate is that same green
- * `chant` run, checked through the API by scripts/publish-verify-ci.sh. Since
- * CI went unit-only (2026-10-23) that run is core's typecheck and the unit
- * tests, the gate runs on every tag push, and the validate job that arms the
- * release gate runs only by hand.
  */
 
 import { spawnSync } from "node:child_process";
@@ -47,41 +41,18 @@ function stepsRunning(job: Job, pattern: RegExp): Step[] {
 }
 
 describe("release gate parity (#1481)", () => {
-  // #5154: the lockstep jobs moved to publish-legacy.yml; publish.yml is the generated train workflow.
-  const publish = workflow("publish-legacy.yml");
   const train = workflow("publish.yml");
   const chant = workflow("chant.yml");
-
-  const publishStep = stepsRunning(publish.jobs.publish, /publish-packages\.sh/);
-  it("the publish step arms CHANT_RELEASE_GATE", () => {
-    expect(publishStep).toHaveLength(1);
-    expect(envOf(publish.jobs.publish, publishStep[0], "CHANT_RELEASE_GATE")).toBe("1");
-  });
-  const gate = envOf(publish.jobs.publish, publishStep[0], "CHANT_RELEASE_GATE");
-
-  // #2817: publish no longer runs the suite and the prepacks again. Its gate
-  // is the chant run on the released commit, which must therefore arm the
-  // release gate itself (the next test).
-  it("publish.yml's test gate requires the released commit's chant run to have passed", () => {
-    const steps = stepsRunning(publish.jobs.test, /scripts\/publish-verify-ci\.sh/);
-    expect(steps).toHaveLength(1);
-    expect(publish.jobs.publish.needs).toEqual(["test"]);
-    expect(publish.jobs.publish.if).toMatch(/needs\.test\.result == 'success'/);
-    expect((publish.jobs["release-publish"] as Job).needs).toEqual(["test"]);
-    expect((publish.jobs["release-publish"] as Job).if).toMatch(/needs\.test\.result == 'success'/);
-  });
+  const gate = "1";
 
   // #5154: a release train publishes from the generated publish.yml, on a
   // dispatch or its release-train/npm/<id> tag, so every package keeps its
-  // trusted-publisher record; publish-legacy.yml leaves that tag alone. The
-  // train's gate is the newest green commit (ci last-green), which the cut
-  // checks again, and the packages build under the release gate.
-  it("a release-train tag runs only publish.yml, whose train publish runs under the release gate", () => {
-    const legacyTags = (publish.on as { push: { tags: string[] } }).push.tags;
+  // trusted-publisher record. The train's gate is the newest green commit
+  // (ci last-green), which the cut checks again, and the packages build under
+  // the release gate.
+  it("a release-train tag runs publish.yml, whose train publish runs under the release gate", () => {
     const trainTags = (train.on as { push: { tags: string[] } }).push.tags;
     expect(trainTags).toEqual(["release-train/npm/*"]);
-    expect(legacyTags).toContain("release/npm/*");
-    expect(legacyTags.some((t) => t.startsWith("release-train/"))).toBe(false);
     expect(stepsRunning(train.jobs.gate, /ci last-green/)).toHaveLength(1);
     expect(stepsRunning(train.jobs.cut, /workspace train cut npm --at "\$CHANT_RELEASE_COMMIT"/)).toHaveLength(1);
     const job = train.jobs.publish;
@@ -94,7 +65,7 @@ describe("release gate parity (#1481)", () => {
     expect(fetchAt).toBeGreaterThanOrEqual(0);
     expect(fetchAt).toBeLessThan(steps.indexOf(prepare[0]));
     expect(steps.indexOf(prepare[0])).toBeLessThan(steps.indexOf(pub[0]));
-    expect(envOf(job, pub[0], "CHANT_RELEASE_GATE")).toBe("1");
+    expect(envOf(job, pub[0], "CHANT_RELEASE_GATE")).toBe(gate);
     expect(envOf(job, pub[0], "NPM_TOKEN")).toBe("${{ secrets.NPM_TOKEN }}");
     expect(job.permissions?.["id-token"]).toBe("write");
   });
@@ -122,48 +93,6 @@ describe("release gate parity (#1481)", () => {
     expect(prepack).toEqual(expect.arrayContaining(["generate", "validate"]));
     expect([...covered].sort()).toEqual(expect.arrayContaining(prepack));
     expect([...stepsIn("validate")]).toEqual(expect.arrayContaining(["validate"]));
-  });
-
-  it("a failed tag release deletes its tag", () => {
-    const untag = publish.jobs.untag;
-    expect(untag).toBeDefined();
-    expect(untag.needs).toEqual(expect.arrayContaining(["test", "publish"]));
-    expect(untag.if).toMatch(/always\(\)/);
-    expect(untag.if).toMatch(/needs\.publish\.result/);
-    expect(untag.if).toMatch(/needs\.test\.result/);
-    // #3191: the deletion goes through release-untag.sh, which keeps the tag
-    // once any package of the release is on npm.
-    expect(stepsRunning(untag, /scripts\/release-untag\.sh/)).toHaveLength(1);
-    expect(readFileSync(join(root, "scripts", "release-untag.sh"), "utf8")).toMatch(/git push origin ":refs\/tags\//);
-  });
-
-  // 2026-10-23: the release gates on the unit tests and nothing else. The
-  // trusted-publisher audit (#3191) is gone from publish.yml.
-  it("publish gates on the unit tests only", () => {
-    expect(Object.keys(publish.jobs).sort()).toEqual(["publish", "release-publish", "test", "untag"]);
-    expect(publish.jobs.test.if).toBeUndefined();
-  });
-
-  // #3903: with CHANT_STAGED_PUBLISH=1 the publish step stages every
-  // package under `next`, then moves `latest` with `npm dist-tag add`. Over
-  // OIDC that needs the id-token permission and an npm whose dist-tag does
-  // the exchange (12.2.0 and later). The trusted-publisher records also need
-  // "Allow npm dist-tag", which is set on npmjs.com, not here (#3904), so the
-  // switch is a repository variable, off until those records allow it.
-  it("the publish job can move dist-tags over OIDC, behind a repository variable", () => {
-    expect(publish.jobs.publish.permissions?.["id-token"]).toBe("write");
-    expect(envOf(publish.jobs.publish, publishStep[0], "CHANT_STAGED_PUBLISH")).toBe("${{ vars.CHANT_STAGED_PUBLISH }}");
-    const script = readFileSync(join(root, "scripts", "publish-packages.sh"), "utf8");
-    expect(script).toMatch(/npm@12\.2\.0/);
-    expect(script).toMatch(/Allow npm dist-tag/);
-  });
-
-  // #3027: the gate waits for the chant run; a gate that ran out of time
-  // waiting has not shown the release is bad, so the tag stays.
-  it("a gate that only timed out waiting keeps the tag", () => {
-    const test = publish.jobs.test as Job & { outputs?: Record<string, string> };
-    expect(test.outputs?.gate).toMatch(/steps\.verify\.outputs\.outcome/);
-    expect(publish.jobs.untag.if).toMatch(/needs\.test\.outputs\.gate != 'timeout'/);
   });
 });
 

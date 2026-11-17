@@ -300,7 +300,9 @@ async function runTrainInit(ctx: CommandContext, root: string, plan: import("../
     `chant workspace train cut ${plan.env}  # the first train's plan; nothing is cut without --yes`,
     fg === "github"
       ? `gh workflow run ${wf} -f levels=auto  # each package's level from its commits since its last release`
-      : `start ${plan.workflowFile} by hand with the levels auto (each package's level from its commits since its last release)`,
+      : fg === "gitlab"
+        ? "run a pipeline with the variable CHANT_RELEASE_LEVELS=auto (each package's level from its commits since its last release)"
+        : `start ${plan.workflowFile} by hand with the levels auto (each package's level from its commits since its last release)`,
   ];
 
   const memberOut = members.map((m) => ({ name: m.name, dir: m.dir, package: m.package, config: rel(m.path), created: m.created, release: m.release }));

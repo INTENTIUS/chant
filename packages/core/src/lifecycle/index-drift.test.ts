@@ -149,6 +149,31 @@ describe("diffDeclaredAgainstIndex", () => {
     expect(res.counts.notObserved).toBe(1);
   });
 
+  test("a declared property the index's listing never carries is not observed, never drift (2026-11-16 A4 run)", () => {
+    // Cloud Control's listing returned a role's RoleName and Path only, so a
+    // hand-written trust policy read as four paths drifted to <absent>.
+    const trust = { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "ecs-tasks.amazonaws.com" }, Action: "sts:AssumeRole" }] };
+    const roleOnly = (maxSession: number) =>
+      typeListing(listing([r("Iam::Role", "global", "app-runner", { RoleName: "app-runner", Path: "/", MaxSessionDuration: maxSession })]), typing);
+    const entities = new Map<string, DeclaredEntities>([
+      ["fake", new Map([["runner", { entityType: "Iam::Role", props: { RoleName: "app-runner", Path: "/", MaxSessionDuration: 3600, AssumeRolePolicyDocument: trust } }]])],
+    ]);
+
+    const same = run(roleOnly(3600), entities);
+    expect(same.counts).toMatchObject({ bound: 1, properties: 0, drifted: 0 });
+    expect(record(same.records, "runner")).toMatchObject({
+      status: "in-sync",
+      attributesUnobserved: { reason: "not-reached", detail: expect.stringContaining("AssumeRolePolicyDocument") },
+    });
+    expect(same.byLexicon.fake.unobservedProperties).toEqual({ runner: ["AssumeRolePolicyDocument"] });
+    expect(parseDriftDocument(JSON.parse(JSON.stringify(indexDriftDocument([same]))))).toEqual(indexDriftDocument([same]));
+
+    // A property the listing does carry still drifts, beside the one it does not.
+    const moved = run(roleOnly(7200), entities);
+    expect(record(moved.records, "runner")).toMatchObject({ status: "drifted", attributes: [{ path: "MaxSessionDuration", before: 3600, after: 7200 }] });
+    expect(moved.counts).toMatchObject({ properties: 1, drifted: 1 });
+  });
+
   test("absent where the index listed the type and location is pending, with the verdict", () => {
     const res = run(atImport, declared([["archive", "Store::Bucket", { BucketName: "never-made" }]]));
     expect(record(res.records, "archive")).toMatchObject({ status: "pending", evidence: { engineCode: "absent" } });

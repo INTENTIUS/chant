@@ -54,11 +54,10 @@ import { packageFiles } from "./publish-package-files";
 import { zipEntry, zipEntryNames } from "./publish-pypi";
 import { bytesDigest, checkReleaseDigest, hasIdToken, publishTargetKey, runIdToken } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
-import { NEXT_RELEASE } from "../release-floors";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 
 /** The first chant that publishes a `nuget` target (#5232). */
-export const PUBLISH_NUGET_FLOOR = NEXT_RELEASE;
+export const PUBLISH_NUGET_FLOOR = "0.124.102";
 
 export const NUGET_ORG = { label: "nuget.org", site: "https://www.nuget.org", push: "https://www.nuget.org/api/v2/package", flat: "https://api.nuget.org/v3-flatcontainer/", token: "https://www.nuget.org/api/v2/token" } as const;
 /** The audience nuget.org takes an OIDC ID token for. */

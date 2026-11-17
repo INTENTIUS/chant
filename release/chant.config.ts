@@ -1,6 +1,6 @@
 import type { ChantConfig } from "@intentius/chant";
 
-// The root of chant's release workspace. Two things live here.
+// The root of chant's release workspace, which declares the release train.
 //
 // The release train (#5154): each publishable package is its own release
 // member under release/<member>/, and `release.train` releases every member
@@ -14,20 +14,7 @@ import type { ChantConfig } from "@intentius/chant";
 // "together"), and `check` refuses a train whose core floors name a version
 // that is neither released nor core's label (#4480). legacyTags are the tags
 // of the releases before the train, read as each member's last release.
-//
-// The lockstep release (#4040), every package at one label: `release.publish`
-// below. `just release` no longer cuts it. It stays so a lockstep release cut
-// before the train can be published again on its release/npm/<label> tag
-// (.github/workflows/publish-legacy.yml), until two trains have published
-// (#5137). A publish never builds: scripts/release-pack.sh writes the
-// tarballs named here, every package at the release's label, before the
-// publish runs. The order is publish-packages.sh's dependency layers, core
-// first, and release-member.test.ts checks it against them.
-//
-// stage: false publishes straight to latest. Moving a dist-tag over trusted
-// publishing needs a per-package setting on npmjs.com that chant's records
-// do not have (#3904). tokenEnv keeps publish-packages.sh's fallback: a
-// package whose trusted-publisher record fails publishes with NPM_TOKEN.
+
 export default {
   environments: ["npm"],
   release: {
@@ -41,60 +28,21 @@ export default {
       trigger: "dispatch",
       file: ".github/workflows/publish.yml",
       install: "cd .. && npm ci",
-      // Runs in the publish job after train prepare. Every lexicon's generated
-      // sources, which a lexicon whose build compiles another's source
-      // (docker against otel) needs even when that one is not packed in this
-      // run. train prepare builds such a member since #5222; this step comes
-      // from the dispatched branch's publish.yml, so it also reaches a train
-      // whose commit's chant predates that, as a resumed publish runs.
-      build: "cd .. && npm run generate --workspaces --if-present",
+      // No build step: each member's prepack builds it, and train prepare
+      // builds a package that a member still to publish compiles against
+      // when this train does not pack it (#5222).
+      build: false,
       chant: "npx tsx ../packages/core/src/cli/main.ts",
       toolchains: ["node"],
-      // #5223: each member's prepack compiles its workspace dependencies'
-      // source, which imports their generated files. A resumed train skips a
-      // dependency an earlier run published, so nothing else would generate
-      // them: generate every lexicon after the install.
-      setup: [{ run: "cd .. && npm run generate" }],
+      // #5216: no release doctor before the train's cut. A package whose npm
+      // trusted-publisher record fails publishes with NPM_TOKEN (each member's
+      // tokenEnv), and the doctor's trusted-publisher check would stop the train
+      // for it before that fallback is reached.
+      doctor: false,
       env: {
         CHANT_RELEASE_GATE: "1",
         NPM_TOKEN: "${{ secrets.NPM_TOKEN }}",
       },
     },
-    publish: [
-      {
-        type: "npm",
-        access: "public",
-        stage: false,
-        tokenEnv: "NPM_TOKEN",
-        packages: [
-          "../.release/packs/packages_core.tgz",
-          "../.release/packs/packages_k8s-client.tgz",
-          "../.release/packs/lexicons_aws.tgz",
-          "../.release/packs/lexicons_azure.tgz",
-          "../.release/packs/lexicons_cedar.tgz",
-          "../.release/packs/lexicons_cpln.tgz",
-          "../.release/packs/lexicons_e2b.tgz",
-          "../.release/packs/lexicons_fountain.tgz",
-          "../.release/packs/lexicons_gcp.tgz",
-          "../.release/packs/lexicons_github.tgz",
-          "../.release/packs/lexicons_k3d.tgz",
-          "../.release/packs/lexicons_k3s.tgz",
-          "../.release/packs/lexicons_otel.tgz",
-          "../.release/packs/lexicons_prow.tgz",
-          "../.release/packs/lexicons_pulumi.tgz",
-          "../.release/packs/lexicons_render.tgz",
-          "../.release/packs/lexicons_sql.tgz",
-          "../.release/packs/lexicons_terraform.tgz",
-          "../.release/packs/lexicons_docker.tgz",
-          "../.release/packs/lexicons_fly.tgz",
-          "../.release/packs/lexicons_forgejo.tgz",
-          "../.release/packs/lexicons_gitlab.tgz",
-          "../.release/packs/lexicons_prometheus.tgz",
-          "../.release/packs/lexicons_k8s.tgz",
-          "../.release/packs/lexicons_grafana.tgz",
-          "../.release/packs/lexicons_helm.tgz",
-        ],
-      },
-    ],
   },
 } satisfies ChantConfig;

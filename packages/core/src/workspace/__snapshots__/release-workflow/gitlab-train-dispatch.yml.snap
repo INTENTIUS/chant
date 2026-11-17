@@ -1,44 +1,1297 @@
 # ==== minimal ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== no install, no build ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== member root ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "cd release"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "cd release"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "cd release"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== supply-chain ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --require-provenance --yes"
 
 # ==== signing ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== lane ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --lane fast --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== gate head ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "if [ \"$commit\" != \"$CI_COMMIT_SHA\" ]; then echo \"$CI_COMMIT_SHA is not green (the newest green commit below it is $commit), so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== green forge-checks ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$CI_COMMIT_SHA\""
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== green none ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$CI_COMMIT_SHA\""
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== after ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+chant-release-after:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+    - job: chant-release-publish
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - npm run announce
 
 # ==== env and setup ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    CHANT_RELEASE_GATE: "1"
+    NPM_TOKEN: "${{ secrets.NPM_TOKEN }}"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "echo setup"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+    CHANT_RELEASE_GATE: "1"
+    NPM_TOKEN: "${{ secrets.NPM_TOKEN }}"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "echo setup"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== permissions ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== targets ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
 # ==== images ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+throws: release.images and release.artifacts at the root: a train releases its members, not the root; declare them in the member that publishes them
 
 # ==== builds ====
-throws: release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs
+throws: release.workflow.builds: a train cuts each member in one job, and per-platform builds are not handed to it; leave builds out of a train's workflow
+
+# ==== member images ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    paths:
+      - ".chant-release-artifacts/"
+    expire_in: 1 day
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+    - "if [ -n \"$train\" ]; then npx chant workspace train artifacts npm \"$train\" -o \"$CI_PROJECT_DIR/.chant-release-artifacts\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "if [ -d \"$CI_PROJECT_DIR/.chant-release-artifacts\" ]; then mv \"$CI_PROJECT_DIR/.chant-release-artifacts\" /tmp/chant-release-artifacts; fi"
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "docker run --privileged --rm tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "npx chant workspace train artifacts npm \"$CHANT_RELEASE_TRAIN\" --from /tmp/chant-release-artifacts"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== member artifacts ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    paths:
+      - ".chant-release-artifacts/"
+    expire_in: 1 day
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+    - "if [ -n \"$train\" ]; then npx chant workspace train artifacts npm \"$train\" -o \"$CI_PROJECT_DIR/.chant-release-artifacts\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "if [ -d \"$CI_PROJECT_DIR/.chant-release-artifacts\" ]; then mv \"$CI_PROJECT_DIR/.chant-release-artifacts\" /tmp/chant-release-artifacts; fi"
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "npx chant workspace train artifacts npm \"$CHANT_RELEASE_TRAIN\" --from /tmp/chant-release-artifacts"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== member goreleaser ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    paths:
+      - ".chant-release-artifacts/"
+    expire_in: 1 day
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+    - "if [ -n \"$train\" ]; then npx chant workspace train artifacts npm \"$train\" -o \"$CI_PROJECT_DIR/.chant-release-artifacts\"; fi"
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "if [ -d \"$CI_PROJECT_DIR/.chant-release-artifacts\" ]; then mv \"$CI_PROJECT_DIR/.chant-release-artifacts\" /tmp/chant-release-artifacts; fi"
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "npx chant workspace train artifacts npm \"$CHANT_RELEASE_TRAIN\" --from /tmp/chant-release-artifacts"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== verified-releases ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --doctor --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "npx chant workspace train verify npm \"$CHANT_RELEASE_TRAIN\""
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== doctor off ====
+chant-release-gate:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  artifacts:
+    reports:
+      dotenv: chant-release-gate.env
+  script:
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
+    - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
+
+chant-release-cut:
+  rules:
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs: [chant-release-gate]
+  artifacts:
+    reports:
+      dotenv: chant-release-train.env
+  script:
+    - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ \"$rc\" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ \"$rc\" != 2 ]; then exit \"$rc\"; fi"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train cut npm --at \"$CHANT_RELEASE_COMMIT\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --yes --json > /tmp/chant-train.json"
+    - "train=\"$(node -e 'const t=require(\"fs\").readFileSync(process.argv[1],\"utf8\");let d;try{d=JSON.parse(t)}catch(e){const m=/\"id\": *\"(train-[^\"]+)\"/.exec(t);console.error(\"the train cut printed more than its JSON document, so the train id can not be read (\"+e.message+\").\"+(m?\" The cut recorded \"+m[1]+\": run a pipeline with CHANT_RELEASE_TRAIN=\"+m[1]+\" to publish it.\":\" If it recorded a train, run a pipeline with CHANT_RELEASE_TRAIN=<id> to publish it.\"));process.exit(1)}const id=d.train?.id??\"\";if(!id&&d.released==null&&(d.members??[]).length>0){console.error(\"the train cut \"+d.members.length+\" member(s), and its JSON names no train id to publish\");process.exit(1)}process.stdout.write(id)' \"/tmp/chant-train.json\")\" || exit 1"
+    - "printf 'CHANT_TRAIN_CUT=%s\\n' \"$train\" > \"$CI_PROJECT_DIR/chant-release-train.env\""
+
+chant-release-publish:
+  rules:
+    - if: $CHANT_RELEASE_TRAIN && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CHANT_RELEASE_LEVELS && ($CHANT_RELEASE_TRAIN == null || $CHANT_RELEASE_TRAIN == "") && $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+  variables:
+    GIT_DEPTH: "0"
+  needs:
+    - job: chant-release-cut
+      optional: true
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
+    - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
+    - "unset chant_auth"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"

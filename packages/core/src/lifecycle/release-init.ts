@@ -862,14 +862,13 @@ export function trainFit(facts: ProjectFacts): { train: true } | { train: false;
   if (packages.length + (rootPublished ? 1 : 0) < 2) return { train: false, why: null };
   if (rootPublished) return { train: false, why: `the root package ${node.root.name} is published too, and a train releases the packages below the root` };
   const ext = [node.root, ...node.workspaces].find((p) => p.vscode && !p.private && p.name);
-  if (ext) return { train: false, why: `${ext.name} is a VS Code extension, and its .vsix is a file the train workflow does not hand from its cut job to its publish job` };
-  if (facts.goreleaser) return { train: false, why: `${facts.goreleaser.file} builds files at the cut, which the train workflow does not hand between its jobs` };
-  if (facts.dockerfiles.length > 0) return { train: false, why: `${facts.dockerfiles[0]} is an image built at the cut, which the train workflow does not hand between its jobs` };
-  if ((facts.charts?.length ?? 0) > 0) return { train: false, why: `${facts.charts![0]!.dir}/Chart.yaml is a chart packed at the cut, which the train workflow does not hand between its jobs` };
-  if (facts.nfpm) return { train: false, why: `${facts.nfpm.file} packages files at the cut, which the train workflow does not hand between its jobs` };
-  if (facts.python?.pyproject && facts.python.name) return { train: false, why: "pyproject.toml is built at the cut, which the train workflow does not hand between its jobs" };
+  if (ext) return { train: false, why: `${ext.name} is a VS Code extension, and release init makes a train's members of npm packages only` };
+  if (facts.goreleaser) return { train: false, why: `${facts.goreleaser.file} builds files for the repository, and release init makes a train's members of npm packages only, with none to build them` };
+  if (facts.dockerfiles.length > 0) return { train: false, why: `${facts.dockerfiles[0]} builds an image, and release init makes a train's members of npm packages only, with none to build it` };
+  if ((facts.charts?.length ?? 0) > 0) return { train: false, why: `${facts.charts![0]!.dir}/Chart.yaml is a chart packed at the cut, and release init makes a train's members of npm packages only, with none to pack it` };
+  if (facts.nfpm) return { train: false, why: `${facts.nfpm.file} packages files at the cut, and release init makes a train's members of npm packages only, with none to build them` };
+  if (facts.python?.pyproject && facts.python.name) return { train: false, why: "pyproject.toml's package publishes beside the npm packages, and release init makes a train's members of npm packages only" };
   if (facts.rust && !facts.rust.unpublishable && (facts.rust.name || facts.rust.workspace)) return { train: false, why: "Cargo.toml's crates publish beside the npm packages, and a train releases npm packages" };
-  if (facts.workflowForge === "gitlab") return { train: false, why: "the train workflow renders for GitHub and Forgejo, and this repository runs GitLab CI" };
   return { train: true };
 }
 
@@ -972,10 +971,12 @@ export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainP
     registry.push(
       adopted
         ? `npm ${m.package}: keep the trusted publisher on npmjs.com that names ${repo} and the workflow file ${workflowName}, or add one naming them if the package has none, and allow npm dist-tag on it, since the reveal moves latest. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`
-        : `npm ${m.package}: on npmjs.com, add a trusted publisher for ${forge === "github" ? "GitHub Actions" : "this forge"} naming ${repo} and the workflow file ${workflowName}, and allow npm dist-tag, since the reveal moves latest. Every package names the same file. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`,
+        : `npm ${m.package}: on npmjs.com, add a trusted publisher for ${forge === "gitlab" ? `GitLab CI/CD naming ${repo} and the top-level config .gitlab-ci.yml` : `${forge === "github" ? "GitHub Actions" : "this forge"} naming ${repo} and the workflow file ${workflowName}`}, and allow npm dist-tag, since the reveal moves latest. Every package names the same file. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`,
     );
   }
 
+  // #5216: a GitLab job token cannot push the train's tags.
+  if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
   const workspaceName = memberNameOf({ name: facts.origin?.repo.split("/").pop() ?? node.root.name ?? null, dir: facts.path ?? "workspace" }) || "workspace";
   return { release, members, workspaceName, reasons, notes, registry, workflowFile, env };
 }

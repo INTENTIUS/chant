@@ -413,9 +413,14 @@ describe("a workspace released as a train (#5154)", () => {
   test("a workspace with something the train can't carry gets one release, and says why", () => {
     expect(trainFit(detectProject(mono({ Dockerfile: "FROM scratch\n" })))).toMatchObject({ train: false, why: expect.stringContaining("Dockerfile") });
     expect(trainFit(detectProject(mono({ "package.json": JSON.stringify({ name: "acme-mono", workspaces: ["packages/*"] }) })))).toMatchObject({ train: false, why: expect.stringContaining("root package acme-mono") });
+    // #5216: GitLab renders the train too, so a GitLab project gets one, with the token its jobs push with.
     const gitlab = detectProject(mono());
     gitlab.workflowForge = "gitlab";
-    expect(trainFit(gitlab)).toMatchObject({ train: false, why: expect.stringContaining("GitLab") });
+    expect(trainFit(gitlab)).toEqual({ train: true });
+    const plan = planTrain(gitlab, PLAN);
+    expect(plan.workflowFile).toBe(".gitlab/chant-release.yml");
+    expect(plan.registry[0]).toContain("GitLab CI/CD naming");
+    expect(plan.registry.at(-1)).toContain("CHANT_RELEASE_TOKEN");
     // One publishable package is no train, and nothing to explain.
     expect(trainFit(detectProject(repo({ "package.json": JSON.stringify({ name: "solo" }) })))).toEqual({ train: false, why: null });
   });

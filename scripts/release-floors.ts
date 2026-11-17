@@ -45,12 +45,12 @@
  * in one checkout and not on origin (chant-v0.81.0 did: npm lists 0.81.0,
  * origin's tags skip from 0.80.0 to 0.82.0), so a check that read tags only
  * passed on the maintainer's checkout and would fail on a clean CI checkout.
- * scripts/release-pack.sh and `just release` both run with `--npm`; the
+ * `just release` and the release train's check both run with `--npm`; the
  * tags-only default is for an offline look at the working tree.
  *
  * A local build stamp is the version of packages/core/package.json in the
- * working tree when it differs from the committed one: scripts/release-pack.sh
- * and a local `npm pack` build (install-local-chant.sh) stamp every package
+ * working tree when it differs from the committed one: a local `npm pack`
+ * build (install-local-chant.sh) stamps every package
  * at the version they build, uncommitted, so a build stamped at NEXT_RELEASE
  * passes. `--release <v>` counts <v> the same way, for a cut, which checks
  * the commit it cuts before any stamp exists. `--train-plan <file>` reads
@@ -206,7 +206,7 @@ function floorFiles(rev: string | undefined): string[] {
  * shipped and must be literals before NEXT_RELEASE moves on.
  */
 export function shippedSymbolic(next: string, named: Floor[], known: Set<string>, stamp?: string): string[] {
-  // A working tree stamped with NEXT_RELEASE is release-pack.sh packing that
+  // A working tree stamped with NEXT_RELEASE is a local pack of that
   // release: its own release/npm/<next> tag already exists, but the floors
   // ship as NEXT_RELEASE in this pack and are frozen after it reaches npm.
   if (stamp === next) return [];

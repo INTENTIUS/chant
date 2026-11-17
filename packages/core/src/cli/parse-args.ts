@@ -86,6 +86,7 @@ const BOOLEAN_FLAGS = new Set([
   "--require-runner-start",
   "--require-clouds",
   "--no-push",
+  "--doctor",
   "--no-forks",
   "--list",
   "--no-require-review",
@@ -1280,6 +1281,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--one-release") {
       // `chant release init --one-release` (#5154): a workspace's packages released together, not as a train.
       result.oneRelease = true;
+    } else if (arg === "--doctor") {
+      // `chant workspace train cut <env> --doctor` (#5216): run release doctor in each member before the cut.
+      result.doctor = true;
     } else if (arg === "--no-push") {
       // `chant ci run --no-push` (#4156): keep the run record on the local chant/lifecycle.
       result.noPush = true;

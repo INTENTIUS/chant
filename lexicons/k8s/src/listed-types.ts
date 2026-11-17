@@ -14,6 +14,7 @@
 import type { ListedTypeMapping } from "@intentius/chant/lifecycle/type-listing";
 import { operationTable } from "./api/operation-surface";
 import { namespaceSegmentForGroup } from "./group-namespace";
+import { k8sReferenceCatalog } from "./reference-catalog";
 
 /** `apps/v1/Deployment` or `v1/Pod` as its group, version and kind. */
 export function parseListedGvk(listedType: string): { group: string; version: string; kind: string } | undefined {
@@ -45,15 +46,30 @@ function generatedKinds(): ReadonlySet<string> | null {
   return cachedKinds;
 }
 
+let cachedCatalogKinds: ReadonlySet<string> | undefined;
+
+/** The k8s kinds the reference catalog names (#5244), as its rules read them: an ExternalSecret and its stores are among them, generated or not. */
+function catalogKinds(): ReadonlySet<string> {
+  if (cachedCatalogKinds) return cachedCatalogKinds;
+  const { identities, refs } = k8sReferenceCatalog;
+  const names = [...identities.map((r) => r.kind), ...refs.flatMap((r) => [r.from, r.targetKind])];
+  const kinds = new Set<string>();
+  for (const k of names) if (k?.startsWith("K8s::")) kinds.add(k);
+  cachedCatalogKinds = kinds;
+  return kinds;
+}
+
 /**
  * The k8s kind for a discovery type, or undefined. The rule's answer must be
- * a kind the lexicon generated; with nothing generated the rule's answer
- * stands, as the lexicon's own discovery sweep does.
+ * a kind the lexicon generated or the reference catalog names; with nothing
+ * generated the rule's answer stands, as the lexicon's own discovery sweep
+ * does. A catalog kind is built as a generated one is: `k8sObservedTree` and
+ * the deep hooks do not depend on which list named the kind.
  */
 export function k8sKindForListedType(listedType: string, kinds: ReadonlySet<string> | null = generatedKinds()): string | undefined {
   const kind = k8sKindByRule(listedType);
   if (kind === undefined) return undefined;
-  if (kinds && !kinds.has(kind)) return undefined;
+  if (kinds && !kinds.has(kind) && !catalogKinds().has(kind)) return undefined;
   return kind;
 }
 

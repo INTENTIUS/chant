@@ -33,6 +33,21 @@
  * where it will be applied, and the objects one member applies together go to
  * one namespace far more often than not.
  *
+ * ## A cloud index beside the workspace (#5245)
+ *
+ * A caller that reads a cluster and a cloud index together (behold's joined
+ * read) hands the index's nodes to {@link runCatalogPass} as one more member,
+ * through {@link indexedMemberNodes}: the member is the index document's
+ * scope key. The cloud kinds are scoped by no catalog, so they sit in the
+ * workspace scope with no namespace, which every namespaced holder reaches
+ * (`scopeOf` below, and the account-only key `reconstructIndexedEdges`
+ * looks a holder's value up under). The index's own account and region are
+ * not part of that scope, so a rule that joins a cluster object to an
+ * indexed node checks them itself: the IRSA rule keeps a role of the
+ * annotation's account, the ExternalSecret rule a secret of the store's
+ * region. `deriveEdgesAcross` (../lifecycle/derive-edges.ts) does not join
+ * the two: it reads one cloud account, and refuses a cluster source.
+ *
  * ## Declared nodes the rules are not written against
  *
  * A catalog's `declaredNode` gives the node the rules read, for a lexicon
@@ -103,6 +118,7 @@ import type {
   WorkspaceGraph,
 } from "./compose-graph";
 import { composedId, danglingKey } from "./compose-graph";
+import type { IndexDocument } from "../lifecycle/index-document";
 
 /** The scope every node of a declared workspace graph sits in. */
 export const WORKSPACE_SCOPE = "workspace";
@@ -316,6 +332,15 @@ export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonl
     generated,
     expansions,
   };
+}
+
+/**
+ * An index document's nodes as members of a catalog pass (#5245): each in the
+ * member the document's scope key names, so they sit beside a cluster's
+ * objects or a workspace's members in one {@link runCatalogPass}.
+ */
+export function indexedMemberNodes(doc: IndexDocument): ComposedNode[] {
+  return doc.graph.nodes.map((n) => ({ ...n, member: doc.stamp.scopeKey }));
 }
 
 /** A rule path's first step, the `viaAttr` an edge it draws carries, as the pass's own rules do. */

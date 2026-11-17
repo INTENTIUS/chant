@@ -61,11 +61,10 @@
  */
 import { MASKED as TYPED_MASKED } from "../deep-observation";
 import type { GraphIR, IREdge, IRNode } from "../graph-ir";
-import { NEXT_RELEASE } from "../release-floors";
 import { MASKED as LISTED_MASKED } from "./mask";
 
 /** The first chant with `inferK8sComponents`, the applications of a live Kubernetes read as a component graph (#5252). */
-export const K8S_COMPONENTS_FLOOR = NEXT_RELEASE;
+export const K8S_COMPONENTS_FLOOR = "0.124.102";
 
 /** What a member is to its application, so a reader can fold without knowing Kubernetes kinds. */
 export type K8sMemberRole = "workload" | "runtime" | "service" | "route" | "policy" | "config" | "storage" | "identity" | "bookkeeping";

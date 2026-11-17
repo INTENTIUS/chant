@@ -188,6 +188,22 @@ describe("release.train.check", () => {
     expect(cuts).toBe(0);
   });
 
+  test("--doctor runs release doctor in each member before the first cut, and a failure stops the train with nothing cut (#5216)", async () => {
+    const x = setup();
+    let cuts = 0;
+    const doctored: string[] = [];
+    const runDoctor = (dir: string) => (doctored.push(dir.split("/").pop()!), dir.endsWith("lex") ? 1 : 0);
+    const run = cutTrain({ cwd: x.nested, env: "npm", at: x.head, registry: npmVersions(x.npm), yes: true, noPush: true, doctor: true, runDoctor, cutter: async () => ({ tag: (cuts++, null) }) });
+    await expect(run).rejects.toMatchObject({ code: "train-doctor-failed" });
+    await expect(run).rejects.toThrow(/in lex/);
+    expect(doctored.sort()).toEqual(["core", "lex"]);
+    expect(cuts).toBe(0);
+    // Without --doctor nothing runs it.
+    const plain: string[] = [];
+    await cutTrain({ cwd: x.nested, env: "npm", at: x.head, registry: npmVersions(x.npm), runDoctor: (d) => (plain.push(d), 1), cutter: async () => ({ tag: null }) });
+    expect(plain).toEqual([]);
+  });
+
   test("a build that train prepare runs writes its stdout to stderr too", async () => {
     const { stdout, stderr, result } = await captured(() => runToStderr("echo built; exit 3", { cwd: tmpdir() }));
     expect(result).toBe(3);

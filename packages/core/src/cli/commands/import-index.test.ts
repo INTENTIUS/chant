@@ -5,7 +5,7 @@
  * No project is built (the declared entities are passed in) and nothing
  * reaches a cloud.
  */
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, describe, expect, test } from "vitest";
@@ -13,7 +13,7 @@ import { MASKED } from "../../deep-observation";
 import type { LexiconPlugin } from "../../lexicon";
 import { indexDocumentDigest, indexScopeKey, type CloudIndexScope, type IndexDocument } from "../../lifecycle/index-document";
 import { adoptionFileProblemsAgainst, type AdoptionFile } from "../../lifecycle/adoption-file";
-import { importFromIndex, INDEX_IMPORT_REPORT_FILE } from "./import-index";
+import { importFromIndex, INDEX_IMPORT_REPORT_FILE, resolveIndexImportProject } from "./import-index";
 
 const dirs: string[] = [];
 const scratch = () => {
@@ -101,13 +101,6 @@ describe("importFromIndex", () => {
     expect(result.error).toMatch(/does not hold index documents/);
   });
 
-  test("an output with no chant.config.ts above it says the declared check did not run", async () => {
-    const out = join(scratch(), "out");
-    const result = await importFromIndex({ index: indexFile(), selection: { all: true }, output: out, plugins: [plugin] });
-    expect(result.success).toBe(true);
-    expect(result.warnings).toContainEqual(expect.stringMatching(/^no chant\.config\.ts at or above .*no indexed resource was checked against declarations/));
-  });
-
   test("--adopt-out writes the adoption file for what was imported, valid against the index (#4536)", async () => {
     const out = join(scratch(), "out");
     const adoptOut = join(scratch(), "adopt.json");
@@ -120,5 +113,37 @@ describe("importFromIndex", () => {
       { node: nodes[0].id, as: "Net1", type: "Fake::Net" },
     ]);
     expect(adoptionFileProblemsAgainst(adopt, DOC)).toEqual([]);
+  });
+});
+
+describe("the project the declared check reads (#4523)", () => {
+  const project = () => {
+    const root = scratch();
+    writeFileSync(join(root, "chant.config.ts"), "export default {};\n");
+    mkdirSync(join(root, "src"));
+    return root;
+  };
+
+  test("--output outside the project still finds the project from the working directory", () => {
+    const root = project();
+    const elsewhere = join(scratch(), "out");
+    expect(resolveIndexImportProject({ cwd: join(root, "src"), output: elsewhere }).dir).toBe(root);
+  });
+
+  test("--output inside the project finds it too", () => {
+    const root = project();
+    expect(resolveIndexImportProject({ cwd: root, output: join(root, "src", "imported") }).dir).toBe(root);
+  });
+
+  test("run from outside any project, the output's parent is the fallback", () => {
+    const root = project();
+    expect(resolveIndexImportProject({ cwd: scratch(), output: join(root, "src") }).dir).toBe(root);
+  });
+
+  test("with no project anywhere it says so instead of skipping the check silently", async () => {
+    const out = join(scratch(), "out");
+    const result = await importFromIndex({ index: indexFile(), selection: { all: true }, output: out, plugins: [plugin] });
+    expect(result.success).toBe(true);
+    expect(result.warnings.join("\n")).toMatch(/no chant\.config.* so no indexed resource was checked against declarations/);
   });
 });

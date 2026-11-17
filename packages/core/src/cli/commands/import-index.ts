@@ -16,6 +16,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join, relative, resolve } from "path";
+import { findProjectConfigPastFragments } from "../../config";
 import type { GeneratedFile } from "../../import/generator";
 import type { LexiconPlugin } from "../../lexicon";
 import type { DeclaredEntity } from "../../lifecycle/identity-match";
@@ -135,9 +136,7 @@ async function projectEntities(
   try {
     const { loadChantConfigUpward, resolveSourceDir } = await import("../../config");
     const { config, configPath } = await loadChantConfigUpward(projectDir);
-    if (!configPath) {
-      return { entities, warning: `no chant.config.ts at or above ${projectDir}, so no indexed resource was checked against declarations; write --output inside the project` };
-    }
+    if (!configPath) return { entities };
     const projectPlugins = plugins.filter((p) => p.serializer);
     if (projectPlugins.length === 0) return { entities };
     const { build } = await import("../../build");
@@ -181,9 +180,27 @@ async function pluginsFor(docs: readonly IndexDocument[], projectDir: string): P
   return plugins;
 }
 
+/**
+ * The project the declared check reads. It is the project the command runs
+ * in: the nearest `chant.config` at or above the working directory (or
+ * `projectDir`), wherever `--output` points. Run from outside any project,
+ * the project above the output's parent is the fallback. `dir` is where the
+ * search started when none is found, and `found` is false.
+ */
+export function resolveIndexImportProject(opts: { cwd: string; output?: string; projectDir?: string }): { dir: string; found: boolean } {
+  const starts = [resolve(opts.projectDir ?? opts.cwd)];
+  if (!opts.projectDir && opts.output) starts.push(dirname(resolve(opts.output)));
+  for (const start of starts) {
+    const { dir, configPath } = findProjectConfigPastFragments(start);
+    if (configPath) return { dir, found: true };
+  }
+  return { dir: starts[0], found: false };
+}
+
 export async function importFromIndex(options: IndexImportOptions): Promise<IndexImportResult> {
   const outputDir = resolve(options.output ?? "./infra/");
-  const projectDir = resolve(options.projectDir ?? (options.output ? dirname(outputDir) : "."));
+  const project0 = resolveIndexImportProject({ cwd: process.cwd(), output: options.output, projectDir: options.projectDir });
+  const projectDir = project0.dir;
   const warnings: string[] = [];
   const fail = (error: string): IndexImportResult => ({ success: false, generatedFiles: [], warnings, error });
 
@@ -204,7 +221,9 @@ export async function importFromIndex(options: IndexImportOptions): Promise<Inde
   if (options.declaredEntities) {
     entities = options.declaredEntities;
   } else {
-    const project = await projectEntities(projectDir, options.src, plugins);
+    const project = project0.found
+      ? await projectEntities(projectDir, options.src, plugins)
+      : { entities: new Map<string, DeclaredEntity[]>(), warning: `no chant.config found at or above ${projectDir}, so no indexed resource was checked against declarations; run the command inside the project` };
     if (project.warning) warnings.push(project.warning);
     entities = project.entities;
   }

@@ -42,9 +42,10 @@ import { readPath, type GenerateRule, type IdentityRule, type JoinedRef, type Re
  * (behold#166's case: `ASSET_BUCKET` set to the bucket's `BucketName`). The
  * env-value rules join such a value to an `AWS::S3::Bucket` of that name, and
  * are `optional`, since most env values name nothing. Over an index the
- * cluster and the AWS account are two scopes, so the join only draws on a
- * declared graph, where a cloud resource sits in the scope every namespace
- * reaches, which is where behold's matcher drew it.
+ * cluster and the AWS account are two scopes, so the join draws in the
+ * catalog pass over a composed graph (`runCatalogPass`), where a cloud
+ * resource sits in the scope every namespace reaches: a declared one, or an
+ * indexed one handed over beside the cluster (#5245).
  *
  * ## External Secrets (#5098)
  *
@@ -66,6 +67,23 @@ import { readPath, type GenerateRule, type IdentityRule, type JoinedRef, type Re
  * argument that is not literal is not read (the pass counts it), so a secret
  * whose `secret_id` or `project` is a variable matches nothing. An AWS secret
  * matches on its name alone when it sets no literal `region`.
+ *
+ * ## What a cloud index holds (#5245)
+ *
+ * The same keys and annotations join the nodes `chant index` writes, when a
+ * caller hands them to the catalog pass beside the cluster (catalog-edges.ts
+ * in core says how they share a scope). A key joins an
+ * `AWS::SecretsManager::Secret` by its `Name` (the aws catalog's identity) or
+ * its ARN, kept when the node's location, or the region its ARN names, is
+ * the store's `region`; and a `GCP::Secretmanager::Secret` whose Cloud Asset
+ * name is `//secretmanager.googleapis.com/projects/<projectID>/secrets/<key>`,
+ * so a store must name the project as the index does (Cloud Asset may name it
+ * by number). The IRSA annotation joins an `AWS::IAM::Role` whose ARN (its
+ * `Arn`, or an arn cloud id) is the annotation, or whose `RoleName` and
+ * `Path` are the ARN's and whose ARN names the same account. A role whose
+ * account cannot be read gets no edge. Each of these rules shares its id
+ * with the rule for the terraform kind, so a value one of them joins is not
+ * dangling under the other.
  *
  * ## Argo CD clusters (#5101)
  *
@@ -264,7 +282,13 @@ function storeOf(holder: IRNode, find: (value: string) => readonly IRNode[]): IR
  * key names inside the scope its store names, `inScope` deciding what counts
  * as inside. Reads only the ExternalSecrets whose store is of `provider`.
  */
-function secretRule(path: string, targetKind: string, provider: (store: IRNode) => string | undefined, inScope: (secret: IRNode, scope: string) => boolean): RefRule {
+function secretRule(
+  path: string,
+  targetKind: string,
+  provider: (store: IRNode) => string | undefined,
+  inScope: (secret: IRNode, scope: string) => boolean,
+  names: (key: string, scope: string) => string[] = (key) => [key],
+): RefRule {
   return {
     from: EXTERNAL_SECRET,
     path,
@@ -277,7 +301,8 @@ function secretRule(path: string, targetKind: string, provider: (store: IRNode) 
       if (!store || scope === undefined) return [];
       const refs: JoinedRef[] = [];
       for (const key of new Set(readPath(holder.attrs, path))) {
-        const targets = find(key).filter((n) => n.kind === targetKind && inScope(n, scope));
+        const found = new Map(names(key, scope).flatMap((v) => find(v)).map((n) => [n.id, n]));
+        const targets = [...found.values()].filter((n) => n.kind === targetKind && inScope(n, scope));
         refs.push({ value: key, targets, via: `remoteRef.key via ${first(store, "metadata.name") ?? store.id}`, through: store });
       }
       return refs;
@@ -285,12 +310,28 @@ function secretRule(path: string, targetKind: string, provider: (store: IRNode) 
   };
 }
 
+const INDEXED_AWS_SECRET = "AWS::SecretsManager::Secret";
+const INDEXED_GCP_SECRET = "GCP::Secretmanager::Secret";
+
+/** The ARNs an indexed node carries: its `Arn`, its native id and its arn cloud ids. */
+const arnsOf = (node: IRNode): string[] =>
+  [first(node, "Arn"), node.nativeId, ...(node.facts?.cloudIds ?? []).filter((c) => c.kind === "arn").map((c) => c.value)].filter((v): v is string => v?.startsWith("arn:") === true);
+
+/** An indexed node's region: its location, or the region its ARN names when the location is global. */
+const indexedRegion = (node: IRNode): string | undefined =>
+  node.location !== undefined && node.location !== "" && node.location !== "global" ? node.location : arnsOf(node).map((a) => a.split(":")[3]).find((r) => r !== undefined && r !== "");
+
 const gcpProject = (store: IRNode) => first(store, "spec.provider.gcpsm.projectID");
 const awsRegion = (store: IRNode) => (first(store, "spec.provider.aws.service") === "SecretsManager" ? first(store, "spec.provider.aws.region") : undefined);
 
 const externalSecretRules: RefRule[] = [
   ...STORE_KINDS.map(storeRule),
   ...SECRET_KEY_PATHS.flatMap((path) => [
+    // The indexed kinds come first: of rules sharing an id, a dangling key names the last one's kind, the terraform kind as before #5245.
+    // An indexed secret (#5245): found by `Name` (the aws catalog's identity) or by its ARN, kept in the store's region.
+    secretRule(path, INDEXED_AWS_SECRET, awsRegion, (secret, region) => indexedRegion(secret) === region),
+    // Cloud Asset names a secret `//secretmanager.googleapis.com/projects/<project>/secrets/<id>`; the store's `projectID` is the project.
+    secretRule(path, INDEXED_GCP_SECRET, gcpProject, () => true, (key, project) => [`//secretmanager.googleapis.com/projects/${project}/secrets/${key}`]),
     secretRule(path, "google_secret_manager_secret", gcpProject, (secret, project) => first(secret, "project") === project),
     // The resource sets `region` only when it is not the provider's, so an AWS secret without one matches on its name.
     secretRule(path, "aws_secretsmanager_secret", awsRegion, (secret, region) => (first(secret, "region") ?? region) === region),
@@ -309,6 +350,7 @@ export const EKS_ANNOTATION = 'metadata.annotations["eks.amazonaws.com/role-arn"
 
 const GCP_EMAIL = /^([a-z][a-z0-9-]*)@([a-z][a-z0-9-]*)\.iam\.gserviceaccount\.com$/i;
 const AWS_ROLE_ARN = /^arn:aws[a-z-]*:iam::(\d{12}):role\/(?:(.*)\/)?([^/]+)$/;
+const INDEXED_ROLE = "AWS::IAM::Role";
 
 /**
  * The cloud identity a ServiceAccount's annotation names (#5099). Neither
@@ -341,6 +383,30 @@ const identityRules: RefRule[] = [
       const m = GCP_EMAIL.exec(email);
       const targets = m ? find(m[1]).filter((n) => n.kind === "google_service_account" && first(n, "account_id") === m[1] && first(n, "project") === m[2]) : [];
       return [{ value: email, targets, via: "iam.gke.io/gcp-service-account" }];
+    },
+  },
+  // The indexed role (#5245) before the terraform one, so a dangling annotation names `aws_iam_role` as before.
+  {
+    from: SERVICE_ACCOUNT,
+    path: EKS_ANNOTATION,
+    targetKind: INDEXED_ROLE,
+    relation: "reference",
+    label: "acts as",
+    join(holder, find) {
+      const arn = first(holder, EKS_ANNOTATION);
+      if (arn === undefined) return [];
+      const m = AWS_ROLE_ARN.exec(arn);
+      if (!m) return [{ value: arn, targets: [], via: "eks.amazonaws.com/role-arn" }];
+      const found = new Map([...find(arn), ...find(m[3])].map((n) => [n.id, n]));
+      const targets = [...found.values()].filter((n) => {
+        if (n.kind !== INDEXED_ROLE) return false;
+        const arns = arnsOf(n);
+        if (arns.includes(arn)) return true;
+        const path = (first(n, "Path") ?? "/").replace(/^\/|\/$/g, "");
+        const accounts = arns.map((a) => AWS_ROLE_ARN.exec(a)?.[1]);
+        return (first(n, "RoleName") ?? n.nativeId) === m[3] && path === (m[2] ?? "") && accounts.includes(m[1]);
+      });
+      return [{ value: arn, targets, via: "eks.amazonaws.com/role-arn" }];
     },
   },
   {

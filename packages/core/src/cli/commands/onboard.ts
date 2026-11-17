@@ -289,9 +289,9 @@ function patchCiWorkflow(root: string, name: string): PatchResult {
 /**
  * Patch publish.yml: add the prepack line to the test job.
  *
- * No publish step is added. scripts/publish-packages.sh enumerates every
- * non-private workspace package at run time, so a new lexicon is published
- * the moment it exists — that is deliberate. Hand-maintained publish steps
+ * No publish step is added. Each publishable package is a release member
+ * under release/, written by scripts/generate-release-members.ts from the
+ * workspace, and publish.yml publishes the release train — that is deliberate. Hand-maintained publish steps
  * were how k8s-client (#1177) and fountain (#1253) each shipped a package
  * the release pipeline could not publish.
  */
@@ -306,13 +306,13 @@ function patchPublishWorkflow(root: string, name: string): PatchResult {
 
   if (!insertPrepackAfterEach(lines, name)) {
     // #3227 — not a failure and not "covered by a prepack line": publish.yml
-    // carries no per-lexicon lines. The run builds every lexicon through
-    // scripts/ci-lexicon-artifacts.sh and publishes through
-    // scripts/publish-packages.sh, both of which enumerate the workspace.
+    // carries no per-lexicon lines. CI builds every lexicon through
+    // scripts/ci-lexicon-artifacts.sh, and publish.yml publishes the release
+    // members scripts/generate-release-members.ts writes; both enumerate the workspace.
     return {
       patched: false,
       reason:
-        "nothing to patch: it has no per-lexicon prepack lines; scripts/ci-lexicon-artifacts.sh and scripts/publish-packages.sh enumerate the workspace",
+        "nothing to patch: it has no per-lexicon prepack lines; scripts/ci-lexicon-artifacts.sh and scripts/generate-release-members.ts enumerate the workspace",
     };
   }
   writeFileSync(filePath, lines.join("\n"));
@@ -460,7 +460,7 @@ export async function printOnboardResult(result: OnboardResult, name: string): P
   console.log(`     (must depend on @intentius/chant-lexicon-${name} for workspace resolution)`);
   console.log(`  2. Add smoke tests to test/integration.sh`);
   console.log(`  3. Run: npm install (to update workspace links)`);
-  console.log(`  4. First release: just release-lexicon ${name} patch`);
+  console.log(`  4. First release: npx tsx scripts/generate-release-members.ts, commit release/lexicon-${name}/, then just release`);
   console.log(`  5. Run: chant dev check-lexicon lexicons/${name} (to see completeness status)`);
   console.log(formatWarning({
     message: "First-time scoped packages may publish as private despite --access public",

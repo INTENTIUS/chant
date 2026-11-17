@@ -15,6 +15,13 @@
  *    and the observation baseline (`.chant/observation-baseline/<env>.json`,
  *    #4519) subtracted, value-bound. An accepted deviation stays quiet until
  *    the indexed value moves again.
+ *
+ *    The index carries what the provider's listing returned, which is often
+ *    a few properties per type (Cloud Control's `ListResources` gives a role
+ *    its name and path, not its trust policy). A declared top-level property
+ *    the indexed node does not carry was never observed, so it is left out
+ *    of the comparison and reported as not observed, never as drift to
+ *    `<absent>`. The record says so in `attributesUnobserved`.
  * 3. Every row becomes one drift record (`drift: "v1"`, ../drift-record.ts).
  *
  * A row that is not bound is reported with its join verdict and never
@@ -98,6 +105,12 @@ export interface IndexDriftLexiconResult {
   joins: Record<string, IndexJoin>;
   /** The deep diff over the bound rows only. Unbound rows are never in it. */
   deep: DeepDiffResult;
+  /**
+   * Per bound row, the declared top-level properties its indexed node does
+   * not carry, sorted. They were left out of {@link deep}: the index never
+   * observed them. Rows with none are not listed.
+   */
+  unobservedProperties: Record<string, string[]>;
 }
 
 export interface IndexDriftCounts {
@@ -208,16 +221,27 @@ export function diffDeclaredAgainstIndex(input: IndexDriftInput): IndexDriftResu
     // The bound rows are the observed side, each its indexed node's tree.
     const bound: DeclaredEntities = new Map();
     const resources: Record<string, DeepResourceObservation> = {};
+    const unobservedProperties: Record<string, string[]> = {};
     for (const [name, entity] of entities) {
       const j = joins[name];
       if (j?.verdict !== "bound") continue;
       const hit = indexed.get(j.node);
       if (!hit) continue;
-      bound.set(name, entity);
-      resources[name] = { type: entity.entityType, physicalId: hit.physicalId ?? j.nativeId, properties: (hit.attrs ?? {}) as Record<string, unknown> };
+      const attrs = (hit.attrs ?? {}) as Record<string, unknown>;
+      // Only what the index observed is compared: a declared property the
+      // listing never returned is unknown, not removed.
+      const props: Record<string, unknown> = {};
+      const missing: string[] = [];
+      for (const [key, value] of Object.entries(entity.props ?? {})) {
+        if (Object.prototype.hasOwnProperty.call(attrs, key)) props[key] = value;
+        else missing.push(key);
+      }
+      if (missing.length > 0) unobservedProperties[name] = missing.sort();
+      bound.set(name, { ...entity, props });
+      resources[name] = { type: entity.entityType, physicalId: hit.physicalId ?? j.nativeId, properties: attrs };
     }
     const deep = diffDeepObservation(bound, { resources, unobserved: {} }, plugin.deepNormalizationHooks, baselineForLexicon(input.baseline, lexicon));
-    byLexicon[lexicon] = { joins, deep };
+    byLexicon[lexicon] = { joins, deep, unobservedProperties };
 
     // Bound rows: the deep diff's records, and in-sync for a row whose every
     // difference is accepted (the deep diff lists it under neither).
@@ -230,6 +254,7 @@ export function diffDeclaredAgainstIndex(input: IndexDriftInput): IndexDriftResu
       if (j?.verdict === "bound" && bound.has(name)) {
         counts.bound++;
         const r = deepRecords.get(name);
+        const missing = unobservedProperties[name];
         records.push(
           driftRecord({
             ...(r ?? {
@@ -244,6 +269,9 @@ export function diffDeclaredAgainstIndex(input: IndexDriftInput): IndexDriftResu
             address: address(name),
             ...at,
             resourceType: entity.entityType,
+            ...(missing
+              ? { attributesUnobserved: { reason: "not-reached" as const, detail: `the index does not carry ${missing.join(", ")}; compared only the properties it holds` } }
+              : {}),
           }),
         );
         continue;

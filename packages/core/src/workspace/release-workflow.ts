@@ -56,6 +56,7 @@ import { releaseJobSteps, releaseSetupSteps, type ReleaseStepItem, type ReleaseS
 import { packLine } from "./release-steps/builds";
 import { RELEASE_BINFMT_IMAGE, qemuArchitectures } from "./release-steps/qemu";
 import { targetExtras } from "./release-steps/targets";
+import { goreleaserSetup } from "./release-steps/goreleaser";
 import { renderTrainWorkflow } from "./release-train-workflow";
 
 export const RELEASE_WORKFLOW_FORGES = ["github", "forgejo", "gitlab"] as const;
@@ -232,7 +233,20 @@ export interface ReleaseWorkflowInput {
    * root's members as a train, recorded for `env`, rather than the root as
    * one member. See ./release-train-workflow.ts.
    */
-  train?: { env: string };
+  train?: {
+    env: string;
+    /**
+     * What the members declare (#5216): `release.images` (with the platforms
+     * they build, for QEMU), `release.artifacts`, and an artifact goreleaser
+     * builds. The jobs hand them from the cut to the publish.
+     */
+    imagePlatforms?: string[];
+    images?: boolean;
+    artifacts?: boolean;
+    goreleaser?: boolean;
+    /** The directory, from the workspace root, of the member whose goreleaser build Go is set up for: its `go.mod` names the Go. */
+    goreleaserDir?: string;
+  };
 }
 
 /** What the generator reads of a `release.publish` target: enough to know which credentials and tools its job needs. */
@@ -342,9 +356,10 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       : [];
   // #5154: the root's members released as a train.
   if (input.train) {
-    if (input.forge === "gitlab") throw new Error("release.train: the train workflow renders for GitHub and Forgejo; on GitLab, run chant workspace train cut, prepare and publish from your own jobs");
     if (builds.length > 0) throw new Error("release.workflow.builds: a train cuts each member in one job, and per-platform builds are not handed to it; leave builds out of a train's workflow");
-    if (images || input.artifacts) throw new Error("release.images and release.artifacts at the root: a train releases its members, and the workflow hands no image or file between its jobs; declare them in a member and release that member on its own");
+    if (images || input.artifacts) throw new Error("release.images and release.artifacts at the root: a train releases its members, not the root; declare them in the member that publishes them");
+    const t = input.train;
+    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, green, builds: [] };
     return renderTrainWorkflow({
       forge: input.forge,
       env: input.train.env,
@@ -357,12 +372,19 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       after,
       chantSetup,
       fullSetup,
-      extra: jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps({ forge: input.forge, shape: "dispatch", input, pipeline: p, chant, root, verify: false, images: false, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, green, builds: [] }) }, input.forge),
+      extra: jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge),
       forgeToken,
       cutToken: green === "forge-checks" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [],
       green,
       gate: p.gate ?? "last-green",
       ...(input.lane ? { lane: input.lane } : {}),
+      // #5216: the members' images and files, from the cut to the publish; the doctor before the cut; verify before the publish.
+      files: t.images === true || t.artifacts === true,
+      ...(t.artifacts && t.goreleaser ? { goreleaser: ((g) => (input.forge === "gitlab" ? g.gitlab : g.github))(goreleaserSetup(input.forge, [root, t.goreleaserDir].filter((d): d is string => !!d && d !== ".").join("/") || null, p)) } : {}),
+      ...(input.signing ? { signing: true } : {}),
+      ...(input.forge === "gitlab" ? { idTokens: stepLines(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("idTokens"), (l) => l) } : {}),
+      doctor: p.trigger === "dispatch" && p.doctor !== false,
+      verify: input.groups.has("verified-releases"),
     });
   }
   if (shape === "dispatch") {
@@ -1112,6 +1134,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   }
   // #5154: a train publishes its members' targets, so their credentials, tools and signing are the workflow's.
   const memberReleases: Array<NonNullable<typeof release>> = [];
+  let goreleaserDir: string | undefined;
   if (release?.train) {
     const { locateWorkspace } = await import("./which-chant");
     const { readDeclaration } = await import("./declaration");
@@ -1121,17 +1144,27 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
       try {
         const r = (await loadChantConfig(join(root, m.dir))).config.release;
         if (r) memberReleases.push(r);
+        if (r?.artifacts && goreleaserDir === undefined && (await import("../lifecycle/release-artifacts")).usesGoreleaser(r.artifacts)) goreleaserDir = m.dir.split(sep).join("/");
       } catch (err) {
         console.error(formatError({ message: `member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
         return 1;
       }
     }
-    const shipped = memberReleases.find((r) => (r.images?.length ?? 0) > 0 || (r.artifacts?.length ?? 0) > 0);
-    if (shipped) {
-      console.error(formatError({ message: "release.train: a member declares release.images or release.artifacts, and the train workflow hands no image or file from its cut job to its publish job", hint: "Release that member with its own workflow, or publish its images and files from its npm package." }));
-      return 1;
+    // #5216: a member's files are built by its cut, in the train's cut job; a train has no per-platform build jobs for builtBy to name.
+    const { checkReleaseArtifacts, ReleaseArtifactError } = await import("../lifecycle/release-artifacts");
+    for (const r of memberReleases) {
+      if ((r.artifacts?.length ?? 0) === 0) continue;
+      try {
+        checkReleaseArtifacts(r.artifacts!, { builds: [] });
+      } catch (err) {
+        if (!(err instanceof ReleaseArtifactError)) throw err;
+        console.error(formatError({ message: `release.train: a member's ${err.message} [${err.code}]`, hint: "A train's members build their files in the train's cut job: build them there rather than in release.workflow.builds." }));
+        return 1;
+      }
     }
   }
+  const memberImages = memberReleases.flatMap((r) => r.images ?? []);
+  const memberArtifacts = memberReleases.flatMap((r) => r.artifacts ?? []);
   const allTargets = [...(release?.publish ?? []), ...memberReleases.flatMap((r) => r.publish ?? [])];
   const { resolveSigning } = await import("../lifecycle/publish-signing");
   const signs = [release, ...memberReleases].some((r) => resolveSigning(r?.signing, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi"));
@@ -1180,7 +1213,15 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
     ...(allTargets.length > 0 ? { publish: allTargets } : {}),
-    ...(release?.train ? { train: { env: release.train.env } } : {}),
+    ...(release?.train
+      ? {
+          train: {
+            env: release.train.env,
+            ...(memberImages.length > 0 ? { images: true, imagePlatforms: releaseImagePlatforms(memberImages) } : {}),
+            ...(memberArtifacts.length > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(memberArtifacts) ? { goreleaser: true, ...(goreleaserDir ? { goreleaserDir } : {}) } : {}) } : {}),
+          },
+        }
+      : {}),
     ...(args.ciInstall ? { install: args.ciInstall } : {}),
     ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
     ...(args.ciChant ? { chant: args.ciChant } : {}),
@@ -1229,5 +1270,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     console.log(`The publish job moves the floating tag (${tags.template.floating}) with git push, which a GitLab job token can't do: use release.workflow.trigger "dispatch", whose jobs push with CHANT_RELEASE_TOKEN, or move it by hand.`);
   if (forge === "gitlab" && text.includes("CHANT_GORELEASER=/tmp/goreleaser")) console.log("The job that builds release.artifacts runs goreleaser with the Go of the job's image: give it an image with the Go your go.mod names.");
   if (forge === "gitlab" && release?.workflow?.trigger === "dispatch") console.log("The cut and publish jobs push with CHANT_RELEASE_TOKEN: a project access token with write_repository, as a masked CI/CD variable.");
+  if (forge === "gitlab" && release?.train && release.workflow?.trigger === "dispatch")
+    console.log(`Start a train by running a pipeline with CHANT_RELEASE_LEVELS=auto (or the levels), and publish a recorded one with CHANT_RELEASE_TRAIN=<id>. A release-train/${release.train.env}/* tag pushed from a workstation starts nothing in this file: publish it with CHANT_RELEASE_TRAIN.`);
   return 0;
 }
