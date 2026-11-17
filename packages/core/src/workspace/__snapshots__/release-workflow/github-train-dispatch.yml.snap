@@ -1484,11 +1484,16 @@ jobs:
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+      CHANT_RELEASE_GIT_TOKEN: ${{ github.token }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper
+      GIT_CONFIG_VALUE_0: "!f() { test \"$1\" = get && echo username=x-access-token && echo \"password=$CHANT_RELEASE_GIT_TOKEN\"; }; f"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.gate.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
@@ -1612,11 +1617,16 @@ jobs:
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+      CHANT_RELEASE_GIT_TOKEN: ${{ github.token }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper
+      GIT_CONFIG_VALUE_0: "!f() { test \"$1\" = get && echo username=x-access-token && echo \"password=$CHANT_RELEASE_GIT_TOKEN\"; }; f"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.gate.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
@@ -1734,11 +1744,16 @@ jobs:
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+      CHANT_RELEASE_GIT_TOKEN: ${{ github.token }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper
+      GIT_CONFIG_VALUE_0: "!f() { test \"$1\" = get && echo username=x-access-token && echo \"password=$CHANT_RELEASE_GIT_TOKEN\"; }; f"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.gate.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
@@ -1747,6 +1762,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: cli/go.mod
+          cache: false
       - name: goreleaser v2.19.0
         run: "mkdir -p \"$RUNNER_TEMP/goreleaser\" && curl -fsSL -o \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  $RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" -C \"$RUNNER_TEMP/goreleaser\" goreleaser && echo \"CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser\" >> \"$GITHUB_ENV\""
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
@@ -1789,6 +1805,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: cli/go.mod
+          cache: false
       - name: goreleaser v2.19.0
         run: "mkdir -p \"$RUNNER_TEMP/goreleaser\" && curl -fsSL -o \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  $RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\" -C \"$RUNNER_TEMP/goreleaser\" goreleaser && echo \"CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser\" >> \"$GITHUB_ENV\""
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'

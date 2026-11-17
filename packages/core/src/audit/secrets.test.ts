@@ -120,6 +120,20 @@ describe("entropy heuristic — identifier/slug false-positive guard (#443)", ()
     expect(ids([{ path: "package.json", content: '"some-package-name": "acme-widget-factory-lib"' }])).not.toContain(ENTROPY_RULE_ID);
   });
 
+  test("a release asset's name in a pinned download URL is not flagged (#5268)", () => {
+    // The goreleaser install line chant release workflow writes: the URL's `0/goreleaser_Linux_x86_64` once scored over the threshold.
+    const line =
+      'run: "curl -fsSL -o \\"$RUNNER_TEMP/goreleaser/goreleaser.tar.gz\\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \\"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  $RUNNER_TEMP/goreleaser/goreleaser.tar.gz\\" | sha256sum -c -"\n';
+    expect(ids([{ path: ".github/workflows/release.yml", content: line }])).not.toContain(ENTROPY_RULE_ID);
+    expect(looksLikeIdentifierSlug("0/goreleaser_Linux_x86_64")).toBe(true);
+    expect(looksLikeIdentifierSlug("nfpm_2.43.1_Linux_x86_64")).toBe(true);
+  });
+
+  test("digit chunks don't make a random token a slug (#5268)", () => {
+    expect(looksLikeIdentifierSlug("kQ7mZ9pL_2024_xR8vT4nW1sD6uJ3")).toBe(false);
+    expect(looksLikeIdentifierSlug("Tq9x_12_abc_77_Zr4k")).toBe(false);
+  });
+
   test("a UUID-shaped value (hyphenated but not dictionary words) is still a candidate", () => {
     // Not asserting it fires (entropy of hex digits alone may sit under the default
     // threshold) — only that the slug guard doesn't blanket-exempt hyphenated values.

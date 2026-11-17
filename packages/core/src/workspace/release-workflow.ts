@@ -51,12 +51,12 @@ import { GENERATED_MARKER } from "../discovery/files";
 import { tagShape, type MemberTags } from "../lifecycle/release-tag";
 import type { SecurityGroup } from "./security";
 import type { OpSetupStep } from "../lexicon";
-import { checkBuilds, releaseBuildArchive, releaseBuildArtifact, resolveToolchains, toolchainLines, type ReleaseBuildConfig, type ReleaseToolchainDecl } from "./release-toolchains";
+import { buildJobToolchains, checkBuilds, releaseBuildArchive, releaseBuildArtifact, resolveToolchains, toolchainLines, type ReleaseBuildConfig, type ReleaseToolchainDecl } from "./release-toolchains";
 import { releaseJobSteps, releaseSetupSteps, type ReleaseStepItem, type ReleaseStepSlot, type ReleaseWorkflowContext, type ReleaseWorkflowShape } from "./release-steps";
 import { packLine } from "./release-steps/builds";
 import { RELEASE_BINFMT_IMAGE, qemuArchitectures } from "./release-steps/qemu";
 import { targetExtras } from "./release-steps/targets";
-import { goreleaserSetup } from "./release-steps/goreleaser";
+import { goreleaserSetup, setsUpGo } from "./release-steps/goreleaser";
 import { renderTrainWorkflow } from "./release-train-workflow";
 
 export const RELEASE_WORKFLOW_FORGES = ["github", "forgejo", "gitlab"] as const;
@@ -317,7 +317,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     throw new Error("release.workflow.toolchains: a GitLab job runs in its runner's image, which brings the toolchain; name the image in .gitlab-ci.yml (default: image:) and leave toolchains out");
   }
   const chantSetup = toolchainLines(resolveToolchains(p.toolchains === false ? false : (p.toolchains ?? []).filter((t) => (typeof t === "string" ? t : t.name) === "node"), new Set(), root, p.toolchains !== false));
-  const fullSetup = toolchainLines(resolveToolchains(p.toolchains, files, root, true));
+  const fullSetup = toolchainLines(buildJobToolchains(p.toolchains, input.projectFiles, root));
   const builds = p.builds ?? [];
   if (builds.length > 0) {
     if (p.trigger !== "dispatch") throw new Error('release.workflow.builds: the tag trigger publishes a release cut before the workflow ran, so nothing built here would be in it; use trigger: "dispatch"');
@@ -409,7 +409,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(input.lane ? { lane: input.lane } : {}),
       // #5216: the members' images and files, from the cut to the publish; the doctor before the cut; verify before the publish.
       files: t.images === true || t.artifacts === true,
-      ...(t.artifacts && t.goreleaser ? { goreleaser: ((g) => (input.forge === "gitlab" ? g.gitlab : g.github))(goreleaserSetup(input.forge, [root, t.goreleaserDir].filter((d): d is string => !!d && d !== ".").join("/") || null, p)) } : {}),
+      ...(t.artifacts && t.goreleaser ? { goreleaser: ((g) => (input.forge === "gitlab" ? g.gitlab : g.github))(goreleaserSetup(input.forge, [root, t.goreleaserDir].filter((d): d is string => !!d && d !== ".").join("/") || null, p, setsUpGo(p, input.projectFiles, root))) } : {}),
       ...(input.signing ? { signing: true } : {}),
       ...(input.forge === "gitlab" ? { idTokens: stepLines(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("idTokens"), (l) => l) } : {}),
       doctor: p.trigger === "dispatch" && p.doctor !== false,
@@ -738,6 +738,23 @@ export function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge)
   };
 }
 
+/**
+ * A job that uploads a workflow artifact checks out without persisting the
+ * token in `.git/config` (#5268), where the upload could sweep it up, and
+ * these lines give its git the job's token instead: a credential helper for
+ * the forge's own host only, read from the job's environment, which no
+ * upload carries. The cut's fetches, the ledger push and the tag push use it.
+ */
+export const GIT_TOKEN_ENV = [
+  "      CHANT_RELEASE_GIT_TOKEN: ${{ github.token }}",
+  '      GIT_CONFIG_COUNT: "1"',
+  "      GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper",
+  `      GIT_CONFIG_VALUE_0: ${JSON.stringify('!f() { test "$1" = get && echo username=x-access-token && echo "password=$CHANT_RELEASE_GIT_TOKEN"; }; f')}`,
+];
+
+/** The job's steps upload a workflow artifact (#5268). */
+export const uploadsArtifact = (steps: readonly string[]): boolean => steps.some((l) => /uses:\s*actions\/upload-artifact@/.test(l));
+
 /** The checkout and toolchain setup a GitHub or Forgejo job starts with (#5152); `ref` checks out that commit. */
 export function githubSetup(ref: string | undefined, setup: readonly string[], persist = true): string[] {
   return [
@@ -906,6 +923,8 @@ function renderGithubDispatch(o: DispatchInput): string {
   const cutStep = (slot: ReleaseStepSlot) => stepLines(cut(slot), run);
   const publishStep = (slot: ReleaseStepSlot) => stepLines(publish(slot), run);
   const built = o.builds.map((b) => `build-${b.name}`);
+  // #5268: a cut that hands files on keeps no token in .git/config.
+  const cutUploads = uploadsArtifact(cutStep("afterCut"));
   const lines = [
     "name: chant release",
     "on:",
@@ -943,9 +962,9 @@ function renderGithubDispatch(o: DispatchInput): string {
     "    runs-on: ubuntu-latest",
     ...jobPermissions(o.extra, { contents: "write", ...(o.context.signing && o.context.doctor ? { "id-token": "write" } : {}) }, "cut"),
     ...defaults,
-    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...cutEnvToken(o)]),
+    ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...cutEnvToken(o), ...(cutUploads ? GIT_TOKEN_ENV : [])]),
     "    steps:",
-    ...githubSetup(commit, o.fullSetup),
+    ...githubSetup(commit, o.fullSetup, !cutUploads),
     ...installLines,
     ...o.extra.githubSteps,
     ...cutStep("prepare"),
