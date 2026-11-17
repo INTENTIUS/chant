@@ -249,3 +249,66 @@ describe("on a composed workspace graph (#5097)", () => {
     expect(graph.edges[0].origin).toBeUndefined();
   });
 });
+
+describe("binding subjects by namespace and containment of every namespaced kind (#5284)", () => {
+  const sa = (ns: string, name: string) => node(`${ns}/sa/${name}`, "K8s::Core::ServiceAccount", { metadata: { name, namespace: ns } }, ns);
+  const binding = (id: string, kind: string, subjects: unknown[], ns?: string) =>
+    node(id, kind, { metadata: { name: id, ...(ns ? { namespace: ns } : {}) }, roleRef: { kind: "ClusterRole", name: "view" }, subjects }, ns);
+  const grants = (out: ReturnType<typeof derive>) => out.edges.filter((e) => e.rule?.includes("subjects[].name")).map((e) => `${e.from} -> ${e.to}`);
+
+  it("reaches a subject in another namespace from a RoleBinding, and not the same name in its own", () => {
+    const nodes = [
+      sa("shop", "web-sa"),
+      sa("shop2", "web-sa"),
+      binding("shop2/rb", "K8s::Rbac::RoleBinding", [{ kind: "ServiceAccount", name: "web-sa", namespace: "shop" }], "shop2"),
+    ];
+    const out = derive(nodes, clusterScope);
+    expect(grants(out)).toEqual(["shop2/rb -> shop/sa/web-sa"]);
+    expect(out.ambiguous).toEqual([]);
+  });
+
+  it("reaches a namespaced ServiceAccount from a cluster-scoped binding, over an index", () => {
+    const nodes = [
+      sa("shop", "web-sa"),
+      sa("shop2", "web-sa"),
+      binding("crb", "K8s::Rbac::ClusterRoleBinding", [
+        { kind: "ServiceAccount", name: "web-sa", namespace: "shop2" },
+        { kind: "ServiceAccount", name: "web-sa", namespace: "shop" },
+      ], undefined),
+    ].map((n) => (n.id === "crb" ? { ...n, location: "cluster" } : n));
+    expect(grants(derive(nodes, clusterScope))).toEqual(["crb -> shop/sa/web-sa", "crb -> shop2/sa/web-sa"]);
+  });
+
+  it("reads a subject with no namespace as the binding's own on a RoleBinding, and as nothing on a ClusterRoleBinding", () => {
+    const nodes = [
+      sa("shop", "web-sa"),
+      sa("shop2", "web-sa"),
+      binding("shop2/rb", "K8s::Rbac::RoleBinding", [{ kind: "ServiceAccount", name: "web-sa" }], "shop2"),
+      { ...binding("crb", "K8s::Rbac::ClusterRoleBinding", [{ kind: "ServiceAccount", name: "web-sa" }]), location: "cluster" },
+    ];
+    const out = derive(nodes, clusterScope);
+    expect(grants(out)).toEqual(["shop2/rb -> shop2/sa/web-sa"]);
+    expect(out.dangling.filter((d) => d.rule.includes("subjects"))).toEqual([]);
+  });
+
+  it("does not read a User or a Group as a ServiceAccount", () => {
+    const nodes = [sa("shop", "web-sa"), binding("shop/rb", "K8s::Rbac::RoleBinding", [{ kind: "User", name: "web-sa" }, { kind: "Group", name: "web-sa" }], "shop")];
+    expect(grants(derive(nodes, clusterScope))).toEqual([]);
+  });
+
+  it("draws no edge to a namespace that holds no such account", () => {
+    const nodes = [sa("shop", "web-sa"), { ...binding("crb", "K8s::Rbac::ClusterRoleBinding", [{ kind: "ServiceAccount", name: "web-sa", namespace: "other" }]), location: "cluster" }];
+    expect(grants(derive(nodes, clusterScope))).toEqual([]);
+  });
+
+  it("places Endpoints, EndpointSlice and ControllerRevision in a namespace with a short name", () => {
+    const nodes = [
+      node("ns/shop", "K8s::Core::Namespace", { metadata: { name: "shop" } }, "cluster"),
+      node("shop/ep/web", "K8s::Core::Endpoints", { metadata: { name: "web", namespace: "shop" } }, "shop"),
+      node("shop/es/web-x", "K8s::Discovery::EndpointSlice", { metadata: { name: "web-x", namespace: "shop" } }, "shop"),
+      node("shop/cr/web-1", "K8s::Apps::ControllerRevision", { metadata: { name: "web-1", namespace: "shop" } }, "shop"),
+    ];
+    const out = derive(nodes, clusterScope);
+    expect(out.containment.map((c) => `${c.child} > ${c.parent}`).sort()).toEqual(["shop/cr/web-1 > ns/shop", "shop/ep/web > ns/shop", "shop/es/web-x > ns/shop"]);
+  });
+});

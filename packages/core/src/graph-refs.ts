@@ -786,8 +786,12 @@ export function reconstructIndexedEdges(
           ...(rule.optional ? { optional: true } : {}),
         };
         if (rule.join) {
-          const find: FindNodes = (value, scope) =>
-            [...(scope === undefined ? lookup(node, value) : named.get(`${scope}\u0000${value}`) ?? new Map<string, string>()).keys()].map((id) => byId.get(id)!);
+          const find: FindNodes = (value, scope) => {
+            if (scope === undefined) return [...lookup(node, value).keys()].map((id) => byId.get(id)!);
+            // Over an index a namespace is the whole region (a node's location), so the holder's account and that region name the scope too (#5284).
+            const ids = new Map([...(named.get(`${scope}\u0000${value}`) ?? []), ...(index.get(keyOf({ account: scopeOf(node).account, region: scope }, value)) ?? [])]);
+            return [...ids.keys()].map((id) => byId.get(id)!);
+          };
           for (const j of rule.join(node, find)) resolve(node, j.value, { ...spec, via: j.via ?? spec.via }, j);
           continue;
         }
