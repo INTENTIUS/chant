@@ -155,6 +155,31 @@ const POD_SPECS: ReadonlyArray<readonly [kind: string, podSpec: string]> = [
   ["K8s::Batch::CronJob", "spec.jobTemplate.spec.template.spec"],
 ];
 
+/**
+ * Namespaced built-in kinds a cluster lists that no rule here reads by name:
+ * they get the `in namespace` containment edge and nothing else (#5284). Their
+ * namespace is a short word as often as not (`shop`), which the identity pass
+ * skips, so without a rule here an Endpoints or an EndpointSlice sits in no
+ * namespace.
+ */
+const CONTAINED_KINDS = [
+  "K8s::Core::Endpoints",
+  "K8s::Discovery::EndpointSlice",
+  "K8s::Apps::ControllerRevision",
+  "K8s::Core::ReplicationController",
+  "K8s::Core::PodTemplate",
+  "K8s::Core::ResourceQuota",
+  "K8s::Core::LimitRange",
+  "K8s::Core::Event",
+  "K8s::Events::Event",
+  "K8s::Coordination::Lease",
+  "K8s::Coordination::LeaseCandidate",
+  "K8s::Resource::ResourceClaim",
+  "K8s::Resource::ResourceClaimTemplate",
+  "K8s::Storage::CSIStorageCapacity",
+  "K8s::Certificates::PodCertificateRequest",
+];
+
 /** Kinds that sit in a namespace, so `metadata.namespace` places them. */
 const NAMESPACED_KINDS = [
   ...POD_SPECS.map(([kind]) => kind),
@@ -243,6 +268,41 @@ function roleRefRules(from: string, roleKinds: readonly string[]): RefRule[] {
       return [{ value: name, targets: find(name).filter((n) => n.kind === targetKind) }];
     },
   }));
+}
+
+/**
+ * A binding's `subjects` name a ServiceAccount by `name` and `namespace`
+ * (#5284). The subject's own namespace says where the account is: a RoleBinding
+ * in `shop2` can name `shop/web-sa`, and a ClusterRoleBinding, which sits in no
+ * namespace, reaches its account only through that field. A subject with no
+ * namespace is the binding's own namespace for a RoleBinding, and names nothing
+ * on a ClusterRoleBinding. Only `kind: ServiceAccount` subjects are read: a
+ * User or a Group of the same name is not an account.
+ */
+function subjectRules(from: string, inOwnNamespace: boolean): RefRule[] {
+  return [
+    {
+      from,
+      path: "subjects[].name",
+      targetKind: "K8s::Core::ServiceAccount",
+      relation: "reference",
+      label: "grants",
+      optional: true,
+      join(holder, find) {
+        const subjects = (holder.attrs as { subjects?: unknown }).subjects;
+        if (!Array.isArray(subjects)) return [];
+        const out: JoinedRef[] = [];
+        for (const s of subjects as Array<Record<string, unknown>>) {
+          if (!s || s.kind !== "ServiceAccount" || typeof s.name !== "string" || s.name === "") continue;
+          const ns = typeof s.namespace === "string" && s.namespace !== "" ? s.namespace : undefined;
+          if (ns === undefined && !inOwnNamespace) continue;
+          const found = ns === undefined ? find(s.name) : find(s.name, ns);
+          out.push({ value: ns === undefined ? s.name : `${ns}/${s.name}`, targets: found.filter((n) => n.kind === "K8s::Core::ServiceAccount"), via: "subjects" });
+        }
+        return out;
+      },
+    },
+  ];
 }
 
 /** What a pod spec names: its service account, mounted config and secrets, claims, pull secrets. */
@@ -458,7 +518,7 @@ const identityRules: RefRule[] = [
 
 const refs: RefRule[] = [
   // ── containment: the namespace an object is in ──
-  ...NAMESPACED_KINDS.map((kind) => ref(kind, "metadata.namespace", "K8s::Core::Namespace", "in namespace", "containment")),
+  ...[...NAMESPACED_KINDS, ...CONTAINED_KINDS].map((kind) => ref(kind, "metadata.namespace", "K8s::Core::Namespace", "in namespace", "containment")),
 
   // ── owner references, by name inside the namespace ──
   ...anyOf("K8s::Core::Pod", "metadata.ownerReferences[].name", ["K8s::Apps::ReplicaSet", "K8s::Apps::StatefulSet", "K8s::Apps::DaemonSet", "K8s::Batch::Job"], "owned by"),
@@ -486,9 +546,9 @@ const refs: RefRule[] = [
   ref("K8s::Core::PersistentVolumeClaim", "spec.storageClassName", "K8s::Storage::StorageClass", "class"),
   ref("K8s::Core::PersistentVolume", "spec.storageClassName", "K8s::Storage::StorageClass", "class"),
   ...roleRefRules("K8s::Rbac::RoleBinding", ["K8s::Rbac::Role", "K8s::Rbac::ClusterRole"]),
-  ...anyOf("K8s::Rbac::RoleBinding", "subjects[].name", ["K8s::Core::ServiceAccount"], "grants"),
+  ...subjectRules("K8s::Rbac::RoleBinding", true),
   ...roleRefRules("K8s::Rbac::ClusterRoleBinding", ["K8s::Rbac::ClusterRole"]),
-  ...anyOf("K8s::Rbac::ClusterRoleBinding", "subjects[].name", ["K8s::Core::ServiceAccount"], "grants"),
+  ...subjectRules("K8s::Rbac::ClusterRoleBinding", false),
   ref("K8s::Core::ServiceAccount", "secrets[].name", "K8s::Core::Secret", "token"),
   ref("K8s::Core::ServiceAccount", "imagePullSecrets[].name", "K8s::Core::Secret", "pulls with"),
 
