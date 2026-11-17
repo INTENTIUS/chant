@@ -265,6 +265,8 @@ chant lifecycle diff dev --index cloud/aws/000000000000/0123456789ab
 
 Each declared entity is joined to the index the way `chant search --index` joins it, through its lexicon's index match. A bound entity's property tree is compared with its indexed resource's, normalized with the lexicon's hooks, and the observation baseline is subtracted as it is for `--live`. `--update-baseline` accepts what the run reported, value-bound as above.
 
+An index holds the properties the provider's listing returned, which for many types is a few. A declared top-level property the indexed resource does not carry is not compared. The report lists it under NOT OBSERVED BY THE INDEX, and the record carries `attributesUnobserved` naming it. A change to such a property shows only in a `--live` read.
+
 An entity that does not bind is reported with its join verdict and is never diffed. When the index listed its type and location and holds nothing with its identity, it is pending. When the index did not cover it, or the declaration spells no identity, or two indexed resources carry it, it is not observed. An uncovered entity is never drifted and never in sync.
 
 `--json` prints one drift document (`drift: "v1"`), a record per declared entity. Every record's read is `live-read`, observed at the index's `stamp.observedAt`, and the join verdict of an entity that did not bind is in `evidence.engineCode`.

@@ -1142,6 +1142,11 @@ function runLifecycleDiffIndex(args: IndexDiffArgs): IndexDriftResult {
         console.log(`  ? ${name} ${joinCell(j) ?? ""}${detail}`);
       }
     }
+    const partial = Object.entries(part.unobservedProperties).sort(([a], [b]) => a.localeCompare(b));
+    if (partial.length > 0) {
+      console.log(formatBold("\nNOT OBSERVED BY THE INDEX (declared properties its listing does not carry; not compared):"));
+      for (const [name, keys] of partial) console.log(`  ? ${name}: ${keys.join(", ")}`);
+    }
     renderDeepDiff(lexicon, part.deep, provenanceOf, args.projectRoot);
   }
   return result;
