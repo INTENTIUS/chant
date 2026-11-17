@@ -197,6 +197,10 @@ async function listOne(
       const cloudIds: CloudId[] = [];
       if (d.Identifier.startsWith("arn:")) cloudIds.push({ kind: "arn", value: d.Identifier });
       if (typeof props.Arn === "string" && props.Arn.startsWith("arn:")) cloudIds.push({ kind: "arn", value: props.Arn });
+      if (type === "AWS::SQS::Queue" && cloudIds.length === 0) {
+        const queueArn = sqsQueueArn(ctx.scope.scopeId, location, props, d.Identifier);
+        if (queueArn) cloudIds.push({ kind: "arn", value: queueArn });
+      }
       cloudIds.push({ kind: "import-id", value: d.Identifier });
       found.push({ listedType: type, location, nativeId: d.Identifier, cloudIds, tags, properties: props, observedAt, labels: false });
     }
@@ -205,6 +209,21 @@ async function listOne(
   }
   for (const r of found) ctx.resources.push(buildResource(ctx, r));
   ctx.coverage.push({ listedType: type, location, ...listedVerdict(ctx.scope) });
+}
+
+/**
+ * A queue's ARN (#5285). Cloud Control lists an SQS queue by its name or its
+ * URL and gives no ARN, while a Lambda environment value or a dead-letter
+ * policy names the queue by `arn:<partition>:sqs:<region>:<account>:<name>`.
+ * The name is the property when the model has one, else the last path segment
+ * of the identifier (a queue URL ends in the name). `scopeId` is the account
+ * the read was made in.
+ */
+export function sqsQueueArn(account: string, region: string, props: Record<string, unknown>, identifier: string): string | undefined {
+  const name = typeof props.QueueName === "string" && props.QueueName !== "" ? props.QueueName : identifier.split("/").filter(Boolean).pop();
+  if (!name || !/^\d{12}$/.test(account)) return undefined;
+  const partition = region.startsWith("cn-") ? "aws-cn" : region.startsWith("us-gov-") ? "aws-us-gov" : "aws";
+  return `arn:${partition}:sqs:${region}:${account}:${name}`;
 }
 
 function recordFailure(ctx: ListerContext, type: string, location: string, res: WireResponse): void {

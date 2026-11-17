@@ -1,4 +1,5 @@
 import type { ReferenceCatalog } from "@intentius/chant/lexicon";
+import { jsonTextRules } from "./json-text-references";
 
 /**
  * AWS reference catalog (#778, epic #776 v1) — how observed AWS resources
@@ -143,6 +144,12 @@ export const awsReferenceCatalog: ReferenceCatalog = {
     // latency record for gcp points at gcp.three-cloud.example.). Optional,
     // since most record values are addresses or hostnames outside it.
     { from: "AWS::Route53::RecordSet", path: "ResourceRecords[]", targetKind: "AWS::Route53::RecordSet", relation: "reference", label: "aliases", optional: true },
+
+    // ── ARNs inside JSON text (#5285) ──
+    // A queue's RedrivePolicy and the Resource and Principal ARNs of a policy
+    // document, each at a named path (./json-text-references.ts). Indexed
+    // nodes only: a declared graph's rules read values, not JSON text.
+    ...jsonTextRules(),
   ],
   // Tags that name a cloud id in their key or value (behold#1023 Q5). Used
   // over indexed nodes only. No rule matches equal tag values in general.

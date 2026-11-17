@@ -126,7 +126,8 @@ describe("derived edges over the aws topology fixture", () => {
 
 describe("the aws catalog over indexed nodes", () => {
   it("gives every untargeted rule a target kind for indexed nodes, and keeps it untargeted for enrichLiveAttrs", () => {
-    const untargeted = awsReferenceCatalog.refs.filter((r) => r.targetKind === undefined);
+    // A rule that reads JSON text through a `join` (#5285) takes whatever kind its ARN names.
+    const untargeted = awsReferenceCatalog.refs.filter((r) => r.targetKind === undefined && !r.join);
     expect(untargeted).toHaveLength(19);
     expect(untargeted.filter((r) => r.indexedTargetKind === undefined)).toEqual([]);
   });
@@ -134,7 +135,7 @@ describe("the aws catalog over indexed nodes", () => {
   it("keys every identity and target to a kind the lexicon has", () => {
     const kinds = [
       ...awsReferenceCatalog.identities.map((i) => i.kind),
-      ...awsReferenceCatalog.refs.flatMap((r) => [r.from, r.targetKind ?? r.indexedTargetKind!]),
+      ...awsReferenceCatalog.refs.flatMap((r) => [r.from, ...(r.join && r.targetKind === undefined ? [] : [r.targetKind ?? r.indexedTargetKind!])]),
       ...(awsReferenceCatalog.tagRefs ?? []).map((r) => r.targetKind),
     ];
     expect([...new Set(kinds)].filter((k) => !KINDS.has(k))).toEqual([]);
