@@ -19,8 +19,15 @@ import { armType } from "./arm-type";
 import { buildLiveProperties, type ArmResourceShowResponse } from "./deep-observe";
 import { loadApiVersions } from "./serializer";
 
+/**
+ * Resource Graph lists resource groups from its ResourceContainers table
+ * under this type, not under the ARM type `Microsoft.Resources/resourceGroups`.
+ */
+export const RESOURCE_GROUP_LISTED_TYPE = "microsoft.resources/subscriptions/resourcegroups";
+
 /** `Microsoft.Network/virtualNetworks_subnets` as Resource Graph spells it: `microsoft.network/virtualnetworks/subnets`. */
 export function azureListedTypeForKind(kind: string): string {
+  if (kind.toLowerCase() === "microsoft.resources/resourcegroups") return RESOURCE_GROUP_LISTED_TYPE;
   return armType(kind).toLowerCase();
 }
 

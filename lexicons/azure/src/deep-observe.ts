@@ -64,6 +64,7 @@ import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { classifyArmFailure, isTopLevelType } from "./describe-resources";
 import { isBracketExpression } from "./lint/post-synth/arm-refs";
 import { AZURE_TAG_OWNERSHIP_KEYS } from "./ownership";
+import { azureImportRegistry } from "./index-import";
 
 
 /** The full `az resource show -o json` shape this reader reads (a superset of the thin path's `AzResourceShowResponse`). */
@@ -280,6 +281,21 @@ function rekeyUserAssignedIdentities(tree: Record<string, unknown>): Record<stri
 }
 
 /**
+ * True when `pattern` is a top-level name of the flattened tree that the
+ * kind's schema requires a declaration to set (a Key Vault's `tenantId`).
+ * A name in {@link AZURE_READ_ONLY_NAMES} is server-filled elsewhere, but
+ * here it is an input. It is kept unless the other side is known to lack
+ * it: an index (no other side) keeps it, so an index import can write source
+ * that builds (#5264), and a diff against a declaration that sets it at the
+ * same path compares it.
+ */
+function isRequiredInput(entityType: string, pattern: string): boolean {
+  if (pattern.includes(".") || pattern.includes("[")) return false;
+  const entry = azureImportRegistry().get(entityType);
+  return (entry?.innerRequired ?? []).includes(pattern) || (entry?.required ?? []).includes(pattern);
+}
+
+/**
  * The azure lexicon's noise rules. Three classes, same as AWS: server-
  * populated fields (by name, unconditional), controller-injected boilerplate
  * (by name, unconditional), and ARM service defaults (gated on
@@ -293,7 +309,8 @@ export const azureDeepNormalizationHooks: DeepNormalizationHooks = {
 
   prune(node: DeepNode): boolean {
     const name = lastSegment(node.pattern);
-    if (AZURE_READ_ONLY_NAMES.has(name) || AZURE_UNCONDITIONAL_PRUNE_NAMES.has(name)) return true;
+    if (AZURE_UNCONDITIONAL_PRUNE_NAMES.has(name)) return true;
+    if (AZURE_READ_ONLY_NAMES.has(name) && !(node.counterpart !== "absent" && isRequiredInput(node.entityType, node.pattern))) return true;
 
     if (node.side !== "live" || node.counterpart !== "absent") return false;
 

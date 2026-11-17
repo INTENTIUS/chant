@@ -150,11 +150,14 @@ function normalizeProvider(fileProvider: string): string {
  * generated surface at once (and back into tsc time — see the #438 bounding
  * story). Only the org-hierarchy and policy providers need them today; grow
  * this set intentionally, checking generated size and azure tsc time after.
+ * Microsoft.Resources is here for `resourceGroups`, which only the
+ * subscription section defines (#5264).
  */
 const SCOPED_SECTION_PROVIDERS = new Set([
   "Microsoft.Management",
   "Microsoft.Subscription",
   "Microsoft.Authorization",
+  "Microsoft.Resources",
 ]);
 
 /** Scope sections of a provider file, in definition-priority order. */

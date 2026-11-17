@@ -77,9 +77,13 @@ export interface IndexImportCodegen {
    * `DeletionPolicy: Retain` on every imported resource, #4536). `notes`
    * go into the file's header comment after the logical id (the k8s
    * lexicon names the keys of a Secret it writes as a referenced secret).
-   * `missing` names the top-level properties the type requires that the
-   * node's attrs do not hold; each becomes a parameter from
-   * {@link requiredParameter}.
+   * `missing` names the properties the type requires that the node's
+   * attrs do not hold, as dotted paths (`properties.tenantId`); each
+   * becomes a parameter from {@link requiredParameter}. `partition` splits
+   * the resources of one lexicon and location into groups that deploy
+   * apart (the azure lexicon writes a resource group's resources apart from
+   * the subscription-scope resource groups themselves); it is a directory
+   * name under the location.
    */
   resource(node: IRNode):
     | {
@@ -88,6 +92,7 @@ export interface IndexImportCodegen {
         attributes?: Record<string, unknown>;
         notes?: readonly string[];
         missing?: readonly string[];
+        partition?: string;
       }
     | { unsupported: string };
   /**
@@ -161,15 +166,16 @@ export interface IndexImportReport {
   selection: IndexImportSelection;
   resources: IndexImportResourceReport[];
   parameters: IndexImportParameterReport[];
-  groups: Array<{ group: string; lexicon: string; location: string; resources: number }>;
+  groups: Array<{ group: string; lexicon: string; location: string; partition?: string; resources: number }>;
 }
 
-/** One output group: a lexicon and a location, written to `dir` under the output. */
+/** One output group: a lexicon and a location (and a partition, when the lexicon names one), written to `dir` under the output. */
 export interface IndexImportGroup {
-  /** `""` when the import has one group, else `<lexicon>/<location>`. */
+  /** `""` when the import has one group, else `<lexicon>/<location>` or `<lexicon>/<location>/<partition>`. */
   dir: string;
   lexicon: string;
   location: string;
+  partition?: string;
   ir: TemplateIR;
   /** Comment lines (without `// `) to put at the top of the group's first file. */
   header: string[];
@@ -401,6 +407,15 @@ function setExact(tree: unknown, parts: ReadonlyArray<string | number>, value: u
   return { ...obj, [head]: setExact(obj[head], rest, value) };
 }
 
+/** `tree` with `value` at the object path `parts`, making each missing object on the way. */
+function setCreating(tree: Record<string, unknown>, parts: readonly string[], value: unknown): Record<string, unknown> {
+  const [head, ...rest] = parts;
+  if (rest.length === 0) return { ...tree, [head]: value };
+  const child = tree[head];
+  const obj = child !== null && typeof child === "object" && !Array.isArray(child) ? (child as Record<string, unknown>) : {};
+  return { ...tree, [head]: setCreating(obj, rest, value) };
+}
+
 function getExact(tree: unknown, parts: ReadonlyArray<string | number>): unknown {
   let cur = tree;
   for (const p of parts) {
@@ -476,6 +491,7 @@ export function planIndexImport(
     attributes?: Record<string, unknown>;
     notes?: readonly string[];
     missing?: readonly string[];
+    partition?: string;
   }> = [];
   for (const node of nodes) {
     if (!nodeSelected(node, sel)) continue;
@@ -521,6 +537,7 @@ export function planIndexImport(
       ...(r.attributes ? { attributes: r.attributes } : {}),
       ...(r.notes && r.notes.length > 0 ? { notes: r.notes } : {}),
       ...(r.missing && r.missing.length > 0 ? { missing: [...new Set(r.missing)].sort(byString) } : {}),
+      ...(r.partition ? { partition: r.partition } : {}),
     });
   }
 
@@ -536,13 +553,18 @@ export function planIndexImport(
     const regions = regional.get(n.lexicon);
     return regions && regions.size === 1 ? [...regions][0] : loc === "" ? "global" : loc;
   };
-  const groupKeys = [...new Set(writable.map((w) => `${w.node.lexicon}/${groupLocation(w.node)}`))].sort(byString);
+  const partitionOf = new Map(writable.map((w) => [w.node.id, w.partition]));
+  const groupKey = (n: IRNode) => {
+    const partition = partitionOf.get(n.id);
+    return `${n.lexicon}/${groupLocation(n)}${partition ? `/${partition}` : ""}`;
+  };
+  const groupKeys = [...new Set(writable.map((w) => groupKey(w.node)))].sort(byString);
   const single = groupKeys.length === 1;
-  const groupDir = (n: IRNode) => (single ? "" : `${n.lexicon}/${groupLocation(n)}`);
+  const groupDir = (n: IRNode) => (single ? "" : groupKey(n));
 
   const logicalIds = new Map<string, string>();
   for (const key of groupKeys) {
-    const members = writable.filter((w) => `${w.node.lexicon}/${groupLocation(w.node)}` === key);
+    const members = writable.filter((w) => groupKey(w.node) === key);
     const codegen = members[0].codegen;
     const label = (n: IRNode) => codegen.typeLabel?.(n) ?? defaultTypeLabel(n);
     for (const [id, name] of assignLogicalIds(members.map((m) => m.node), label)) logicalIds.set(id, name);
@@ -551,7 +573,7 @@ export function planIndexImport(
   const groups: IndexImportGroup[] = [];
   const parameterReports: IndexImportParameterReport[] = [];
   for (const key of groupKeys) {
-    const members = writable.filter((w) => `${w.node.lexicon}/${groupLocation(w.node)}` === key);
+    const members = writable.filter((w) => groupKey(w.node) === key);
     const dir = groupDir(members[0].node);
     const header: string[] = [];
     const resources: ResourceIR[] = [];
@@ -643,14 +665,15 @@ export function planIndexImport(
         header.push(`${logicalId}.${at} was masked in the index; fill in the parameter ${name}`);
       }
       for (const at of w.missing ?? []) {
-        if (props[at] !== undefined) continue;
+        const parts = at.split(".");
+        if (getExact(props, parts) !== undefined) continue;
         if (!w.codegen.requiredParameter) {
           header.push(`${logicalId}.${at} is required and the index listing did not hold it; add it before building`);
           continue;
         }
         const name = parameterName(at);
         parameters.push(w.codegen.requiredParameter(name, { node: w.node, logicalId, path: at }));
-        props = { ...props, [at]: w.codegen.parameterReference(name) };
+        props = setCreating(props, parts, w.codegen.parameterReference(name));
         params.push(name);
         parameterReports.push({ name, node: w.node.id, path: at, group: dir, cause: "missing" });
         header.push(`${logicalId}.${at} is required and the index listing did not hold it; fill in the parameter ${name}`);
@@ -660,8 +683,15 @@ export function planIndexImport(
       if (params.length > 0) report.parameters = params;
       resources.push({ logicalId, type: w.type, properties: props, ...(w.attributes && Object.keys(w.attributes).length > 0 ? { attributes: w.attributes } : {}) });
     }
-    const [lexicon, ...loc] = key.split("/");
-    groups.push({ dir, lexicon, location: loc.join("/"), ir: { resources, parameters }, header });
+    const first = members[0];
+    groups.push({
+      dir,
+      lexicon: first.node.lexicon,
+      location: groupLocation(first.node),
+      ...(first.partition ? { partition: first.partition } : {}),
+      ir: { resources, parameters },
+      header,
+    });
   }
 
   const report: IndexImportReport = {
@@ -672,7 +702,13 @@ export function planIndexImport(
     selection: sel,
     resources: [...reports.values()].sort((a, b) => byString(a.node, b.node)),
     parameters: parameterReports,
-    groups: groups.map((g) => ({ group: g.dir, lexicon: g.lexicon, location: g.location, resources: g.ir.resources.length })),
+    groups: groups.map((g) => ({
+      group: g.dir,
+      lexicon: g.lexicon,
+      location: g.location,
+      ...(g.partition ? { partition: g.partition } : {}),
+      resources: g.ir.resources.length,
+    })),
   };
   return { groups, report };
 }

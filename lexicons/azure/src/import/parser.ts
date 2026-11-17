@@ -213,7 +213,8 @@ function mapArmParameterType(type: string): string {
     case "bool": return "String";
     case "array": return "CommaDelimitedList";
     case "object": return "String";
-    case "securestring": return "String";
+    case "securestring": return "securestring";
+    case "secureobject": return "secureObject";
     default: return "String";
   }
 }

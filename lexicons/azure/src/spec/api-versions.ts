@@ -92,12 +92,18 @@ export function parseSchemaPath(
  * GA dates: the naive latest for both is a preview (2024-02-01-preview adds
  * serviceGroups; 2025-11-01-preview adds changeTenantRequest), and the
  * management-group hierarchy should not author against preview apiVersions.
+ *
+ * Microsoft.Resources splits too (#5264): the newest dated file (2025-07-01)
+ * carries only deploymentStacks, and resourceGroups, deployments and tags
+ * last appear in 2025-04-01. Pin both so a resource group is a kind, which
+ * an index import of a subscription needs.
  */
 export const PROVIDER_VERSION_OVERRIDES: Record<string, readonly string[]> = {
   "Microsoft.Authorization": ["2022-04-01", "2026-06-01", "2022-07-01-preview"],
   "Microsoft.AzureStackHCI": ["2026-05-01-preview", "2026-04-01-preview"],
   "Microsoft.Compute": ["2026-03-01"],
   "Microsoft.Management": ["2023-04-01"],
+  "Microsoft.Resources": ["2025-07-01", "2025-04-01"],
   "Microsoft.Subscription": ["2021-10-01"],
 };
 

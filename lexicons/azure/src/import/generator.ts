@@ -10,6 +10,10 @@ import type { TemplateIR, ResourceIR, ParameterIR } from "@intentius/chant/impor
 const require = createRequire(import.meta.url);
 import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
 import { join } from "path";
+import { armType } from "../arm-type";
+
+/** Intrinsics the generator writes as calls, which the file then imports. */
+const CALL_INTRINSICS = new Set(["ResourceId", "Reference", "Concat", "UniqueString"]);
 
 /**
  * TypeScript code generator for ARM templates.
@@ -23,11 +27,17 @@ export class ArmGenerator implements TypeScriptGenerator {
     // `// Unknown resource type: Microsoft.…` — indistinguishable from a
     // genuine coverage gap in the lexicon. A missing registry now says so
     // (#1367).
+    // A child type is keyed both ways: the lexicon's kind
+    // (`Microsoft.Network/virtualNetworks_subnets`, what an index import
+    // writes) and ARM's type (`.../virtualNetworks/subnets`, what a template
+    // holds), so a subnet is written as a Subnet rather than an unknown type
+    // (#5264).
     const meta = loadLexiconRegistry(join(import.meta.dirname, "../.."), "azure");
     for (const [className, entry] of Object.entries(meta)) {
-      if (entry.kind === "resource" && !className.includes("_")) {
-        this.typeToClass.set(entry.resourceType, className);
-      }
+      if (entry.kind !== "resource") continue;
+      this.typeToClass.set(entry.resourceType, className);
+      const arm = armType(entry.resourceType);
+      if (!this.typeToClass.has(arm)) this.typeToClass.set(arm, className);
     }
   }
 
@@ -47,11 +57,10 @@ export class ArmGenerator implements TypeScriptGenerator {
       if (this.hasAzurePseudo(resource.properties)) {
         needsAzure = true;
       }
+      this.collectIntrinsics(resource.properties, importedIntrinsics);
     }
 
-    if (ir.parameters.length > 0) {
-      // Parameters would need a Parameter import from core
-    }
+    if (ir.parameters.length > 0) importedClasses.add("Parameter");
 
     // Build import statement
     const symbols: string[] = [...importedClasses].sort();
@@ -64,6 +73,16 @@ export class ArmGenerator implements TypeScriptGenerator {
 
     if (symbols.length > 0) {
       lines.push(`import { ${symbols.join(", ")} } from "@intentius/chant-lexicon-azure";`);
+      lines.push("");
+    }
+
+    // Parameters, each an export whose name is the template's parameter name.
+    for (const param of ir.parameters) {
+      const options: string[] = [];
+      if (param.description) options.push(`description: ${JSON.stringify(param.description)}`);
+      if (param.defaultValue !== undefined) options.push(`defaultValue: ${this.generateValue(param.defaultValue, 1)}`);
+      const args = [JSON.stringify(param.type), ...(options.length > 0 ? [`{ ${options.join(", ")} }`] : [])];
+      lines.push(`export const ${this.toVarName(param.name)} = new Parameter(${args.join(", ")});`);
       lines.push("");
     }
 
@@ -102,7 +121,8 @@ export class ArmGenerator implements TypeScriptGenerator {
     const entries: string[] = [];
 
     for (const [key, value] of Object.entries(props)) {
-      entries.push(`${innerIndent}${key}: ${this.generateValue(value, depth + 1)},`);
+      const k = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+      entries.push(`${innerIndent}${k}: ${this.generateValue(value, depth + 1)},`);
     }
 
     return `{\n${entries.join("\n")}\n${indent}}`;
@@ -151,6 +171,17 @@ export class ArmGenerator implements TypeScriptGenerator {
       default:
         return JSON.stringify(obj);
     }
+  }
+
+  private collectIntrinsics(value: unknown, into: Set<string>): void {
+    if (Array.isArray(value)) {
+      for (const v of value) this.collectIntrinsics(v, into);
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.__intrinsic === "string" && CALL_INTRINSICS.has(obj.__intrinsic)) into.add(obj.__intrinsic);
+    for (const v of Object.values(obj)) this.collectIntrinsics(v, into);
   }
 
   private hasAzurePseudo(props: Record<string, unknown>): boolean {

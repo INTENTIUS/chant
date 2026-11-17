@@ -566,14 +566,24 @@ function serializeToTemplate(
 /**
  * Map chant parameter types to ARM parameter types.
  */
-function mapParameterType(paramType: string): string {
+/**
+ * The ARM type of a parameter: the core names (`String`, `Number`,
+ * `CommaDelimitedList`), or ARM's own type names in any case, so a
+ * `securestring` parameter stays secure (#5264).
+ */
+export function mapParameterType(paramType: string): string {
   switch (paramType) {
     case "String": return "string";
     case "Number": return "int";
     case "CommaDelimitedList": return "array";
-    default: return "string";
   }
+  const arm = ARM_PARAMETER_TYPES.get(paramType.toLowerCase());
+  return arm ?? "string";
 }
+
+const ARM_PARAMETER_TYPES: ReadonlyMap<string, string> = new Map(
+  ["string", "securestring", "int", "bool", "object", "secureObject", "array"].map((t) => [t.toLowerCase(), t]),
+);
 
 /**
  * Azure ARM template serializer implementation.

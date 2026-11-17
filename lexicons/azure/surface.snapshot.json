@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-21T04:33:19.549Z",
+  "generatedAt": "2026-11-17T21:02:09.229Z",
   "entries": {
     "ADCCatalogProperties": {
       "kind": "property",
@@ -4773,6 +4773,28 @@
       "kind": "property",
       "resourceType": "Microsoft.Relationships/dependencyOf.DependencyOfRelationshipProperties"
     },
+    "Deployment": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Resources/deployments",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "identity:false",
+        "location:false",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "createOnly": [
+        "location"
+      ],
+      "taggable": true
+    },
+    "DeploymentPropertiesOrDeploymentPropertiesExtended": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/deployments.DeploymentPropertiesOrDeploymentPropertiesExtended"
+    },
     "DeploymentResourceProperties": {
       "kind": "property",
       "resourceType": "Microsoft.AppPlatform/Spring_apps_deployments.DeploymentResourceProperties"
@@ -4792,6 +4814,22 @@
     "DeploymentStacksWhatIfResultProperties": {
       "kind": "property",
       "resourceType": "Microsoft.Resources/deploymentStacksWhatIfResults.DeploymentStacksWhatIfResultProperties"
+    },
+    "Deployment_DeploymentIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/deployments.DeploymentIdentity"
+    },
+    "Deployment_DeploymentIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/deployments.DeploymentIdentityUserAssignedIdentities"
+    },
+    "Deployment_DeploymentPropertiesOrDeploymentPropertiesExtended": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/deployments.DeploymentPropertiesOrDeploymentPropertiesExtended"
+    },
+    "Deployment_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/deployments.UserAssignedIdentity"
     },
     "DesktopVirtualizationworkspaces": {
       "kind": "resource",
@@ -12387,6 +12425,10 @@
       "kind": "property",
       "resourceType": "Microsoft.ApiManagement/service_apis_resolvers.ResolverEntityBaseContract"
     },
+    "ResourceGroupProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/resourceGroups.ResourceGroupProperties"
+    },
     "ResourceGuard": {
       "kind": "property",
       "resourceType": "Microsoft.DataProtection/resourceGuards.ResourceGuard"
@@ -16005,6 +16047,10 @@
     "TagInheritanceProperties": {
       "kind": "property",
       "resourceType": "Microsoft.CostManagement/settings.TagInheritanceProperties"
+    },
+    "Tags": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/tags.Tags"
     },
     "TaskHubProperties": {
       "kind": "property",
@@ -58927,6 +58973,37 @@
       "kind": "property",
       "resourceType": "Microsoft.DataReplication/replicationVaults_replicationPolicies.UserAssignedIdentity"
     },
+    "resourceGroups": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Resources/resourceGroups",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "location:true",
+        "managedBy:false",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "resourceGroups_DeploymentIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/resourceGroups.DeploymentIdentity"
+    },
+    "resourceGroups_DeploymentIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/resourceGroups.DeploymentIdentityUserAssignedIdentities"
+    },
+    "resourceGroups_ResourceGroupProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/resourceGroups.ResourceGroupProperties"
+    },
+    "resourceGroups_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/resourceGroups.UserAssignedIdentity"
+    },
     "resourceGuards": {
       "kind": "resource",
       "resourceType": "Microsoft.DataProtection/resourceGuards",
@@ -74531,6 +74608,33 @@
     "systemTopics_eventSubscriptions_UserIdentityProperties": {
       "kind": "property",
       "resourceType": "Microsoft.EventGrid/systemTopics_eventSubscriptions.UserIdentityProperties"
+    },
+    "tags": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Resources/tags",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "tags_DeploymentIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/tags.DeploymentIdentity"
+    },
+    "tags_DeploymentIdentityUserAssignedIdentities": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/tags.DeploymentIdentityUserAssignedIdentities"
+    },
+    "tags_Tags": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/tags.Tags"
+    },
+    "tags_UserAssignedIdentity": {
+      "kind": "property",
+      "resourceType": "Microsoft.Resources/tags.UserAssignedIdentity"
     },
     "targets_solutions": {
       "kind": "resource",
