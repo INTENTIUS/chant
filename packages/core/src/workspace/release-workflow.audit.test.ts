@@ -52,6 +52,8 @@ const SHAPES: Array<[string, ReleaseWorkflowInput]> = [
   ],
   ["tag: npm package", { forge: "github", groups: new Set(), publish: [{ type: "npm" }] }],
   ["train dispatch: member goreleaser and images", { forge: "github", groups: new Set(), projectFiles: ["package.json", "go.mod"], pipeline: { trigger: "dispatch" }, train: { env: "npm", images: true, artifacts: true, goreleaser: true, goreleaserDir: "cli", imagePlatforms: ["linux/amd64", "linux/arm64"] } }],
+  ["train dispatch: members build on their own runners", { forge: "github", groups: new Set(), projectFiles: ["package.json", "go.mod"], pipeline: { trigger: "dispatch" }, train: { env: "npm", builds: [{ member: "cli", dir: "cli", build: { name: "cli-arm64", runner: "ubuntu-24.04-arm", build: "go build -o dist/cli-linux-arm64 .", outputs: ["dist/cli-linux-arm64"] } }] } }],
+  ["train dispatch: member builds with images and goreleaser", { forge: "github", groups: new Set(), projectFiles: ["package.json", "go.mod"], pipeline: { trigger: "dispatch" }, train: { env: "npm", images: true, artifacts: true, goreleaser: true, goreleaserDir: "cli", imagePlatforms: ["linux/amd64", "linux/arm64"], builds: [{ member: "cli", dir: "cli", build: { name: "cli-arm64", runner: "ubuntu-24.04-arm", build: "go build -o dist/cli-linux-arm64 .", outputs: ["dist/cli-linux-arm64"] } }] } }],
 ];
 
 let plugins: LexiconPlugin[];

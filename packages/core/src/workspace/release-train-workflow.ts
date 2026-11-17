@@ -264,7 +264,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       ...defaults,
       "    outputs:",
       "      train: ${{ steps.cut.outputs.train }}",
-      ...o.extra.githubEnv(["      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}", ...(builds.length > 0 ? ["      CHANT_TRAIN_PLANNED: ${{ needs.gate.outputs.planned }}"] : []), ...new Set([...(o.cutToken ?? []), ...(o.doctor ? o.forgeToken : [])])], ...(o.files ? GIT_TOKEN_ENV : [])]),
+      ...o.extra.githubEnv(["      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}", "      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}", ...(builds.length > 0 ? ["      CHANT_TRAIN_PLANNED: ${{ needs.gate.outputs.planned }}"] : []), ...new Set([...(o.cutToken ?? []), ...(o.doctor ? o.forgeToken : [])]), ...(o.files ? GIT_TOKEN_ENV : [])]),
       "    steps:",
       // #5268: a cut that hands files on keeps no token in .git/config.
       ...githubSetup("${{ needs.gate.outputs.commit }}", o.fullSetup, !o.files),
