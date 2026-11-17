@@ -13,7 +13,7 @@ import { formatBold, formatError, formatSuccess } from "../format";
 import type { CommandContext } from "../registry";
 import type { DoctorReport, DoctorStatus } from "../../lifecycle/release-doctor";
 
-const USAGE = "chant release doctor [--json]";
+const USAGE = "chant release doctor [--from cut] [--json]";
 
 /** The release workflow file from the repository root: `release.workflow.file` in the workspace root's config, or the forge's default. */
 async function releaseWorkflowFile(cwd: string): Promise<string | null> {
@@ -62,7 +62,7 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   const e = report.environment;
   const where = e.ci === "github" ? `GitHub Actions${e.workflow ? `, ${e.workflow}` : ""}` : e.ci === "gitlab" ? "GitLab CI" : e.ci === "other" ? "CI" : "a workstation";
   const lines = [
-    `Release doctor, from ${where}: OIDC ${e.oidc ? "yes" : "no"}; the release workflow is ${e.releaseWorkflow ?? "not known"}${e.repository ? ` in ${e.repository}` : ""}`,
+    `Release doctor, from ${where}${e.from === "cut" ? ", the cut job" : ""}: OIDC ${e.oidc ? "yes" : "no"}; the release workflow is ${e.releaseWorkflow ?? "not known"}${e.repository ? ` in ${e.repository}` : ""}`,
   ];
   for (const t of report.targets) {
     lines.push(formatBold(t.name));
@@ -79,6 +79,11 @@ export function formatDoctorReport(report: DoctorReport): string[] {
 export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const cwd = resolve(".");
+  const from = ctx.args.migrateFrom;
+  if (from !== undefined && from !== "cut") {
+    console.error(formatError({ message: `--from ${from} is not a job the doctor knows: the release workflow's cut job is --from cut [doctor-from-invalid]`, hint: USAGE }));
+    return 1;
+  }
   let publish: import("../../lifecycle/publish-declaration").PublishDeclaration[];
   let declaredGreen: import("../../lifecycle/release-green").ReleaseGreenSource | undefined;
   let signing: import("../../lifecycle/publish-signing").SigningConfig | undefined;
@@ -102,7 +107,7 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   } catch {
     groups = new Set();
   }
-  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), groups });
+  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), ...(from === "cut" ? { from } : {}), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), groups });
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
   } else if (report.targets.length === 0) {

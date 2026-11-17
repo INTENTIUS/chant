@@ -96,6 +96,22 @@ describe("npm", () => {
     expect(report.counts.fail).toBe(0);
   });
 
+  test("in the release workflow's cut job, which has no id-token: write, the OIDC checks can't tell instead of failing (--from cut)", async () => {
+    const cutEnv = { GITHUB_ACTIONS: "true", CI: "true", GITHUB_REPOSITORY: "acme/app", GITHUB_WORKFLOW_REF: `acme/app/${WORKFLOW}@refs/heads/main` };
+    const routes = [packument("@acme/core"), provenance("acme/app", WORKFLOW)];
+    // Without the flag the cut job fails, as it did in a dispatched release.
+    const before = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: cutEnv, releaseWorkflow: WORKFLOW, deps: { fetch: fakeFetch(routes).fetch, run: fakeRun({}) } });
+    expect(statuses(before.targets[0]!.checks)).toMatchObject({ "npm-trusted-publisher": "fail", "npm-token": "fail" });
+    const report = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: cutEnv, releaseWorkflow: WORKFLOW, from: "cut", deps: { fetch: fakeFetch(routes).fetch, run: fakeRun({}) } });
+    expect(report.environment.from).toBe("cut");
+    expect(statuses(report.targets[0]!.checks)).toEqual({ "npm-registry": "ok", "npm-last-publisher": "ok", "npm-trusted-publisher": "unknown", "npm-token": "unknown", "npm-dist-tag": "unknown" });
+    expect(report.targets[0]!.checks.find((c) => c.check === "npm-trusted-publisher")!.message).toContain("the publish job's id-token: write");
+    expect(report.counts.fail).toBe(0);
+    // Other checks still run: a package that is private still fails in the cut job.
+    const priv = await releaseDoctor({ cwd: member({ "packages/core": { name: "@acme/core", version: "0.0.0", private: true } }), publish: [npmDecl()], env: cutEnv, releaseWorkflow: WORKFLOW, from: "cut", deps: { fetch: fakeFetch(routes).fetch, run: fakeRun({}) } });
+    expect(priv.counts.fail).toBeGreaterThan(0);
+  });
+
   test("the last version published from another workflow file is a warning naming the fix, not a failure", async () => {
     const { fetch } = fakeFetch([packument("@acme/core"), provenance("acme/app", ".github/workflows/publish.yml")]);
     const report = await releaseDoctor({ cwd: member(), publish: [npmDecl()], env: { GITHUB_REPOSITORY: "acme/app" }, releaseWorkflow: WORKFLOW, deps: { fetch, run: fakeRun({}) } });
@@ -218,6 +234,53 @@ describe("forges", () => {
       expect(statuses(r.targets[0]!.checks), JSON.stringify([body, headers])).toEqual({ "forge-token": "ok", "forge-access": want });
       expect(calls[0]!.method).toBe("GET");
     }
+  });
+
+  describe("GitHub Actions' GITHUB_TOKEN (#5299)", () => {
+    // An installation token: the repository API reports no push right, or false.
+    const apiBodies: unknown[] = [{}, { permissions: { push: false, pull: true } }];
+    const run = async (yaml: string | null, job: string, from?: "cut") => {
+      const ws = member({});
+      if (yaml !== null) {
+        mkdirSync(join(ws, ".github/workflows"), { recursive: true });
+        writeFileSync(join(ws, ".github/workflows/release.yml"), yaml);
+      }
+      const out: DoctorCheck[] = [];
+      for (const body of apiBodies) {
+        const { fetch } = fakeFetch([(url) => (url === "https://api.github.com/repos/acme/app" ? { status: 200, body, headers: {} } : undefined)]);
+        const env = { GITHUB_ACTIONS: "true", CI: "true", GITHUB_TOKEN: "ghs_token_abc", GITHUB_REPOSITORY: "acme/app", GITHUB_WORKFLOW_REF: "acme/app/.github/workflows/release.yml@refs/heads/main", GITHUB_JOB: job, GITHUB_WORKSPACE: ws };
+        const r = await releaseDoctor({ cwd: ws, publish: [gh], env, releaseWorkflow: null, ...(from ? { from } : {}), deps: { fetch } });
+        out.push(r.targets[0]!.checks.find((c) => c.check === "forge-access")!);
+      }
+      return out;
+    };
+    const wf = (jobs: string, top = "") => `name: release\non: push\n${top}jobs:\n${jobs}`;
+
+    test("contents: write on the job is ok, from the job or the workflow", async () => {
+      for (const c of await run(wf("  cut:\n    permissions:\n      contents: write\n    runs-on: ubuntu-latest\n    steps: []\n"), "cut")) expect(c.status).toBe("ok");
+      for (const c of await run(wf("  cut:\n    runs-on: ubuntu-latest\n    steps: []\n", "permissions:\n  contents: write\n"), "cut")) expect(c.status).toBe("ok");
+      for (const c of await run(wf("  cut:\n    permissions: write-all\n    runs-on: ubuntu-latest\n    steps: []\n"), "cut")) expect(c.status).toBe("ok");
+    });
+
+    test("a job that declares read or no contents fails; its own permissions replace the workflow's", async () => {
+      for (const c of await run(wf("  cut:\n    permissions:\n      contents: read\n    runs-on: ubuntu-latest\n    steps: []\n"), "cut")) expect(c.status).toBe("fail");
+      for (const c of await run(wf("  cut:\n    permissions:\n      id-token: write\n    runs-on: ubuntu-latest\n    steps: []\n", "permissions:\n  contents: write\n"), "cut")) expect(c.status).toBe("fail");
+    });
+
+    test("permissions that can't be read are can't-tell, never fail", async () => {
+      const noDecl = wf("  cut:\n    runs-on: ubuntu-latest\n    steps: []\n");
+      for (const c of await run(noDecl, "cut")) expect(c.status).toBe("unknown");
+      for (const c of await run(null, "cut")) expect(c.status).toBe("unknown");
+      for (const c of await run(noDecl, "other")) expect(c.status).toBe("unknown");
+    });
+
+    test("under --from cut a cut job without write defers to the publish job", async () => {
+      const yaml = wf("  cut:\n    permissions:\n      contents: read\n    runs-on: ubuntu-latest\n    steps: []\n");
+      for (const c of await run(yaml, "cut", "cut")) {
+        expect(c.status).toBe("unknown");
+        expect(c.message).toContain("publish job");
+      }
+    });
   });
 
   test("a missing token warns on a workstation and fails in CI; Forgejo with no API root fails", async () => {

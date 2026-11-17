@@ -36,6 +36,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { parseYAML } from "../yaml";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
 import type {
   CargoPublishDeclaration,
@@ -89,6 +90,13 @@ export interface DoctorEnvironment {
   repository: string | null;
   /** The release workflow file, from the repository root: `release.workflow.file` or the forge's default. */
   releaseWorkflow: string | null;
+  /**
+   * `cut` under `chant release doctor --from cut`: this is the cut job of a
+   * release workflow, which runs without OIDC on purpose (it runs the
+   * project's build), and the publish job holds the credentials. The checks
+   * that need an OIDC token then can't tell from here, rather than fail.
+   */
+  from?: "cut";
 }
 
 export interface DoctorReport {
@@ -128,14 +136,14 @@ function defaultRun(bin: string, args: string[], opts: { cwd: string; env: NodeJ
 }
 
 /** The CI this process runs in, and whether it can get an OIDC token, from its environment. */
-export function doctorEnvironment(env: NodeJS.ProcessEnv, req: { cwd: string; releaseWorkflow: string | null }): DoctorEnvironment {
+export function doctorEnvironment(env: NodeJS.ProcessEnv, req: { cwd: string; releaseWorkflow: string | null; from?: "cut" }): DoctorEnvironment {
   const ci = env.GITHUB_ACTIONS === "true" ? "github" : env.GITLAB_CI === "true" ? "gitlab" : env.CI ? "other" : null;
   const oidc = ci === "github" ? Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) : ci === "gitlab" ? Boolean(env.NPM_ID_TOKEN || env.SIGSTORE_ID_TOKEN || env.OVSX_ID_TOKEN) : Boolean(env.OVSX_ID_TOKEN);
   // GITHUB_WORKFLOW_REF is `owner/name/.github/workflows/release.yml@refs/heads/main`.
   const ref = env.GITHUB_WORKFLOW_REF ?? "";
   const repository = env.GITHUB_REPOSITORY ?? (ci === "gitlab" ? (env.CI_PROJECT_PATH ?? null) : originRepository(req.cwd));
   const workflow = ci === "github" && repository && ref.startsWith(`${repository}/`) ? ref.slice(repository.length + 1).replace(/@.*$/, "") : null;
-  return { ci, oidc, workflow, repository, releaseWorkflow: req.releaseWorkflow };
+  return { ci, oidc, workflow, repository, releaseWorkflow: req.releaseWorkflow, ...(req.from ? { from: req.from } : {}) };
 }
 
 /** `owner/name` of the `origin` remote, or null. */
@@ -167,6 +175,8 @@ export async function releaseDoctor(req: {
   publish: readonly PublishDeclaration[];
   env?: NodeJS.ProcessEnv;
   releaseWorkflow: string | null;
+  /** `cut` when the doctor runs in the cut job of the release workflow, whose publish job holds the OIDC credentials. */
+  from?: "cut";
   /** The cut's green gate (#5149); `forge-checks` adds the check that the forge answers for the commit's checks. */
   green?: import("./release-green").ReleaseGreenSource;
   /** The commit whose checks are read under `forge-checks`. Default: HEAD of `cwd`. */
@@ -178,7 +188,7 @@ export async function releaseDoctor(req: {
 }): Promise<DoctorReport> {
   const env = req.env ?? process.env;
   const deps = req.deps ?? {};
-  const environment = doctorEnvironment(env, { cwd: req.cwd, releaseWorkflow: req.releaseWorkflow });
+  const environment = doctorEnvironment(env, { cwd: req.cwd, releaseWorkflow: req.releaseWorkflow, ...(req.from ? { from: req.from } : {}) });
   const redactor = createRedactor(env);
   const ctx: Ctx = {
     cwd: req.cwd,
@@ -314,6 +324,26 @@ function missing(ctx: Ctx, check: string, what: string, fix: string): DoctorChec
   return ctx.environment.ci
     ? { check, status: "fail", message: `${what}, so a publish from this job fails`, fix }
     : { check, status: "warn", message: `${what} in this shell; the release job needs it in its environment`, fix };
+}
+
+/**
+ * An OIDC token this job lacks, where the job is the cut job (`--from cut`):
+ * the release workflow gives the publish job the token and keeps it from the
+ * cut, which runs the project's build. The check can't tell from here.
+ */
+function deferredToPublish(ctx: Ctx, check: string, what: string): DoctorCheck {
+  const held = ctx.environment.ci === "gitlab" ? "the publish job's id_tokens" : "the publish job's id-token: write";
+  return { check, status: "unknown", message: `${what}; this is the cut job, which runs without OIDC, and ${held} is what a publish uses, so only a run of the publish job can test this` };
+}
+
+/** No OIDC ID token for a trusted-publishing check: a failure, except in the cut job, where it can't be told. */
+function noIdToken(ctx: Ctx, check: string, none: string, fix: string, failMessage: string = none): DoctorCheck {
+  return ctx.environment.from === "cut" ? deferredToPublish(ctx, check, none) : { check, status: "fail", message: failMessage, fix };
+}
+
+/** A token the publish needs, unset here. Where the target could use OIDC instead and this is the cut job, the publish job may hold that. */
+function tokenMissing(ctx: Ctx, check: string, what: string, fix: string, oidcCapable: boolean): DoctorCheck {
+  return oidcCapable && ctx.environment.from === "cut" ? deferredToPublish(ctx, check, what) : missing(ctx, check, what, fix);
 }
 
 async function answer(ctx: Ctx, url: string, init: { method: string; headers: Record<string, string>; body?: string }): Promise<{ status: number; text: string; json: unknown; header: (n: string) => string | null }> {
@@ -477,7 +507,7 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
     } else if (exists) {
       const id = await idToken(ctx, `npm:${host}`, "NPM_ID_TOKEN");
       if ("none" in id) {
-        checks.push(user ? { check: "npm-trusted-publisher", status: "unknown", message: `no trusted-publisher exchange: ${id.none}. npm's config signs in as ${user}, which the publish uses instead` } : { check: "npm-trusted-publisher", status: "fail", message: `${id.none}, and npm's config has no token, so nothing here can publish ${name}`, fix: "Give the job permissions: id-token: write (GitLab: an NPM_ID_TOKEN under id_tokens), or a token in the npm config it reads." });
+        checks.push(user ? { check: "npm-trusted-publisher", status: "unknown", message: `no trusted-publisher exchange: ${id.none}. npm's config signs in as ${user}, which the publish uses instead` } : noIdToken(ctx, "npm-trusted-publisher", `${id.none}, and npm's config has no token`, "Give the job permissions: id-token: write (GitLab: an NPM_ID_TOKEN under id_tokens), or a token in the npm config it reads.", `${id.none}, and npm's config has no token, so nothing here can publish ${name}`));
       } else {
         const ex = await answer(ctx, `${registry}/-/npm/v1/oidc/token/exchange/package/${name.replace("/", "%2f")}`, { method: "POST", headers: { authorization: `Bearer ${id.token}` } });
         const token = (ex.json as { token?: unknown } | null)?.token;
@@ -512,7 +542,7 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
             : { check: "npm-token", status: "unknown", message: `npm's config signs in as ${user}; ${registry} did not say what ${user} may do to ${name}, and a granular token's own scope is not shown` },
       );
     } else if (!user && !env.oidc) {
-      checks.push(missing(ctx, "npm-token", "npm's config has no token and the run has no OIDC token", "npm login on a workstation; in CI, permissions: id-token: write for trusted publishing, or a token in the npm config the job reads."));
+      checks.push(tokenMissing(ctx, "npm-token", "npm's config has no token and the run has no OIDC token", "npm login on a workstation; in CI, permissions: id-token: write for trusted publishing, or a token in the npm config the job reads.", true));
     }
 
     // The reveal moves a dist-tag, unless the target publishes straight to latest.
@@ -614,6 +644,9 @@ async function repoAccess(ctx: Ctx, req: { forge: "github" | "forgejo"; api: str
   if (res.status !== 200) return { check: req.check, status: "unknown", message: `${req.api}/repos/${req.repo} answered ${res.status}` };
   const push = (res.json as { permissions?: { push?: unknown } } | null)?.permissions?.push;
   if (push === true) return { check: req.check, status: "ok", message: `the token in ${req.tokenFrom} may write ${req.repo}` };
+  // A job's GITHUB_TOKEN is an installation token: the repository API reports no push right for it
+  // (absent, or false), whatever the job's permissions grant. The workflow file says what it grants.
+  if (ctx.environment.ci === "github" && req.tokenFrom === "GITHUB_TOKEN" && req.forge === "github") return jobTokenAccess(ctx, req);
   if (push === false) return { check: req.check, status: "fail", message: `the token in ${req.tokenFrom} may read ${req.repo} and not write it`, fix: `Give the token write access to ${req.repo}${req.forge === "github" ? " (contents: write)" : ""}.` };
   const scopes = res.header("x-oauth-scopes");
   if (scopes !== null) {
@@ -627,6 +660,47 @@ async function repoAccess(ctx: Ctx, req: { forge: "github" | "forgejo"; api: str
     status: "unknown",
     message: `the token in ${req.tokenFrom} sees ${req.repo}; ${req.api} does not say what this kind of token may write${ctx.environment.ci === "github" && req.tokenFrom === "GITHUB_TOKEN" ? ", and a job token gets contents: write from the workflow's permissions" : ""}`,
   };
+}
+
+type ContentsRight = "write" | "read" | "none";
+
+/** The `contents` right the running job's declared `permissions` give its GITHUB_TOKEN, read from the workflow file in the checkout; null when it can't be told. */
+function jobContentsPermission(ctx: Ctx): { right: ContentsRight | null; why: string; where: string } {
+  const file = ctx.environment.workflow;
+  const job = ctx.env.GITHUB_JOB;
+  if (!file || !job) return { right: null, where: "the workflow file", why: "GITHUB_WORKFLOW_REF or GITHUB_JOB is not set" };
+  const abs = join(ctx.env.GITHUB_WORKSPACE || ctx.cwd, file);
+  const where = `${file}, job ${job}`;
+  let doc: { permissions?: unknown; jobs?: Record<string, { permissions?: unknown; uses?: unknown }> };
+  try {
+    doc = parseYAML(readFileSync(abs, "utf-8")) as typeof doc;
+  } catch {
+    return { right: null, where, why: `${file} is not in the checkout, or does not parse` };
+  }
+  const j = doc.jobs?.[job];
+  if (!j || typeof j !== "object") return { right: null, where, why: `${file} has no job ${job}` };
+  // A job's own `permissions` replaces the workflow's whole; with neither, the repository's default decides.
+  const declared = j.permissions !== undefined ? j.permissions : doc.permissions;
+  if (declared === undefined || declared === null) return { right: null, where, why: "neither the job nor the workflow declares permissions, so the repository's default token permissions apply" };
+  if (declared === "write-all") return { right: "write", where, why: "" };
+  if (declared === "read-all") return { right: "read", where, why: "" };
+  if (typeof declared !== "object") return { right: null, where, why: "its permissions are an expression" };
+  const contents = (declared as Record<string, unknown>).contents;
+  if (contents === "write") return { right: "write", where, why: "" };
+  if (contents === "read") return { right: "read", where, why: "" };
+  if (contents === undefined || contents === "none") return { right: "none", where, why: "" };
+  return { right: null, where, why: "its contents permission is an expression" };
+}
+
+/** What the job's GITHUB_TOKEN may do on the repository: ok or fail from the declared permissions, unknown when they can't be read. Never fail on the API's silence. */
+function jobTokenAccess(ctx: Ctx, req: { repo: string; check: string; tokenFrom: string }): DoctorCheck {
+  const p = jobContentsPermission(ctx);
+  if (p.right === "write") return { check: req.check, status: "ok", message: `the job's ${req.tokenFrom} may write ${req.repo}: ${p.where} declares contents: write` };
+  if (ctx.environment.from === "cut" && p.right !== null)
+    return { check: req.check, status: "unknown", message: `this is the cut job, whose ${req.tokenFrom} has contents: ${p.right} (${p.where}); the publish job holds the write the forge target needs, so only a run of the publish job can test this` };
+  if (p.right === "read" || p.right === "none")
+    return { check: req.check, status: "fail", message: `${p.where} declares contents: ${p.right}, so the job's ${req.tokenFrom} may read ${req.repo} and not write it`, fix: "Give the job permissions: contents: write." };
+  return { check: req.check, status: "unknown", message: `the job's ${req.tokenFrom} sees ${req.repo}; the API does not report what an Actions token may write, and ${p.why}` };
 }
 
 async function checkForge(decl: ForgePublishDeclaration, ctx: Ctx): Promise<DoctorTarget> {
@@ -900,7 +974,7 @@ async function checkMcpRegistry(decl: McpRegistryPublishDeclaration, ctx: Ctx): 
   // The target reads only GitHub Actions' token service, so no variable stands in for it.
   const tok = await idToken(ctx, audience, "");
   if ("none" in tok) {
-    checks.push({ check: "mcp-registry-auth", status: "fail", message: ctx.environment.ci === "github" ? tok.none : "this publish gets its OIDC token from GitHub Actions, and this run is not one", fix: "Give the job permissions: id-token: write." });
+    checks.push(noIdToken(ctx, "mcp-registry-auth", ctx.environment.ci === "github" ? tok.none : "this publish gets its OIDC token from GitHub Actions, and this run is not one", "Give the job permissions: id-token: write."));
     return t;
   }
   const ex = await answer(ctx, `${registry}/v0.1/auth/github-oidc`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ oidc_token: tok.token }) });
@@ -967,7 +1041,7 @@ async function checkMarketplace(decl: MarketplacePublishDeclaration, ctx: Ctx): 
       }
       const tok = await idToken(ctx, registry, OVSX_ID_TOKEN_ENV);
       if ("none" in tok) {
-        checks.push({ check: "marketplace-trusted-publisher", status: "fail", message: tok.none, fix: `Give the job permissions: id-token: write, or put an ID token in ${OVSX_ID_TOKEN_ENV}.` });
+        checks.push(noIdToken(ctx, "marketplace-trusted-publisher", tok.none, `Give the job permissions: id-token: write, or put an ID token in ${OVSX_ID_TOKEN_ENV}.`));
         return t;
       }
       const ex = await answer(ctx, `${registry}/api/-/trusted-publishing/token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ namespace: id.publisher, extension: id.name, token: tok.token }) });
@@ -1041,7 +1115,7 @@ async function checkPypi(decl: PypiPublishDeclaration, ctx: Ctx): Promise<Doctor
     checks.push(
       token
         ? { check: "pypi-token", status: "unknown", message: `the token in ${tokenName} is set; ${index.label} has no read-only check of a token, so whether it may upload shows at the upload` }
-        : missing(ctx, "pypi-token", `${tokenName} is not set${index.site ? " and there is no OIDC ID token for trusted publishing" : ""}`, `Set ${tokenName} to an API token for the project${index.site ? ", or publish with trusted publishing from a CI job with an OIDC ID token" : ""}.`),
+        : tokenMissing(ctx, "pypi-token", `${tokenName} is not set${index.site ? " and there is no OIDC ID token for trusted publishing" : ""}`, `Set ${tokenName} to an API token for the project${index.site ? ", or publish with trusted publishing from a CI job with an OIDC ID token" : ""}.`, decl.auth === undefined && index.site !== null),
     );
     return t;
   }
@@ -1057,7 +1131,7 @@ async function checkPypi(decl: PypiPublishDeclaration, ctx: Ctx): Promise<Doctor
   }
   const tok = await idToken(ctx, audience, PYPI_ID_TOKEN_ENV);
   if ("none" in tok) {
-    checks.push({ check: "pypi-trusted-publisher", status: "fail", message: tok.none, fix: `Give the job permissions: id-token: write, or declare ${PYPI_ID_TOKEN_ENV} under the GitLab job's id_tokens with the audience ${audience}.` });
+    checks.push(noIdToken(ctx, "pypi-trusted-publisher", tok.none, `Give the job permissions: id-token: write, or declare ${PYPI_ID_TOKEN_ENV} under the GitLab job's id_tokens with the audience ${audience}.`));
     return t;
   }
   const ex = await answer(ctx, `${index.site}/_/oidc/mint-token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: tok.token }) });
@@ -1150,7 +1224,7 @@ async function checkNuget(decl: NugetPublishDeclaration, ctx: Ctx): Promise<Doct
     checks.push(
       readCredential(ctx.env, [tokenName], ctx.redactor)
         ? { check: "nuget-token", status: "unknown", message: `the API key in ${tokenName} is set; ${feed.label} has no read-only check of a key, so whether it may push shows at the push` }
-        : missing(ctx, "nuget-token", `${tokenName} is not set${feed.nugetOrg ? " and there is no OIDC ID token for trusted publishing" : ""}`, `Set ${tokenName} to an API key that may push the packages${feed.nugetOrg ? ", or publish with trusted publishing from a CI job with an OIDC ID token" : ""}.`),
+        : tokenMissing(ctx, "nuget-token", `${tokenName} is not set${feed.nugetOrg ? " and there is no OIDC ID token for trusted publishing" : ""}`, `Set ${tokenName} to an API key that may push the packages${feed.nugetOrg ? ", or publish with trusted publishing from a CI job with an OIDC ID token" : ""}.`, decl.auth === undefined && Boolean(feed.nugetOrg)),
     );
     return t;
   }
@@ -1166,7 +1240,7 @@ async function checkNuget(decl: NugetPublishDeclaration, ctx: Ctx): Promise<Doct
   }
   const tok = await idToken(ctx, NUGET_AUDIENCE, NUGET_ID_TOKEN_ENV);
   if ("none" in tok) {
-    checks.push({ check: "nuget-trusted-publisher", status: "fail", message: tok.none, fix: `Give the job permissions: id-token: write, or declare ${NUGET_ID_TOKEN_ENV} under the GitLab job's id_tokens with aud: ${NUGET_AUDIENCE}.` });
+    checks.push(noIdToken(ctx, "nuget-trusted-publisher", tok.none, `Give the job permissions: id-token: write, or declare ${NUGET_ID_TOKEN_ENV} under the GitLab job's id_tokens with aud: ${NUGET_AUDIENCE}.`));
     return t;
   }
   const ex = await answer(ctx, NUGET_ORG.token, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tok.token}` }, body: JSON.stringify({ username: user.value, tokenType: "ApiKey" }) });
@@ -1218,7 +1292,7 @@ async function checkRubygems(decl: RubygemsPublishDeclaration, ctx: Ctx): Promis
     checks.push(
       readCredential(ctx.env, [tokenName], ctx.redactor)
         ? { check: "rubygems-token", status: "unknown", message: `the API key in ${tokenName} is set; ${label} has no read-only check of a key, so whether it may push shows at the push` }
-        : missing(ctx, "rubygems-token", `${tokenName} is not set${decl.host ? "" : " and there is no OIDC ID token for trusted publishing"}`, `Set ${tokenName} to an API key with the push scope${decl.host ? "" : ", or publish with trusted publishing from a GitHub Actions job with id-token: write"}.`),
+        : tokenMissing(ctx, "rubygems-token", `${tokenName} is not set${decl.host ? "" : " and there is no OIDC ID token for trusted publishing"}`, `Set ${tokenName} to an API key with the push scope${decl.host ? "" : ", or publish with trusted publishing from a GitHub Actions job with id-token: write"}.`, decl.auth === undefined && !decl.host),
     );
     return t;
   }
@@ -1228,7 +1302,7 @@ async function checkRubygems(decl: RubygemsPublishDeclaration, ctx: Ctx): Promis
   }
   const tok = await idToken(ctx, RUBYGEMS_AUDIENCE, RUBYGEMS_ID_TOKEN_ENV);
   if ("none" in tok) {
-    checks.push({ check: "rubygems-trusted-publisher", status: "fail", message: tok.none, fix: "Give the job permissions: id-token: write." });
+    checks.push(noIdToken(ctx, "rubygems-trusted-publisher", tok.none, "Give the job permissions: id-token: write."));
     return t;
   }
   const ex = await answer(ctx, `${host}/api/v1/oidc/trusted_publisher/exchange_token`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ jwt: tok.token }) });
@@ -1269,7 +1343,7 @@ async function checkCargo(decl: CargoPublishDeclaration, ctx: Ctx): Promise<Doct
   if (auth === "token") {
     const tokenName = cargoTokenEnv(decl);
     const token = readCredential(ctx.env, [tokenName], ctx.redactor);
-    checks.push(token ? { check: "cargo-token", status: "unknown", message: `the token in ${tokenName} is set; ${label} has no read-only check of a token, so whether it may publish shows at the publish` } : missing(ctx, "cargo-token", `${tokenName} is not set`, `Set ${tokenName} to a token of ${label}.`));
+    checks.push(token ? { check: "cargo-token", status: "unknown", message: `the token in ${tokenName} is set; ${label} has no read-only check of a token, so whether it may publish shows at the publish` } : tokenMissing(ctx, "cargo-token", `${tokenName} is not set`, `Set ${tokenName} to a token of ${label}.`, decl.auth === undefined && decl.registry === undefined));
     return t;
   }
   if (!ctx.environment.ci && !ctx.env[CRATES_IO_ID_TOKEN_ENV]) {
@@ -1278,7 +1352,7 @@ async function checkCargo(decl: CargoPublishDeclaration, ctx: Ctx): Promise<Doct
   }
   const tok = await idToken(ctx, CRATES_IO_AUDIENCE, CRATES_IO_ID_TOKEN_ENV);
   if ("none" in tok) {
-    checks.push({ check: "cargo-trusted-publisher", status: "fail", message: tok.none, fix: "Give the job permissions: id-token: write." });
+    checks.push(noIdToken(ctx, "cargo-trusted-publisher", tok.none, "Give the job permissions: id-token: write."));
     return t;
   }
   const api = (decl.api ?? CRATES_IO_API).replace(/\/+$/, "");

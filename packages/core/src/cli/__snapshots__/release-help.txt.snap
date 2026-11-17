@@ -86,11 +86,14 @@ Releases:
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to
                         the file CHANT_RELEASE_DIGESTS names for the build.
-  release doctor [--json]
+  release doctor [--from cut] [--json]
                         Before a cut, ask each release.publish target whether
                         a publish from here can succeed: credentials, OIDC,
                         npm trusted publishers and dist-tags, registry and
                         forge access. Says what it can't observe from here.
+                        --from cut: this is the release workflow's cut job,
+                        which has no OIDC token; the checks that need one
+                        say the publish job holds it instead of failing.
                         Exits 1 when a check fails.
   release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
                         Build the files release.artifacts declares again from
