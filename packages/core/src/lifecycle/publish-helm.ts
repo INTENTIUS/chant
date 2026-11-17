@@ -43,11 +43,10 @@ import { Registry, ociCredential, parseRepository } from "./publish-oci";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget } from "./release-publish";
-import { NEXT_RELEASE } from "../release-floors";
 import { emitYAML, parseYAML } from "../yaml";
 
 /** The first chant that publishes a `helm` target (#5233). */
-export const PUBLISH_HELM_FLOOR = NEXT_RELEASE;
+export const PUBLISH_HELM_FLOOR = "0.124.102";
 
 /** The media type of a chart's config blob: its metadata as JSON. */
 export const HELM_CONFIG_MEDIA_TYPE = "application/vnd.cncf.helm.config.v1+json";

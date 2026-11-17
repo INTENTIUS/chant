@@ -48,11 +48,10 @@ import { zipEntry, zipEntryNames } from "./publish-pypi";
 import { bytesDigest, checkReleaseDigest, expandArtifactAssets, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
 import { zipArchive } from "./release-artifacts";
-import { NEXT_RELEASE } from "../release-floors";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget } from "./release-publish";
 
 /** The first chant that publishes a `maven` target (#5232). */
-export const PUBLISH_MAVEN_FLOOR = NEXT_RELEASE;
+export const PUBLISH_MAVEN_FLOOR = "0.124.102";
 
 export const CENTRAL_PORTAL = "https://central.sonatype.com";
 export const MAVEN_CENTRAL_REPOSITORY = "https://repo1.maven.org/maven2/";
