@@ -66,6 +66,7 @@ import { canonicalJson } from "../effect-receipt";
 import { getHeadCommit } from "./git";
 import { resolveMemberLedger } from "./member-ledger";
 import { resolveCiRun } from "./release-ledger";
+import { NEXT_RELEASE } from "../release-floors";
 import {
   appendCut,
   invalidLabel,
@@ -119,6 +120,8 @@ export type ReleaseCutCode =
   /** #5149: `release.green: "forge-checks"`, and the forge could not be asked. */
   | "release-forge-checks-unavailable"
   | "release-worktree-dirty"
+  /** #5261: a `release.check` line exited non-zero. */
+  | "release-check-failed"
   | "release-no-environments"
   | "release-no-components"
   | "release-build-inputs-differ"
@@ -156,6 +159,9 @@ export type ReleaseCutCode =
   /** #5230: an npm target names a package the registry has never published, or the registry can't say. */
   | "publish-npm-never-published"
   | "publish-npm-registry-unreadable";
+
+/** The first chant whose `chant release cut` runs `release.check`, shell lines that refuse the cut with `release-check-failed` before anything is recorded or tagged, in a dry run too (#5261). */
+export const RELEASE_CHECK_FLOOR = NEXT_RELEASE;
 
 export class ReleaseCutError extends Error {
   constructor(
@@ -251,6 +257,14 @@ export interface CutRequest {
    * environments, so a commit that does not build is not cut.
    */
   build?: () => void | Promise<void>;
+  /**
+   * Run `release.check` (#5261), once the label is stamped and the images,
+   * files and build command have run, and before any environment is
+   * compiled or anything recorded or tagged. Given the commit being cut;
+   * throws {@link ReleaseCutError} `release-check-failed` to refuse the cut.
+   * A dry run runs it too, so it refuses the same label.
+   */
+  check?: (commit: string) => void | Promise<void>;
   /** The intent files the cut consumes (#5159), recorded on its cut line. */
   intents?: readonly ReleaseCutIntent[];
 }
@@ -640,6 +654,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
   const builtFiles = req.buildArtifacts ? await req.buildArtifacts(commit) : [];
 
   if (artifactRelease) await req.build?.();
+  await req.check?.(commit);
   const compiled: CompiledTarget[] = [];
   for (const env of envs) compiled.push(await req.compiler.compile(env));
 

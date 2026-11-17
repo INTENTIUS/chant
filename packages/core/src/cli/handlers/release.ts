@@ -183,6 +183,12 @@ async function releaseTagOf(cwd: string): Promise<import("../../lifecycle/releas
   return (await loadChantConfig(cwd)).config.release?.tag;
 }
 
+/** The member's `release.check` lines (#5261), which a cut runs before it records anything. */
+async function releaseChecksOf(cwd: string): Promise<string[]> {
+  const { loadChantConfig } = await import("../../config");
+  return (await loadChantConfig(cwd)).config.release?.check ?? [];
+}
+
 async function releaseVersionOf(cwd: string): Promise<import("../../lifecycle/release-version").ReleaseVersionConfig | undefined> {
   const { loadChantConfig } = await import("../../config");
   return (await loadChantConfig(cwd)).config.release?.version;
@@ -698,6 +704,29 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
             if (run.status !== 0) throw new ReleaseCompileError(`the build command exited ${run.status ?? "with a signal"}: ${buildCommand}`);
           }
         : undefined;
+    // #5261: release.check, run by the cut and its dry run alike once the label is stamped and the builds have run.
+    const checkLines = await releaseChecksOf(cutCwd);
+    const check =
+      checkLines.length > 0
+        ? async (at: string) => {
+            const { runToStderr } = await import("../../workspace/train-shell");
+            const env: NodeJS.ProcessEnv = { ...process.env, CHANT_RELEASE_COMMIT: at };
+            delete env[RELEASE_LABEL_ENV];
+            if (label !== null) env[RELEASE_LABEL_ENV] = label;
+            if (digestsFile) env.CHANT_RELEASE_DIGESTS = digestsFile;
+            for (const line of checkLines) {
+              console.error(`check: ${line}`);
+              const code = await runToStderr(line, { cwd: cutCwd, env });
+              if (code !== 0) {
+                throw new ReleaseCutError(
+                  "release-check-failed",
+                  `no release was cut: release.check failed (exit ${code}): ${line}`,
+                  "Nothing was recorded or tagged. Fix what the check reports, or cut another label, and run the cut again.",
+                );
+              }
+            }
+          }
+        : undefined;
     const request = {
       cwd: cutCwd,
       compiler,
@@ -715,6 +744,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(greenSource ? { green: greenSource } : {}),
       ...(publishes ? { publishes } : {}),
       ...(build ? { build } : {}),
+      ...(check ? { check } : {}),
       ...(intents.length > 0 ? { intents: intents.map(({ path, added, bump }) => ({ path, added, bump })) } : {}),
     };
 
@@ -779,6 +809,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       if (computed && !computed.alreadyCut) console.log(`  label from release next: ${computed.bump ?? "the prerelease's version"} from ${computed.from.label}, ${computed.commits.length} commit(s) and ${computed.intents.length} intent file(s) since`);
       for (const i of intents) console.log(`  consumes ${i.path} (${i.bump})`);
       if (plan.green) console.log(`  gate: ${describeGreen(plan.green)}`);
+      if (checkLines.length > 0) console.log(`  release.check: ${checkLines.length} line(s) passed`);
       if (plan.green?.source === "none") console.error(formatWarning({ message: GREEN_NONE_WARNING }));
       if (plan.publishes) console.log(`  an artifact release: no environment is compiled, and it records ${plan.publishes.length} publish target(s)`);
       if (plan.override) console.log(`  under the override by ${plan.override.by} at ${plan.override.at}${plan.override.sealed ? ", sealed" : ""}: ${plan.override.reason}; the cut spends it`);

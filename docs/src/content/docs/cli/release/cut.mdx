@@ -41,11 +41,35 @@ The cut refuses before it writes anything when:
 | `declaration-invalid` | The cut names a lane, and the declaration at base has no `ci.green` or declares no such lane, or `release.green` is not `chant`, which is the only gate with lanes. The message lists the lanes it declares. |
 | `release-build-inputs-differ` | A component's build steps differ between environments, for example a `docker-build` whose `buildArgs` read a parameter that is set per environment. Its artifact can't be built once for every environment. |
 | `publish-npm-carries-image` | An `npm` target in `release.publish` would pack an image archive the cut just built ([#4941](https://github.com/INTENTIUS/chant/issues/4941)). The cut runs the npm target's own check (see [Images the package pins](#images-the-package-pins)) once the images are built, so the label is not spent on a release the publish would refuse. `publish-npm-pack-failed` when `npm pack --dry-run` can't list the package. |
+| `release-check-failed` | A line of [`release.check`](#checks-before-the-cut) exited non-zero. The message names the line and its exit code. |
 | `publish-npm-never-published` | An `npm` target in `release.publish` names a public package that the registry (the target's `registry`, else npm's configured one) has never published. npm trusted publishing can't create a package, so its first publish would fail after the label is spent and other packages were staged. The message names the package. Publish one placeholder version of it by hand (`npm login`, then `npm publish`), add the trusted publisher on npmjs.com under the package's Settings, and cut again. `chant release doctor` reports it before a cut, and [`chant workspace train cut`](/chant/cli/workspace-train/#cut) refuses it before cutting any member. `publish-npm-registry-unreadable` when the registry can't say, which refuses the cut as well. |
 
 The code is printed in square brackets at the end of the message. The dry run refuses with the same codes, and also with `release-label-taken` when the label already names a release of another commit.
 
 `auto` in place of the label cuts the label [`release next`](/chant/cli/release/next/) computes for the commit being cut, and refuses with its codes. `--pre <id>` goes with `auto` only. Every cut with a label, `auto` or typed, consumes the [intent files](/chant/cli/release/next/#intent-files) at the commit that name the member: its cut line lists them, and the dry run prints them.
+
+## Checks before the cut
+
+`release.check` lists shell lines the cut runs before it records anything ([#5261](https://github.com/INTENTIUS/chant/issues/5261)), for checks that decide whether this commit may be released at this label. Each line runs with `sh -c` in the member's directory, in order:
+
+```json
+{
+  "release": {
+    "version": { "packages": ["packages/conformance", "packages/reference"] },
+    "check": [
+      "bash scripts/release-spec-version.sh",
+      "npm test",
+      "npm run smoke:published"
+    ]
+  }
+}
+```
+
+The lines run once the label is known and stamped into the files [`release.version`](#the-label-as-the-package-version) names, and after the images, the files `release.artifacts` builds and, for a release with no environments, `--build`. They run before any environment is compiled and before anything is recorded or tagged. `CHANT_RELEASE_LABEL` holds the label (unset for a cut with no label), `CHANT_RELEASE_COMMIT` the commit being cut, and `CHANT_RELEASE_DIGESTS` the digests file when `release.images` built images. The first line that exits non-zero refuses the cut with `release-check-failed`, and the stamped files are put back. What a line prints goes to stderr, so the stdout of `--json` holds the cut's document alone.
+
+The dry run runs the lines too, so `chant release cut <label>` refuses a label the checks refuse before anyone types `--yes`, and a cut from a workstation runs them as the release workflow's cut job does. A line that needs a build of its own, when the cut has no `--build`, runs it itself. A [train](/chant/cli/workspace-train/#cut) runs each member's `release.check` in that member's cut, after its own `release.train.check`. `RELEASE_CHECK_FLOOR` in `@intentius/chant/lifecycle/release-cut` is the first chant with the setting.
+
+`release.verify` is a different hook: [`release publish`](/chant/cli/release/publish/) runs it after every target has staged, when a version is already on the registry under a staging tag.
 
 ## Cutting a chosen commit
 
