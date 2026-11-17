@@ -143,6 +143,8 @@ export const ChantConfigSchema = z.object({
               prepare: z.string().min(1).optional(),
               // #4908: build arguments beside the two chant passes.
               args: z.record(z.string(), z.string()).optional(),
+              // #5269: OCI labels on the image.
+              labels: z.record(z.string(), z.string()).optional(),
             })
             .strict(),
         ]),

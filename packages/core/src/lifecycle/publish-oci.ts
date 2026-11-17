@@ -55,6 +55,10 @@ import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publish
 import { trainName, waitUntilServed } from "./publish-train-names";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant whose oci target takes `platformTags`, a tag for each platform's image in the index (#5269). */
+export const OCI_PLATFORM_TAGS_FLOOR = NEXT_RELEASE;
 
 const INDEX_TYPES = new Set(["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"]);
 
@@ -87,6 +91,8 @@ interface Descriptor {
   mediaType: string;
   digest: string;
   size?: number;
+  /** An index entry's platform. */
+  platform?: { os?: string; architecture?: string; variant?: string };
 }
 
 /** What a layout holds, in the order it is pushed. */
@@ -445,11 +451,53 @@ export function referrerManifest(a: Attachment, subject: { mediaType: string; di
   return new Uint8Array(Buffer.from(JSON.stringify(manifest)));
 }
 
+/**
+ * The tag of each platform's image (#5269): `platformTags` with `{label}`,
+ * `{version}`, `{os}` and `{arch}` (the architecture and its variant, `armv7`) filled in
+ * for each image of the layout's index, from the index entry's platform or
+ * else the image's config. None for a release with no label. Two images
+ * that would take one tag are refused.
+ */
+export function ociPlatformTags(
+  decl: Pick<OciPublishDeclaration, "platformTags" | "image">,
+  label: string | null,
+  manifests: ReadonlyArray<{ digest: string; platform?: Descriptor["platform"] }>,
+  configPlatform: (digest: string) => Descriptor["platform"] = () => undefined,
+): Array<{ tag: string; digest: string }> {
+  if (!decl.platformTags || label === null) return [];
+  const out: Array<{ tag: string; digest: string }> = [];
+  const taken = new Map<string, string>();
+  for (const m of manifests) {
+    const p = m.platform ?? configPlatform(m.digest);
+    if (!p?.architecture || p.architecture === "unknown") continue;
+    const arch = `${p.architecture}${p.variant ?? ""}`;
+    for (const t of decl.platformTags) {
+      const tag = fillTag(t, label).split("{arch}").join(arch).split("{os}").join(p.os ?? "");
+      const other = taken.get(tag);
+      if (other !== undefined && other !== m.digest) {
+        throw new PublishTargetError("publish-oci-platform-tag-taken", `${decl.image} holds two images that platformTags would both tag ${tag}`, "Name {os} in platformTags as well, or build one image per platform.");
+      }
+      if (other === undefined) out.push({ tag, digest: m.digest });
+      taken.set(tag, m.digest);
+    }
+  }
+  return out;
+}
+
+/** A tag that names the release, by `{label}` or `{version}` (#5269), and so belongs to it. */
+const namesRelease = (t: string): boolean => t.includes("{label}") || t.includes("{version}");
+
+/** `t` with `{label}` and `{version}` (the label from its first digit, #5269) filled in. */
+function fillTag(t: string, label: string): string {
+  const at = label.search(/\d/);
+  return t.split("{label}").join(label).split("{version}").join(at >= 0 ? label.slice(at) : label);
+}
+
 /** The tags to point at the digest: the context's tag when set, else the declared ones with `{label}` filled in, without `latest` for a prerelease label. */
 export function ociTags(decl: OciPublishDeclaration, ctx: Pick<PublishContext, "tag" | "label">): string[] {
   if (ctx.tag) return [ctx.tag];
   const declared = decl.tags ?? (ctx.label ? ["{label}"] : []);
-  const tags = declared.filter((t) => ctx.label !== null || !t.includes("{label}")).map((t) => t.split("{label}").join(ctx.label ?? ""));
+  const tags = declared.filter((t) => ctx.label !== null || !namesRelease(t)).map((t) => (ctx.label === null ? t : fillTag(t, ctx.label)));
   // A prerelease label moves no `latest`; what is left is its own label tag.
   if (prereleaseOf(ctx.label) === null) return tags;
   const kept = tags.filter((t) => t !== "latest");
@@ -474,7 +522,7 @@ export function ociArchiveDigest(abs: string): string {
  */
 export function ociMovingTags(decl: OciPublishDeclaration, channel: string | null, label: string | null = null): string[] {
   if (channel) return [channel];
-  const moving = (decl.tags ?? ["{label}"]).filter((t) => !t.includes("{label}"));
+  const moving = (decl.tags ?? ["{label}"]).filter((t) => !namesRelease(t));
   return prereleaseOf(label) === null ? moving : moving.filter((t) => t !== "latest");
 }
 
@@ -493,8 +541,17 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     }
     return layout;
   };
-  const item = (ctx: PublishContext, digest: string): PublishItem => {
-    const tags = ociTags(decl, ctx);
+  /** #5269: each platform's image's tags, from the layout. */
+  const platformTags = (ctx: PublishContext, layout: LayoutImage) =>
+    ociPlatformTags(decl, ctx.label, layout.manifests, (digest) => {
+      const m = layout.manifests.find((x) => x.digest === digest);
+      const config = m?.blobs[0];
+      if (!config) return undefined;
+      const c = JSON.parse(Buffer.from(layout.readBlob(config.digest)).toString("utf-8")) as { os?: string; architecture?: string; variant?: string };
+      return { ...(c.os ? { os: c.os } : {}), ...(c.architecture ? { architecture: c.architecture } : {}), ...(c.variant ? { variant: c.variant } : {}) };
+    });
+  const item = (ctx: PublishContext, digest: string, perPlatform: ReadonlyArray<{ tag: string }> = []): PublishItem => {
+    const tags = [...ociTags(decl, ctx), ...perPlatform.map((p) => p.tag)];
     return {
       name: `${decl.image}${tags.length > 0 ? ` (tag${tags.length === 1 ? "" : "s"} ${tags.join(", ")})` : ""}`,
       destination: `${decl.repository}@${digest}`,
@@ -579,7 +636,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async published(ctx) {
       const label = ctx.label;
       if (label === null) return null;
-      const tags = (decl.tags ?? ["{label}"]).filter((t) => t.includes("{label}")).map((t) => t.split("{label}").join(label));
+      const tags = (decl.tags ?? ["{label}"]).filter(namesRelease).map((t) => fillTag(t, label));
       if (tags.length === 0) return null;
       const { registry } = connect(ctx);
       for (const t of tags) if ((await registry.getManifest(t)) === null) return false;
@@ -651,7 +708,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async plan(ctx) {
       const layout = inspect(ctx);
       try {
-        return [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem), ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
+        return [item(ctx, layout.top.digest, platformTags(ctx, layout)), ...referrers(ctx, layout).map(referrerItem), ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
       } finally {
         layout.cleanup();
       }
@@ -661,7 +718,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
       try {
         const attached = referrers(ctx, layout);
         const { cred, registry } = connect(ctx);
-        const staged: PublishItem = { ...item(ctx, layout.top.digest), name: decl.image };
+        const staged: PublishItem = { ...item(ctx, layout.top.digest, platformTags(ctx, layout)), name: decl.image };
         const items: PublishItem[] = [];
         if (await registry.hasManifest(layout.top.digest, layout.top.mediaType)) {
           ctx.log(`${decl.repository} already holds ${layout.top.digest}; the image is not pushed again`);
@@ -703,8 +760,15 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
         const tags = ociTags(decl, ctx);
         for (const t of tags) await registry.putManifest(t, layout.top.mediaType, layout.top.bytes);
         ctx.log(tags.length > 0 ? `tagged ${layout.top.digest} ${tags.join(", ")}` : `no tag to point at ${layout.top.digest}`);
+        // #5269: each platform's image under its own tag, pushed by digest in the stage.
+        const perPlatform = platformTags(ctx, layout);
+        for (const p of perPlatform) {
+          const m = layout.manifests.find((x) => x.digest === p.digest)!;
+          await registry.putManifest(p.tag, m.mediaType, m.bytes);
+          ctx.log(`tagged ${p.digest} ${p.tag}`);
+        }
         const signed = (staged?.items ?? []).filter((i) => i.attachment === "signature" || i.attachment === "attestation").map(({ present: _present, ...i }) => i);
-        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest), ...referrers(ctx, layout).map(referrerItem), ...signed] };
+        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...referrers(ctx, layout).map(referrerItem), ...signed] };
       } finally {
         layout.cleanup();
       }

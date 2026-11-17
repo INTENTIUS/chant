@@ -139,7 +139,10 @@ async function releaseBuildJobsOf(cwd: string): Promise<import("../../lifecycle/
 /** The member's `release.images` (#4657), or none when the config declares none. A Dockerfile entry (#4819) keeps its form, so its prepare command runs. */
 async function releaseImagesOf(cwd: string): Promise<import("../../lifecycle/release-images").ReleaseImageDeclaration[]> {
   const { loadChantConfig } = await import("../../config");
-  return (await loadChantConfig(cwd)).config.release?.images ?? [];
+  const { placeReleaseImages } = await import("../../lifecycle/release-images");
+  const release = (await loadChantConfig(cwd)).config.release;
+  // #5269: an archive moved out of goreleaser's dist, which it empties.
+  return placeReleaseImages(release?.images ?? [], release?.artifacts ?? []);
 }
 
 /**
@@ -634,16 +637,18 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     const compiler = spawnTargetCompiler({ ...compileInputs(ctx, params, cutCwd, label), ...(digestsFile ? { releaseDigests: digestsFile } : {}) });
     const buildImages = digestsFile
       ? async (at: string) => {
-          const { buildReleaseImages, writeReleaseDigests, ReleaseImageError } = await import("../../lifecycle/release-images");
+          const { buildReleaseImages, checkImagesOutsideGoreleaser, writeReleaseDigests, ReleaseImageError } = await import("../../lifecycle/release-images");
           const { ociArchiveDigest } = await import("../../lifecycle/publish-oci");
           try {
+            // #5269: goreleaser would empty an archive in its dist before the cut records it.
+            checkImagesOutsideGoreleaser(declaredImages, declaredArtifacts);
             const built = buildReleaseImages({ images: declaredImages, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, archiveDigest: ociArchiveDigest, ...(versionConfig ? { versionArg: true } : {}) });
             writeReleaseDigests(digestsFile, Object.fromEntries(built.map((a) => [a.component, a.digest])));
             return built;
           } catch (err) {
             const code = err instanceof ReleaseImageError ? err.code : (err as { code?: unknown }).code;
             const fix = err instanceof ReleaseImageError ? err.fix : undefined;
-            throw new ReleaseCutError(code === "release-image-name-taken" ? "release-image-name-taken" : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
+            throw new ReleaseCutError(code === "release-image-name-taken" || code === "release-image-archive-in-dist" ? code : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
           }
         }
       : undefined;

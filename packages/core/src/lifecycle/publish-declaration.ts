@@ -96,8 +96,18 @@ export const OciPublishSchema = z
     image: z.string().min(1),
     /** `<registry host>/<name>`, such as `ghcr.io/acme/api` or `docker.io/acme/api`. */
     repository: z.string().min(1),
-    /** Tags to point at the pushed digest. `{label}` is the release's label. Default: `["{label}"]`, or none for a release with no label. */
+    /** Tags to point at the pushed digest. `{label}` is the release's label and `{version}` the label from its first digit (#5269). Default: `["{label}"]`, or none for a release with no label. */
     tags: z.array(z.string().min(1)).optional(),
+    /**
+     * Tags for each platform's image in an index (#5269), such as `["{label}-{arch}"]`: `{arch}` is the
+     * platform's architecture with its variant (`amd64`, `arm64`, `armv7`), `{os}` its OS and `{label}` the
+     * release's label (`{version}`, the label from its first digit). Each names `{label}` or `{version}`, so it
+     * belongs to the release and no status change moves it.
+     */
+    platformTags: z
+      .array(z.string().min(1).refine((t) => (t.includes("{label}") || t.includes("{version}")) && t.includes("{arch}"), { message: "a platform tag names {arch} and {label} or {version}, such as {label}-{arch}" }))
+      .min(1)
+      .optional(),
     /** The variable holding the registry user name. Default `OCI_USERNAME`. */
     usernameEnv: envName.optional(),
     /** The variable holding the registry password or token. Default `OCI_PASSWORD`. */

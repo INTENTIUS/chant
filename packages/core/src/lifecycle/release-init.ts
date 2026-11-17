@@ -24,6 +24,8 @@ import { basename, join, posix, relative, sep } from "node:path";
 import { GENERATED_MARKER } from "../discovery/files";
 import { forgeOfRemote } from "../forge-remote";
 import { parseYAML } from "../yaml";
+import { goreleaserImage, type GoreleaserImage } from "./release-init-goreleaser-images";
+import { imageArchiveBesideGoreleaser } from "./release-images";
 import { detectRegistryProjects, planRegistryTargets, type RegistryProjectFacts } from "./release-init-registries";
 
 export type ReleaseInitCode =
@@ -122,6 +124,8 @@ export interface ProjectFacts {
     images: boolean;
     /** Its `changelog.filters` (#5270): the types left out, or the patterns no commit type names. */
     changelog?: { exclude: string[] } | { unread: string[] } | null;
+    /** The image its `dockers` or `dockers_v2` build (#5269), as release.images and an oci target declare it. */
+    image?: GoreleaserImage | null;
   } | null;
   /** Helm charts (#5233): each directory holding a `Chart.yaml`, from the project root, and the chart's name. A chart inside another's directory is its subchart and is not listed. */
   charts?: Array<{ dir: string; name: string | null }>;
@@ -133,6 +137,8 @@ export interface ProjectFacts {
   chantCi: boolean;
   /** `.gitignore` ignores `dist/`. */
   distIgnored: boolean;
+  /** `.gitignore` ignores `build/`, where an image beside goreleaser's dist is written (#5269). */
+  buildIgnored?: boolean;
   /** A `pom.xml`, `*.csproj` files or a `*.gemspec` at the root (#5232). */
   registries?: RegistryProjectFacts;
 }
@@ -463,7 +469,13 @@ export function detectProject(root: string): ProjectFacts {
   const python = pyproject === null ? (existsSync(join(root, "setup.py")) ? { name: null, pyproject: false, version: false } : null) : pyprojectFacts(pyproject);
 
   const grFile = GORELEASER_FILES.find((f) => existsSync(join(root, f)));
-  const goreleaser = grFile ? { file: grFile, ...goreleaserFacts(readText(join(root, grFile)) ?? ""), changelog: goreleaserChangelog(readText(join(root, grFile)) ?? "") } : null;
+  const grText = grFile ? (readText(join(root, grFile)) ?? "") : "";
+  const grImage = grFile ? goreleaserImage(grText) : null;
+  // #5269: chant builds the Dockerfile from the repository, not from goreleaser's context with the binary it built.
+  if (grImage && (readText(join(root, grImage.dockerfile)) ?? "").match(/^\s*FROM\s/gim)?.length === 1) {
+    grImage.unread.push(`a binary goreleaser builds: chant builds ${grImage.dockerfile} from the repository, and its one stage copies what goreleaser would have put in its context; give it a build stage of its own`);
+  }
+  const goreleaser = grFile ? { file: grFile, ...goreleaserFacts(grText), ...(grImage ? { image: grImage } : {}), changelog: goreleaserChangelog(grText) } : null;
 
   const nfpmFile = NFPM_FILES.find((f) => existsSync(join(root, f)));
   const nfpmVersion = nfpmFile ? /^version:[ \t]*["']?[^\n]*\$\{?CHANT_RELEASE_(VERSION|LABEL)/m.test(readText(join(root, nfpmFile)) ?? "") : false;
@@ -490,6 +502,7 @@ export function detectProject(root: string): ProjectFacts {
     tags: readTagHistory(tagList),
     chantCi: ciGreen || tagList.some((t) => t.startsWith("ci/green/") || /^ci\/green-[^/]+\//.test(t)),
     distIgnored: /^\/?dist\/?\s*$/m.test(gitignore) || /^\/?dist\/\*\s*$/m.test(gitignore),
+    buildIgnored: /^\/?build\/?\s*$/m.test(gitignore) || /^\/?build\/\*\s*$/m.test(gitignore),
     registries: detectRegistryProjects(root),
   };
 }
@@ -712,10 +725,31 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   // Images.
   const goreleaserImages = facts.goreleaser?.images ?? false;
   const dockerfiles = goreleaserImages ? [] : facts.dockerfiles;
-  if (goreleaserImages && facts.dockerfiles.length > 0) notes.push(`${facts.goreleaser!.file} builds the images, so no Dockerfile is declared in release.images.`);
+  const grImage = facts.goreleaser?.image ?? null;
+  if (goreleaserImages && !grImage) notes.push(`${facts.goreleaser!.file} builds its images with kos, which chant does not build, so no image is declared in release.images and the release publishes none: declare a Dockerfile entry in release.images and an oci target to keep publishing it.`);
+  else if (goreleaserImages && facts.dockerfiles.length > 0) notes.push(`${facts.goreleaser!.file} builds the images, so release.images declares its image alone and no other Dockerfile.`);
   const fallbackName = (facts.origin?.repo.split("/").pop() ?? facts.node?.root.name?.replace(/^@[^/]+\//, "") ?? facts.go?.module?.split("/").pop() ?? "app");
   const images: Json[] = [];
   const usedNames = new Set<string>();
+  // #5269: goreleaser's image, built by chant at the cut and pushed by an oci target with goreleaser's tags.
+  if (grImage) {
+    const g = grImage;
+    usedNames.add(g.name);
+    images.push({
+      name: g.name,
+      dockerfile: g.dockerfile,
+      ...(g.platforms.length > 0 ? { platforms: g.platforms } : {}),
+      archive: g.archive,
+      ...(Object.keys(g.args).length > 0 ? { args: g.args } : {}),
+      ...(Object.keys(g.labels).length > 0 ? { labels: g.labels } : {}),
+    });
+    publish.push({ type: "oci", image: g.archive, repository: g.repository, ...(g.tags.length > 0 ? { tags: g.tags } : {}), ...(g.platformTags.length > 0 ? { platformTags: g.platformTags } : {}) });
+    if (g.repository.startsWith("ghcr.io/")) registry.push(`${g.repository}: the workflow pushes with the run's token, as goreleaser did.`);
+    else registry.push(`${g.repository}: set OCI_USERNAME and OCI_PASSWORD for the release workflow, as ${forge === "gitlab" ? "masked CI/CD variables" : "secrets in release.workflow.env"}, with push access to the registry.`);
+    reasons.push(`release.images: ${g.dockerfile} built once at the cut as a reproducible OCI archive of ${g.platforms.join(", ") || "the default platforms"}, as ${facts.goreleaser!.file}'s ${g.keys.join(" and ")} built it, pushed to ${g.repository} by the oci target`);
+    notes.push(`Remove ${g.keys.join(" and ")} from ${facts.goreleaser!.file}: chant builds and pushes the image now, and the cut's goreleaser would build it again.`);
+    if (g.unread.length > 0) notes.push(`Not carried from ${facts.goreleaser!.file}'s images: ${g.unread.join("; ")}.`);
+  }
   for (const dockerfile of dockerfiles) {
     let name = imageName(dockerfile, fallbackName);
     while (usedNames.has(name)) name = `${name}-${usedNames.size}`;
@@ -724,14 +758,14 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
     images.push(dir === "." ? { name, dockerfile } : { name, dockerfile, context: dir });
     const repository = imageRepository(facts.origin, name, dockerfiles.length === 1);
     if (repository) {
-      publish.push({ type: "oci", image: `dist/images/${name}.tar`, repository });
+      publish.push({ type: "oci", image: facts.goreleaser ? imageArchiveBesideGoreleaser(name) : `dist/images/${name}.tar`, repository });
       if (repository.startsWith("ghcr.io/")) registry.push(`${repository}: the workflow pushes with the run's token. The first push makes the package private; make it public in the package's settings if it should be.`);
       else registry.push(`${repository}: set OCI_USERNAME and OCI_PASSWORD for the release workflow, as ${forge === "gitlab" ? "masked CI/CD variables" : "secrets in release.workflow.env"}, with push access to the registry.`);
     } else notes.push(`${dockerfile} is built into release.images as ${name}, and no oci target is declared: origin names no registry chant knows. Add { type: "oci", image: "dist/images/${name}.tar", repository: "<registry>/<name>" }.`);
   }
   if (images.length > 0) {
     release.images = images;
-    reasons.push(`release.images: ${dockerfiles.join(", ")} built once at the cut as reproducible OCI archives${publish.some((p) => (p as { type?: string }).type === "oci") ? ", pushed by the oci target" : ""}`);
+    if (dockerfiles.length > 0) reasons.push(`release.images: ${dockerfiles.join(", ")} built once at the cut as reproducible OCI archives${publish.some((p) => (p as { type?: string }).type === "oci") ? ", pushed by the oci target" : ""}`);
   }
 
   // goreleaser.
@@ -850,6 +884,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   if (adopted) reasons.push(`release.workflow.file ${workflowFile}: it runs npm publish today, so the npm trusted publisher that names it keeps working; the release workflow replaces it rather than publishing from a second file`);
 
   if (!facts.distIgnored && (images.length > 0 || facts.goreleaser || charts.length > 0 || facts.nfpm || publish.some((p) => ["pypi", "nuget", "rubygems"].includes((p as { type?: string }).type ?? "")) || publish.some((p) => (p as { type?: string }).type === "marketplace"))) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
+  if (facts.goreleaser && images.length > 0 && facts.buildIgnored !== true) notes.push("build/ is not in .gitignore: the images are written to build/images/, outside goreleaser's dist, and the publish refuses a tree with build outputs git does not ignore.");
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
 
   const h = facts.tags.prefix;

@@ -40,6 +40,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import type { PublishDeclaration } from "./publish-declaration";
 import type { Release, ReleaseArtifact } from "./release-store";
+import { NEXT_RELEASE } from "../release-floors";
 
 /** The variable that names the digests file a release's package build reads. */
 export const RELEASE_DIGESTS_ENV = "CHANT_RELEASE_DIGESTS";
@@ -56,6 +57,14 @@ export const RELEASE_IMAGE_DOCKERFILE_FLOOR = "0.124.78";
 
 /** The first chant whose Dockerfile entry in `release.images` takes `args`, build arguments beside the two chant passes (#4908). */
 export const RELEASE_IMAGE_ARGS_FLOOR = "0.124.88";
+
+/**
+ * The first chant whose Dockerfile entry takes `labels`, OCI labels on the
+ * image, and `{label}` and `{version}` in `args` and `labels` values, and
+ * whose image builds see `CHANT_RELEASE_VERSION`; and whose default archive
+ * moves out of a goreleaser entry's `dist` (#5269).
+ */
+export const RELEASE_IMAGE_LABELS_FLOOR = NEXT_RELEASE;
 
 /** One image a release builds in its cut with a command of the product's. */
 export interface ReleaseImageBuild {
@@ -90,9 +99,17 @@ export interface ReleaseImageDockerfile {
    * Build arguments beside `SOURCE_DATE_EPOCH` and `CHANT_RELEASE_LABEL`
    * (#4908), such as the packed package's file and the chant packages the
    * image installs beside it, as sql-yodeler's `release-image.sh` passed
-   * them. Values are literal; the config computes them.
+   * them. `{label}` in a value is the release's label and `{version}` the
+   * label from its first digit (#5269), such as `{ VERSION: "{version}" }`;
+   * the rest is literal.
    */
   args?: Record<string, string>;
+  /**
+   * OCI labels on the image (#5269), such as
+   * `{ "org.opencontainers.image.version": "{version}" }`, with the same
+   * placeholders as `args`.
+   */
+  labels?: Record<string, string>;
 }
 
 /** One image a release builds in its cut. */
@@ -113,6 +130,17 @@ const isDockerfile = (i: ReleaseImageDeclaration): i is ReleaseImageDockerfile =
 
 const archiveOf = (i: ReleaseImageDeclaration): string => i.archive ?? `dist/images/${i.name}.tar`;
 
+/** The placeholders an `args` or `labels` value takes (#5269), each the variable the build command reads. */
+const PLACEHOLDERS: Record<string, string> = { "{label}": '"$CHANT_RELEASE_LABEL"', "{version}": '"$CHANT_RELEASE_VERSION"' };
+
+/** `s` as one shell word, its `{label}` and `{version}` read from the build's environment (#5269). */
+const word = (s: string): string =>
+  s
+    .split(/(\{label\}|\{version\})/)
+    .filter((p) => p.length > 0)
+    .map((p) => PLACEHOLDERS[p] ?? sh(p))
+    .join("");
+
 /**
  * The shell command a Dockerfile entry builds with (#4819), the one
  * terragucci's and plywood's `scripts/release-image.sh` ran: `--no-cache`,
@@ -129,11 +157,59 @@ export function releaseImageBuildCommand(i: ReleaseImageDockerfile, o: { version
     [
       `docker buildx build --builder ${b} --no-cache --platform ${sh((i.platforms ?? RELEASE_IMAGE_PLATFORMS).join(","))}`,
       `--provenance=false --sbom=false --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"${o.versionArg ? ' --build-arg CHANT_RELEASE_LABEL="$CHANT_RELEASE_LABEL"' : ""}${Object.entries(i.args ?? {})
-        .map(([k, v]) => ` --build-arg ${sh(`${k}=${v}`)}`)
+        .map(([k, v]) => ` --build-arg ${word(`${k}=${v}`)}`)
+        .join("")}${Object.entries(i.labels ?? {})
+        .map(([k, v]) => ` --label ${word(`${k}=${v}`)}`)
         .join("")}`,
       `--output ${sh(`type=oci,dest=${archive},rewrite-timestamp=true`)} -f ${sh(i.dockerfile)} ${sh(i.context ?? ".")} >&2`,
     ].join(" "),
   ].join(" && ");
+}
+
+/** The archive of a Dockerfile entry that names none and whose default would be inside a goreleaser entry's `dist` (#5269). */
+export const imageArchiveBesideGoreleaser = (name: string): string => `build/images/${name}.tar`;
+
+/** `p` is `dir` or inside it, both relative to the member. */
+const within = (p: string, dir: string): boolean => {
+  const a = posix.normalize(p.replace(/\\/g, "/"));
+  const d = posix.normalize(dir.replace(/\\/g, "/")).replace(/\/$/, "");
+  return d === "." || a === d || a.startsWith(`${d}/`);
+};
+
+/** The `dist` directory of each goreleaser entry in `release.artifacts` (#5269). */
+const goreleaserDists = (artifacts: readonly unknown[]): string[] =>
+  artifacts.flatMap((a) => {
+    const g = (a as { goreleaser?: { dist?: unknown } } | null)?.goreleaser;
+    return g && typeof g === "object" ? [typeof g.dist === "string" ? g.dist : "dist"] : [];
+  });
+
+/**
+ * A member's `release.images` with each archive placed (#5269). goreleaser
+ * empties its `dist` (`--clean`) when it builds, after the images, so an
+ * archive there would be gone before the cut records it: a Dockerfile entry
+ * that names no archive, whose default `dist/images/<name>.tar` is inside a
+ * goreleaser entry's `dist`, writes {@link imageArchiveBesideGoreleaser}
+ * instead. An archive named inside it is left for
+ * {@link checkImagesOutsideGoreleaser} to refuse.
+ */
+export function placeReleaseImages(images: readonly ReleaseImageDeclaration[], artifacts: readonly unknown[] = []): ReleaseImageDeclaration[] {
+  const dists = goreleaserDists(artifacts);
+  if (dists.length === 0) return [...images];
+  return images.map((i) => (isDockerfile(i) && i.archive === undefined && dists.some((d) => within(archiveOf(i), d)) ? { ...i, archive: imageArchiveBesideGoreleaser(i.name) } : i));
+}
+
+/** Refuse an image archive inside a goreleaser entry's `dist` (#5269), which goreleaser empties after the images are built. */
+export function checkImagesOutsideGoreleaser(images: readonly ReleaseImageDeclaration[], artifacts: readonly unknown[] = []): void {
+  const dists = goreleaserDists(artifacts);
+  for (const i of images) {
+    const dist = dists.find((d) => within(archiveOf(i), d));
+    if (dist === undefined) continue;
+    throw new ReleaseImageError(
+      "release-image-archive-in-dist",
+      `release.images "${i.name}": the archive ${archiveOf(i)} is inside ${dist}, which goreleaser empties when it builds the release's files, after the images`,
+      `Write it outside ${dist}, such as archive: "${imageArchiveBesideGoreleaser(i.name)}".`,
+    );
+  }
 }
 
 /** Each entry as a command and an archive: a Dockerfile entry's command is {@link releaseImageBuildCommand}, its archive the default when it names none. */
@@ -163,6 +239,7 @@ export class ReleaseImageError extends Error {
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const BUILD_ARG = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const LABEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
 /** The build arguments chant passes itself, which an entry's `args` cannot set. */
 const CHANT_BUILD_ARGS = ["SOURCE_DATE_EPOCH", "CHANT_RELEASE_LABEL"];
 
@@ -179,6 +256,10 @@ export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): 
     const paths: [string, string | undefined][] = isDockerfile(i) ? [["the archive", archiveOf(i)], ["the Dockerfile", i.dockerfile], ["the context", i.context]] : [["the archive", i.archive]];
     for (const [what, p] of paths) {
       if (p !== undefined && outside(p)) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": ${what} ${p} is not a path inside the member`);
+    }
+    for (const [k, v] of Object.entries((isDockerfile(i) && i.labels) || {})) {
+      if (!LABEL_KEY.test(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": labels names ${JSON.stringify(k)}, which is not a label key such as org.opencontainers.image.version`);
+      if (typeof v !== "string" || /[\r\n]/.test(v)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": labels.${k} is not a one-line string`);
     }
     for (const [k, v] of Object.entries((isDockerfile(i) && i.args) || {})) {
       if (!BUILD_ARG.test(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args names ${JSON.stringify(k)}, which is not a build argument name`);
@@ -218,7 +299,8 @@ const defaultRun = (command: string, o: { cwd: string; env: NodeJS.ProcessEnv })
 /**
  * Build each image and return it as the release's image artifact. The
  * command runs with `SOURCE_DATE_EPOCH` and, for a cut with a label,
- * `CHANT_RELEASE_LABEL`; an archive it did not write, or a command that
+ * `CHANT_RELEASE_LABEL` and `CHANT_RELEASE_VERSION` (the label from its
+ * first digit, when it has one); an archive it did not write, or a command that
  * fails, stops the cut.
  */
 export function buildReleaseImages(i: BuildImagesInput): ReleaseArtifact[] {
@@ -228,7 +310,11 @@ export function buildReleaseImages(i: BuildImagesInput): ReleaseArtifact[] {
   const envFor = (): NodeJS.ProcessEnv => {
     const env: NodeJS.ProcessEnv = { ...(i.env ?? process.env), SOURCE_DATE_EPOCH: String(i.sourceDateEpoch) };
     delete env.CHANT_RELEASE_LABEL;
+    delete env.CHANT_RELEASE_VERSION;
     if (i.label !== null) env.CHANT_RELEASE_LABEL = i.label;
+    // #5269: the label from its first digit, for an entry's {version}.
+    const at = i.label?.search(/\d/) ?? -1;
+    if (i.label !== null && at >= 0) env.CHANT_RELEASE_VERSION = i.label.slice(at);
     return env;
   };
   // #4819: each prepare command once, before any build, with no digests file, as the image's contents are built in the cut and the publish job alike.
