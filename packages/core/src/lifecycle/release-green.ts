@@ -6,8 +6,11 @@
  *   `ci/revoked/<sha>` tag, as `chant ci` writes them from `ci.green`
  *   (./release-cut.ts). The default when `chant.workspace.json` declares
  *   `ci.green` or the repository holds any `ci/green/` tag.
- * - `forge-checks`: the forge's checks on the commit passed. GitHub: every
- *   check run and commit status, and each check a branch rule of the
+ * - `forge-checks`: the forge's checks on the commit passed. Each check is
+ *   judged by its newest run on the commit (GitHub: per check name and app,
+ *   and per status context; newest completion time, ties by highest id), so
+ *   a failed merge_group run followed by a passing push run is green.
+ *   GitHub: every check run and commit status, and each check a branch rule of the
  *   branch requires. Forgejo: every commit status, and each context its
  *   branch protection requires when the token can read it. GitLab: the
  *   newest pipeline of each source on the commit. A check that failed or has
@@ -102,6 +105,33 @@ export function judgeChecks(forge: ForgeKind, checks: ForgeCheck[], required: re
   return { green: true, forge, checks: [...names].sort() };
 }
 
+/** A reading of a check with what orders it among the reruns of the same check. */
+interface Reading {
+  key: string;
+  at: number;
+  id: number;
+  check: ForgeCheck;
+}
+
+const num = (v: unknown): number => (typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : 0);
+const time = (...vs: unknown[]): number => {
+  for (const v of vs) {
+    const t = typeof v === "string" ? Date.parse(v) : NaN;
+    if (!Number.isNaN(t)) return t;
+  }
+  return 0;
+};
+
+/** The newest reading of each key: latest time, ties by highest id. A rerun, or a later run on the same commit, supersedes the one before it, as in GitHub's own rollup. */
+function newestRuns(readings: Reading[]): ForgeCheck[] {
+  const out = new Map<string, Reading>();
+  for (const r of readings) {
+    const had = out.get(r.key);
+    if (!had || r.at > had.at || (r.at === had.at && r.id > had.id)) out.set(r.key, r);
+  }
+  return [...out.values()].map((r) => r.check);
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
@@ -163,7 +193,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           if (str(r.path) === workflowPath && r.id !== undefined) runId.add(String(r.id));
         }
       }
-      const checks: ForgeCheck[] = [];
+      const runReadings: Reading[] = [];
       for (let page = 1; page <= 20; page++) {
         const got = await get(`${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`);
         const runs = isObject(got) && Array.isArray(got.check_runs) ? got.check_runs.filter(isObject) : [];
@@ -173,18 +203,27 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           if (!name || inRun(url, runId)) continue;
           const status = str(r.status) ?? "unknown";
           const conclusion = str(r.conclusion) ?? null;
-          checks.push({ name, state: checkState(status, conclusion), status: status === "completed" ? (conclusion ?? status) : status, ...(url ? { url } : {}) });
+          const app = isObject(r.app) ? String(r.app.id ?? r.app.slug ?? "") : "";
+          runReadings.push({
+            key: `${app}\0${name}`,
+            at: time(r.completed_at, r.started_at),
+            id: num(r.id),
+            check: { name, state: checkState(status, conclusion), status: status === "completed" ? (conclusion ?? status) : status, ...(url ? { url } : {}) },
+          });
         }
         if (runs.length < 100) break;
       }
+      const checks = newestRuns(runReadings);
       const combined = await get(`${repo}/commits/${sha}/status?per_page=100`);
+      const statusReadings: Reading[] = [];
       for (const s of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses.filter(isObject) : []) {
         const name = str(s.context);
         const url = str(s.target_url);
         if (!name || inRun(url, runId)) continue;
         const state = str(s.state) ?? "unknown";
-        checks.push({ name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) });
+        statusReadings.push({ key: name, at: time(s.updated_at, s.created_at), id: num(s.id), check: { name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) } });
       }
+      checks.push(...newestRuns(statusReadings));
       const required: string[] = [];
       if (branch) {
         const rules = await get(`${repo}/rules/branches/${encodeURIComponent(branch)}`, true);
@@ -206,14 +245,15 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
     const repo = `/repos/${target.repo}`;
     return async (sha, branch) => {
       const combined = await get(`${repo}/commits/${sha}/status?limit=100`);
-      const checks: ForgeCheck[] = [];
+      const readings: Reading[] = [];
       for (const s of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses.filter(isObject) : []) {
         const name = str(s.context);
         const url = str(s.target_url);
         if (!name || inRun(url, runNumber)) continue;
         const state = str(s.status) ?? str(s.state) ?? "unknown";
-        checks.push({ name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) });
+        readings.push({ key: name, at: time(s.updated_at, s.created_at), id: num(s.id), check: { name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) } });
       }
+      const checks = newestRuns(readings);
       const required: string[] = [];
       if (branch) {
         const protections = await get(`${repo}/branch_protections`, true);
@@ -250,7 +290,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
   };
 }
 
-/** Each check name once, at the worst state any entry of that name has, so a check run and a status of the same name can't hide a failure. */
+/** Each check name once, at the worst state any entry of that name has, so a check run and a status of the same name can't hide a failure. Reruns of one check are already collapsed to the newest by `newestRuns`. */
 function newestByName(checks: ForgeCheck[]): ForgeCheck[] {
   const rank = { failure: 2, pending: 1, success: 0 } as const;
   const out = new Map<string, ForgeCheck>();
