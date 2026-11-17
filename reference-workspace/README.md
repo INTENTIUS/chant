@@ -122,13 +122,13 @@ for the loop end to end.
 | | |
 |---|---|
 | Owner | the chant maintainers, [INTENTIUS/chant](https://github.com/INTENTIUS/chant). Changes go through chant's own pull requests |
-| Tags | `reference-workspace-v<major>.<minor>` on the chant repo, one per chant minor release, on the commit that release was cut from. A release train does not cut it; a maintainer tags it by hand. The tags for 0.81 to 0.100 were cut by hand from the `chant-v<minor>.0` commits |
+| Tags | none of its own. A version of the workspace is the chant release it shipped in, `release/npm/<version>` on the chant repo, which the release train cuts. The `reference-workspace-v<major>.<minor>` tags, cut by hand through 0.124, are kept and no longer cut |
 | Chant floor | 0.101.0 |
 | Upgrade range | a workspace made from any tag of the last three chant minors upgrades to the current one |
 
 The floor is 0.101.0 because the declaration's `design` member has kind `design`, which an older chant lists with `unknown-kind`. The declaration sets no `minReader`, because the chant under test is 0.100.0 until the 0.101 release. Before that it was 0.94.0, because the declaration's `app` member names its intent with `box.intent` and a work item's source can be a person's ask, both read from 0.94.0 ([#2850](https://github.com/INTENTIUS/chant/issues/2850), [#2851](https://github.com/INTENTIUS/chant/issues/2851)); an older chant rejects the declaration's `box` key. Before that it was 0.85.0, because delivery declares the app with the docker lexicon's `DockerWebService` composite and `graph --composites` reads it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)), neither of which is in 0.84.0. Before that it was 0.81.0, because the declaration needs `chant workspace ls` and the declaration reader ([#2593](https://github.com/INTENTIUS/chant/pull/2593)), merged after 0.80.0. The decision files need `chant workspace records`, which is in 0.80.0 ([#2572](https://github.com/INTENTIUS/chant/pull/2572), [#2573](https://github.com/INTENTIUS/chant/pull/2573)), and the delivery member alone builds on older releases, but the fixture is only ever tested as a whole. The floor moves up when a phase lands a feature here that an older chant does not have, and the tag for that minor says so below.
 
-`chant workspace upgrade` ([#2550](https://github.com/INTENTIUS/chant/issues/2550), shipped in 0.81.0) performs an upgrade from an older tag of this workspace. Within the range, each change between two tags is listed below with any manual step it needs, and `git diff reference-workspace-v<old> reference-workspace-v<new> -- reference-workspace/` shows the whole difference.
+`chant workspace upgrade` ([#2550](https://github.com/INTENTIUS/chant/issues/2550), shipped in 0.81.0) performs an upgrade from an older version of this workspace. Within the range, each change between two versions is listed below with any manual step it needs, and `git diff release/npm/<old> release/npm/<new> -- reference-workspace/` shows the whole difference. The tag column names the hand-cut tag for each row; a release tag of the same chant minor or later holds the same files or newer.
 
 ## Changes by tag
 
