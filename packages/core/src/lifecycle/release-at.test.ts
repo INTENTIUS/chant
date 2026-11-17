@@ -6,7 +6,7 @@
 import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkoutCommit, CutAtError, resolveCutCommit } from "./release-at";
 
@@ -43,6 +43,33 @@ describe("checkoutCommit", () => {
       co.remove();
       expect(existsSync(co.dir)).toBe(false);
       expect(git(dir, "worktree", "list").split("\n")).toHaveLength(1);
+    });
+  });
+
+  test("points a workspace member's node_modules link at the worktree's member, not the checkout's", async () => {
+    await withTestDir(async (dir) => {
+      for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@chant.dev"], ["config", "user.name", "T"]]) git(dir, ...args);
+      mkdirSync(join(dir, "packages", "a"), { recursive: true });
+      writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
+      writeFileSync(join(dir, "packages", "a", "package.json"), "{}");
+      git(dir, "add", ".");
+      git(dir, "commit", "-q", "-m", "one");
+      mkdirSync(join(dir, "node_modules", "@acme"), { recursive: true });
+      mkdirSync(join(dir, "node_modules", "left-pad"));
+      mkdirSync(join(dir, "node_modules", ".bin"));
+      symlinkSync("../../packages/a", join(dir, "node_modules", "@acme", "a"), "dir");
+      symlinkSync("../left-pad", join(dir, "node_modules", ".bin", "left-pad"), "dir");
+
+      const co = checkoutCommit(dir, dir, git(dir, "rev-parse", "HEAD"));
+      try {
+        const nm = join(co.dir, "node_modules");
+        expect(lstatSync(nm).isSymbolicLink()).toBe(false);
+        expect(realpathSync(join(nm, "@acme", "a"))).toBe(realpathSync(join(co.dir, "packages", "a")));
+        expect(realpathSync(join(nm, "left-pad"))).toBe(realpathSync(join(dir, "node_modules", "left-pad")));
+        expect(realpathSync(join(nm, ".bin", "left-pad"))).toBe(realpathSync(join(dir, "node_modules", "left-pad")));
+      } finally {
+        co.remove();
+      }
     });
   });
 });

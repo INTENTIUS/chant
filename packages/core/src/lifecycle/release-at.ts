@@ -12,13 +12,17 @@
  * repository's own. The checkout's `node_modules` are linked in, so the
  * compile resolves the packages the checkout already installed; a commit
  * whose lockfile differs from the checkout's would need its own install
- * (inferred, as the cut can't tell).
+ * (inferred, as the cut can't tell). An npm, pnpm or yarn workspace links
+ * each member into `node_modules` with a relative symlink to the member's
+ * directory; those links are pointed at the member's directory in the new
+ * worktree, so a build there resolves the worktree's own members (built by
+ * the cut's build command) and not the checkout's.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export type CutAtCode = "release-at-unknown";
 
@@ -48,6 +52,62 @@ export function resolveCutCommit(top: string, ref: string): string {
       "Fetch it first (git fetch origin --tags), or name a sha `chant release candidates` lists.",
     );
   }
+}
+
+/** Where `link` points, relative to `top`, when that is inside `top` and outside any `node_modules`; else null. */
+function workspaceTarget(link: string, top: string): string | null {
+  try {
+    if (!lstatSync(link).isSymbolicLink()) return null;
+    const rel = relative(top, realpathSync(link));
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel) || rel.split(sep).includes("node_modules")) return null;
+    return rel;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `name` in `from` is a directory of entries of its own: a scope or `.bin`. */
+function isGroup(from: string, name: string): boolean {
+  if (!(name.startsWith("@") || name === ".bin")) return false;
+  try {
+    const st = lstatSync(join(from, name));
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function hasWorkspaceLink(from: string, top: string): boolean {
+  for (const name of readdirSync(from)) {
+    if (isGroup(from, name)) {
+      if (hasWorkspaceLink(join(from, name), top)) return true;
+    } else if (workspaceTarget(join(from, name), top) !== null) return true;
+  }
+  return false;
+}
+
+function mirror(from: string, to: string, top: string, dir: string): void {
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(from)) {
+    const src = join(from, name);
+    const dest = join(to, name);
+    if (isGroup(from, name)) {
+      mirror(src, dest, top, dir);
+      continue;
+    }
+    const rel = workspaceTarget(src, top);
+    symlinkSync(rel === null ? src : join(dir, rel), dest);
+  }
+}
+
+/**
+ * Link the checkout's `node_modules` at `to`: as one symlink, or, when it
+ * holds workspace links into the checkout, as a directory of per-entry links
+ * with those re-pointed into `dir`.
+ */
+function linkNodeModules(from: string, to: string, top: string, dir: string): void {
+  if (hasWorkspaceLink(from, top)) mirror(from, to, top, dir);
+  else symlinkSync(from, to, "dir");
 }
 
 /** A checkout of one commit for the cut, and the member's directory inside it. */
@@ -90,7 +150,7 @@ export function checkoutCommit(top: string, cwd: string, commit: string): Commit
     for (const level of levels) {
       const from = join(realTop, level, "node_modules");
       const to = join(dir, level, "node_modules");
-      if (existsSync(from) && !existsSync(to) && existsSync(dirname(to))) symlinkSync(from, to, "dir");
+      if (existsSync(from) && !existsSync(to) && existsSync(dirname(to))) linkNodeModules(from, to, realTop, dir);
     }
   } catch (err) {
     remove();
