@@ -818,6 +818,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined) throw new Error("--levels needs the levels: --levels auto, --levels minor, or --levels \"core=minor web=patch\"");
       result.levels = value;
+    } else if (arg === "--planned") {
+      // `chant workspace train cut <env> --planned "<member>=<label> ..."` (#5237): the plan the cut must match, or `none`.
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error('--planned needs the members and labels a plan gave: --planned "core=1.4.0 web=2.0.1", or --planned none');
+      result.planned = value;
     } else if (arg === "--bump-member") {
       // `chant release changed --bump-member <member>=<level>` (#5134) is repeatable.
       const value = args[++i];

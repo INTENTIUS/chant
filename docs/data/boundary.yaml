@@ -257,7 +257,7 @@ rows:
     concept: "workspace train cut"
     owner: "chant"
     carrier: "chant workspace train cut --json"
-    what: "Cuts a release train under release.train: the members release changed lists at a commit, each labelled past every version its ledger, release tags, legacy tags, stamped packages and the npm registry hold, cut with release cut --at, the train recorded and chant/lifecycle pushed, then the member tags and release-train/<env>/<id> pushed in one atomic push. --levels types levels; --doctor runs release doctor in each member before anything is cut; without --yes it plans and writes nothing (#5154, #5216)."
+    what: "Cuts a release train under release.train: the members release changed lists at a commit, each labelled past every version its ledger, release tags, legacy tags, stamped packages and the npm registry hold, cut with release cut --at, the train recorded and chant/lifecycle pushed, then the member tags and release-train/<env>/<id> pushed in one atomic push. --levels types levels; --doctor runs release doctor in each member before anything is cut; without --yes it plans and writes nothing; --plan-only prints the members and labels with no member's dry run, and --planned refuses a cut whose plan differs from the one given (#5154, #5216, #5237)."
   - category: "command"
     concept: "workspace train prepare"
     owner: "chant"

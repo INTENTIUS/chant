@@ -682,3 +682,9 @@ jobs:
       - run: git config user.name "chant release"
       - run: git config user.email "chant-release@localhost"
       - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes
+
+# ==== member builds ====
+throws: release.workflow.builds in a member: the tag trigger publishes a train cut before the workflow ran, so nothing built here would be in it; use trigger: "dispatch"
+
+# ==== member builds named twice ====
+throws: release.workflow.builds in a member: the tag trigger publishes a train cut before the workflow ran, so nothing built here would be in it; use trigger: "dispatch"

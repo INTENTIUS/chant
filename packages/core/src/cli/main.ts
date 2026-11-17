@@ -1220,7 +1220,7 @@ Workspace (level 1, #2524):
                         instead; --continue moves on from the member's answer
                         in _control/applied.jsonl, after applied or unchanged
                         (#5119)
-  workspace train cut <env> [--at <sha>] [--levels <levels>] [--doctor] [--yes] [--no-push] [--json]
+  workspace train cut <env> [--at <sha>] [--levels <levels>] [--plan-only] [--planned <member=label ...|none>] [--doctor] [--yes] [--no-push] [--json]
                         Cut a train (release.train): the members release
                         changed lists, each labelled past every version its
                         ledger, tags, packages and npm hold, cut at one
@@ -1228,7 +1228,9 @@ Workspace (level 1, #2524):
                         release-train/<env>/<id> pushed in one push. --levels
                         types levels (auto, minor, core=major ...). --doctor
                         runs release doctor in each member first. Without
-                        --yes it plans (#5154)
+                        --yes it plans (#5154). --plan-only prints the members
+                        and labels with no member's dry run; --planned refuses
+                        a cut whose plan differs from the one given (#5237)
   workspace train prepare <env> [<train id|digest>] [--json]
                         In a checkout of the train's commit: stamp each member
                         cut here (release.version, train ranges) and build the

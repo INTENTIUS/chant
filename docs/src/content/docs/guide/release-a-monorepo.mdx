@@ -106,6 +106,8 @@ export default {
 
 The cut job builds them once, in that member's cut, and hands them to the publish job, which checks every file against the digests the release recorded before anything publishes. A publish with no cut job before it (a train tag pushed from a workstation, or a dispatched `train`) builds them again from the train's commit and publishes only when they come out the same. See [A release train](/chant/cli/release/workflow/#a-release-train) for what the jobs run.
 
+Files that need another runner, such as a macOS or Windows binary, come from the member's own `release.workflow.builds`, with a `release.artifacts` entry whose `builtBy` names the jobs. The workflow's gate plans the train first, so each build job runs with the label its member is about to be cut at, and the cut refuses a train whose labels changed since. Such a train publishes in the run that cut it. [A member's builds on other runners](/chant/cli/release/workflow/#a-members-builds-on-other-runners) shows the config.
+
 ## On GitLab
 
 `chant release workflow` renders the train for GitLab as jobs of `.gitlab/chant-release.yml`, which `.gitlab-ci.yml` includes. Store a project access token with `write_repository` as the masked CI/CD variable `CHANT_RELEASE_TOKEN`, since a job token cannot push the train's tags. Start a train by running a pipeline with `CHANT_RELEASE_LEVELS=auto`, and finish one that did not publish with `CHANT_RELEASE_TRAIN=<id>`. [A release train on GitLab](/chant/cli/release/workflow/#a-release-train-on-gitlab) has the details.

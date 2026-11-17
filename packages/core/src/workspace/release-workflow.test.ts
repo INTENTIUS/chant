@@ -1166,4 +1166,88 @@ describe("a dispatched train workflow (#5154)", () => {
     expect(Object.keys(tag)).toEqual(["chant-release-publish"]);
     expect(tag["chant-release-publish"]!.rules[0]!.if).toBe("$CI_COMMIT_TAG =~ /^release-train\\/npm\\//");
   });
+
+  test("GitLab runs a member's build with the label the gate planned, and one not in the train builds nothing (#5237)", () => {
+    const build = { name: "cli-arm64", runner: "arm64", build: "make", outputs: ["dist/cli"] };
+    const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { trigger: "dispatch" }, train: { env: "npm", builds: [{ member: "cli", dir: "cli", build }] } })) as Record<string, { script: string[]; needs?: unknown; tags?: string[]; artifacts?: { paths?: string[] } }>;
+    expect(Object.keys(doc)).toEqual(["chant-release-gate", "chant-release-build-cli-arm64", "chant-release-cut", "chant-release-publish"]);
+    expect(doc["chant-release-gate"]!.script.some((l) => l.startsWith("printf 'CHANT_TRAIN_LABEL_CLI_ARM64=%s\\n'"))).toBe(true);
+    const b = doc["chant-release-build-cli-arm64"]!;
+    expect(b.tags).toEqual(["arm64"]);
+    expect(b.artifacts!.paths).toEqual(["cli/chant-release-build-cli-arm64.tar"]);
+    expect(b.script.slice(0, 2)).toEqual(['export CHANT_RELEASE_LABEL="$CHANT_TRAIN_LABEL_CLI_ARM64"', 'if [ -z "$CHANT_RELEASE_LABEL" ]; then echo "cli is not in this train, so build-cli-arm64 builds nothing"; exit 0; fi']);
+    expect(b.script.slice(-3)).toEqual(["cd cli", "make", "tar -cf chant-release-build-cli-arm64.tar -- dist/cli"]);
+    const cut = doc["chant-release-cut"]!;
+    expect(cut.needs).toEqual(["chant-release-gate", "chant-release-build-cli-arm64"]);
+    const unpack = cut.script.indexOf('if [ -n "$CHANT_TRAIN_LABEL_CLI_ARM64" ]; then tar -xkf cli/chant-release-build-cli-arm64.tar -C cli; mv cli/chant-release-build-cli-arm64.tar /tmp/; fi');
+    expect(unpack).toBeGreaterThan(-1);
+    expect(unpack).toBeLessThan(cut.script.findIndex((l) => l.includes('workspace train cut npm --at "$CHANT_RELEASE_COMMIT"') && l.includes('--planned "$CHANT_TRAIN_PLANNED"')));
+    expect(doc["chant-release-publish"]!.needs).toEqual([{ job: "chant-release-cut", optional: true }, { job: "chant-release-build-cli-arm64", optional: true }]);
+  });
+});
+
+describe("a train's members build on other runners (#5237)", () => {
+  const member = (builtBy: string) =>
+    `export default { release: { workflow: { builds: [{ name: "cli-arm64", runner: "ubuntu-24.04-arm", build: "go build -o dist/cli-linux-arm64 .", outputs: ["dist/cli-linux-arm64"] }] }, artifacts: [{ name: "cli", builtBy: ${JSON.stringify(builtBy)} }], publish: [{ type: "forge", forge: "github", repo: "acme/acme", assets: ["artifact:cli"] }] } };\n`;
+  const render = async (memberConfig: string, trigger = "dispatch"): Promise<{ code: number; root: string; errors: string[] }> => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-5237-")));
+    writeFileSync(join(root, "chant.workspace.json"), JSON.stringify({ name: "acme", schema: 1, members: [{ name: "cli", dir: "cli", kind: "chant" }, { name: "web", dir: "web", kind: "chant" }] }, null, 2));
+    writeFileSync(join(root, "chant.config.ts"), `export default { release: { train: { env: "npm" }, workflow: { trigger: ${JSON.stringify(trigger)} } } };\n`);
+    mkdirSync(join(root, "cli"));
+    mkdirSync(join(root, "web"));
+    writeFileSync(join(root, "cli", "go.mod"), "module example.com/cli\n\ngo 1.24\n");
+    writeFileSync(join(root, "cli", "chant.config.ts"), memberConfig);
+    writeFileSync(join(root, "web", "chant.config.ts"), "export default { release: { publish: [] } };\n");
+    expect(spawnSync("git", ["init", "-q"], { cwd: root }).status).toBe(0);
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const code = await runReleaseWorkflow({ args: { forge: "github", output: join(root, "release.yml") } } as unknown as CommandContext);
+      return { code, root, errors: err.mock.calls.map((c) => String(c[0])) };
+    } finally {
+      cwd.mockRestore();
+      log.mockRestore();
+      err.mockRestore();
+    }
+  };
+
+  test("the gate plans the train, the member's build job builds with its planned label, and the cut unpacks it and cuts that plan", async () => {
+    const { code, root, errors } = await render(member("cli-arm64"));
+    expect(code, errors.join("\n")).toBe(0);
+    const doc = parseYAML(readFileSync(join(root, "release.yml"), "utf-8")) as GhDoc;
+    const gate = runs(doc.jobs.gate!).join("\n");
+    expect(gate).toContain('workspace train cut npm --at "$commit" --levels "${CHANT_RELEASE_LEVELS:-auto}" --plan-only --json');
+    expect(gate).toContain('m.member==="cli"');
+    const build = doc.jobs["build-cli-arm64"] as GhJob & { if?: string; defaults?: { run?: Record<string, string> } };
+    expect(build.if).toBe("needs.gate.outputs.label-cli-arm64 != ''");
+    expect(build.env!.CHANT_RELEASE_LABEL).toBe("${{ needs.gate.outputs.label-cli-arm64 }}");
+    expect(build.defaults!.run!["working-directory"]).toBe("cli");
+    expect(JSON.stringify(build.steps)).toContain("cli/go.mod");
+    expect(runs(build)).toContain("go build -o dist/cli-linux-arm64 .");
+    // The cut waits for the builds, runs only when none failed, unpacks into the member, and cuts the gate's plan.
+    expect(doc.jobs.cut!.needs).toEqual(["gate", "build-cli-arm64"]);
+    expect((doc.jobs.cut as { if?: string }).if).toContain("!contains(needs.*.result, 'failure')");
+    expect(doc.jobs.cut!.env!.CHANT_TRAIN_PLANNED).toBe("${{ needs.gate.outputs.planned }}");
+    const cut = runs(doc.jobs.cut!);
+    const unpack = cut.indexOf('tar -xkf "$RUNNER_TEMP/chant-release-builds/chant-release-build-cli-arm64.tar" -C cli');
+    const cutAt = cut.findIndex((l) => l.includes("workspace train cut"));
+    expect(unpack).toBeGreaterThan(-1);
+    expect(unpack).toBeLessThan(cutAt);
+    expect(cut[cutAt]).toContain('--planned "$CHANT_TRAIN_PLANNED"');
+    expect(cut.some((l) => l.includes("go build"))).toBe(false);
+    // The publish job of the same run unpacks them too, before the members are prepared.
+    const pub = runs(doc.jobs.publish!);
+    expect(doc.jobs.publish!.needs).toEqual(["gate", "cut", "build-cli-arm64"]);
+    expect(pub.indexOf('tar -xf "$RUNNER_TEMP/chant-release-builds/chant-release-build-cli-arm64.tar" -C cli')).toBeLessThan(pub.findIndex((l) => l.includes("train prepare")));
+  });
+
+  test("builtBy naming no build job of its member is refused, and so are builds with the tag trigger", async () => {
+    const wrong = await render(member("windows"));
+    expect(wrong.code).toBe(1);
+    expect(wrong.errors.join("\n")).toMatch(/release.train: a member's .*builtBy names "windows", which is not a release.workflow.builds job \(they are cli-arm64\) \[release-artifact-invalid\]/);
+    const tag = await render(member("cli-arm64"), "tag");
+    expect(tag.code).toBe(1);
+    expect(tag.errors.join("\n")).toMatch(/release.workflow.builds in a member: the tag trigger/);
+  });
 });

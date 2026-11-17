@@ -10,7 +10,7 @@ diataxis: reference
 chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json]
 chant workspace train list <env> [--json]
 chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json]
-chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--doctor] [--yes] [--no-push] [--json]
+chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--plan-only] [--planned <member=label ...|none>] [--doctor] [--yes] [--no-push] [--json]
 chant workspace train prepare <env> [<train id|digest>] [--json]
 chant workspace train artifacts <env> [<train id|digest>] [--from <dir>] [-o <dir>] [--no-build] [--json]
 chant workspace train verify <env> [<train id|digest>] [--json]
@@ -105,14 +105,15 @@ The cut, in order:
 1. A commit a `release-train/<env>/*` tag already names is released: it says so and does nothing.
 2. The members are those [`chant release changed`](/chant/cli/release/changed/) lists at the commit, with its dependency closure, in publish order. `--levels` types levels: `auto` (the default: each member's conventional commits and intent files decide), a level for every member (`minor`), `<member>=<level>`, or several separated by spaces or commas (`minor core=major`). A member already cut from this commit, by a run that stopped part way, is taken at its label and is not cut again.
 3. Each member's label is its bumped label, floored past every version it already has: the labels in its ledger, its release tags (as `release.tag` renders them, default `release/<workspace>/<member>/<label>`), the `release.legacyTags` tags, the `version` of each package its `release.version` names at the commit, and every version npm lists for the packages it stamps or publishes (`npm view <name> versions`, at the target's `registry`). A label is never one the registry already holds. A registry that can't answer stops the cut with `train-registry-unreadable`; one that has never heard of a package adds nothing.
-4. `release.train.check` runs.
-5. Each member the train cuts has its npm packages looked up on the registry, at the target's `registry`. A package that has never been published refuses the train with `publish-npm-never-published` before any member is cut, since npm trusted publishing can't create a package and its first publish would otherwise fail part way through the train. The message names the package. Publish one placeholder version of it by hand (`npm login`, then `npm publish`), add the trusted publisher on npmjs.com under the package's Settings, and cut again. A registry that can't answer refuses with `publish-npm-registry-unreadable`. [`chant release doctor`](/chant/cli/release/doctor/) reports the same package before a cut.
-6. With `--doctor`, [`chant release doctor`](/chant/cli/release/doctor/) runs in each member of the train, and a check that fails in any of them stops the train with nothing cut. The doctors' output goes to stderr.
-7. [`chant release cut <label> --at <commit> --yes`](/chant/cli/release/cut/) runs in each member's directory. Each cut pushes its record and tags the commit locally.
-8. The train is recorded, every member cut here at its new release and every other member at its newest, and `chant/lifecycle` is pushed.
-9. The member tags and `release-train/<env>/<id>` on the commit go to `origin` in one atomic push. A workflow on that tag publishes the train.
+4. With `--planned`, the members and labels planned must be exactly those `--planned` gives, or the cut stops with `train-plan-changed` and nothing is cut.
+5. `release.train.check` runs.
+6. Each member the train cuts has its npm packages looked up on the registry, at the target's `registry`. A package that has never been published refuses the train with `publish-npm-never-published` before any member is cut, since npm trusted publishing can't create a package and its first publish would otherwise fail part way through the train. The message names the package. Publish one placeholder version of it by hand (`npm login`, then `npm publish`), add the trusted publisher on npmjs.com under the package's Settings, and cut again. A registry that can't answer refuses with `publish-npm-registry-unreadable`. [`chant release doctor`](/chant/cli/release/doctor/) reports the same package before a cut.
+7. With `--doctor`, [`chant release doctor`](/chant/cli/release/doctor/) runs in each member of the train, and a check that fails in any of them stops the train with nothing cut. The doctors' output goes to stderr.
+8. [`chant release cut <label> --at <commit> --yes`](/chant/cli/release/cut/) runs in each member's directory. Each cut pushes its record and tags the commit locally.
+9. The train is recorded, every member cut here at its new release and every other member at its newest, and `chant/lifecycle` is pushed.
+10. The member tags and `release-train/<env>/<id>` on the commit go to `origin` in one atomic push. A workflow on that tag publishes the train.
 
-Without `--yes` it prints the members, their labels and why, runs each cut's dry run, and writes nothing. `--no-push` records and tags locally and pushes no tag. `--json` prints the plan, the tags and the train. Under `--json` stdout holds that document and nothing else: what the `release.train.check` lines and the member cuts print goes to stderr.
+Without `--yes` it prints the members, their labels and why, runs each cut's dry run, and writes nothing. `--plan-only` prints the members and labels and runs no member's dry run; with `--json` its document adds `planned`, the members and labels as `--planned` takes them (`core=1.0.4,lex=1.1.0`, or `none`). The generated workflow's gate runs it so that each [build job on another runner](/chant/cli/release/workflow/#a-members-builds-on-other-runners) builds with its member's label, and its cut job passes `planned` back as `--planned`. `--plan-only` takes no `--yes` or `--planned` (`train-plan-only`). `--no-push` records and tags locally and pushes no tag. `--json` prints the plan, the tags and the train. Under `--json` stdout holds that document and nothing else: what the `release.train.check` lines and the member cuts print goes to stderr.
 
 ```
 $ chant workspace train cut npm --levels "lex=minor"
@@ -126,6 +127,9 @@ Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cu
 |---|---|
 | `train-not-declared` | The root's `chant.config.ts` declares no `release.train` |
 | `train-env-mismatch` | `<env>` is not the one `release.train.env` names |
+| `train-plan-only` | `--plan-only` was given with `--yes` or `--planned` |
+| `train-planned-invalid` | A `--planned` word is not `<member>=<label>`, or names a member twice |
+| `train-plan-changed` | The train differs from the one `--planned` gives: a release or tag landed after the plan. Nothing was cut |
 | `train-levels-invalid` | `--levels` has a word that is not a level or `<member>=<level>`, names a member the workspace does not have, or gives per-member levels to a `first: "together"` train |
 | `train-registry-unreadable` | npm could not say which versions a package has |
 | `publish-npm-never-published` | A member's npm target names a package the registry has never published. Nothing was cut |
@@ -205,6 +209,8 @@ Two things come from different places. The workflow file is the one on the branc
 | `--levels <levels>` | (`cut`) `auto`, a level for every member, `<member>=<level>`, or several of them separated by spaces or commas. |
 | `--no-push` | (`cut`) Record the train and tag locally, and push no tag. |
 | `--doctor` | (`cut`) Run `release doctor` in each member of the train before anything is cut. |
+| `--plan-only` | (`cut`) Print the members and labels, with no member's dry run, and cut nothing. |
+| `--planned <member=label ...\|none>` | (`cut`) Refuse to cut unless the train plans exactly these members at these labels; `none` for a plan of nothing. |
 | `--from <dir>`, `-o <dir>`, `--no-build` | (`artifacts`) Copy each member's files from a staged directory first; stage them in one; refuse a missing file rather than build it again. |
 | `--allow-unsigned`, `--require-provenance` | (`publish`) As for `chant release publish`, for every member. |
 | `--json` | Print the train, or the list, as JSON. |

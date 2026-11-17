@@ -607,7 +607,7 @@ async function promoteAcrossRepos(query: TrainPromoteQuery, train: ReadTrain, no
 }
 
 const USAGE =
-  "chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json] | chant workspace train list <env> [--json] | chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json] | chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--doctor] [--yes] [--no-push] [--json] | chant workspace train prepare <env> [<train id|digest>] [--json] | chant workspace train artifacts <env> [<train id|digest>] [--from <dir>] [-o <dir>] [--no-build] [--json] | chant workspace train verify <env> [<train id|digest>] [--json] | chant workspace train publish <env> [<train id|digest>] [--yes] [--json]";
+  "chant workspace train <env> [--pin <member>=<label|digest>]... [--dry-run] [--json] | chant workspace train list <env> [--json] | chant workspace train promote <env> [<train id|digest>] [--gate <name>] [--continue] [--dry-run] [--json] | chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--plan-only] [--planned <member=label ...|none>] [--doctor] [--yes] [--no-push] [--json] | chant workspace train prepare <env> [<train id|digest>] [--json] | chant workspace train artifacts <env> [<train id|digest>] [--from <dir>] [-o <dir>] [--no-build] [--json] | chant workspace train verify <env> [<train id|digest>] [--json] | chant workspace train publish <env> [<train id|digest>] [--yes] [--json]";
 
 /** The workspace runs that promoted each train, as `train list --json` gives them (#4037). */
 export interface TrainPromotion {

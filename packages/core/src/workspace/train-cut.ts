@@ -37,7 +37,13 @@
  *    the commit. A workflow on that tag publishes the train.
  *
  * Without `--yes` it plans: it prints the members and labels, runs each
- * cut's dry run, and cuts, records, tags and pushes nothing.
+ * cut's dry run, and cuts, records, tags and pushes nothing. `--plan-only`
+ * (#5237) prints the members and labels and runs no member's dry run: what
+ * a workflow's gate reads to give each per-platform build job its member's
+ * label. `--planned "<member>=<label> ..."` (or `none`) then makes the cut
+ * refuse (`train-plan-changed`) unless it plans exactly those members at
+ * those labels, so the files the build jobs made carry the labels the cut
+ * records.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -51,6 +57,10 @@ import { readDeclaration } from "./declaration";
 import { bumpLabel, parseVersion, RELEASE_BUMPS, type ReleaseBump, type ReleaseChangedMember } from "./release-changed";
 import { appendReleaseTrain, pickTrain, readMemberReleases, readReleaseTrains, trainDigest, type ReleaseTrainRecord } from "./release-train";
 import { locateWorkspace } from "./which-chant";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant with `chant workspace train cut --plan-only` and `--planned` (#5237): what the train workflow's gate and cut jobs run when a member declares `release.workflow.builds`. */
+export const TRAIN_BUILDS_FLOOR = NEXT_RELEASE;
 
 /** `release.train` in a workspace root's `chant.config.ts` (#5154). */
 export interface ReleaseTrainConfig {
@@ -276,6 +286,12 @@ export interface TrainCutQuery {
   /** The commit; the trunk's tip without it. */
   at?: string;
   levels?: TrainLevels;
+  /**
+   * The members and labels a plan made earlier gave (#5237), by member: the
+   * cut refuses (`train-plan-changed`) unless its own plan names exactly
+   * these, before any check, doctor or cut runs. Empty for a plan of nothing.
+   */
+  planned?: Record<string, string>;
   /** Reads the registry's versions. Default: {@link npmVersions}. */
   registry?: NpmVersionsReader;
 }
@@ -457,10 +473,55 @@ const defaultDoctor = (dir: string): number => {
   return spawnSync(bin!, [...pre, "release", "doctor"], { cwd: dir, stdio: ["ignore", 2, 2] }).status ?? 1;
 };
 
+/**
+ * Parse `--planned` (#5237): `<member>=<label>` words separated by spaces or
+ * commas, as a plan's members give them, or `none` for a plan of nothing.
+ */
+export function parseTrainPlanned(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const words = text.split(/[\s,]+/).filter(Boolean);
+  if (words.length === 1 && words[0] === "none") return out;
+  if (words.length === 0) throw new TrainCutError("train-planned-invalid", "--planned names no member", 'Give the plan\'s members as <member>=<label>, separated by spaces, or none for a plan of nothing.');
+  for (const word of words) {
+    const at = word.indexOf("=");
+    if (at <= 0 || at === word.length - 1) throw new TrainCutError("train-planned-invalid", `--planned ${JSON.stringify(word)}: each word is <member>=<label>`);
+    const m = word.slice(0, at);
+    if (out[m] !== undefined) throw new TrainCutError("train-planned-invalid", `--planned names ${m} twice`);
+    out[m] = word.slice(at + 1);
+  }
+  return out;
+}
+
+/** The members and labels of a plan, as `--planned` takes them: `none` for a plan of nothing. */
+export function plannedText(plan: Pick<TrainCutPlan, "members">): string {
+  return plan.members.map((m) => `${m.member}=${m.label}`).join(",") || "none";
+}
+
+/** Refuse a plan that differs from the one `--planned` gave (#5237). */
+function checkPlanned(plan: TrainCutPlan, planned: Record<string, string>): void {
+  const got = new Map(plan.members.map((m) => [m.member, m.label] as const));
+  const diffs: string[] = [];
+  for (const [m, label] of Object.entries(planned)) {
+    const now = got.get(m);
+    if (now === undefined) diffs.push(`${m} was planned at ${label} and is not in the train now`);
+    else if (now !== label) diffs.push(`${m} was planned at ${label} and is labelled ${now} now`);
+  }
+  for (const [m, label] of got) if (planned[m] === undefined) diffs.push(`${m} is in the train now at ${label}, and was not planned`);
+  if (plan.released !== null && Object.keys(planned).length > 0) diffs.unshift(`${plan.commit.slice(0, 12)} is released now as ${plan.released}`);
+  if (diffs.length > 0) {
+    throw new TrainCutError(
+      "train-plan-changed",
+      `the train differs from the plan the build jobs built for: ${diffs.join("; ")}`,
+      "Nothing was cut. A release or a tag landed between the plan and the cut; start the train again, so the builds run with the labels it cuts.",
+    );
+  }
+}
+
 /** Plan, and with `yes` cut, record, tag and push, a release train (#5154). */
 export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
   const root = locateWorkspace(q.cwd).rootOnDisk;
   const plan = await planTrainCut(q);
+  if (q.planned !== undefined) checkPlanned(plan, q.planned);
   const say = q.say ?? (() => undefined);
   const base: TrainCutOutcome = { ...plan, tags: {}, train: null, trainTag: null, pushed: false };
   if (plan.released !== null || plan.members.length === 0) return base;
@@ -552,7 +613,7 @@ export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
   return { ...out, pushed: true };
 }
 
-const CUT_USAGE = "chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--doctor] [--yes] [--no-push] [--json]";
+const CUT_USAGE = "chant workspace train cut <env> [--at <sha>] [--levels <levels>] [--plan-only] [--planned <member=label ...|none>] [--doctor] [--yes] [--no-push] [--json]";
 
 /** `chant workspace train cut <env>` (#5154). */
 export async function runTrainCut(ctx: import("../cli/registry").CommandContext, words: string[]): Promise<number> {
@@ -571,12 +632,15 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
   await fetchLifecycle({ cwd }).catch(() => false);
   spawnSync("git", ["fetch", "--quiet", "origin", "refs/tags/*:refs/tags/*"], { cwd, stdio: "ignore" });
   let outcome: TrainCutOutcome;
+  const planOnly = args.planOnly === true;
   try {
-    outcome = await cutTrain({
-      cwd,
-      env,
-      ...(args.at ? { at: args.at } : {}),
-      levels: parseTrainLevels(args.levels),
+    if (planOnly && (args.yes === true || args.planned !== undefined)) throw new TrainCutError("train-plan-only", `--plan-only prints the plan and cuts nothing, so it takes no ${args.yes === true ? "--yes" : "--planned"}`, CUT_USAGE);
+    const query = { cwd, env, ...(args.at ? { at: args.at } : {}), levels: parseTrainLevels(args.levels) };
+    outcome = planOnly
+      ? { ...(await planTrainCut(query)), tags: {}, train: null, trainTag: null, pushed: false }
+      : await cutTrain({
+      ...query,
+      ...(args.planned !== undefined ? { planned: parseTrainPlanned(args.planned) } : {}),
       yes: args.yes === true && args.dryRun !== true,
       noPush: args.noPush === true,
       doctor: args.doctor === true,
@@ -596,7 +660,7 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
     throw err;
   }
   if (json) {
-    console.log(JSON.stringify({ dryRun: args.yes !== true || args.dryRun === true, ...outcome }, null, 2));
+    console.log(JSON.stringify({ dryRun: planOnly || args.yes !== true || args.dryRun === true, ...(planOnly ? { planOnly: true, planned: plannedText(outcome) } : {}), ...outcome }, null, 2));
     return 0;
   }
   const short = outcome.commit.slice(0, 12);
@@ -610,6 +674,10 @@ export async function runTrainCut(ctx: import("../cli/registry").CommandContext,
   }
   console.log(`Release train for ${env} from ${short}${outcome.first ? " (the first: every member at one label)" : ""}:`);
   for (const m of outcome.members) console.log(`  ${m.member.padEnd(24)} ${m.label.padEnd(12)} ${m.why}${m.bump ? `; ${m.bump} from ${m.bumpFrom}` : ""}${m.floor ? `; floor ${m.floor}` : ""}`);
+  if (planOnly) {
+    console.error(`Plan only: no member's dry run ran, and nothing was cut. Cut it as planned with --planned ${JSON.stringify(plannedText(outcome))}.`);
+    return 0;
+  }
   if (args.yes !== true || args.dryRun === true) {
     console.error("Dry run: nothing was cut, recorded, tagged or pushed. Run again with --yes to cut the train.");
     return 0;

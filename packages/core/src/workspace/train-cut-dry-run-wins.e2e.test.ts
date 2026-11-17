@@ -2,6 +2,7 @@
  * #5240: `chant workspace train cut --dry-run --yes` stays a dry run. The cut
  * runs in a child chant, with a fake npm first on PATH and a bare remote the
  * members' own dry-run cuts read; nothing is cut, recorded or tagged.
+ * #5237: `--plan-only` prints the members and labels and cuts nothing.
  */
 
 import { afterAll, describe, expect, test } from "vitest";
@@ -57,5 +58,15 @@ describe("chant workspace train cut --dry-run --yes (#5240)", () => {
     expect(JSON.parse(run.stdout)).toMatchObject({ dryRun: true });
     expect(r.git(["tag", "-l", "release/*"]).trim()).toBe("");
     expect((await readReleaseTrains(nested, "npm")).records).toEqual([]);
+
+    // #5237: --plan-only prints the plan a workflow's gate hands the build jobs, with no member's dry run, and cuts nothing.
+    const env = { ...process.env, PATH: `${dirname(npm)}:${process.env.PATH}`, USER: "tester" };
+    const plan = spawnSync(cli[0]!, [...cli.slice(1), "workspace", "train", "cut", "npm", "--plan-only", "--json"], { cwd: nested, encoding: "utf-8", env, timeout: 120_000 });
+    expect(plan.status, plan.stderr).toBe(0);
+    expect(JSON.parse(plan.stdout)).toMatchObject({ dryRun: true, planOnly: true, planned: "core=1.0.1,lex=1.0.1" });
+    const refused = spawnSync(cli[0]!, [...cli.slice(1), "workspace", "train", "cut", "npm", "--plan-only", "--yes", "--json"], { cwd: nested, encoding: "utf-8", env, timeout: 120_000 });
+    expect(refused.status).toBe(1);
+    expect(JSON.parse(refused.stdout)).toMatchObject({ status: "refused", code: "train-plan-only" });
+    expect(r.git(["tag", "-l", "release/*"]).trim()).toBe("");
   }, 180_000);
 });
