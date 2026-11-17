@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { deriveEdges } from "@intentius/chant/lifecycle/derive-edges";
 import { typeListing, type ListingLexicon, type ListingResult } from "@intentius/chant/lifecycle/type-listing";
 import { MASKED } from "@intentius/chant/deep-observation";
 import { operationTable } from "./api/operation-surface";
@@ -72,5 +73,64 @@ describe("the k8s fixture listing as typed nodes", () => {
   it("masks a Secret's data whatever its keys are called", () => {
     const secret = doc.graph.nodes.find((n) => n.kind === "K8s::Core::Secret")!;
     expect(secret.attrs.data).toEqual({ "app.conf": MASKED });
+  });
+});
+
+describe("a kind the reference catalog names (#5244)", () => {
+  const es = (name: string, store: string) => ({
+    apiVersion: "external-secrets.io/v1",
+    kind: "ExternalSecret",
+    metadata: { name, namespace: "shop", uid: `uid-${name}`, resourceVersion: "4" },
+    spec: { secretStoreRef: { name: store, kind: "ClusterSecretStore" }, data: [{ secretKey: "pw", remoteRef: { key: "shop/db" } }] },
+    status: { refreshTime: "2026-11-16T00:00:00Z" },
+  });
+  const store = {
+    apiVersion: "external-secrets.io/v1",
+    kind: "ClusterSecretStore",
+    metadata: { name: "aws", uid: "uid-store" },
+    spec: { provider: { aws: { service: "SecretsManager", region: "us-east-1" } } },
+  };
+  const widget = { apiVersion: "widgets.example.com/v1alpha1", kind: "Widget", metadata: { name: "w1", namespace: "shop", uid: "uid-w" } };
+  const res = (listedType: string, location: string, name: string, properties: Record<string, unknown>) => ({
+    listedType,
+    location,
+    nativeId: location === "cluster" ? name : `${location}/${name}`,
+    cloudIds: [],
+    tags: {},
+    properties,
+    observedAt: "2026-11-16T00:00:00.000Z",
+  });
+  const catalogListing: ListingResult = {
+    ...listing,
+    resources: [
+      res("external-secrets.io/v1/ExternalSecret", "shop", "db", es("db", "aws")),
+      res("external-secrets.io/v1/ClusterSecretStore", "cluster", "aws", store),
+      res("widgets.example.com/v1alpha1/Widget", "shop", "w1", widget),
+    ],
+  };
+
+  it("types the external-secrets kinds, drops apiVersion and kind, and prunes status", () => {
+    const doc = typeListing(catalogListing, [k8s]);
+    const kinds = Object.fromEntries(doc.graph.nodes.map((n) => [n.nativeId, [n.kind, n.lexicon]]));
+    expect(kinds["shop/db"]).toEqual(["K8s::ExternalSecrets::ExternalSecret", "k8s"]);
+    expect(kinds["aws"]).toEqual(["K8s::ExternalSecrets::ClusterSecretStore", "k8s"]);
+    const secret = doc.graph.nodes.find((n) => n.nativeId === "shop/db")!;
+    expect(secret.attrs.apiVersion).toBeUndefined();
+    expect(secret.attrs.kind).toBeUndefined();
+    expect(secret.attrs.status).toBeUndefined();
+    expect((secret.attrs.spec as { secretStoreRef: unknown }).secretStoreRef).toEqual({ name: "aws", kind: "ClusterSecretStore" });
+  });
+
+  it("keeps the listed type of a CRD kind the catalog does not name", () => {
+    const doc = typeListing(catalogListing, [k8s]);
+    const w = doc.graph.nodes.find((n) => n.nativeId === "shop/w1")!;
+    expect([w.kind, w.lexicon, w.unmappedKind]).toEqual(["widgets.example.com/v1alpha1/Widget", "kubernetes", true]);
+  });
+
+  it("draws the derived edge from an ExternalSecret to the ClusterSecretStore it names", () => {
+    const doc = deriveEdges(typeListing(catalogListing, [k8s]), [{ name: "k8s", referenceCatalog: k8sPlugin.referenceCatalog }]);
+    const from = doc.graph.nodes.find((n) => n.nativeId === "shop/db")!.id;
+    const to = doc.graph.nodes.find((n) => n.nativeId === "aws")!.id;
+    expect(doc.graph.edges.some((e) => e.from === from && e.to === to)).toBe(true);
   });
 });
