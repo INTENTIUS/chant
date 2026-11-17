@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { reconstructIdentityEdges, type IndexedNodeScope } from "../graph-refs";
 import type { IRNode } from "../graph-ir";
 import { deriveEdges, indexedNodeScope, type EdgeLexicon } from "./derive-edges";
-import { indexCoverageVerdict, matchDeclaredToIndex, type DeclaredIdentity, type IndexIdentity } from "./identity-match";
+import { ANY_LOCATION, indexCoverageVerdict, matchDeclaredToIndex, type DeclaredIdentity, type IndexIdentity } from "./identity-match";
 import type { IndexDocument } from "./index-document";
 import { typeListing, type ListedResource, type ListingLexicon, type ListingResult } from "./type-listing";
 
@@ -175,6 +175,41 @@ describe("matchDeclaredToIndex", () => {
     expect(() => matchDeclaredToIndex([], [doc, other], identity)).toThrow(/one account/);
     const later = typeListing(listing(RESOURCES, { startedAt: "2026-10-26T10:00:00.000Z" }), typing);
     expect(() => matchDeclaredToIndex([], [doc, later], identity)).toThrow(/one read/);
+  });
+
+  // #4538: a substrate whose native id holds parts no declaration spells (an
+  // Azure resource group) compares against a key, and a declaration whose
+  // location is not a literal matches at every location.
+  describe("a node key and the any-location", () => {
+    const keyed: IndexIdentity = {
+      substrate: "aws",
+      declaredIdentity: (entityType, props) => ({ kind: "identifier", listedType: entityType, identifier: String(props.BucketName), global: false, location: ANY_LOCATION }),
+      nodeKey: (n) => n.nativeId?.toUpperCase(),
+    };
+
+    test("the key, not the native id, is what the identifier is compared with; the bound row keeps the native id", () => {
+      const { matches: m } = matchDeclaredToIndex([declared("logs", "Store::Bucket", { BucketName: "SHOP-LOGS" })], [doc], keyed);
+      expect(m.logs).toMatchObject({ verdict: "bound", nativeId: "shop-logs", location: "us-east-1" });
+    });
+
+    test("one identifier at two locations is refused", () => {
+      const { matches: m } = matchDeclaredToIndex([declared("assets", "Store::Bucket", { BucketName: "SHOP-ASSETS" })], [doc], keyed);
+      expect(m.assets).toMatchObject({ verdict: "refused" });
+    });
+
+    test("a miss is absent only when the coverage listed every location", () => {
+      const { matches: m } = matchDeclaredToIndex([declared("missing", "Store::Bucket", { BucketName: "NEVER" })], [doc], keyed);
+      expect(m.missing).toMatchObject({ verdict: "not-observed", reason: "filtered", location: "*" });
+      const everywhere = typeListing(listing(RESOURCES, { coverage: [{ listedType: "*", location: "*", verdict: "listed" }] }), typing);
+      const { matches: all } = matchDeclaredToIndex([declared("missing", "Store::Bucket", { BucketName: "NEVER" })], [everywhere], keyed);
+      expect(all.missing).toMatchObject({ verdict: "absent", location: "*" });
+    });
+
+    test("a node whose key is undefined is left out", () => {
+      const none: IndexIdentity = { ...keyed, nodeKey: () => undefined };
+      const { matches: m } = matchDeclaredToIndex([declared("logs", "Store::Bucket", { BucketName: "shop-logs" })], [doc], none);
+      expect(m.logs.verdict).not.toBe("bound");
+    });
   });
 });
 

@@ -14,7 +14,7 @@
  *   `--live` lays a live read over it (`sourceOverlayGraphs`).
  *
  * The join goes through each lexicon's own index match, its plugin's
- * `indexIdentity` (#4523, ./identity-match.ts). aws has one; a lexicon with
+ * `indexIdentity` (#4523, ./identity-match.ts). aws, k8s, gcp and azure have one; a lexicon with
  * none gets `not-observed`, reason `unsupported-kind`, on every row, never a
  * guessed match. The verdicts:
  *

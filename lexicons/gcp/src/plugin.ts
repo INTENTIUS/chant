@@ -29,6 +29,7 @@ import { gcpCompletions } from "./lsp/completions";
 import { gcpHover } from "./lsp/hover";
 import { gcpDeepNormalizationHooks } from "./deep-observe-hooks";
 import { gcpListedTypes } from "./listed-types";
+import { gcpIndexIdentity } from "./index-identity";
 import { gcpReferenceCatalog } from "./reference-catalog";
 
 export const gcpPlugin: LexiconPlugin = {
@@ -421,6 +422,10 @@ export const bucket = new StorageBucket({
 
   // Cloud inventory type names to kinds, for an indexed resource (#4521).
   listedTypes: gcpListedTypes,
+
+  // The identifier a declaration spells, for `chant search --index` and the
+  // identity edges over an index (#4538).
+  indexIdentity: gcpIndexIdentity,
 
   // How its resources reference each other, for chant's catalog pass over an
   // index and a declared graph (#4535; behold#1005 retires behold's matcher on it).

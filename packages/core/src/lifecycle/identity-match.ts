@@ -41,14 +41,21 @@ export type DeclaredIdentity =
       kind: "identifier";
       /** The inventory API's type name the identifier belongs to (the CloudFormation type for aws). */
       listedType: string;
-      /** The identifier as the index's `nativeId` spells it (Cloud Control's, `|`-joined for a multi-part one). */
+      /**
+       * The identifier as the index's `nativeId` spells it (Cloud Control's,
+       * `|`-joined for a multi-part one), or as the lexicon's
+       * {@link IndexIdentity.nodeKey} spells a node's key.
+       */
       identifier: string;
       /** A global type is indexed once per account at location `global`. */
       global: boolean;
       /**
        * The location the declaration itself names, ahead of the entity's
        * region: a Kubernetes namespace, or `cluster` for a cluster-scoped
-       * kind. Absent: `global` or the region.
+       * kind. `"*"` matches the identifier at every location, for a
+       * declaration whose location is not a literal (an Azure resource that
+       * takes its resource group's), and absence is then read from the
+       * coverage at `*`. Absent: `global` or the region.
        */
       location?: string;
       /**
@@ -82,6 +89,13 @@ export interface IndexIdentity {
    * Absent: its native id and its ARN cloud ids.
    */
   nodeIdentities?(node: IRNode): NodeIdentityValue[];
+  /**
+   * The value a declared identifier is compared with, for a substrate whose
+   * native id holds parts no declaration spells: the resource group in an
+   * Azure id, the project and location in a GCP asset name. Undefined leaves
+   * the node out of the match. Absent: its native id.
+   */
+  nodeKey?(node: IRNode): string | undefined;
 }
 
 /** One declared entity, as the build output names it. */
@@ -116,6 +130,9 @@ export interface MatchOptions {
 }
 
 const byString = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** A declared location that matches every indexed location ({@link DeclaredIdentity}). */
+export const ANY_LOCATION = "*";
 
 /** The documents must be cloud reads of one substrate, one account and one read, or a candidate from another read would bind. */
 function cloudScopes(docs: readonly IndexDocument[], substrate: CloudIndexScope["substrate"]): CloudIndexScope[] {
@@ -204,15 +221,17 @@ export function matchDeclaredToIndex(
   // listedType -> nativeId -> nodes, and the same keyed by lexicon kind
   const byIdentity = new Map<string, Map<string, IRNode[]>>();
   const byKind = new Map<string, Map<string, IRNode[]>>();
-  const add = (index: Map<string, Map<string, IRNode[]>>, t: string, n: IRNode) => {
+  const add = (index: Map<string, Map<string, IRNode[]>>, t: string, key: string, n: IRNode) => {
     const m = index.get(t) ?? index.set(t, new Map()).get(t)!;
-    (m.get(n.nativeId!) ?? m.set(n.nativeId!, []).get(n.nativeId!)!).push(n);
+    (m.get(key) ?? m.set(key, []).get(key)!).push(n);
   };
   for (const d of docs) {
     for (const n of d.graph.nodes) {
       if (n.nativeId === undefined) continue;
-      add(byIdentity, listedTypeOf(n), n);
-      if (!n.unmappedKind) add(byKind, n.kind, n);
+      const key = identity.nodeKey ? identity.nodeKey(n) : n.nativeId;
+      if (key === undefined) continue;
+      add(byIdentity, listedTypeOf(n), key, n);
+      if (!n.unmappedKind) add(byKind, n.kind, key, n);
     }
   }
 
@@ -228,7 +247,7 @@ export function matchDeclaredToIndex(
     const region = entity.region ?? options.region;
     const location = declared.location ?? (declared.global ? "global" : region);
     const all = (declared.entityKind !== undefined ? byKind.get(declared.entityKind) : byIdentity.get(listedType))?.get(identifier) ?? [];
-    const inScope = location === undefined ? all : all.filter((n) => n.location === location);
+    const inScope = location === undefined || location === ANY_LOCATION ? all : all.filter((n) => n.location === location);
     const candidates = [...new Set(inScope.map((n) => n.id))].sort(byString);
 
     if (candidates.length > 1) {
