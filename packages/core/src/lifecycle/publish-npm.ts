@@ -64,7 +64,7 @@ import { readPins, unknownPins } from "./release-images";
 import { NPM_STAGE_TAG, PublishTargetError, statusMessage, type PublishContext, type PublishContextBase, type PublishDeps, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
 
-/** npm's output when a publish could not authenticate, as publish-packages.sh matches it. */
+/** npm's output when a publish could not authenticate. */
 const NPM_AUTH_FAILED = /ENEEDAUTH|E401|need auth/;
 
 export interface NpmPackage {

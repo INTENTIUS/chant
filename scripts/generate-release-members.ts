@@ -4,15 +4,15 @@
  * that declares them.
  *
  * A package is publishable when its `package.json` under `packages/` or
- * `lexicons/` is not private, the set publish-packages.sh publishes. Each
+ * `lexicons/` is not private. Each
  * member takes the name of the outer member that owns the package's
  * directory (`core`, `k8s-client`, `lexicon-aws`, ...) and holds:
  *
  * - `chant.config.ts`: one `npm` target for the package's tarball;
  * - `packages.component.ts`: the component a cut needs to compile.
  *
- * The nested declaration lists the members in publish-packages.sh's
- * dependency layers, core first, repeats chant's `ci.green` so a cut from a
+ * The nested declaration lists the members in dependency layers, core
+ * first, repeats chant's `ci.green` so a cut from a
  * member reads the same green rule as the root, and names every member file
  * as a `generated` entry, so a stale file fails `chant workspace check
  * --generated`. The outer declaration names the nested one the same way.
@@ -36,8 +36,6 @@ export interface ReleasePackage {
   name: string;
   /** The outer member owning `dir`, and the release member's name: `lexicon-aws`. */
   member: string;
-  /** The tarball slug the lockstep release-pack.sh writes: `lexicons_aws`. */
-  slug: string;
   /** Publishable workspace directories this package depends on, peers and optionals included. */
   needs: string[];
 }
@@ -54,7 +52,7 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf-8")) as T;
 }
 
-/** Every publishable package, in publish-packages.sh's layer order: Kahn layers, alphabetical by directory within a layer. */
+/** Every publishable package, in dependency layer order: Kahn layers, alphabetical by directory within a layer. */
 export function releasePackages(root = ROOT): ReleasePackage[] {
   const outer = readJson<{ members: { name: string; dir?: string }[] }>(join(root, "chant.workspace.json"));
   const pkgs = new Map<string, PackageJson>();
@@ -73,7 +71,7 @@ export function releasePackages(root = ROOT): ReleasePackage[] {
     if (!member) throw new Error(`${dir} is published to npm and no member of chant.workspace.json owns it; declare it there first`);
     const deps = Object.keys({ ...p.dependencies, ...p.peerDependencies, ...p.optionalDependencies });
     const needs = [...new Set(deps.map((n) => owner.get(n)).filter((x): x is string => x !== undefined && x !== dir))].sort();
-    all.push({ dir, name: p.name, member, slug: dir.replace("/", "_"), needs });
+    all.push({ dir, name: p.name, member, needs });
   }
   const out: ReleasePackage[] = [];
   const left = new Map(all.map((p) => [p.dir, p]));

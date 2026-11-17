@@ -1,10 +1,7 @@
 /**
- * chant's own release member (#4040): release/chant.config.ts names the
- * tarballs scripts/release-pack.sh writes, and `chant release publish`
- * publishes them in the order listed. The list must name every package npm
- * would publish, once, and each after the workspace packages it depends on,
- * as publish-packages.sh's layers order them: a consumer installing between
- * two publishes must never find a package whose dependency is not out yet.
+ * chant's release members: one per package npm would publish, each declared
+ * after the workspace packages it depends on, so a consumer installing
+ * between two publishes never finds a package whose dependency is not out yet.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -44,34 +41,6 @@ function publishable(): Pkg[] {
   }
   return out;
 }
-
-describe("release/chant.config.ts (#4040)", () => {
-  const npm = config.release.publish.find((t) => t.type === "npm");
-  const listed = (npm?.packages ?? []).map((p) => p.replace(/^\.\.\/\.release\/packs\//, "").replace(/\.tgz$/, "").replace("_", "/"));
-
-  it("publishes straight to latest, core first, with NPM_TOKEN as the fallback", () => {
-    expect(npm?.stage).toBe(false);
-    expect(npm?.tokenEnv).toBe("NPM_TOKEN");
-    expect(listed[0]).toBe("packages/core");
-  });
-
-  it("names every package npm would publish, once", () => {
-    expect([...listed].sort()).toEqual(publishable().map((p) => p.dir).sort());
-  });
-
-  it("lists each package after the workspace packages it depends on", () => {
-    const pkgs = publishable();
-    const byName = new Map(pkgs.map((p) => [p.name, p.dir]));
-    const late: string[] = [];
-    for (const p of pkgs) {
-      for (const dep of p.deps) {
-        const dir = byName.get(dep);
-        if (dir && listed.indexOf(dir) > listed.indexOf(p.dir)) late.push(`${p.dir} before its dependency ${dir}`);
-      }
-    }
-    expect(late).toEqual([]);
-  });
-});
 
 /**
  * One release member per npm package (#5133, #5132 decision 1): every file

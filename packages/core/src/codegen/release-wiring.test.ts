@@ -1,17 +1,12 @@
 /**
- * The release path is two hand-maintained halves that must agree: the
- * justfile recipes that create and push a tag, and publish.yml's tag
- * trigger that decides whether pushing it does anything.
+ * The release path is two halves that must agree: the tag a release pushes
+ * and publish.yml's tag trigger that decides whether pushing it does anything.
  *
- * They disagreed. `just release-lexicon <name>` has always tagged
- * `lexicon-<name>-v<version>`, pushed it, and echoed "publish workflow
- * triggered" — while publish.yml matched only `chant-v*`. The tag landed,
- * no workflow ran, and the recipe reported success. fly's 0.33.0 shipped
- * with zero rules and zero skills and could not be patched by the one
- * recipe built for patching a single lexicon.
- *
- * A release that silently no-ops is worse than one that fails, so this
- * turns the next divergence into a PR-time failure.
+ * They once disagreed: a recipe tagged `lexicon-<name>-v<version>`, pushed it,
+ * and echoed "publish workflow triggered" while publish.yml matched only
+ * `chant-v*`. The tag landed, no workflow ran, and the recipe reported
+ * success. A release that silently no-ops is worse than one that fails, so
+ * this turns the next divergence into a PR-time failure.
  */
 
 import { describe, expect, it } from "vitest";
@@ -21,9 +16,9 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
-/** The tag triggers of the publish workflows: the generated train workflow and the lockstep one (#5154). */
+/** The tag triggers of the generated train workflow (#5154). */
 function publishTagPatterns(): string[] {
-  return ["publish.yml", "publish-legacy.yml"].flatMap((file) => {
+  return ["publish.yml"].flatMap((file) => {
     const workflow = readFileSync(join(repoRoot, ".github", "workflows", file), "utf-8");
     const match = workflow.match(/^\s*tags:\s*\[([^\]]+)\]/m);
     if (!match) throw new Error(`${file}: \`tags: [...]\` trigger not found`);
@@ -31,27 +26,13 @@ function publishTagPatterns(): string[] {
   });
 }
 
-/** Tags the justfile actually creates, as literal-prefix + wildcard shapes. */
+/**
+ * Tags a release pushes. A release train (#5154): `chant workspace train cut
+ * npm` tags the commit release-train/npm/<id>, which publish.yml runs on. Each
+ * member's own release/npm/<member>/<label> tag publishes nothing by design.
+ */
 function releaseTagShapes(): Array<{ recipe: string; example: string }> {
-  const justfile = readFileSync(join(repoRoot, "justfile"), "utf-8");
-  const shapes: Array<{ recipe: string; example: string }> = [];
-
-  // `git tag "chant-v$next"` / `git tag "lexicon-{{name}}-v$next"`
-  for (const m of justfile.matchAll(/git tag "([^"]+)"/g)) {
-    const raw = m[1];
-    // The reference workspace's tag (`release_reference_tag`, #2543) rides
-    // along with a chant release and publishes nothing by design.
-    if (raw === "$rtag") continue;
-    const example = raw
-      .replace(/\{\{name\}\}/g, "docker")
-      .replace(/\$\{?next\}?/g, "9.9.9");
-    shapes.push({ recipe: raw, example });
-  }
-  // A release train (#5154): `chant workspace train cut npm` tags the commit
-  // release-train/npm/<id>, which publish.yml runs on. Each member's own
-  // release/npm/<member>/<label> tag publishes nothing by design.
-  shapes.push({ recipe: "release-train/<env>/<id> (chant workspace train cut npm)", example: "release-train/npm/train-x" });
-  return shapes;
+  return [{ recipe: "release-train/<env>/<id> (chant workspace train cut npm)", example: "release-train/npm/train-x" }];
 }
 
 /** Minimal glob match for the `prefix*` shapes these patterns use. */
@@ -82,14 +63,11 @@ describe("release wiring: justfile tags vs publish.yml trigger", () => {
     }
   });
 
-  it("covers the two shapes the repo releases by", () => {
-    const examples = releaseTagShapes().map((s) => s.example);
-    // A release train, the legacy whole-repo release and single-lexicon
-    // patch. If a recipe stops producing one of these, the assertion above
-    // would pass vacuously.
-    expect(examples).toContain("release-train/npm/train-x");
-    expect(examples).toContain("chant-v9.9.9");
-    expect(examples).toContain("lexicon-docker-v9.9.9");
+  it("no justfile recipe pushes a release tag of its own", () => {
+    // Every release goes through the train; a recipe that tags would need a
+    // trigger here too.
+    const justfile = readFileSync(join(repoRoot, "justfile"), "utf-8");
+    expect(justfile).not.toMatch(/git tag "/);
   });
 });
 
@@ -116,126 +94,7 @@ function recipeBody(name: string): string {
   return lines.slice(start, end).join("\n");
 }
 
-/**
- * #1255.2 — `just release` rewrites the `@intentius/*` peer ranges alongside
- * `.version` (added in #411, because ranges frozen at `^0.1.0` break clean
- * installs). `release-lexicon` only set `.version`, so a single-lexicon patch
- * needing a newer core silently shipped a stale range.
- *
- * The two recipes pin to different things on purpose: a whole-repo release
- * moves everything together so `^$next` is right, while a single-lexicon
- * patch leaves core where it is, so the range must track the CURRENT core
- * version. Pinning it to `$next` would demand a core that does not exist —
- * which is why this asserts the mechanism, not a shared literal.
- */
-describe("release wiring: peer ranges stay in lockstep (#1255)", () => {
-  it("the whole-repo release rewrites every @intentius peer range", () => {
-    // The rewrite is generic (`with_entries` over every `@intentius/*`
-    // peer) rather than named keys — a hand-listed rewrite goes stale the
-    // same way the hand-listed publish steps did.
-    const body = recipeBody("release-legacy");
-    expect(body).toMatch(/\.peerDependencies\s*\|=\s*with_entries/);
-    expect(body).toMatch(/startswith\("@intentius\/"\)/);
-  });
-
-  it("the single-lexicon release rewrites them too", () => {
-    const body = recipeBody("release-lexicon");
-    expect(
-      body.includes('peerDependencies["@intentius/chant"]'),
-      "release-lexicon sets .version without touching the @intentius/chant peer range — " +
-        "a lexicon patch that needs a newer core would ship a stale range (#411, #1255)",
-    ).toBe(true);
-    expect(body).toMatch(/peerDependencies\["@intentius\/chant-lexicon-github"\]/);
-  });
-
-  it("the single-lexicon release pins peers to core, not to its own new version", () => {
-    const body = recipeBody("release-lexicon");
-    // It reads the current core version rather than reusing $next.
-    expect(body).toMatch(/jq -r \.version packages\/core\/package\.json/);
-    expect(
-      /peerDependencies\["@intentius\/chant"\]\s*=\s*"\^"\s*\+\s*\$next/.test(body),
-      "release-lexicon must not pin the core peer range to the lexicon's own new version",
-    ).toBe(false);
-  });
-
-  it("both recipes keep the committed lockfile in step", () => {
-    for (const recipe of ["release-legacy", "release-lexicon"]) {
-      expect(recipeBody(recipe)).toMatch(/npm install --package-lock-only/);
-    }
-  });
-});
-
-/**
- * #1255.3 — both recipes pushed the bump commit straight to main, bypassing
- * branch protection, so a release tag could point at a commit CI never ran.
- */
-describe("release wiring: preflight gates both recipes (#1255)", () => {
-  it("every release recipe runs the preflight before tagging", () => {
-    for (const recipe of ["release-legacy", "release-lexicon"]) {
-      const body = recipeBody(recipe);
-      expect(
-        body.includes("scripts/release-preflight.sh"),
-        `justfile recipe "${recipe}" tags and pushes without running the preflight — ` +
-          "it could release a commit CI never ran (#1255)",
-      ).toBe(true);
-      // Ordering matters: a check that runs after `git tag` proves nothing.
-      expect(body.indexOf("scripts/release-preflight.sh")).toBeLessThan(body.indexOf("git tag"));
-    }
-  });
-
-});
-
-/**
- * #2816 — main's HEAD is rarely green, so a release tags the newest green
- * commit on main (or the one named) and merges the bump back into main.
- * scripts/release-preflight.test.ts runs the mechanics; this pins the wiring.
- */
-describe("release wiring: release the newest green commit (#2816)", () => {
-  it("both recipes tag the commit the preflight chose, not HEAD", () => {
-    for (const recipe of ["release-legacy", "release-lexicon"]) {
-      const body = recipeBody(recipe);
-      expect(body).toMatch(/sha=\$\(bash scripts\/release-preflight\.sh/);
-      expect(body).toMatch(/release_open "\$sha"/);
-    }
-  });
-
-  it("both recipes merge the tag back into main instead of pushing HEAD", () => {
-    for (const recipe of ["release-legacy", "release-lexicon"]) {
-      const body = recipeBody(recipe);
-      expect(body).toMatch(/release_ship "\$tag"/);
-      expect(body).not.toMatch(/git push/);
-      expect(body.indexOf("git tag")).toBeLessThan(body.indexOf("release_ship"));
-    }
-    const lib = readFileSync(join(repoRoot, "scripts", "release-lib.sh"), "utf-8");
-    // main and the tag land together or not at all, and nothing is forced.
-    expect(lib).toMatch(/push_refs=\("refs\/tags\/\$tag"\)/);
-    expect(lib).toMatch(/git push --quiet --atomic origin "HEAD:refs\/heads\/main" "\$\{push_refs\[@\]\}"/);
-    expect(lib).not.toMatch(/git push[^\n]*(--force|\s-f\b)/);
-  });
-
-  it("both recipes offer a dry run that stops before committing", () => {
-    for (const recipe of ["release-legacy", "release-lexicon"]) {
-      const body = recipeBody(recipe);
-      expect(body.indexOf("RELEASE_DRY_RUN")).toBeGreaterThan(-1);
-      expect(body.indexOf("RELEASE_DRY_RUN")).toBeLessThan(body.indexOf("git commit"));
-    }
-  });
-
-  it("the floor reads main as well as the green commit", () => {
-    expect(recipeBody("release-legacy")).toMatch(/release_version_at "\$RELEASE_MAIN"/);
-    // release-lexicon floors through release_lexicon_floor (#4040), which also reads tags and npm.
-    expect(recipeBody("release-lexicon")).toMatch(/release_lexicon_floor \{\{name\}\} "\$sha"/);
-    const lib = readFileSync(join(repoRoot, "scripts", "release-lib.sh"), "utf-8");
-    // #5135: release_lexicon_floor is release_package_floor for lexicons/<name>.
-    expect(lib.slice(lib.indexOf("release_lexicon_floor() {"))).toMatch(/release_package_floor "lexicon-\$1" "lexicons\/\$1" "\$2"/);
-    const floor = lib.slice(lib.indexOf("release_package_floor() {"));
-    expect(floor).toMatch(/release_version_at "\$\{RELEASE_MAIN:-origin\/main\}"/);
-    expect(floor).toMatch(/release_legacy_versions/);
-    expect(floor).toMatch(/npm view "\$pkg" versions/);
-    // Lockstep tags only: a member's release/npm/<member>/<v> is no lockstep label.
-    expect(lib).toMatch(/git tag -l 'release\/npm\/\[0-9\]\*' 'chant-v\*'/);
-  });
-
+describe("release wiring: main's chant run", () => {
   it("a push to main does not cancel main's chant run; PR runs still cancel", () => {
     const workflow = readFileSync(join(repoRoot, ".github", "workflows", "chant.yml"), "utf-8");
     const block = workflow.match(/^concurrency:\n((?:[ ]+.*\n)+)/m)?.[1] ?? "";

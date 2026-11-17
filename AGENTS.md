@@ -26,4 +26,4 @@ Parallel branches collide in barrels, the audit catalog, generated docs pages an
 
 ## Releases
 
-`just release` dispatches `.github/workflows/publish.yml`, the release train generated from `release/chant.config.ts` (regenerate it with `chant release workflow` in `release/`; never hand-edit it). The train cuts every package that changed since its last release at the newest green main commit and publishes it core first. `publish-legacy.yml` keeps the lockstep paths until two trains have published. Agents do not run `just release`, `chant workspace train cut --yes` or `train publish`.
+`just release` dispatches `.github/workflows/publish.yml`, the release train generated from `release/chant.config.ts` (regenerate it with `chant release workflow` in `release/`; never hand-edit it). The train cuts every package that changed since its last release at the newest green main commit and publishes it core first. Agents do not run `just release`, `chant workspace train cut --yes` or `train publish`.

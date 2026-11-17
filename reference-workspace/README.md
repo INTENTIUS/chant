@@ -122,7 +122,7 @@ for the loop end to end.
 | | |
 |---|---|
 | Owner | the chant maintainers, [INTENTIUS/chant](https://github.com/INTENTIUS/chant). Changes go through chant's own pull requests |
-| Tags | `reference-workspace-v<major>.<minor>` on the chant repo, one per chant minor release, on the same commit as `chant-v<minor>.0`. `just release` cuts it with the chant tag on every minor or major release and pushes both together, and a patch release cuts none ([scripts/release-lib.sh](../scripts/release-lib.sh)). The tags for 0.81 to 0.100 were cut by hand from the `chant-v<minor>.0` commits |
+| Tags | `reference-workspace-v<major>.<minor>` on the chant repo, one per chant minor release, on the commit that release was cut from. A release train does not cut it; a maintainer tags it by hand. The tags for 0.81 to 0.100 were cut by hand from the `chant-v<minor>.0` commits |
 | Chant floor | 0.101.0 |
 | Upgrade range | a workspace made from any tag of the last three chant minors upgrades to the current one |
 
