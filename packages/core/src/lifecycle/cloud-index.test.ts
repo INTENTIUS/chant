@@ -278,6 +278,49 @@ describe("chant index over a fake lister", () => {
     expect(summary).toMatchObject({ substrate: "aws", scopeId: ACCOUNT, written: true, nodes: 2, coverage: { listed: 2, notObserved: 0 } });
   });
 
+  const withNotes = (notes: ListingResult["notes"]) => async (scope: CloudScope, target: SubstrateTarget) => ({ ...listing(scope, "2026-10-26T12:00:00.000Z"), notes });
+  const runWithNotes = async (notes: ListingResult["notes"], extra: string[] = []) => {
+    const t = tempTree();
+    const io = capture();
+    const code = await runCloudIndex(["aws", "--endpoint", ENDPOINT, "--account", ACCOUNT, "--regions", "us-east-1", ...extra], {
+      cwd: t.cwd,
+      home: t.home,
+      env: { ...EMULATOR_ENV, XDG_DATA_HOME: t.xdg },
+      stdout: io.stdout,
+      stderr: io.stderr,
+      list: withNotes(notes),
+      openStore: fakeStore().openStore,
+      lexicons: noLexicons,
+    });
+    expect(code).toBe(0);
+    return io.out.join("");
+  };
+  const disabled = {
+    code: "api-disabled" as const,
+    message: "Cloud Asset API is disabled on project p, so nothing was listed for it.",
+    command: "gcloud services enable cloudasset.googleapis.com --project=p",
+  };
+
+  it("prints the command a note carries, and keeps it in --json", async () => {
+    const text = await runWithNotes([disabled]);
+    expect(text).toContain("  note: Cloud Asset API is disabled on project p");
+    expect(text).toContain("    run: gcloud services enable cloudasset.googleapis.com --project=p\n");
+    const summary = JSON.parse(await runWithNotes([disabled], ["--json"]));
+    expect(summary.notes).toContain(disabled.message);
+    expect(summary.noteDetails).toContainEqual({ kind: "api-disabled", message: disabled.message, command: disabled.command });
+  });
+
+  it("prints a long run of one kind as one line with a count, and keeps every note in --json", async () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({ code: "no-lister" as const, message: `no lister for type ${i}` }));
+    const text = await runWithNotes([disabled, ...many]);
+    expect(text.match(/note: \d+ no-lister notes/g)).toHaveLength(1);
+    expect(text).not.toContain("no lister for type 3");
+    expect(text).toContain("note: 6 no-lister notes, for example: no lister for type 0");
+    expect(text).toContain("run: gcloud services enable");
+    const summary = JSON.parse(await runWithNotes([disabled, ...many], ["--json"]));
+    expect(summary.noteDetails.filter((n: { kind?: string }) => n.kind === "no-lister")).toHaveLength(6);
+  });
+
   it("with an endpoint and no static credentials it is refused, and no SDK chain is asked", async () => {
     const t = tempTree();
     const store = fakeStore();
