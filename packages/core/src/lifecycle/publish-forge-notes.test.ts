@@ -399,5 +399,11 @@ describe("a forge release's generated notes (#5153)", () => {
     expect(() => decl({ ...GH, notes: { file: "CHANGES.md" } })).toThrow(/go together/);
     expect(() => decl({ ...GH, notes: { before: "x" } })).toThrow(/file section, generate, or both/);
     expect(() => decl({ ...GH, notes: { generate: "forge", types: ["feat"] } })).toThrow(/notes.types applies to generate/);
+    // #5270: exclude and nonConventional need commits, and exclude goes in place of types.
+    expect(() => decl({ ...GH, notes: { generate: "forge", exclude: ["docs"] } })).toThrow(/notes.exclude applies to generate/);
+    expect(() => decl({ ...GH, notes: { generate: "forge", nonConventional: true } })).toThrow(/notes.nonConventional applies to generate/);
+    expect(() => decl({ ...GH, notes: { generate: "commits", types: ["feat"], exclude: ["docs"] } })).toThrow(/name one/);
+    expect(() => decl({ ...GH, notes: { generate: "commits", exclude: ["^docs:"] } })).toThrow(/a commit type/);
+    expect(() => decl({ ...GH, notes: { generate: "commits", exclude: ["docs", "test", "chore"], nonConventional: true } })).not.toThrow();
   });
 });

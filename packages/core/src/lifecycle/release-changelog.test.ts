@@ -4,7 +4,7 @@
  * (terragucci `test/publish.test.ts`).
  */
 import { describe, expect, test } from "vitest";
-import { classifyCommit, changelogBump, changelogNotes, releaseChangelog } from "./release-changelog";
+import { classifyCommit, changelogBump, changelogNotes, notesListCommit, releaseChangelog } from "./release-changelog";
 import { buildReleaseCatalog } from "./release-catalog";
 
 describe("changelogBump agrees with terragucci's bumpFor", () => {
@@ -105,5 +105,23 @@ describe("changelogNotes (#5153)", () => {
     expect(changelogNotes(commits, ["fix"])).toBe(["### Breaking changes", "", "- rename inputs (c300000)", "", "### Fixes", "", "- tag subnets (b200000)"].join("\n"));
     expect(changelogNotes(commits, ["*"]).split("\n").filter((l) => l.startsWith("- "))).toHaveLength(6);
     expect(changelogNotes([commits[3]!], ["feat"])).toBe("");
+  });
+
+  const listed = (notes: string) => notes.split("\n").filter((l) => l.startsWith("- "));
+
+  test("exclude lists every commit but those types, conventional or not (#5270)", () => {
+    const notes = changelogNotes(commits, { exclude: ["chore", "docs", "test"] });
+    expect(listed(notes)).toEqual(["- rename inputs (c300000)", "- net: add flow logs (a100000)", "- tag subnets (b200000)", "- iam: cache policies (e500000)", "- Update README (f600000)"]);
+    // A breaking change is listed even when its type is excluded.
+    expect(notesListCommit("chore!: drop node 18", { exclude: ["chore"] })).toBe(true);
+    expect(notesListCommit("chore(deps): bump", { exclude: ["chore"] })).toBe(false);
+  });
+
+  test("nonConventional decides the commits that are not conventional either way (#5270)", () => {
+    expect(listed(changelogNotes(commits, { exclude: ["chore"], nonConventional: false }))).not.toContain("- Update README (f600000)");
+    expect(listed(changelogNotes(commits, { types: ["fix"], nonConventional: true }))).toEqual(["- rename inputs (c300000)", "- tag subnets (b200000)", "- Update README (f600000)"]);
+    expect(listed(changelogNotes(commits, { types: ["*"], nonConventional: false }))).toHaveLength(5);
+    // The default list of types leaves them out, as it always did.
+    expect(notesListCommit("Update README")).toBe(false);
   });
 });

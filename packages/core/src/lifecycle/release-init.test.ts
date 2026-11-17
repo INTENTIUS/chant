@@ -113,7 +113,7 @@ describe("detecting the project (#5160)", () => {
       ".gitignore": "dist/\n",
     }, { origin: "https://github.com/acme/tool.git", tags: ["v0.1.0"] });
     const facts = detectProject(root);
-    expect(facts.goreleaser).toEqual({ file: ".goreleaser.yaml", labelTemplate: false, snapshot: false, images: false });
+    expect(facts.goreleaser).toEqual({ file: ".goreleaser.yaml", labelTemplate: false, snapshot: false, images: false, changelog: null });
     const plan = planRelease(facts, PLAN);
     expect(plan.release.tag).toBe("v{version}");
     expect(plan.release.artifacts).toEqual([{ name: "goreleaser", goreleaser: {} }]);
@@ -123,6 +123,26 @@ describe("detecting the project (#5160)", () => {
     // A config with a snapshot section of its own is told, not edited.
     writeFileSync(join(root, ".goreleaser.yaml"), "version: 2\nsnapshot:\n  version_template: '{{ .Version }}-next'\n");
     expect(planRelease(detectProject(root), PLAN).goreleaserPatch).toMatchObject({ append: null, manual: expect.stringContaining("CHANT_RELEASE_LABEL") });
+  });
+
+  test("a goreleaser changelog that filters commit types becomes notes from commits with exclude (#5270)", () => {
+    const changelog = 'changelog:\n  use: github\n  sort: asc\n  filters:\n    exclude:\n      - "^docs:"\n      - "^test:"\n      - "^chore(\\\\(.*\\\\))?:"\n';
+    const root = repo({
+      ".github/workflows/ci.yml": "on: push\n",
+      "go.mod": "module github.com/acme/tool\n\ngo 1.24\n",
+      ".goreleaser.yaml": `version: 2\n${changelog}`,
+      ".gitignore": "dist/\n",
+    }, { origin: "https://github.com/acme/tool.git", tags: ["v0.1.0"] });
+    const facts = detectProject(root);
+    expect(facts.goreleaser?.changelog).toEqual({ exclude: ["docs", "test", "chore"] });
+    const plan = planRelease(facts, PLAN);
+    expect(plan.release.publish).toEqual([{ type: "forge", forge: "github", repo: "acme/tool", assets: ["artifact:goreleaser"], notes: { generate: "commits", exclude: ["docs", "test", "chore"] } }]);
+    expect(plan.reasons.join("\n")).toContain("except docs, test, chore");
+    // A filter that names no commit type keeps the forge's notes, and says so.
+    writeFileSync(join(root, ".goreleaser.yaml"), 'version: 2\nchangelog:\n  filters:\n    exclude:\n      - "(?i)typo"\n');
+    const other = planRelease(detectProject(root), PLAN);
+    expect(other.release.publish).toMatchObject([{ notes: { generate: "forge" } }]);
+    expect(other.notes.join("\n")).toContain('"(?i)typo" name no commit type');
   });
 
   test("Helm charts and an nfpm config: helm and nfpm artifact entries, a helm target on the forge's registry, and the packages on the forge release (#5233)", () => {
