@@ -240,11 +240,12 @@ function installSourceResolution(): void {
  * registration covers this process, so a caller that registers its own
  * CommonJS hook from source knows not to add a second one.
  */
-export function ensureTypeScriptLoader(): boolean {
+export function ensureTypeScriptLoader(projectDir?: string): boolean {
   const state = compiledState();
   if (!state) return false;
   if (state.tsx) return true;
-  const load = (specifier: string) => requireOptionalPeer<{ register: () => unknown }>("tsx", specifier, "run TypeScript", import.meta.url);
+  const from = tsxResolvedFrom(projectDir) ?? import.meta.url;
+  const load = (specifier: string) => requireOptionalPeer<{ register: () => unknown }>("tsx", specifier, "run TypeScript", from);
   load("tsx/cjs/api").register();
   load("tsx/esm/api").register();
   state.tsx = true;
@@ -252,21 +253,37 @@ export function ensureTypeScriptLoader(): boolean {
 }
 
 /**
+ * #5263 — where tsx resolves from: chant's own install first, then the
+ * project's (`projectDir`, then the working directory). chant run through
+ * `npx @intentius/chant@<v>` lives in npx's cache, where tsx is not
+ * installed, while the project has it in its `node_modules`. Returns the
+ * path or URL to resolve from, or undefined when neither has tsx.
+ */
+export function tsxResolvedFrom(projectDir?: string): string | undefined {
+  const bases = [import.meta.url, ...[projectDir, process.cwd()].filter((d): d is string => d !== undefined).map((d) => join(d, "package.json"))];
+  for (const base of bases) {
+    try {
+      nodeModule.createRequire(base).resolve("tsx/cjs/api");
+      return base;
+    } catch {
+      // Not installed where this base resolves from.
+    }
+  }
+  return undefined;
+}
+
+/**
  * Whether this process can load a TypeScript module such as
  * `chant.config.ts`: always from source, where a loader already runs chant
- * itself, and in the compiled CLI when tsx resolves from chant's install.
+ * itself, and in the compiled CLI when tsx resolves from chant's install or
+ * the project's (#5263).
  * Nothing is registered; `chant release init` asks before it writes a
  * config it would have to read back.
  */
-export function typeScriptLoaderAvailable(): boolean {
+export function typeScriptLoaderAvailable(projectDir?: string): boolean {
   const state = compiledState();
   if (!state || state.tsx) return true;
-  try {
-    nodeModule.createRequire(import.meta.url).resolve("tsx/cjs/api");
-    return true;
-  } catch {
-    return false;
-  }
+  return tsxResolvedFrom(projectDir) !== undefined;
 }
 
 /**
