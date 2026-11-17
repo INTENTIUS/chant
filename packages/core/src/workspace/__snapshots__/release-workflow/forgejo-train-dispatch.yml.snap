@@ -1384,8 +1384,7 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1393,6 +1392,8 @@ jobs:
   gate:
     if: github.event_name == 'workflow_dispatch' && inputs.train == ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
     steps:
@@ -1413,6 +1414,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -1453,6 +1456,9 @@ jobs:
     needs: [gate, cut]
     if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
     steps:
@@ -1501,8 +1507,7 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1510,6 +1515,8 @@ jobs:
   gate:
     if: github.event_name == 'workflow_dispatch' && inputs.train == ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
     steps:
@@ -1530,6 +1537,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -1567,6 +1576,9 @@ jobs:
     needs: [gate, cut]
     if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
     steps:
@@ -1612,8 +1624,7 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1621,6 +1632,8 @@ jobs:
   gate:
     if: github.event_name == 'workflow_dispatch' && inputs.train == ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
     steps:
@@ -1641,6 +1654,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -1683,6 +1698,9 @@ jobs:
     needs: [gate, cut]
     if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
     steps:
@@ -1733,8 +1751,7 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1742,6 +1759,8 @@ jobs:
   gate:
     if: github.event_name == 'workflow_dispatch' && inputs.train == ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
     steps:
@@ -1762,6 +1781,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -1790,6 +1811,9 @@ jobs:
     needs: [gate, cut]
     if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
     steps:
@@ -1830,8 +1854,7 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
@@ -1839,6 +1862,8 @@ jobs:
   gate:
     if: github.event_name == 'workflow_dispatch' && inputs.train == ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       commit: ${{ steps.green.outputs.commit }}
     steps:
@@ -1859,6 +1884,8 @@ jobs:
   cut:
     needs: gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -1887,6 +1914,9 @@ jobs:
     needs: [gate, cut]
     if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     env:
       CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
     steps:

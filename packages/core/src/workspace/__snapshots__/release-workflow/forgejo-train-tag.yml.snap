@@ -507,14 +507,16 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -543,14 +545,16 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -576,14 +580,16 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -614,14 +620,16 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -647,14 +655,16 @@ on:
   push:
     tags: ["release-train/npm/*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: chant-release
   cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
