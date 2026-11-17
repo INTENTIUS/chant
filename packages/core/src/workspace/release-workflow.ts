@@ -46,7 +46,7 @@
 import { readFileSync } from "node:fs";
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import { TOOL_PINS } from "../tool-pins";
-import { releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
+import { placeReleaseImages, releaseImagePlatforms, resolveReleaseImages } from "../lifecycle/release-images";
 import { GENERATED_MARKER } from "../discovery/files";
 import { tagShape, type MemberTags } from "../lifecycle/release-tag";
 import type { SecurityGroup } from "./security";
@@ -1232,7 +1232,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     workspaceRoot,
     tags,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
-    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(release!.images!).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
+    ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(placeReleaseImages(release!.images!, release!.artifacts ?? [])).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
     ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}), ...((await import("../lifecycle/release-artifacts")).usesNfpm(release!.artifacts!) ? { nfpm: true } : {}) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     green: await (async () => {

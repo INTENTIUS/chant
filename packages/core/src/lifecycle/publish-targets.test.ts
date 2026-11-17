@@ -309,6 +309,26 @@ describe("oci", () => {
     }
   });
 
+  test("platformTags: the reveal tags each platform's image, read here from a single image's config (#5269)", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "oci-pass-9876", token: "registry-token-abcdef" });
+    try {
+      const dir = temp();
+      writeLockfile(dir);
+      const { digest, configDigest } = writeOciLayout(join(dir, "dist", "api.oci"));
+      const repo = `${reg.host}/acme/api`;
+      const [target] = await createPublishTargets([decl({ type: "oci", image: "dist/api.oci", repository: repo, tags: ["{version}"], platformTags: ["{version}-{arch}"] })], {});
+      const ctx = context(dir, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "oci-pass-9876" }, artifacts: [{ component: "api", kind: "image", path: "dist/api.oci", digest: configDigest }] });
+      expect((await target!.plan(ctx))[0]!.name).toBe("dist/api.oci (tags 1.4.0, 1.4.0-amd64)");
+      const staged = await target!.stage(ctx);
+      await target!.reveal(ctx, staged);
+      expect(reg.manifests.has("1.4.0")).toBe(true);
+      expect(reg.manifests.has("1.4.0-amd64")).toBe(true);
+      expect(ctx.lines.join("\n")).toContain(`tagged ${digest} 1.4.0-amd64`);
+    } finally {
+      await reg.close();
+    }
+  });
+
   describe("a registry that refuses or drops an upload (#4877)", () => {
     const env = { OCI_USERNAME: "robot", OCI_PASSWORD: "oci-pass-9876" };
     async function push(faults: Parameters<typeof startFakeRegistry>[1]) {

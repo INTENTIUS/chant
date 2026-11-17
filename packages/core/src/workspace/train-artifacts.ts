@@ -127,7 +127,7 @@ export async function trainArtifacts(q: TrainArtifactsQuery): Promise<TrainArtif
   const { loadChantConfig } = await import("../config");
   const { resolveRelease } = await import("../lifecycle/release-store");
   const { releaseArtifactFiles } = await import("../lifecycle/release-artifacts");
-  const { resolveReleaseImages } = await import("../lifecycle/release-images");
+  const { placeReleaseImages, resolveReleaseImages } = await import("../lifecycle/release-images");
   const chant = q.chant ?? spawnMemberChant;
   const say = q.say ?? (() => undefined);
   const out: TrainArtifactsMember[] = [];
@@ -139,7 +139,7 @@ export async function trainArtifacts(q: TrainArtifactsQuery): Promise<TrainArtif
     if (declaredImages.length === 0 && declaredFiles.length === 0) continue;
     const found = await resolveRelease(m.releaseDigest, { cwd: m.dir });
     if (!found) throw new TrainCutError("release-not-found", `${m.member}: the train pins release ${m.releaseDigest}, which no cut in the member names`, `Fetch chant/lifecycle (git fetch origin chant/lifecycle:chant/lifecycle) in the train's checkout.`);
-    const images = resolveReleaseImages(declaredImages).map((i) => i.archive.replace(/^\.\//, ""));
+    const images = resolveReleaseImages(placeReleaseImages(declaredImages, declaredFiles)).map((i) => i.archive.replace(/^\.\//, ""));
     const files = releaseArtifactFiles(found.release, declaredFiles.map((d) => d.name)).map((f) => f.path);
     let copied = 0;
     if (q.from !== undefined) {

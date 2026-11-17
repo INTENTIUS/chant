@@ -129,6 +129,7 @@ export type ReleaseCutCode =
   | "release-image-unknown-component"
   | "release-image-name-taken"
   | "release-image-build-failed"
+  | "release-image-archive-in-dist"
   /** #5151: `release.artifacts`, as ./release-artifacts.ts refuses it. */
   | "release-artifact-invalid"
   | "release-artifact-name-invalid"

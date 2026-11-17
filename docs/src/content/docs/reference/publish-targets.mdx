@@ -68,7 +68,8 @@ For both steps npm authenticates with its own config. chant reads no npm token a
 |---|---|
 | `image` | An OCI image layout as a directory or as the tar file `docker save` writes. Its `index.json` names one image manifest or one index |
 | `repository` | `<registry host>/<name>` like `ghcr.io/acme/api` |
-| `tags` | Tags to point at the pushed digest. `{label}` is the release's label. The default is `["{label}"]` when the release has a label. A release whose label is a semver prerelease drops a `latest` tag and keeps the rest, or the label tag when nothing else is left |
+| `tags` | Tags to point at the pushed digest. `{label}` is the release's label, and `{version}` the label from its first digit. The default is `["{label}"]` when the release has a label. A release whose label is a semver prerelease drops a `latest` tag and keeps the rest, or the label tag when nothing else is left |
+| `platformTags` | Tags for each platform's image in the archive's index, such as `["{version}-{arch}"]` for `1.4.0-amd64` and `1.4.0-arm64`. `{arch}` is the platform's architecture with its variant (`armv7`), `{os}` its OS. Each names `{arch}` and `{label}` or `{version}`, so it belongs to the release and a status change never moves it. The reveal points them at the platform images the stage pushed by digest; two images that would take one tag are refused (`publish-oci-platform-tag-taken`). `OCI_PLATFORM_TAGS_FLOOR` is the first chant that reads it |
 | `usernameEnv` and `passwordEnv` | The variables holding the registry user and its password or token. The defaults are `OCI_USERNAME` and `OCI_PASSWORD` |
 | `sbom` | An SPDX or CycloneDX JSON file to attach, relative to the member. Default: one written from the member's lockfile. `false` attaches none |
 

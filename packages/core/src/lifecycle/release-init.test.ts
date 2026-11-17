@@ -145,6 +145,42 @@ describe("detecting the project (#5160)", () => {
     expect(other.notes.join("\n")).toContain('"(?i)typo" name no commit type');
   });
 
+  test("a goreleaser config that builds its image with dockers: release.images and an oci target carry it (#5269)", () => {
+    const goreleaser = [
+      "version: 2",
+      "dockers:",
+      "  - image_templates: ['ghcr.io/acme/tool:{{ .Version }}-amd64']",
+      "    dockerfile: Dockerfile",
+      "    goarch: amd64",
+      "    build_flag_templates: ['--build-arg=VERSION={{ .Version }}']",
+      "  - image_templates: ['ghcr.io/acme/tool:{{ .Version }}-arm64']",
+      "    dockerfile: Dockerfile",
+      "    goarch: arm64",
+      "    build_flag_templates: ['--build-arg=VERSION={{ .Version }}']",
+      "docker_manifests:",
+      "  - name_template: 'ghcr.io/acme/tool:{{ .Version }}'",
+      "  - name_template: 'ghcr.io/acme/tool:latest'",
+      "",
+    ].join("\n");
+    const root = repo({
+      ".github/workflows/ci.yml": "on: push\n",
+      "go.mod": "module github.com/acme/tool\n\ngo 1.24\n",
+      ".goreleaser.yaml": goreleaser,
+      Dockerfile: "FROM golang:1.24 AS build\nRUN go build -o /tool .\nFROM scratch\nCOPY --from=build /tool /tool\n",
+      ".gitignore": "dist/\n",
+    }, { origin: "https://github.com/acme/tool.git", tags: ["v0.1.0"] });
+    const plan = planRelease(detectProject(root), PLAN);
+    expect(plan.release.images).toEqual([{ name: "tool", dockerfile: "Dockerfile", platforms: ["linux/amd64", "linux/arm64"], archive: "build/images/tool.tar", args: { VERSION: "{version}" } }]);
+    expect(plan.release.publish).toContainEqual({ type: "oci", image: "build/images/tool.tar", repository: "ghcr.io/acme/tool", tags: ["{version}", "latest"], platformTags: ["{version}-{arch}"] });
+    const notes = plan.notes.join("\n");
+    expect(notes).toContain("Remove dockers and docker_manifests from .goreleaser.yaml");
+    expect(notes).toContain("build/ is not in .gitignore");
+    expect(notes).not.toContain("Not carried");
+    // A one-stage Dockerfile that copies goreleaser's binary is named.
+    writeFileSync(join(root, "Dockerfile"), "FROM scratch\nCOPY tool /tool\n");
+    expect(planRelease(detectProject(root), PLAN).notes.join("\n")).toContain("give it a build stage of its own");
+  });
+
   test("Helm charts and an nfpm config: helm and nfpm artifact entries, a helm target on the forge's registry, and the packages on the forge release (#5233)", () => {
     const root = repo({
       ".github/workflows/ci.yml": "on: push\n",
