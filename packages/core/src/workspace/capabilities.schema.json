@@ -61,9 +61,38 @@
         },
         "templates": {
           "type": "array",
-          "description": "The investigation templates (#4531), the catalog's second kind of entry: each a fixed query about one resource, as a chant search path pattern or as Cypher for behold's graph pane. Added within contract 1 by #4531, written by chant 0.124.54 and newer; a document without it is from an older chant.",
+          "description": "The investigation templates (#4531), the catalog's second kind of entry: each a fixed query about one resource, as a chant search path pattern or as Cypher for behold's graph pane. Added within contract 1 by #4531, written by chant 0.124.54 and newer; a document without it is from an older chant. chant's own come first, then the project's own from .chant/templates.json at the workspace root, or at the project root with no workspace.",
           "items": {
             "$ref": "#/$defs/template"
+          }
+        },
+        "refused": {
+          "type": "array",
+          "description": "The project's template entries left out of templates: one that does not hold to the entry kind, or whose id is one of chant's, or the whole file as one entry when it is not a templates file. The others still load. Added within contract 1 by behold#1142, written by chant 0.124.103 and newer.",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "message"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The entry's id, when it has a usable one."
+              },
+              "file": {
+                "type": "string",
+                "description": "The file the entry was read from, relative to the workspace or project root, such as .chant/templates.json."
+              },
+              "field": {
+                "type": "string",
+                "description": "The field at fault, such as templates[2].query.text; absent when the file cannot be read as JSON."
+              },
+              "message": {
+                "type": "string",
+                "description": "What is wrong, naming the file and the field."
+              }
+            }
           }
         }
       }
@@ -219,6 +248,21 @@
           "items": {
             "type": "string"
           }
+        },
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The node kinds it applies to, as the graph holds them, such as aws_s3_bucket or AWS::S3::Bucket; absent means every kind. Added within contract 1 by behold#1142, written by chant 0.124.103 and newer.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "origin": {
+          "enum": [
+            "chant",
+            "project"
+          ],
+          "description": "Where it was declared: chant's own templates.json, or the project's .chant/templates.json. Added within contract 1 by behold#1142, written by chant 0.124.103 and newer."
         },
         "inputs": {
           "type": "array",

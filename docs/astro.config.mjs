@@ -279,6 +279,7 @@ export default defineConfig({
 								{ label: 'Feature Flags', slug: 'guide/feature-flags' },
 								{ label: 'Decision Points', slug: 'guide/decision-points' },
 								{ label: 'Recording Decisions by Hand', slug: 'guide/recording-decisions-by-hand' },
+								{ label: 'Add an Investigation Template', slug: 'guide/project-templates' },
 							],
 						},
 						{

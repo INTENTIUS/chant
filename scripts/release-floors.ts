@@ -123,6 +123,9 @@ const FLOOR_RE = /export const ([A-Z0-9_]+_FLOOR) = (?:"(\d+\.\d+\.\d+)"|(NEXT_R
  */
 const NEXT_RELEASE_TEXT: { file: string; text: string; count: number; floor: string }[] = [
   // --freeze empties this list after a release ships (#4501); each entry is one line.
+  { file: "packages/core/src/workspace/capabilities.schema.json", text: "Added within contract 1 by behold#1142, written by chant {v} and newer.", count: 3, floor: "PROJECT_TEMPLATES_FLOOR" },
+  { file: "docs/src/content/docs/reference/capabilities.mdx", text: "`refused` are written by chant `{v}` and newer.", count: 1, floor: "PROJECT_TEMPLATES_FLOOR" },
+  { file: "docs/src/content/docs/guide/project-templates.mdx", text: "chant `{v}` and newer reads it.", count: 1, floor: "PROJECT_TEMPLATES_FLOOR" },
 ];
 
 interface Args {

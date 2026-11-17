@@ -1,0 +1,108 @@
+---
+title: Add an Investigation Template
+description: Declare a project's own investigation templates in .chant/templates.json, beside the ones chant ships, and read which entries chant refused and why.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/project-templates/.
+  Add the investigation template I describe to `.chant/templates.json` at this workspace's root, or at the project root when there is no workspace, creating the file if it is missing.
+  Run `npx chant search --capabilities --json` and check that the template is listed with `origin: "project"` and that `refused` is empty. Fix each refusal it names, then open a pull request.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+An investigation template is a fixed question about one resource, such as
+"what reads this resource". chant ships a set of them (see
+[investigation templates](/chant/reference/capabilities/#investigation-templates)).
+A project adds its own in `.chant/templates.json`, and chant lists them
+after its own on the capabilities document. chant `0.124.103` and newer reads it.
+
+## Where the file goes
+
+In a declared workspace, the file is `.chant/templates.json` in the folder
+that holds `chant.workspace.json`. A member's own `.chant/templates.json` is
+not read, so every member of a workspace sees one set. A project with no
+workspace keeps the file at its project root, the folder holding
+`chant.config.ts`.
+
+## Write the file
+
+The file has the shape of chant's own `templates.json`: a `version`, which is
+`1`, and a list of `templates`.
+
+```json
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "bucket-readers",
+      "title": "Bucket readers",
+      "question": "which functions read this bucket",
+      "kinds": ["AWS::S3::Bucket", "aws_s3_bucket"],
+      "inputs": [{ "name": "node", "kind": "resource", "description": "the bucket" }],
+      "reads": "session",
+      "query": {
+        "kind": "cypher",
+        "text": "MATCH (f:Resource)-[:REF]->(b:Resource {key: $key}) WHERE f.kind CONTAINS 'Function' RETURN DISTINCT f.key AS key, f.kind AS kind"
+      }
+    },
+    {
+      "id": "reaches-table",
+      "title": "Reaches a table",
+      "question": "does this resource reach a DynamoDB table",
+      "inputs": [{ "name": "node", "kind": "resource", "description": "the resource" }],
+      "reads": "source",
+      "query": { "kind": "path", "text": "{{node}} ->*kind:AWS::DynamoDB::Table" }
+    }
+  ]
+}
+```
+
+Each entry takes the fields chant's own entries take:
+
+| Field | What to write |
+|---|---|
+| `id` | lowercase letters, digits and `-`, and not an id chant ships |
+| `title`, `question` | a short name, and the question in people's words |
+| `inputs` | the resource input first, the only one of kind `resource`; then any `term` or `scope` inputs |
+| `reads` | `source`, `live`, `snapshots` or `session` |
+| `query` | `{ kind: "path", text }`, a `chant search` pattern with `{{<input>}}` placeholders, or `{ kind: "cypher", text }`, a statement that binds the resource as `$key` and each other input as `$<name>` |
+| `kinds` | optional: the node kinds it applies to, as the graph holds them; leave it out for every kind |
+| `sources` | optional: the sources whose nodes it applies to |
+| `note` | optional: what it does not answer |
+
+A template only reads. A Cypher query starts with a reading clause and may
+not use `CREATE`, `MERGE`, `DELETE`, `DETACH`, `SET`, `REMOVE` or `DROP`. A
+path pattern is a `chant search` query, and a value filled into it must be
+one search term. Any `reads` value chant's own templates use is allowed, so
+a `live` template reads the cloud with the credentials of whoever runs it.
+
+## Check it
+
+```bash
+chant search --capabilities --json
+```
+
+The document's `templates` lists chant's entries, each with
+`origin: "chant"`, and then the project's, each with `origin: "project"`.
+An entry chant cannot use is left out of `templates` and listed under
+`refused`, and the rest still load. Each refusal names the file and the field
+at fault, and `chant search --capabilities` also prints it on standard error:
+
+```
+template refused: .chant/templates.json templates[1].query.text: template reaches-table: {{kind}} names no input
+```
+
+chant refuses an entry when:
+
+- it does not hold to the fields above, naming the field, such as
+  `templates[0].reads` or `templates[2].inputs[1].kind`;
+- its id is one chant ships, naming both files, since an id keeps chant's
+  meaning in every project; rename it;
+- its id appears earlier in the same file, in which case the first one loads.
+
+A file that is not JSON, whose `version` is not `1`, or that has no
+`templates` list is refused whole as one entry, and chant's own templates
+still load. With no `.chant/templates.json`, the document lists chant's
+templates alone and `refused` is empty.
+
+In a workspace, `chant workspace search --capabilities --json` and chant's
+MCP `capabilities` tool print the same lists.
