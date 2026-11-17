@@ -205,6 +205,27 @@ describe("chant release changed (#5134)", () => {
     });
   });
 
+  test("#5271: a member's release.sources count as its own paths", async () => {
+    await withTestDir(async (dir) => {
+      for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@chant.dev"], ["config", "user.name", "T"]]) git(dir, ...args);
+      const first = commit(dir, "init", {
+        "chant.workspace.json": JSON.stringify({ name: "mono", schema: 1, members: [{ name: "web", dir: "packages/web", kind: "chant" }, { name: "image", dir: "release/image", kind: "chant" }] }),
+        "chant.config.json": JSON.stringify({ release: { legacyTags: ["v"] } }),
+        "packages/web/package.json": pkg("@acme/web"),
+        "packages/web/chant.config.json": "{}",
+        "release/image/chant.config.json": JSON.stringify({ release: { sources: ["../../docker"] } }),
+        "docker/Dockerfile": "FROM scratch\n",
+      });
+      git(dir, "tag", "v1.0.0", first);
+      commit(dir, "fix: the image", { "docker/Dockerfile": "FROM busybox\n" });
+      const doc = await releaseChangedDocument({ cwd: dir, at: "HEAD" });
+      if (!("members" in doc)) throw new Error(JSON.stringify(doc));
+      expect(doc.members.map((m) => [m.member, m.paths])).toEqual([["image", ["docker/Dockerfile"]]]);
+      commit(dir, "fix: web", { "packages/web/index.js": "1\n" });
+      expect(names(await releaseChangedDocument({ cwd: dir, at: "HEAD" }))).toEqual(["image", "web"]);
+    });
+  });
+
   test("errors are coded", async () => {
     await withTestDir(async (dir) => {
       repo(dir);

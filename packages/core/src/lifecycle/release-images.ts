@@ -245,7 +245,13 @@ const CHANT_BUILD_ARGS = ["SOURCE_DATE_EPOCH", "CHANT_RELEASE_LABEL"];
 
 const outside = (p: string): boolean => isAbsolute(p) || p.split(/[\\/]/).includes("..");
 
-/** Check a member's `release.images`: names valid and unique, one of `build` and `dockerfile`, paths inside the member, platforms of the form os/arch. */
+/**
+ * Check a member's `release.images`: names valid and unique, one of `build`
+ * and `dockerfile`, the archive inside the member, platforms of the form
+ * os/arch. The Dockerfile and the context, which the build only reads, may
+ * leave the member with `..` (#5271), so a member at `release/<name>` builds
+ * the repository root's Dockerfile.
+ */
 export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): void {
   const seen = new Set<string>();
   for (const i of images) {
@@ -253,9 +259,11 @@ export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): 
     if (seen.has(i.name)) throw new ReleaseImageError("release-image-name-taken", `release.images names "${i.name}" twice`);
     seen.add(i.name);
     if (isDockerfile(i) && "build" in i) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}" names a build command and a Dockerfile; chant builds a Dockerfile itself, so name one`);
-    const paths: [string, string | undefined][] = isDockerfile(i) ? [["the archive", archiveOf(i)], ["the Dockerfile", i.dockerfile], ["the context", i.context]] : [["the archive", i.archive]];
-    for (const [what, p] of paths) {
-      if (p !== undefined && outside(p)) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": ${what} ${p} is not a path inside the member`);
+    if (outside(archiveOf(i))) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": the archive ${archiveOf(i)} is not a path inside the member`);
+    if (isDockerfile(i)) {
+      for (const [what, p] of [["the Dockerfile", i.dockerfile], ["the context", i.context]] as const) {
+        if (p !== undefined && isAbsolute(p)) throw new ReleaseImageError("release-image-archive-outside", `release.images "${i.name}": ${what} ${p} is an absolute path; name it relative to the member`);
+      }
     }
     for (const [k, v] of Object.entries((isDockerfile(i) && i.labels) || {})) {
       if (!LABEL_KEY.test(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": labels names ${JSON.stringify(k)}, which is not a label key such as org.opencontainers.image.version`);

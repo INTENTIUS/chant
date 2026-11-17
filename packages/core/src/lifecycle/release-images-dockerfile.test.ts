@@ -156,7 +156,9 @@ describe("a release.images entry that names a Dockerfile (#4819)", () => {
       }
     };
     expect(refused({ name: "a", dockerfile: "D", build: "x", archive: "a.tar" })).toBe("release-image-invalid");
-    expect(refused({ name: "a", dockerfile: "../D" })).toBe("release-image-archive-outside");
+    // #5271: the Dockerfile and context are only read, so they may leave the member; the archive may not.
+    expect(refused({ name: "a", dockerfile: "../../Dockerfile", context: "../.." })).toBe("");
+    expect(refused({ name: "a", dockerfile: "D", archive: "../a.tar" })).toBe("release-image-archive-outside");
     expect(refused({ name: "a", dockerfile: "D", context: "/abs" })).toBe("release-image-archive-outside");
     expect(refused({ name: "a", dockerfile: "D", platforms: ["linux/amd64; rm"] })).toBe("release-image-invalid");
     expect(refused({ name: "a", dockerfile: "D", platforms: [] })).toBe("release-image-invalid");

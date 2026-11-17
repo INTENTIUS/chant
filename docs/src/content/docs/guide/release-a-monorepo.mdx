@@ -106,6 +106,8 @@ export default {
 
 The cut job builds them once, in that member's cut, and hands them to the publish job, which checks every file against the digests the release recorded before anything publishes. A publish with no cut job before it (a train tag pushed from a workstation, or a dispatched `train`) builds them again from the train's commit and publishes only when they come out the same. See [A release train](/chant/cli/release/workflow/#a-release-train) for what the jobs run.
 
+An image or chart built from files outside every package, such as the repository root's Dockerfile, can have a member of its own, such as `release/web-image`, whose entry names them with `..` (`dockerfile: "../../Dockerfile", context: "../.."`) and whose `release.sources: ["../.."]` makes [`release changed`](/chant/cli/release/changed/) release it when they change. [`release init`](/chant/cli/release/init/#images-charts-python-and-rust) sets this up.
+
 Files that need another runner, such as a macOS or Windows binary, come from the member's own `release.workflow.builds`, with a `release.artifacts` entry whose `builtBy` names the jobs. The workflow's gate plans the train first, so each build job runs with the label its member is about to be cut at, and the cut refuses a train whose labels changed since. Such a train publishes in the run that cut it. [A member's builds on other runners](/chant/cli/release/workflow/#a-members-builds-on-other-runners) shows the config.
 
 ## On GitLab

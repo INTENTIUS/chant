@@ -223,6 +223,8 @@ export const ChantConfigSchema = z.object({
     legacyTags: z.array(z.string().min(1)).optional(),
     // #5191: what a breaking change does to a 0.x version when the label comes from commits.
     breakingOnZero: z.enum(["minor", "major"]).optional(),
+    // #5271: paths outside a train member, relative to it, whose changes release it too.
+    sources: z.array(z.string().min(1)).min(1).optional(),
     // #5150: the tag a cut makes, as a template, and the floating tag a publish moves.
     tag: z.union([z.string().min(1), z.object({ name: z.string().min(1), floating: z.string().min(1).optional() }).strict()]).optional(),
     // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false.
@@ -621,6 +623,15 @@ export interface ChantConfig {
      * either way.
      */
     breakingOnZero?: "minor" | "major";
+    /**
+     * Paths beside the member's own directory whose changes release it
+     * (#5271), relative to the member: a member at `release/web-image` that
+     * builds the root's Dockerfile names `["../.."]`. `chant release changed`
+     * takes a member whose own directory or any of these paths changed since
+     * its last release. A path may leave the member with `..`, inside the
+     * repository.
+     */
+    sources?: string[];
     /**
      * The tag `chant release cut` makes (#5150), as a template: `v{version}`,
      * `cli-v{version}`, `{member}/v{version}` or `{path}/v{version}`. The

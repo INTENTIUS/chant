@@ -892,14 +892,14 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
   return { release, reasons, notes, registry, workflowFile, goreleaserPatch, readsHistory };
 }
 
-/** One member of a planned train: a publishable package, released at its own version from its own `chant.config.ts`. */
+/** One member of a planned train: a publishable package, or what the train builds outside one, released at its own version from its own `chant.config.ts`. */
 export interface TrainMemberPlan {
   /** The member's name in `chant.workspace.json`. */
   name: string;
-  /** The package's directory from the project root. */
+  /** The member's directory from the project root. */
   dir: string;
-  /** The npm package name. */
-  package: string;
+  /** The npm package name, or null for a member that is no workspace package (#5271). */
+  package: string | null;
   /** The member's `release` block. */
   release: Record<string, Json>;
 }
@@ -922,28 +922,35 @@ export interface ReleaseTrainPlan {
 /** The environment a planned train is recorded for. */
 export const TRAIN_ENV = "npm";
 
+/** The directory a train member init makes for what no workspace package holds (#5271), from the project root. */
+export const TRAIN_OWN_DIR = "release";
+
+/** The rule by which init gives a train member what the project builds besides its packages (#5271), as the plan's reasons print it. */
+export const TRAIN_OWNERSHIP_RULE = `an image, chart or Python or Rust package belongs to the train member whose directory holds its file; what no member's directory holds gets a member of its own at ${TRAIN_OWN_DIR}/<name>, one per directory, whose entries name the files with ../.. and whose release.sources names that directory, so release changed releases it when the files change`;
+
+/** A workspace package a train releases: an npm package, or a VS Code extension (#5271). */
+const trainPackage = (p: InitPackage): boolean => p.name !== null && !p.private;
+
 /**
  * Whether the project's npm, pnpm or yarn workspaces can release as a train:
- * one member per publishable package (#5154). `why` says why a project with
+ * one member per publishable package or VS Code extension (#5154, #5271),
+ * with the images, charts and Python or Rust package beside them given to a
+ * member by {@link TRAIN_OWNERSHIP_RULE}. `why` says why a project with
  * several packages gets one release instead, and is null for a project with
  * fewer than two.
  */
 export function trainFit(facts: ProjectFacts): { train: true } | { train: false; why: string | null } {
   const node = facts.node;
   if (!node?.workspaces) return { train: false, why: null };
-  const published = (p: InitPackage) => p.name !== null && !p.private && !p.vscode;
-  const packages = node.workspaces.filter(published);
-  const rootPublished = published(node.root);
+  const packages = node.workspaces.filter(trainPackage);
+  const rootPublished = trainPackage(node.root);
   if (packages.length + (rootPublished ? 1 : 0) < 2) return { train: false, why: null };
   if (rootPublished) return { train: false, why: `the root package ${node.root.name} is published too, and a train releases the packages below the root` };
-  const ext = [node.root, ...node.workspaces].find((p) => p.vscode && !p.private && p.name);
-  if (ext) return { train: false, why: `${ext.name} is a VS Code extension, and release init makes a train's members of npm packages only` };
-  if (facts.goreleaser) return { train: false, why: `${facts.goreleaser.file} builds files for the repository, and release init makes a train's members of npm packages only, with none to build them` };
-  if (facts.dockerfiles.length > 0) return { train: false, why: `${facts.dockerfiles[0]} builds an image, and release init makes a train's members of npm packages only, with none to build it` };
-  if ((facts.charts?.length ?? 0) > 0) return { train: false, why: `${facts.charts![0]!.dir}/Chart.yaml is a chart packed at the cut, and release init makes a train's members of npm packages only, with none to pack it` };
-  if (facts.nfpm) return { train: false, why: `${facts.nfpm.file} packages files at the cut, and release init makes a train's members of npm packages only, with none to build them` };
-  if (facts.python?.pyproject && facts.python.name) return { train: false, why: "pyproject.toml's package publishes beside the npm packages, and release init makes a train's members of npm packages only" };
-  if (facts.rust && !facts.rust.unpublishable && (facts.rust.name || facts.rust.workspace)) return { train: false, why: "Cargo.toml's crates publish beside the npm packages, and a train releases npm packages" };
+  if (facts.goreleaser) return { train: false, why: `${facts.goreleaser.file} runs goreleaser at the repository root, and a train member runs it in its own directory, where its builds and dist would not be the root's` };
+  if (facts.nfpm) return { train: false, why: `${facts.nfpm.file} packs files by paths from the repository root, and a train member runs nfpm in its own directory` };
+  const r = facts.registries;
+  const other = r?.maven ? "pom.xml" : r?.dotnet ? r.dotnet.projects[0]!.file : r?.ruby ? r.ruby.gemspec : null;
+  if (other) return { train: false, why: `${other} builds at the repository root, and release init makes no train member for it` };
   return { train: true };
 }
 
@@ -954,15 +961,21 @@ export function memberNameOf(pkg: Pick<InitPackage, "name" | "dir">): string {
 }
 
 /** The tag prefixes of a history that name one package's releases: `core-v`, `core/v`, `@acme/core@`, `packages/core/v`. */
-function ownPrefixes(h: TagHistory, pkg: InitPackage, member: string): string[] {
+function ownPrefixes(h: TagHistory, pkg: Pick<InitPackage, "name" | "dir">, member: string): string[] {
   const names = new Set([pkg.name, pkg.name?.replace(/^@[^/]+\//, ""), member, pkg.dir, posix.basename(pkg.dir)].filter((n): n is string => !!n));
   return [h.prefix, ...h.others.map((o) => o.prefix)].filter((p): p is string => p !== null && p !== "" && names.has(p.replace(/[/@_-]v?$/, "")));
 }
 
+/** `path` (from the project root) relative to `dir`, `.` for the directory itself. */
+const relTo = (dir: string, path: string): string => posix.relative(dir === "." ? "" : dir, path === "." ? "" : path) || ".";
+
 /**
  * Plan a train for a project {@link trainFit} accepts: a member per
- * publishable workspace package, each stamping and publishing its own
- * package, and the root's `release.train` with a dispatched workflow.
+ * publishable workspace package or VS Code extension, each stamping and
+ * publishing its own package, the images and charts each member's
+ * directory holds, a member at `release/<name>` for each other directory
+ * that holds an image, a chart, or a Python or Rust package (#5271), and the
+ * root's `release.train` with a dispatched workflow.
  */
 export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainPlan {
   const node = facts.node!;
@@ -970,90 +983,238 @@ export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainP
   const notes: string[] = [];
   const registry: string[] = [];
   const forge = facts.workflowForge;
-  const { file: workflowFile, adopted } = releaseWorkflowFile(facts, true, notes);
+  const named = node.workspaces!.filter((p) => p.name);
+  const packages = dependencyOrder(named.filter(trainPackage));
+  const npmPackages = packages.filter((p) => !p.vscode);
+  const { file: workflowFile, adopted } = releaseWorkflowFile(facts, npmPackages.length > 0, notes);
   const workflowName = posix.basename(workflowFile);
   const env = TRAIN_ENV;
-
-  const named = node.workspaces!.filter((p) => p.name);
-  const packages = dependencyOrder(named.filter((p) => !p.private && !p.vscode));
+  const repo = facts.origin?.repo ?? "this repository";
   const skipped = named.filter((p) => p.private);
   const names = new Set(packages.map((p) => p.name!));
   const greenReasons: string[] = [];
   const green = greenOf(facts, greenReasons, notes);
+  const workflow: Record<string, Json> = { trigger: "dispatch" };
+  const addEnv = (k: string, v: string) => void (workflow.env = { ...((workflow.env as Record<string, Json>) ?? {}), [k]: v });
 
   // Member names, unique.
   const used = new Set<string>();
-  const memberNames = packages.map((p) => {
-    const base = memberNameOf(p);
+  const unique = (base: string): string => {
     let name = base;
     for (let i = 2; used.has(name); i++) name = `${base.slice(0, 38)}-${i}`;
     used.add(name);
     return name;
-  });
+  };
 
-  // Tags: a package's own history keeps its prefix; tags shared by every package are the root's legacy tags.
+  // Tags: a member's own history keeps its prefix; tags shared by every member are the root's legacy tags.
   const h = facts.tags;
   const claimed = new Set<string>();
-  const members: TrainMemberPlan[] = packages.map((p, i) => {
-    const name = memberNames[i]!;
-    const own = ownPrefixes(h, p, name);
+  const tagged = (release: Record<string, Json>, who: Pick<InitPackage, "name" | "dir">, name: string): void => {
+    const own = ownPrefixes(h, who, name);
     for (const o of own) claimed.add(o);
     const template = own.find(templatePrefix);
-    const release: Record<string, Json> = { tag: template ? `${template}{version}` : "{member}/v{version}" };
+    release.tag = template ? `${template}{version}` : "{member}/v{version}";
     const legacy = own.filter((o) => o !== template);
     if (legacy.length > 0) release.legacyTags = legacy;
     release.green = green;
+  };
+
+  interface Planned extends TrainMemberPlan {
+    /** What the member publishes, for its reason line. */
+    what: string[];
+    /** The directory its files come from, from the project root: its own, or the one it points back at. */
+    source: string;
+    /** Publishes to npm, so its builds are written outside dist (#5271). */
+    npm: boolean;
+  }
+  const members: Planned[] = packages.map((p) => {
+    const name = unique(memberNameOf(p));
+    const release: Record<string, Json> = {};
+    tagged(release, p, name);
     const internal = p.deps.some((d) => names.has(d) && d !== p.name);
     release.version = internal ? { packages: ["."], ranges: "train" } : { packages: ["."] };
-    const target: Record<string, Json> = { type: "npm", packages: ["."] };
-    if (p.name!.startsWith("@") && p.access === null) target.access = "public";
-    release.publish = [target];
-    return { name, dir: p.dir, package: p.name!, release };
+    const publish: Json[] = [];
+    const what: string[] = [];
+    if (p.vscode) {
+      const vsix = `dist/${p.name!.replace(/^@[^/]+\//, "")}.vsix`;
+      publish.push({ type: "marketplace", marketplace: "vscode", vsix }, { type: "marketplace", marketplace: "openvsx", vsix, auth: "trusted-publishing" });
+      what.push(`${p.name} stamped with its label and published to the VS Code Marketplace and Open VSX from ${vsix}`);
+    } else {
+      const target: Record<string, Json> = { type: "npm", packages: ["."] };
+      if (p.name!.startsWith("@") && p.access === null) target.access = "public";
+      publish.push(target);
+      what.push(`${p.name} stamped with its label and published to npm${target.access ? ' with access "public"' : ""}`);
+    }
+    release.publish = publish;
+    return { name, dir: p.dir, package: p.name!, release, what, source: p.dir, npm: !p.vscode };
   });
+
+  // #5271: what the members' directories don't hold gets a member at release/<name>, one per directory.
+  const ownerOf = (path: string): Planned | null => {
+    let best: Planned | null = null;
+    for (const m of members) if (m.package !== null && (path === m.dir || path.startsWith(`${m.dir}/`)) && (!best || m.dir.length > best.dir.length)) best = m;
+    return best;
+  };
+  const fallbackName = facts.origin?.repo.split("/").pop() ?? node.root.name?.replace(/^@[^/]+\//, "") ?? "app";
+  const ownMember = (source: string, base: string): Planned => {
+    const found = members.find((m) => m.package === null && m.source === source);
+    if (found) return found;
+    const name = unique(memberNameOf({ name: base, dir: source === "." ? fallbackName : source }));
+    const back = relTo(`${TRAIN_OWN_DIR}/${name}`, source);
+    const release: Record<string, Json> = {};
+    tagged(release, { name: null, dir: `${TRAIN_OWN_DIR}/${name}` }, name);
+    release.sources = [back];
+    const m: Planned = { name, dir: `${TRAIN_OWN_DIR}/${name}`, package: null, release, what: [], source, npm: false };
+    members.push(m);
+    return m;
+  };
+  /** A path from the project root as the member names it: from its own directory, or back from release/<name>. */
+  const fromMember = (m: Planned, path: string): string => relTo(m.dir, path);
+  const push = (m: Planned, key: "publish" | "artifacts" | "images", v: Json) => void (m.release[key] = [...((m.release[key] as Json[] | undefined) ?? []), v]);
+  const stampFile = (m: Planned, file: string) => {
+    const version = (m.release.version as Record<string, Json> | undefined) ?? {};
+    m.release.version = { ...version, files: [...((version.files as Json[] | undefined) ?? []), fromMember(m, file)] };
+  };
+
+  // Python and Rust packages at the root, before the images, so the root's member is named for the package.
+  const py = facts.python;
+  const forgejo = forge === "forgejo";
+  if (py?.pyproject && py.name) {
+    const m = ownMember(".", py.name);
+    push(m, "artifacts", { name: "python", build: `python -m pip install build && python -m build --outdir dist ${fromMember(m, ".")}`, outputs: ["dist/*"] });
+    push(m, "publish", { type: "pypi", files: ["artifact:python"], auth: forgejo ? "token" : "trusted-publishing" });
+    if (py.version) stampFile(m, "pyproject.toml");
+    else notes.push(`pyproject.toml has no static version (it is dynamic, or unset), so member ${m.name} does not stamp it: the build takes the version from wherever the project sets it.`);
+    m.what.push(`${py.name} built with python -m build into its own dist and published to PyPI ${forgejo ? "with the token in PYPI_TOKEN" : "with trusted publishing"}${py.version ? ", its label stamped into the root's pyproject.toml" : ""}`);
+    if (forgejo) {
+      addEnv("PYPI_TOKEN", "${{ secrets.PYPI_TOKEN }}");
+      registry.push(`PyPI ${py.name}: create an API token for the project on pypi.org and store it as the secret PYPI_TOKEN; PyPI has no trusted publisher for this forge.`);
+    } else {
+      registry.push(`PyPI ${py.name}: on pypi.org add a trusted publisher to the project's publishing settings (a pending publisher if the project does not exist yet) for ${forge === "gitlab" ? `GitLab CI/CD naming ${repo} and the top-level pipeline file .gitlab-ci.yml` : `GitHub Actions naming ${repo} and the workflow file ${workflowName}`}.${forge === "github" ? " A GitHub publisher can name an environment; leave it empty, since the workflow runs in none." : ""}`);
+    }
+  } else if (py) notes.push(`${py.name ?? "The Python package"} is in no member and not published to PyPI: ${py.pyproject ? "pyproject.toml has no [project] name" : "there is no pyproject.toml for python -m build to read"}.`);
+  const rs = facts.rust;
+  if (rs && !rs.unpublishable && (rs.name || rs.workspace)) {
+    const m = ownMember(".", rs.name ?? fallbackName);
+    push(m, "publish", { type: "cargo", manifest: fromMember(m, "Cargo.toml") });
+    if (rs.version) stampFile(m, "Cargo.toml");
+    else notes.push(`Cargo.toml has no [package] or [workspace.package] version at the root, so member ${m.name} does not stamp it: add the member crates' Cargo.toml files to its release.version.files.`);
+    m.what.push(`${rs.name ?? "the workspace's crates"} published with cargo publish from the root's Cargo.toml${rs.version ? ", its label stamped into it" : ""}`);
+    registry.push(
+      `crates.io ${rs.name ?? "each crate"}: ${forge === "github" ? `add a trusted publisher to ${rs.name ? "the crate" : "each crate"} on crates.io for GitHub Actions naming ${repo} and the workflow file ${workflowName}. A crate's first version can't be published that way: publish it by hand, or store a token that may publish new crates as the secret CARGO_REGISTRY_TOKEN and set CARGO_REGISTRY_TOKEN: "\${{ secrets.CARGO_REGISTRY_TOKEN }}" in the root's release.workflow.env.` : `create an API token that may publish ${rs.name ? "the crate" : "the crates"} and store it as the ${forge === "gitlab" ? "masked CI/CD variable" : "secret"} CARGO_REGISTRY_TOKEN${forge === "gitlab" ? "." : ", and set CARGO_REGISTRY_TOKEN: \"${{ secrets.CARGO_REGISTRY_TOKEN }}\" in the root's release.workflow.env."}`}`,
+    );
+  } else if (rs) notes.push(`${rs.name ?? "The crate"} is in no member and not published to crates.io: ${rs.unpublishable ? "Cargo.toml sets publish = false" : "Cargo.toml has no [package] name or [workspace]"}.`);
+
+  // Images: each in the member whose directory holds its Dockerfile, else in release/<name>.
+  const usedImages = new Set<string>();
+  const imageCount = facts.dockerfiles.length;
+  for (const dockerfile of facts.dockerfiles) {
+    let image = imageName(dockerfile, fallbackName);
+    while (usedImages.has(image)) image = `${image}-${usedImages.size}`;
+    usedImages.add(image);
+    const dir = posix.dirname(dockerfile);
+    const m = ownerOf(dockerfile) ?? ownMember(dir, image);
+    const context = fromMember(m, dir);
+    // In a package npm publishes, the archive is written outside dist, which npm packs.
+    const archive = m.npm ? imageArchiveBesideGoreleaser(image) : `dist/images/${image}.tar`;
+    push(m, "images", { name: image, dockerfile: fromMember(m, dockerfile), ...(context === "." ? {} : { context }), ...(m.npm ? { archive } : {}) });
+    const repository = imageRepository(facts.origin, image, imageCount === 1);
+    if (repository) {
+      push(m, "publish", { type: "oci", image: archive, repository });
+      m.what.push(`the image ${image} built from ${dockerfile} and pushed to ${repository}`);
+      if (repository.startsWith("ghcr.io/")) registry.push(`${repository}: the workflow pushes with the run's token. The first push makes the package private; make it public in the package's settings if it should be.`);
+      else registry.push(`${repository}: set OCI_USERNAME and OCI_PASSWORD for the release workflow, as ${forge === "gitlab" ? "masked CI/CD variables" : "secrets in the root's release.workflow.env"}, with push access to the registry.`);
+    } else {
+      m.what.push(`the image ${image} built from ${dockerfile}`);
+      notes.push(`${dockerfile} is built into member ${m.name}'s release.images as ${image}, and no oci target is declared: origin names no registry chant knows. Add { type: "oci", image: "${archive}", repository: "<registry>/<name>" } to its release.publish.`);
+    }
+  }
+
+  // Helm charts: the same rule, a helm target per member that packs any.
+  const charts = facts.charts ?? [];
+  const chartRepository = imageRepository(facts.origin, "charts", false);
+  const placed = charts.map((c) => {
+    const chartName = (c.name ?? posix.basename(c.dir === "." ? fallbackName : c.dir)).toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+    return { c, chartName, m: ownerOf(c.dir) ?? ownMember(c.dir, chartName) };
+  });
+  for (const { c, chartName, m } of placed) {
+    const entries = (m.release.artifacts as Array<{ name: string }> | undefined) ?? [];
+    let entry = placed.filter((x) => x.m === m).length === 1 ? "chart" : `chart-${chartName}`;
+    while (entries.some((e) => e.name === entry)) entry = `${entry}-${entries.length}`;
+    push(m, "artifacts", { name: entry, helm: m.npm ? { chart: fromMember(m, c.dir), dir: "build" } : { chart: fromMember(m, c.dir) } });
+    const target = ((m.release.publish as Json[] | undefined) ?? []).find((t) => (t as { type?: string }).type === "helm") as { charts: Json[] } | undefined;
+    if (target) target.charts.push(`artifact:${entry}`);
+    else if (chartRepository) push(m, "publish", { type: "helm", charts: [`artifact:${entry}`], oci: { repository: chartRepository } });
+    m.what.push(`the chart ${c.dir === "." ? "Chart.yaml" : `${c.dir}/Chart.yaml`} packed with its label${chartRepository ? ` and pushed to ${chartRepository}/${chartName}` : ""}`);
+  }
+  if (charts.length > 0) {
+    if (chartRepository) {
+      if (chartRepository.startsWith("ghcr.io/")) registry.push(`${chartRepository}: the workflow pushes the charts with the run's token. The first push makes each package private; make it public in the package's settings if it should be.`);
+      else registry.push(`${chartRepository}: set OCI_USERNAME and OCI_PASSWORD for the release workflow, as ${forge === "gitlab" ? "masked CI/CD variables" : "secrets in the root's release.workflow.env"}, with push access to the registry.`);
+    } else notes.push(`The charts are packed into their members' release.artifacts, and no helm target is declared: origin names no registry chant knows. Add { type: "helm", charts: ["artifact:<entry>"], oci: { repository: "<registry>/<path>" } } to each member's release.publish.`);
+  }
+
+  // The members' tags read the old ones: shared tags are the root's.
   const shared = [h.prefix, ...h.others.map((o) => o.prefix)].filter((p): p is string => p !== null && p !== "" && !claimed.has(p));
 
   const release: Record<string, Json> = { train: shared.length > 0 ? { env, first: "together" } : { env } };
   reasons.push(
-    `release.train: ${packages.length} packages, each a workspace member released at its own version; chant workspace train cut ${env} cuts every member that changed since its last release, and the train publishes them in dependency order${shared.length > 0 ? `. first "together": the packages have shared ${shared.map((p) => `${p}<version>`).join(" and ")} releases, so the first train gives every package one label past the highest version any has, and each later train labels each on its own` : ""}`,
+    `release.train: ${members.length} members, each released at its own version; chant workspace train cut ${env} cuts every member that changed since its last release, and the train publishes them in dependency order${shared.length > 0 ? `. first "together": the packages have shared ${shared.map((p) => `${p}<version>`).join(" and ")} releases, so the first train gives every member one label past the highest version any has, and each later train labels each on its own` : ""}`,
   );
+  if (members.some((m) => m.package === null) || members.some((m) => m.release.images || m.release.artifacts)) reasons.push(`members: ${TRAIN_OWNERSHIP_RULE}`);
   if (shared.length > 0) {
     release.legacyTags = shared;
-    reasons.push(`release.legacyTags ${JSON.stringify(shared)}: chant release changed reads the newest ${shared.map((p) => `${p}<version>`).join(" or ")} tag as every package's last release until the train has cut one`);
+    reasons.push(`release.legacyTags ${JSON.stringify(shared)}: chant release changed reads the newest ${shared.map((p) => `${p}<version>`).join(" or ")} tag as every member's last release until the train has cut one`);
   }
   release.green = green;
   reasons.push(...greenReasons);
-  const workflow: Record<string, Json> = { trigger: "dispatch" };
   if (adopted) workflow.file = workflowFile;
+  const extensions = packages.filter((p) => p.vscode);
+  // A GitLab job gets the project's CI/CD variables as they are.
+  if (extensions.length > 0 && forge !== "gitlab") addEnv("VSCE_PAT", "${{ secrets.VSCE_PAT }}");
   nodeWorkflow(node, opts, workflow, reasons);
-  release.workflow = workflow;
+  // Keys in the order the one release writes them.
+  const { env: wfEnv, ...wfRest } = workflow;
+  release.workflow = wfEnv ? { ...wfRest, env: wfEnv } : wfRest;
   reasons.push(`release.workflow: ${workflowFile}, started by hand with the levels, cuts the train from a green commit and publishes it`);
   if (adopted) reasons.push(`release.workflow.file ${workflowFile}: it runs npm publish today, so the npm trusted publishers that name it keep working; the train workflow replaces it rather than publishing from a second file`);
 
   for (const m of members) {
     const tag = m.release.tag as string;
-    const ranges = (m.release.version as { ranges?: string }).ranges;
-    const access = ((m.release.publish as Json[])[0] as { access?: string }).access;
+    const ranges = (m.release.version as { ranges?: string } | undefined)?.ranges;
+    const where = m.package === null ? `${m.dir}/chant.config.ts, member ${m.name}, a member of its own for ${m.source === "." ? "the repository root" : m.source} (release.sources ${JSON.stringify(m.release.sources)})` : `${m.dir}/chant.config.ts, member ${m.name}`;
     reasons.push(
-      `${m.dir}/chant.config.ts, member ${m.name}: ${m.package} stamped with its label and published to npm${access ? ' with access "public"' : ""}, tagged ${tag}${ranges ? `; ranges "train", so its range on a sibling names the version the train gives it` : ""}${m.release.legacyTags ? `; its ${(m.release.legacyTags as string[]).map((p) => `${p}<version>`).join(" and ")} tags read as earlier releases` : ""}`,
+      `${where}: ${m.what.join("; ")}, tagged ${tag}${ranges ? `; ranges "train", so its range on a sibling names the version the train gives it` : ""}${m.release.legacyTags ? `; its ${(m.release.legacyTags as string[]).map((p) => `${p}<version>`).join(" and ")} tags read as earlier releases` : ""}`,
     );
   }
   if (skipped.length > 0) notes.push(`Not published, being private: ${skipped.map((p) => p.name).join(", ")}. The train's publish job builds ${skipped.length === 1 ? "it" : "them"} when a member needs ${skipped.length === 1 ? "it" : "them"}.`);
-  const packed = packages.filter((p) => !p.packList);
+  const packed = npmPackages.filter((p) => !p.packList);
   if (packed.length > 0) notes.push(`npm packs a package's chant.config.ts with it unless package.json files or an .npmignore leaves it out: ${packed.map((p) => p.name).join(", ")} ${packed.length === 1 ? "has" : "have"} neither.`);
+  for (const ext of extensions) {
+    const vsix = `${ext.dir}/dist/${ext.name!.replace(/^@[^/]+\//, "")}.vsix`;
+    notes.push(`The build must write ${vsix}, such as with vsce package -o dist/${posix.basename(vsix)} in ${ext.dir}, and the VS Code Marketplace target needs vsce on PATH.`);
+  }
+  const anyDist = members.some((m) => m.release.images || m.release.artifacts) || extensions.length > 0;
+  if (!facts.distIgnored && anyDist) notes.push("dist/ is not in .gitignore: the publish refuses a tree with build outputs git does not ignore.");
+  if (facts.buildIgnored !== true && members.some((m) => m.npm && (m.release.images || m.release.artifacts))) notes.push("build/ is not in .gitignore: a member that publishes to npm writes its images and charts to build/, outside the dist npm packs, and the publish refuses a tree with build outputs git does not ignore.");
 
-  const repo = facts.origin?.repo ?? "this repository";
   for (const m of members) {
+    if (!m.npm) continue;
     registry.push(
       adopted
         ? `npm ${m.package}: keep the trusted publisher on npmjs.com that names ${repo} and the workflow file ${workflowName}, or add one naming them if the package has none, and allow npm dist-tag on it, since the reveal moves latest. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`
         : `npm ${m.package}: on npmjs.com, add a trusted publisher for ${forge === "gitlab" ? `GitLab CI/CD naming ${repo} and the top-level config .gitlab-ci.yml` : `${forge === "github" ? "GitHub Actions" : "this forge"} naming ${repo} and the workflow file ${workflowName}`}, and allow npm dist-tag, since the reveal moves latest. Every package names the same file. If ${m.package} is not on npm yet, publish its first version by hand from ${m.dir} (npm publish) so it has settings; the train labels the next past it.`,
     );
   }
+  for (const ext of extensions) {
+    registry.push(`VS Code Marketplace ${ext.publisher ?? "<publisher>"}.${ext.name}: create a personal access token with Marketplace (Manage) scope and store it as the ${forge === "gitlab" ? "masked CI/CD variable" : "repository secret"} VSCE_PAT.`);
+    registry.push(`Open VSX ${ext.publisher ?? "<publisher>"}.${ext.name}: create the namespace ${ext.publisher ?? "<publisher>"} once, and add ${repo} with the workflow file ${workflowName} under the extension's trusted publishers at https://open-vsx.org/user-settings/trusted-publishers.`);
+  }
 
   // #5216: a GitLab job token cannot push the train's tags.
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
   const workspaceName = memberNameOf({ name: facts.origin?.repo.split("/").pop() ?? node.root.name ?? null, dir: facts.path ?? "workspace" }) || "workspace";
-  return { release, members, workspaceName, reasons, notes, registry, workflowFile, env };
+  return { release, members: members.map(({ name, dir, package: pkg, release: r }) => ({ name, dir, package: pkg, release: r })), workspaceName, reasons, notes, registry, workflowFile, env };
 }
 
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;

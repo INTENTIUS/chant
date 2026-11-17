@@ -324,7 +324,8 @@ export function checkReleaseArtifacts(artifacts: readonly ReleaseArtifactDeclara
       inside(a, "the dist directory", a.goreleaser.dist);
       if (a.goreleaser.types !== undefined && a.goreleaser.types.length === 0) throw new ReleaseArtifactError("release-artifact-invalid", `${where(a)}: goreleaser.types is empty, so nothing would be recorded`);
     } else if (isHelm(a)) {
-      inside(a, "the chart directory", a.helm.chart);
+      // #5271: the chart is only read, so it may leave the member with `..`; its archive may not.
+      if (isAbsolute(a.helm.chart)) throw new ReleaseArtifactError("release-artifact-outside", `${where(a)}: the chart directory ${a.helm.chart} is an absolute path; name it relative to the member`);
       inside(a, "the chart archive directory", a.helm.dir);
     } else if (isNfpm(a)) {
       inside(a, "the nfpm config", a.nfpm.config);

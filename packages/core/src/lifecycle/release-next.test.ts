@@ -201,6 +201,19 @@ describe("nextRelease", () => {
     expect(r.commits.map((c) => c.subject)).toEqual(["fix: an api fix"]);
   });
 
+  test("#5271: a member's release.sources count beside its own directory", async () => {
+    const dir = repo();
+    commit(dir, "chore: start", { "release/image/chant.config.json": JSON.stringify({ release: { sources: ["../../docker"] } }), "docker/Dockerfile": "FROM scratch\n", "web/b.ts": "1" });
+    const image = join(dir, "release/image");
+    await cut(image, git(dir, "rev-parse", "HEAD"), "1.0.0");
+    commit(dir, "feat: a web feature", { "web/b.ts": "2" });
+    expect(await nextRelease({ cwd: image }).then(() => null, (e: ReleaseNextError) => e.code)).toBe("release-next-unchanged");
+    commit(dir, "feat: a newer base image", { "docker/Dockerfile": "FROM busybox\n" });
+    const r = await nextRelease({ cwd: image });
+    expect(r.label).toBe("1.1.0");
+    expect(r.commits.map((c) => c.subject)).toEqual(["feat: a newer base image"]);
+  });
+
   test("#5200: with no release in the ledger, the newest stable version tag of release.tag on an ancestor is the previous release", async () => {
     const dir = repo();
     writeFileSync(join(dir, "chant.config.json"), JSON.stringify({ release: { tag: "v{version}" } }));
