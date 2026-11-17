@@ -73,7 +73,7 @@ describe("importFromIndex", () => {
     const report = JSON.parse(readFileSync(join(out, INDEX_IMPORT_REPORT_FILE), "utf-8"));
     expect(report.report).toBe("chant-index-import/v1");
     expect(report.resources.map((r: { status: string }) => r.status)).toEqual(["imported", "imported"]);
-    expect(report.parameters).toEqual([{ name: "Db1Password", node: nodes[1].id, path: "Password", group: "" }]);
+    expect(report.parameters).toEqual([{ name: "Db1Password", node: nodes[1].id, path: "Password", group: "", cause: "masked" }]);
   });
 
   test("the same index and selection give byte-identical files", async () => {

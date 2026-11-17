@@ -38,6 +38,9 @@ exports[`snapshot tests > Bucket lexicon entry 1`] = `
       "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$",
     },
   },
+  "required": [
+    "BucketName",
+  ],
   "resourceType": "AWS::S3::Bucket",
 }
 `;
@@ -101,6 +104,10 @@ exports[`snapshot tests > Function lexicon entry 1`] = `
       ],
     },
   },
+  "required": [
+    "Code",
+    "Role",
+  ],
   "resourceType": "AWS::Lambda::Function",
   "runtimeDeprecations": {
     "dotnet6": "deprecated",
@@ -134,6 +141,9 @@ exports[`snapshot tests > Role lexicon entry 1`] = `
       "pattern": "^[\\w+=,.@-]+$",
     },
   },
+  "required": [
+    "AssumeRolePolicyDocument",
+  ],
   "resourceType": "AWS::IAM::Role",
 }
 `;

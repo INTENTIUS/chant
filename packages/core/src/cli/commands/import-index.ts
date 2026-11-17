@@ -31,7 +31,7 @@ import {
   type IndexImportReport,
   type IndexImportSelection,
 } from "../../lifecycle/index-import";
-import { generateOrganizedFiles, type ImportResult } from "./import";
+import { buildErrorWarnings, generateOrganizedFiles, type ImportResult } from "./import";
 
 export const INDEX_IMPORT_REPORT_FILE = "chant-index-import.json";
 
@@ -267,6 +267,18 @@ export async function importFromIndex(options: IndexImportOptions): Promise<Inde
     } catch (err) {
       return { success: false, generatedFiles, warnings, error: `no adoption file written: ${err instanceof Error ? err.message : String(err)}`, report: plan.report };
     }
+  }
+
+  // As `chant import <template>` does: build what was written and name each
+  // error-severity post-synth finding that would stop `chant build`. Source
+  // that mirrors a resource as the cloud holds it can lack settings a check
+  // requires; the person sees the gap here rather than at the first build.
+  for (const group of plan.groups) {
+    const plugin = plugins.find((p) => p.name === group.lexicon);
+    const prefix = group.dir ? `${group.dir}/` : "";
+    const written = generatedFiles.filter((f) => f.endsWith(".ts") && f.startsWith(prefix)).map((f) => f.slice(prefix.length));
+    if (!plugin || written.length === 0) continue;
+    warnings.push(...(await buildErrorWarnings(plugin, join(outputDir, group.dir), written)));
   }
 
   const lexicons = [...new Set(plan.groups.map((g) => g.lexicon))];

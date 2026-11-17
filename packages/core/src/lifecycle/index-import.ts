@@ -23,6 +23,10 @@
  *   comment in the file names the edge and why;
  * - a value the listing masked (`[REDACTED]`) is never written. Each one
  *   becomes a parameter to fill in;
+ * - a property the lexicon requires that the listing does not hold (a
+ *   listing returns part of a resource's model) becomes a parameter to fill
+ *   in too, with a header line saying so, rather than source that leaves it
+ *   out;
  * - output is deterministic: nodes, edges, parameters and logical ids are
  *   ordered by id, so the same index and selection give the same IR, and the
  *   same files.
@@ -73,10 +77,19 @@ export interface IndexImportCodegen {
    * `DeletionPolicy: Retain` on every imported resource, #4536). `notes`
    * go into the file's header comment after the logical id (the k8s
    * lexicon names the keys of a Secret it writes as a referenced secret).
+   * `missing` names the top-level properties the type requires that the
+   * node's attrs do not hold; each becomes a parameter from
+   * {@link requiredParameter}.
    */
-  resource(
-    node: IRNode,
-  ): { type: string; properties: Record<string, unknown>; attributes?: Record<string, unknown>; notes?: readonly string[] } | { unsupported: string };
+  resource(node: IRNode):
+    | {
+        type: string;
+        properties: Record<string, unknown>;
+        attributes?: Record<string, unknown>;
+        notes?: readonly string[];
+        missing?: readonly string[];
+      }
+    | { unsupported: string };
   /**
    * `value`, held by another node, as a reference to `target` in this
    * lexicon's IR, or undefined when the value is not one the lexicon can
@@ -85,6 +98,11 @@ export interface IndexImportCodegen {
   reference(value: string, target: IndexImportTarget): unknown | undefined;
   /** The parameter that stands in for a masked value. */
   secretParameter(name: string, context: { node: IRNode; logicalId: string; path: string }): ParameterIR;
+  /**
+   * The parameter that stands in for a required property the listing did
+   * not hold. Absent: such a property is named in the header only.
+   */
+  requiredParameter?(name: string, context: { node: IRNode; logicalId: string; path: string }): ParameterIR;
   /** A reference to that parameter, as a property value in this lexicon's IR. */
   parameterReference(name: string): unknown;
   /** The type's short name for logical ids (`Bucket` for `AWS::S3::Bucket`). Absent: the kind's last segment. */
@@ -132,6 +150,8 @@ export interface IndexImportParameterReport {
   node: string;
   path: string;
   group: string;
+  /** Why the value is a parameter: `masked` in the index, or a required property the listing did not hold. */
+  cause: "masked" | "missing";
 }
 
 /** The import report (`chant-index-import.json`), deterministic for one index and selection. */
@@ -455,6 +475,7 @@ export function planIndexImport(
     properties: Record<string, unknown>;
     attributes?: Record<string, unknown>;
     notes?: readonly string[];
+    missing?: readonly string[];
   }> = [];
   for (const node of nodes) {
     if (!nodeSelected(node, sel)) continue;
@@ -499,6 +520,7 @@ export function planIndexImport(
       properties: r.properties,
       ...(r.attributes ? { attributes: r.attributes } : {}),
       ...(r.notes && r.notes.length > 0 ? { notes: r.notes } : {}),
+      ...(r.missing && r.missing.length > 0 ? { missing: [...new Set(r.missing)].sort(byString) } : {}),
     });
   }
 
@@ -606,15 +628,32 @@ export function planIndexImport(
       }
 
       const params: string[] = [];
-      for (const { at, parts } of maskedPaths(props)) {
+      const parameterName = (at: string): string => {
         let name = `${logicalId}${pascalWords(at)}`;
         for (let i = 2; usedParams.has(name); i++) name = `${logicalId}${pascalWords(at)}${i}`;
         usedParams.add(name);
+        return name;
+      };
+      for (const { at, parts } of maskedPaths(props)) {
+        const name = parameterName(at);
         parameters.push(w.codegen.secretParameter(name, { node: w.node, logicalId, path: at }));
         props = setExact(props, parts, w.codegen.parameterReference(name)) as Record<string, unknown>;
         params.push(name);
-        parameterReports.push({ name, node: w.node.id, path: at, group: dir });
+        parameterReports.push({ name, node: w.node.id, path: at, group: dir, cause: "masked" });
         header.push(`${logicalId}.${at} was masked in the index; fill in the parameter ${name}`);
+      }
+      for (const at of w.missing ?? []) {
+        if (props[at] !== undefined) continue;
+        if (!w.codegen.requiredParameter) {
+          header.push(`${logicalId}.${at} is required and the index listing did not hold it; add it before building`);
+          continue;
+        }
+        const name = parameterName(at);
+        parameters.push(w.codegen.requiredParameter(name, { node: w.node, logicalId, path: at }));
+        props = { ...props, [at]: w.codegen.parameterReference(name) };
+        params.push(name);
+        parameterReports.push({ name, node: w.node.id, path: at, group: dir, cause: "missing" });
+        header.push(`${logicalId}.${at} is required and the index listing did not hold it; fill in the parameter ${name}`);
       }
 
       if (references.length > 0) report.references = references;

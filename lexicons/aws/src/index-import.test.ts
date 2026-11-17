@@ -25,7 +25,7 @@ import { declaredNodes, planIndexImport, type IndexImportSelection } from "@inte
 import { typeListing, type ListingLexicon, type ListingResult } from "@intentius/chant/lifecycle/type-listing";
 import { indexImportReportJson, renderIndexImport } from "@intentius/chant/cli/commands/import-index";
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
-import { awsImportProperties, createAwsIndexImport, isImportableAwsType } from "./index-import";
+import { awsImportProperties, awsMissingRequired, createAwsIndexImport, isImportableAwsType, type ImportManifestEntry } from "./index-import";
 import { awsKindForListedType } from "./listed-types";
 import { awsPlugin } from "./plugin";
 import { awsSerializer } from "./serializer";
@@ -175,6 +175,35 @@ describe("chant import --index on the aws fixture", () => {
     expect(JSON.stringify(template)).not.toContain(MASKED);
   });
 
+  test("a required property the listing left out becomes a parameter to fill in, not a gap in the source", async () => {
+    // floci (and Cloud Control's ListResources on AWS) lists a role without
+    // its trust policy, which CloudFormation requires.
+    const listing = JSON.parse(raw) as ListingResult;
+    for (const r of listing.resources) {
+      if (r.listedType === "AWS::IAM::Role") delete (r.properties as Record<string, unknown>).AssumeRolePolicyDocument;
+    }
+    const rows = new Map<string, ImportManifestEntry>(MANIFEST);
+    rows.set("AWS::IAM::Role", { ...MANIFEST.get("AWS::IAM::Role")!, required: ["AssumeRolePolicyDocument"] });
+    const seam = createAwsIndexImport(rows);
+    const plan = planIndexImport([indexFrom(listing)], { types: ["AWS::IAM::Role"] }, [{ name: "aws", indexImport: seam }]);
+    const { files } = renderIndexImport(plan, [{ ...awsPlugin, indexImport: seam } as LexiconPlugin]);
+
+    expect(plan.report.parameters).toEqual([
+      { name: "RoleImpTaskRoleAssumeRolePolicyDocument", node: "aws/000000000000/global/AWS::IAM::Role/imp-task-role", path: "AssumeRolePolicyDocument", group: "", cause: "missing" },
+    ]);
+    expect(files[0].content).toContain(
+      "RoleImpTaskRole.AssumeRolePolicyDocument is required and the index listing did not hold it; fill in the parameter RoleImpTaskRoleAssumeRolePolicyDocument",
+    );
+    const template = await synth(files);
+    expect(template.Parameters.RoleImpTaskRoleAssumeRolePolicyDocument).toMatchObject({ Type: "String" });
+    expect(template.Parameters.RoleImpTaskRoleAssumeRolePolicyDocument.NoEcho).toBeUndefined();
+    expect(template.Resources.RoleImpTaskRole.Properties.AssumeRolePolicyDocument).toEqual({ Ref: "RoleImpTaskRoleAssumeRolePolicyDocument" });
+
+    // When the listing holds the property, no parameter is written.
+    const full = planIndexImport([doc], { types: ["AWS::IAM::Role"] }, [{ name: "aws", indexImport: seam }]);
+    expect(full.report.parameters).toEqual([]);
+  });
+
   test("derived edges become Ref and GetAtt between imported resources", async () => {
     const { plan, files } = importOf(doc, ALL);
     const template = await synth(files);
@@ -249,6 +278,13 @@ describe("chant import --index on the aws fixture", () => {
     // With no registry, the listed-type rule's shape check alone decides.
     expect(isImportableAwsType("Alexa::ASK::Skill", new Map())).toBe(true);
     expect(isImportableAwsType("not-a-type", new Map())).toBe(false);
+  });
+
+  test("awsMissingRequired names the registry's required properties a node does not hold", () => {
+    const rows = new Map([["AWS::IAM::Role", { resourceType: "AWS::IAM::Role", kind: "resource", required: ["AssumeRolePolicyDocument"] }]]);
+    expect(awsMissingRequired("AWS::IAM::Role", { RoleName: "r" }, rows)).toEqual(["AssumeRolePolicyDocument"]);
+    expect(awsMissingRequired("AWS::IAM::Role", { AssumeRolePolicyDocument: {} }, rows)).toEqual([]);
+    expect(awsMissingRequired("AWS::S3::Bucket", {}, rows)).toEqual([]);
   });
 
   test("the plugin declares the seam", () => {

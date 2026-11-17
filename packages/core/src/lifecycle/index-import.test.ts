@@ -159,6 +159,28 @@ describe("planIndexImport", () => {
     expect(one.report.parameters.map((p) => p.path)).toEqual(["Data.db.password"]);
   });
 
+  test("a required property the listing left out becomes a parameter, and a seam with no requiredParameter names it in the header", () => {
+    const requiring: IndexImportCodegen = {
+      ...fake,
+      resource: (n) => ({ type: n.kind, properties: n.attrs, missing: ["Trust", "Cidr"] }),
+      requiredParameter: (name, ctx) => ({ name, type: "String", description: `${ctx.path} of ${ctx.node.id}, required` }),
+    };
+    const one = planIndexImport([docOf([net], [])], { all: true }, [{ name: "fake", indexImport: requiring }]);
+    const lid = one.report.resources[0].logicalId!;
+    // Cidr is held, so only Trust is missing.
+    expect(one.groups[0].ir.resources[0].properties).toEqual({ Cidr: "10.0.0.0/16", Trust: { param: `${lid}Trust` } });
+    expect(one.groups[0].ir.parameters.map((p) => p.name)).toEqual([`${lid}Trust`]);
+    expect(one.report.parameters).toEqual([{ name: `${lid}Trust`, node: net.id, path: "Trust", group: "", cause: "missing" }]);
+    expect(one.report.resources[0].parameters).toEqual([`${lid}Trust`]);
+    expect(one.groups[0].header).toEqual([`${lid}.Trust is required and the index listing did not hold it; fill in the parameter ${lid}Trust`]);
+
+    const { requiredParameter: _, ...noParam } = requiring;
+    const bare = planIndexImport([docOf([net], [])], { all: true }, [{ name: "fake", indexImport: noParam }]);
+    expect(bare.report.parameters).toEqual([]);
+    expect(bare.groups[0].ir.resources[0].properties).toEqual({ Cidr: "10.0.0.0/16" });
+    expect(bare.groups[0].header).toEqual([`${lid}.Trust is required and the index listing did not hold it; add it before building`]);
+  });
+
   test("a codegen's notes go into the header after the logical id (#4538)", () => {
     const noting: IndexImportCodegen = { ...fake, resource: (n) => ({ type: n.kind, properties: n.attrs, notes: ["supplied out of band"] }) };
     const one = planIndexImport([docOf([net], [])], { all: true }, [{ name: "fake", indexImport: noting }]);

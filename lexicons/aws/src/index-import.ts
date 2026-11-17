@@ -18,6 +18,11 @@
  *   `GetAtt(<id>, "Arn")` when it is the resource's ARN and the type has an
  *   `Arn` attribute. Anything else stays a literal.
  * - A masked value becomes a `String` parameter with `NoEcho`.
+ * - A property the schema requires that the node does not hold becomes a
+ *   `String` parameter to fill in. Cloud Control's `ListResources` returns
+ *   part of a resource's model for some types (a role's listing has no
+ *   `AssumeRolePolicyDocument`), and source that left the property out
+ *   would build into a template CloudFormation refuses.
  */
 import { createRequire } from "module";
 import { moduleSourceUrl } from "@intentius/chant/module-source";
@@ -34,6 +39,8 @@ export interface ImportManifestEntry {
   kind: string;
   /** GetAtt name -> CloudFormation attribute: the schema's `readOnlyProperties`. */
   attrs?: Record<string, string>;
+  /** The schema's top-level required properties. */
+  required?: string[];
 }
 
 let cachedManifest: ReadonlyMap<string, ImportManifestEntry> | undefined;
@@ -101,6 +108,15 @@ export function awsImportProperties(
   return out;
 }
 
+/** The properties `type` requires that `properties` does not hold, sorted. */
+export function awsMissingRequired(
+  type: string,
+  properties: Record<string, unknown>,
+  manifest: ReadonlyMap<string, ImportManifestEntry> = defaultManifest(),
+): string[] {
+  return (manifest.get(type)?.required ?? []).filter((p) => properties[p] === undefined).sort();
+}
+
 /** True when `type` exposes `Arn` to GetAtt, or when there is no registry to ask. */
 function hasArnAttribute(type: string, manifest: ReadonlyMap<string, ImportManifestEntry>): boolean {
   if (manifest.size === 0) return true;
@@ -136,7 +152,14 @@ export function createAwsIndexImport(manifest?: ReadonlyMap<string, ImportManife
       // (#4536, ruled on choudoufu#2284 Q4): CloudFormation deletes at stack
       // level and reads no per-resource marker, so an adopted object is never
       // deleted on the stack's word alone. Import requires a DeletionPolicy.
-      return { type: node.kind, properties: awsImportProperties(node.kind, node.attrs ?? {}, m()), attributes: { ...ADOPTED_RESOURCE_ATTRIBUTES } };
+      const properties = awsImportProperties(node.kind, node.attrs ?? {}, m());
+      const missing = awsMissingRequired(node.kind, properties, m());
+      return {
+        type: node.kind,
+        properties,
+        attributes: { ...ADOPTED_RESOURCE_ATTRIBUTES },
+        ...(missing.length > 0 ? { missing } : {}),
+      };
     },
     reference: (value, target) => awsImportReference(value, target, m()),
     secretParameter(name, context): ParameterIR {
@@ -145,6 +168,13 @@ export function createAwsIndexImport(manifest?: ReadonlyMap<string, ImportManife
         type: "String",
         description: `${context.path} of ${context.node.id}, masked in the index`,
         constraints: { NoEcho: true },
+      };
+    },
+    requiredParameter(name, context): ParameterIR {
+      return {
+        name,
+        type: "String",
+        description: `${context.path} of ${context.node.id}, required and not in the index listing`,
       };
     },
     parameterReference: (name) => ({ __intrinsic: "Ref", name }),
