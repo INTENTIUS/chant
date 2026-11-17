@@ -49,11 +49,10 @@ import { packageFiles } from "./publish-package-files";
 import { tarEntries } from "./publish-pypi";
 import { bytesDigest, checkReleaseDigest, hasIdToken, publishTargetKey, runIdToken } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
-import { NEXT_RELEASE } from "../release-floors";
 import { PublishTargetError, type PublishContext, type PublishContextBase, type PublishDeps, type PublishFetch, type PublishItem, type PublishTarget, type StagedTarget, type StatusAction, type StatusContext } from "./release-publish";
 
 /** The first chant that publishes a `rubygems` target (#5232). */
-export const PUBLISH_RUBYGEMS_FLOOR = NEXT_RELEASE;
+export const PUBLISH_RUBYGEMS_FLOOR = "0.124.102";
 
 export const RUBYGEMS_ORG = "https://rubygems.org";
 /** The audience RubyGems.org takes an OIDC ID token for. */

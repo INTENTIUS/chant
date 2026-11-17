@@ -75,7 +75,6 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { deflateRawSync, gzipSync } from "node:zlib";
 import type { Release, ReleaseArtifact } from "./release-store";
-import { NEXT_RELEASE } from "../release-floors";
 import { stampVersionFile } from "./release-version-formats";
 import { parseYAML } from "../yaml";
 
@@ -86,7 +85,7 @@ export const RELEASE_ARTIFACTS_FLOOR = "0.124.101";
 export const GORELEASER_ENV = "CHANT_GORELEASER";
 
 /** The first chant with `helm` and `nfpm` entries in `release.artifacts` (#5233). */
-export const RELEASE_ARTIFACTS_PACKAGES_FLOOR = NEXT_RELEASE;
+export const RELEASE_ARTIFACTS_PACKAGES_FLOOR = "0.124.102";
 
 /** The variable naming the nfpm binary the cut runs (#5233). */
 export const NFPM_ENV = "CHANT_NFPM";

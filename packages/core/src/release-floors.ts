@@ -26,7 +26,7 @@
  * files rather than to the end of this one. The floors below were declared
  * here before that and keep the subpath they shipped under.
  */
-export const NEXT_RELEASE = "0.124.102";
+export const NEXT_RELEASE = "0.124.103";
 
 /** The first chant with `chant dev local` and `chant dev bundle-check`, `@intentius/chant/local-chant` and `@intentius/chant/bundle-check` (`chantRuntimeTarget`, `chantExternalPlugin`, `checkBundle`): a product built against a chant checkout, and its bundle checked, without its own scripts (#4787). */
 export const LOCAL_CHANT_FLOOR = "0.124.86";
