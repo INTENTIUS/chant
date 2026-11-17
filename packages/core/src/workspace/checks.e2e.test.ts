@@ -51,6 +51,9 @@ describe("the WSP catalog", () => {
       "kind-probe-tie",
       "other-claimed",
       "check-settings-invalid",
+      // An org workspace holds only repo members, and a repo member's URL carries no credential (#3168).
+      "org-member-local",
+      "repo-url-credential",
       // A member that ignores either writes its records or marks its resources as another's (#2538).
       "ownership-stack-shared",
       "flat-ledger-environment-shared",
@@ -111,7 +114,7 @@ describe("declaration checks (#2535)", () => {
         column: 15,
         ruleId: "WSP003",
         severity: "error",
-        message: "member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, design, other, workspace",
+        message: "member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, design, other, repo, workspace",
         entity: "infra",
       },
     ]);

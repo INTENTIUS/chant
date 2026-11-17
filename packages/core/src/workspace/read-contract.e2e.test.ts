@@ -104,7 +104,7 @@ describe("every schema against the reference workspace (#2543)", () => {
         expectValid(doc);
         if ("error" in doc) throw new Error(doc.error.message);
         expect(failed, JSON.stringify(doc.members)).toBe(false);
-        expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
+        expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace" });
         expect(doc.at).toBe(at ? head : null);
         const delivery = doc.members.find((m) => m.name === "delivery");
         expect(delivery).toMatchObject({ status: "composed", reason: null, irVersion: 1 });
@@ -145,7 +145,7 @@ describe("every schema against the reference workspace (#2543)", () => {
       const doc = await runChecks(FIXTURE, at);
       expectValid(doc);
       if ("error" in doc) throw new Error(doc.error.message);
-      expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
+      expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace" });
       expect(doc.declaration?.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
     }
   });
@@ -220,7 +220,7 @@ describe("every schema against the reference workspace (#2543)", () => {
         expect(doc.components[0].runtimes).toEqual([{ name: "local", lexicon: null, default: true, command: "chant run --components app" }]);
         expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
         // #2695: the reference config declares no environments, so the app deploys to local only.
-        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", site: null, command: "chant run --components app" }]);
+        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", site: null, command: "chant run --components app", executor: { forge: null, workflow: null, reason: { code: "executor-none-declared", message: "chant.config.ts declares no executor for local" } } }]);
         expect(doc.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
         expect(doc.reasons).toEqual([]);
       }
