@@ -28,7 +28,7 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 // The label's major.minor must be the one in SPEC_VERSION, read from the stamped package.json; the log records each run.
-const CHECK = `v=$(node -p "require('./package.json').version"); echo "$CHANT_RELEASE_LABEL $CHANT_RELEASE_COMMIT $v" >> "$CHECK_LOG"; case "$v" in "$(cat SPEC_VERSION)".*) ;; *) echo "label $v is not spec $(cat SPEC_VERSION)"; exit 3;; esac`;
+const CHECK = `v=$(node -p "require('./package.json').version"); echo "$CHANT_RELEASE_LABEL $CHANT_RELEASE_COMMIT $v" >> "$CHECK_LOG"; case "$v" in "$(cat SPEC_VERSION)".*) ;; *) echo "label $v is not spec $(cat SPEC_VERSION)"; echo "detail on stderr" >&2; exit 3;; esac`;
 
 describe("release.check (#5261)", () => {
   test(
@@ -63,6 +63,12 @@ describe("release.check (#5261)", () => {
         const cutWrong = chant(dir, ["release", "cut", "1.7.0", "--yes"]);
         expect(cutWrong.code, cutWrong.stderr).toBe(1);
         expect(cutWrong.stderr).toContain("release-check-failed");
+        // #5320: the failing line's output is printed, labeled, before the refusal.
+        expect(cutWrong.stderr).toContain("release.check: ");
+        expect(cutWrong.stderr).toContain("printed:");
+        expect(cutWrong.stderr).toContain("--- stdout ---\nlabel 1.7.0 is not spec 1.6");
+        expect(cutWrong.stderr).toContain("--- stderr ---\ndetail on stderr");
+        expect(cutWrong.stderr.indexOf("printed:")).toBeLessThan(cutWrong.stderr.lastIndexOf("release-check-failed"));
         expect(git(dir, "tag", "--list", "release/*")).toBe("");
         expect(spawnSync("git", ["rev-parse", "--verify", "--quiet", "refs/heads/chant/lifecycle"], { cwd: dir }).status).not.toBe(0);
         // The stamped package.json is put back.
