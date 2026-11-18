@@ -1503,8 +1503,9 @@ Lexicon development:
                            then dev bundle-check. --reset runs npm ci and checks the pins
   dev bundle-check [<package-dir>]
                            Check a bundle against its package.json chantBundleCheck: imports
-                           only Node, its dependencies and chant served as compiled JS, the
-                           dependencies on the root's chant pin, size ceilings, denied inputs
+                           only Node, its dependencies and chant served as compiled JS, core
+                           on the root's pin, each lexicon's peer range taking that pin, size
+                           ceilings, denied inputs
   dev local-image [--with <package>]... [-- <docker build args>]
                            Print the chant an image installs (the pin, or local-<commit>
                            after dev local), or run docker build with CHANT_VERSION and,
