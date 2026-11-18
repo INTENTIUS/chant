@@ -13,17 +13,21 @@
  * names its bundle, its ceiling and its denied inputs (`chantBundleCheck` in
  * the package's package.json, read by `chant dev bundle-check`).
  *
- * This module imports only Node's own modules, so a product's build script
- * can import it from plain Node.
+ * This module imports only Node's own modules and chant's version-range
+ * reader, which imports nothing, so a product's build script can import it
+ * from plain Node.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { dirname, join, resolve } from "node:path";
+import { parseVersion, satisfies } from "./workspace/lineage-version";
 
 /** Any `@intentius/chant` package, with or without a subpath: core and every lexicon. */
 const CHANT = /^(@intentius\/chant(?:-[a-z0-9-]+)?)(\/.*)?$/;
 const CONDITIONS = ["import", "node", "default"];
+/** An exact version, as a product pins each chant package. */
+const EXACT = /^\d+\.\d+\.\d+(?:-[\w.]+)?$/;
 
 /** The target Node's ESM conditions pick from one exports value, in key order. */
 function pick(value: unknown): string | undefined {
@@ -229,6 +233,7 @@ interface Manifest {
   workspaces?: unknown;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
   chantBundleCheck?: BundleCheckConfig;
   chantLocal?: { commit?: string; dir?: string };
 }
@@ -265,9 +270,13 @@ function packSize(pkgDir: string): number {
  *   `optional` packages, and each chant import is one the installed chant
  *   serves as compiled JS ({@link chantRuntimeTarget});
  * - the runtime dependencies are exactly the packages the bundle imports and
- *   the `needs`, and every `@intentius/chant*` among them and among the
- *   devDependencies is pinned to the root's `@intentius/chant`, an exact version;
- * - each installed chant package is that version, or a local build marked
+ *   the `needs`; `@intentius/chant` among them and among the devDependencies
+ *   is the root's pin, an exact version, and every lexicon is an exact version;
+ * - each lexicon pin is one whose peerDependencies range on `@intentius/chant`
+ *   (and on any other chant package the product pins) takes the product's
+ *   pin of it: lexicons are released on their own, so a lexicon a train did
+ *   not cut stays at its last release, which still names the chant it needs;
+ * - each installed chant package is its pin, or a local build marked
  *   `chantLocal` (`chant dev local`);
  * - the bundle and the tarball stay within `maxBytes` and `maxPackBytes`;
  * - no metafile input matches a `deny` pattern.
@@ -280,7 +289,7 @@ export function checkBundle(pkgDir: string, config: BundleCheckConfig): BundleCh
   const rootPkg = readManifest(join(root, "package.json"));
   const pin = rootPkg.dependencies?.["@intentius/chant"] ?? rootPkg.devDependencies?.["@intentius/chant"];
   if (pin === undefined) problems.push(`${join(root, "package.json")} does not name @intentius/chant`);
-  else if (!/^\d+\.\d+\.\d+(?:-[\w.]+)?$/.test(pin)) problems.push(`@intentius/chant is '${pin}' in ${join(root, "package.json")}, not an exact version`);
+  else if (!EXACT.test(pin)) problems.push(`@intentius/chant is '${pin}' in ${join(root, "package.json")}, not an exact version`);
 
   const bundleFile = join(dir, config.bundle);
   let text = "";
@@ -319,11 +328,21 @@ export function checkBundle(pkgDir: string, config: BundleCheckConfig): BundleCh
   for (const name of Object.keys(deps)) {
     if (!used.has(name)) problems.push(`${name} is a runtime dependency that the bundle does not import and chantBundleCheck.needs does not name`);
   }
+  // The version the product pins each chant package at: core at the root's
+  // pin, every other one at its exact version in this package or the root.
+  const pins = new Map<string, string>();
+  for (const list of [rootPkg.devDependencies, rootPkg.dependencies, pkg.devDependencies, pkg.dependencies]) {
+    for (const [name, v] of Object.entries(list ?? {})) if (CHANT.test(name) && EXACT.test(v)) pins.set(name, v);
+  }
   if (pin !== undefined) {
+    pins.set("@intentius/chant", pin);
     for (const [kind, list] of [["dependencies", deps], ["devDependencies", pkg.devDependencies ?? {}]] as const) {
       if (dir === root && kind === "devDependencies") continue;
       for (const [name, v] of Object.entries(list)) {
-        if (CHANT.test(name) && v !== pin) problems.push(`${name} is '${v}' in ${kind}, not the root's chant pin ${pin}`);
+        if (!CHANT.test(name)) continue;
+        if (name === "@intentius/chant") {
+          if (v !== pin) problems.push(`${name} is '${v}' in ${kind}, not the root's chant pin ${pin}`);
+        } else if (!EXACT.test(v)) problems.push(`${name} is '${v}' in ${kind}, not an exact version`);
       }
     }
   }
@@ -336,6 +355,7 @@ export function checkBundle(pkgDir: string, config: BundleCheckConfig): BundleCh
     const core = readManifest(join(coreDir, "package.json"));
     chant = core.chantLocal ? `local chant ${core.version} (${String(core.chantLocal.commit).slice(0, 12)})` : `chant ${core.version}`;
   }
+  const installedChant = new Map<string, Manifest>();
   for (const name of new Set([...Object.keys(deps), ...Object.keys(pkg.devDependencies ?? {})])) {
     if (!CHANT.test(name) || pin === undefined) continue;
     const at = installedPackageDir(name, dir);
@@ -344,7 +364,30 @@ export function checkBundle(pkgDir: string, config: BundleCheckConfig): BundleCh
       continue;
     }
     const installed = readManifest(join(at, "package.json"));
-    if (!installed.chantLocal && installed.version !== pin) problems.push(`the installed ${name} is ${installed.version}, not the pin ${pin}; run npm ci`);
+    installedChant.set(name, installed);
+    const own = pins.get(name);
+    if (own !== undefined && !installed.chantLocal && installed.version !== own) problems.push(`the installed ${name} is ${installed.version}, not the pin ${own}; run npm ci`);
+  }
+  // A lexicon is released on its own and states the chant it works with in
+  // its peerDependencies (`^<core's label>` when its release train cut it), so
+  // a lexicon pin is compatible when the product's pin of each chant package
+  // the lexicon names there falls in that range. A `chant dev local` build
+  // stamps its packages' ranges to each other, so it is left out.
+  for (const [name, installed] of installedChant) {
+    if (installed.chantLocal || installed.version !== pins.get(name)) continue;
+    const needs = { ...installed.dependencies, ...installed.peerDependencies };
+    for (const [peer, range] of Object.entries(needs)) {
+      const at = pins.get(peer);
+      if (!CHANT.test(peer) || at === undefined || installedChant.get(peer)?.chantLocal) continue;
+      const v = parseVersion(at);
+      let ok: boolean;
+      try {
+        ok = v !== null && satisfies(v, range);
+      } catch {
+        ok = false;
+      }
+      if (!ok) problems.push(`${name} ${installed.version} works with ${peer} ${range} (its peerDependencies), and the product pins ${peer} ${at}; pin a ${name} release whose range takes ${at}`);
+    }
   }
 
   if (config.deny?.length) {

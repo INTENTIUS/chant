@@ -64,10 +64,13 @@ Paths are relative to the package. The check fails when:
 - the bundle imports something other than Node's modules, its runtime dependencies and the `optional` packages;
 - a chant import (core or a lexicon, with any subpath) is not served by the installed package as compiled JS under Node's `import` condition. Plain Node does not load TypeScript from `node_modules`;
 - a runtime dependency is not imported by the bundle and not listed in `needs`, or a package in `needs` is not a runtime dependency;
-- an `@intentius/chant*` dependency or devDependency is not the root's `@intentius/chant` pin, or that pin is not an exact version;
-- an installed chant package is not the pin and has no `chantLocal` mark;
+- `@intentius/chant` as a dependency or devDependency is not the root's `@intentius/chant` pin, that pin is not an exact version, or a lexicon is not pinned to an exact version;
+- a lexicon pin's `peerDependencies` range on `@intentius/chant`, or on another chant package the product pins, does not take the product's pin of that package;
+- an installed chant package is not its pin and has no `chantLocal` mark;
 - the bundle is over `maxBytes`, or the `npm pack --dry-run` tarball is over `maxPackBytes`;
 - an input in the esbuild `metafile` matches a `deny` pattern. The pattern is matched against the input path with everything up to its last `node_modules/` removed.
+
+Lexicons are released on their own. A release that changes only core leaves each lexicon at its last release, so a product can pin `@intentius/chant` 0.124.105 beside `@intentius/chant-lexicon-github` 0.124.101. Each lexicon release names the core it works with in its `peerDependencies` (`^0.124.101` for that one), and the check takes a lexicon pin whose range accepts the core pin. A lexicon from an older minor line, or one released against a newer core than the pin, fails with the range it needs. A lexicon that `chant dev local` built is left out of this check, since its ranges name the other packages of the same build.
 
 ## Images with the product's chant
 

@@ -132,6 +132,57 @@ describe("checkBundle (#4787)", () => {
     expect(checkBundle(app, config).problems).toContain("@intentius/chant is '^1.2.0' in dependencies, not the root's chant pin 1.2.3");
   });
 
+  /** Install a lexicon at the product's root as npm would, with the peerDependencies its release published. */
+  const lexicon = (root: string, name: string, version: string, peerDependencies: Record<string, string>, extra: object = {}) =>
+    write(join(root, "node_modules", name, "package.json"), { name, version, peerDependencies, exports: { ".": { import: "./dist/index.js" } }, ...extra });
+
+  it("passes lexicons a release train left at their own versions, when their peer range takes the chant pin", () => {
+    // A train that only moved core: chant 1.2.3, the lexicons still at the releases that last cut them.
+    const deps = { "@intentius/chant": "1.2.3", "@intentius/chant-lexicon-github": "1.2.1", "@intentius/chant-lexicon-gitlab": "1.2.1", "@intentius/chant-lexicon-pulumi": "1.2.2" };
+    const { root, app, config } = product({ deps, config: { needs: Object.keys(deps).slice(1) } });
+    lexicon(root, "@intentius/chant-lexicon-github", "1.2.1", { "@intentius/chant": "^1.2.1" });
+    lexicon(root, "@intentius/chant-lexicon-gitlab", "1.2.1", { "@intentius/chant": "^1.2.1", "@intentius/chant-lexicon-github": "^1.2.1" });
+    lexicon(root, "@intentius/chant-lexicon-pulumi", "1.2.2", { "@intentius/chant": "^1.2.2", zod: "^4.3.6" });
+    expect(checkBundle(app, config).problems).toEqual([]);
+  });
+
+  it("passes a lexicon newer than core when a lexicon-only train cut it against the pinned core", () => {
+    const deps = { "@intentius/chant": "1.2.3", "@intentius/chant-lexicon-k8s": "1.2.4" };
+    const { root, app, config } = product({ deps, config: { needs: ["@intentius/chant-lexicon-k8s"] } });
+    lexicon(root, "@intentius/chant-lexicon-k8s", "1.2.4", { "@intentius/chant": "^1.2.3" });
+    expect(checkBundle(app, config).problems).toEqual([]);
+  });
+
+  it("fails a lexicon whose peer range does not take the chant pin, or another lexicon's pin", () => {
+    const deps = { "@intentius/chant": "1.2.3", "@intentius/chant-lexicon-github": "1.2.0", "@intentius/chant-lexicon-gitlab": "1.2.5", "@intentius/chant-lexicon-aws": "0.9.9" };
+    const { root, app, config } = product({ deps, config: { needs: Object.keys(deps).slice(1) } });
+    lexicon(root, "@intentius/chant-lexicon-github", "1.2.0", { "@intentius/chant": "^1.2.0" });
+    lexicon(root, "@intentius/chant-lexicon-gitlab", "1.2.5", { "@intentius/chant": "^1.2.5", "@intentius/chant-lexicon-github": "^1.2.5" });
+    lexicon(root, "@intentius/chant-lexicon-aws", "0.9.9", { "@intentius/chant": "^0.9.9" });
+    expect(checkBundle(app, config).problems.sort()).toEqual([
+      "@intentius/chant-lexicon-aws 0.9.9 works with @intentius/chant ^0.9.9 (its peerDependencies), and the product pins @intentius/chant 1.2.3; pin a @intentius/chant-lexicon-aws release whose range takes 1.2.3",
+      "@intentius/chant-lexicon-gitlab 1.2.5 works with @intentius/chant ^1.2.5 (its peerDependencies), and the product pins @intentius/chant 1.2.3; pin a @intentius/chant-lexicon-gitlab release whose range takes 1.2.3",
+      "@intentius/chant-lexicon-gitlab 1.2.5 works with @intentius/chant-lexicon-github ^1.2.5 (its peerDependencies), and the product pins @intentius/chant-lexicon-github 1.2.0; pin a @intentius/chant-lexicon-gitlab release whose range takes 1.2.0",
+    ]);
+  });
+
+  it("fails a lexicon pin that is a range, and an installed lexicon off its own pin", () => {
+    const deps = { "@intentius/chant": "1.2.3", "@intentius/chant-lexicon-github": "^1.2.1" };
+    const ranged = product({ deps, config: { needs: ["@intentius/chant-lexicon-github"] } });
+    lexicon(ranged.root, "@intentius/chant-lexicon-github", "1.2.1", { "@intentius/chant": "^1.2.1" });
+    expect(checkBundle(ranged.app, ranged.config).problems).toEqual(["@intentius/chant-lexicon-github is '^1.2.1' in dependencies, not an exact version"]);
+    const off = product({ deps: { ...deps, "@intentius/chant-lexicon-github": "1.2.1" }, config: { needs: ["@intentius/chant-lexicon-github"] } });
+    lexicon(off.root, "@intentius/chant-lexicon-github", "1.2.2", { "@intentius/chant": "^1.2.2" });
+    expect(checkBundle(off.app, off.config).problems).toEqual(["the installed @intentius/chant-lexicon-github is 1.2.2, not the pin 1.2.1; run npm ci"]);
+  });
+
+  it("leaves a lexicon chant dev local built out of the peer check", () => {
+    const deps = { "@intentius/chant": "1.2.3", "@intentius/chant-lexicon-github": "1.2.1" };
+    const { root, app, config } = product({ deps, config: { needs: ["@intentius/chant-lexicon-github"] } });
+    lexicon(root, "@intentius/chant-lexicon-github", "1.3.0", { "@intentius/chant": "1.3.0" }, { chantLocal: { commit: "abcdef0123456789" } });
+    expect(checkBundle(app, config).problems).toEqual([]);
+  });
+
   it("fails an installed chant off the pin unless chant dev local marked it", () => {
     const off = product({ installed: { version: "1.3.0" } });
     expect(checkBundle(off.app, off.config).problems).toContain("the installed @intentius/chant is 1.3.0, not the pin 1.2.3; run npm ci");
