@@ -621,8 +621,9 @@ function pack(command: string[]): number {
     for (const [file, text] of files) writeFileSync(join(ROOT, file), text);
     writeTable(ROOT);
     const shown = [...shipped].map(([n, v]) => `${n} ${v}`);
-    console.log(`release floors: packing with NEXT_RELEASE ${version}${shown.length > 0 ? `; shipped earlier: ${shown.join(", ")}` : ""}`);
-    const run = spawnSync(command[0]!, command.slice(1), { stdio: "inherit" });
+    // stderr: `npm pack --json` prints the JSON on stdout, after prepack's own output.
+    console.error(`release floors: packing with NEXT_RELEASE ${version}${shown.length > 0 ? `; shipped earlier: ${shown.join(", ")}` : ""}`);
+    const run = spawnSync(command[0]!, command.slice(1), { stdio: ["inherit", 2, "inherit"] });
     if (run.error) throw run.error;
     status = run.status ?? 1;
   } finally {

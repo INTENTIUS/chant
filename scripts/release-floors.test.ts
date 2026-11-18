@@ -5,7 +5,7 @@
  * check must ask it.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -373,7 +373,11 @@ describe("release floors resolve from the release tags, with no freeze between r
       const files = ["packages/core/src/a.ts", "packages/core/src/b.ts", "packages/core/src/release-floors.ts", "packages/core/src/floor-table.data.ts"];
       const before = files.map((f) => readFileSync(join(repo, f), "utf8"));
       const copy = `for (const f of ${JSON.stringify(files)}) require("fs").copyFileSync(f, "out-" + require("path").basename(f))`;
-      expect(run("scripts/release-floors.ts", "--pack", process.execPath, "-e", copy)).toContain("packing with NEXT_RELEASE 0.124.55; shipped earlier: SHIPPED_FLOOR 0.124.54");
+      // The note goes to stderr: npm pack --json reads stdout, so prepack must leave it empty (#5300).
+      const packed = spawnSync(tsx, ["scripts/release-floors.ts", "--pack", process.execPath, "-e", copy], { cwd: repo, encoding: "utf-8" });
+      expect(packed.status).toBe(0);
+      expect(packed.stdout).toBe("");
+      expect(packed.stderr).toContain("packing with NEXT_RELEASE 0.124.55; shipped earlier: SHIPPED_FLOOR 0.124.54");
       expect(readFileSync(join(repo, "out-a.ts"), "utf8")).toBe('export const SHIPPED_FLOOR = "0.124.54";\n');
       expect(readFileSync(join(repo, "out-b.ts"), "utf8")).toBe('export const LATER_FLOOR = "0.124.55";\n');
       expect(readFileSync(join(repo, "out-release-floors.ts"), "utf8")).toBe('export const NEXT_RELEASE = "0.124.55";\n');
