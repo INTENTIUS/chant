@@ -800,6 +800,21 @@ function cutEnvToken(o: DispatchInput): string[] {
   return [...new Set([...o.cutToken, ...(o.doctor ? o.forgeToken : [])])];
 }
 
+/**
+ * The `label` input's description, from what the cut accepts. Under
+ * `release.version` the label is the package version, so `v1.4.0` is refused
+ * (`release-version-label-invalid`). A `release.tag` template that names
+ * `{version}` drops one leading `v` and adds its own, so `0.13.5` and `v0.13.5`
+ * make the tag `v0.13.5`. Otherwise the tag carries the label as given. Plain
+ * YAML scalar: no colon followed by a space, no ` #`.
+ */
+export function dispatchLabelDescription(c: Pick<ReleaseWorkflowContext, "version" | "tags">): string {
+  const auto = "or auto for the one chant release next computes";
+  if (c.version) return `The release's label, a bare version such as 1.4.0 with no leading v since it becomes the package version, ${auto}`;
+  if (c.tags && !c.tags.template.legacy && c.tags.template.name.includes("{version}")) return `The release's label, a bare version such as 1.4.0 since the tag template adds any v (one leading v is dropped), ${auto}`;
+  return `The release's label, such as 1.4.0 (the tag carries it as given), ${auto}`;
+}
+
 /** The label in a dispatched release's cut and publish jobs. */
 const DISPATCH_LABEL = '"$CHANT_RELEASE_LABEL"';
 
@@ -931,7 +946,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "  workflow_dispatch:",
     "    inputs:",
     "      label:",
-    "        description: The release's label, such as v1.4.0, or auto for the one chant release next computes",
+    `        description: ${dispatchLabelDescription(o.context)}`,
     "        required: true",
     "        type: string",
     "permissions:",

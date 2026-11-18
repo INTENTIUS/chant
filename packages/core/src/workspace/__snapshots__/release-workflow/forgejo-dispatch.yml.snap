@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -95,7 +95,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -182,7 +182,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -282,7 +282,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -373,7 +373,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -465,7 +465,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -556,7 +556,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -646,7 +646,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, a bare version such as 1.4.0 with no leading v since it becomes the package version, or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -738,7 +738,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -831,7 +831,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -947,7 +947,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1055,7 +1055,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1169,7 +1169,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1265,7 +1265,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1359,7 +1359,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1450,7 +1450,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1542,7 +1542,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1633,7 +1633,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1723,7 +1723,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1833,7 +1833,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -1936,7 +1936,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -2028,7 +2028,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -2119,7 +2119,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -2218,7 +2218,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -2297,7 +2297,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
         required: true
         type: string
 permissions:
@@ -2466,7 +2466,7 @@ on:
   workflow_dispatch:
     inputs:
       label:
-        description: The release's label, such as v1.4.0, or auto for the one chant release next computes
+        description: The release's label, a bare version such as 1.4.0 with no leading v since it becomes the package version, or auto for the one chant release next computes
         required: true
         type: string
 permissions:

@@ -1265,3 +1265,27 @@ describe("a train's members build on other runners (#5237)", () => {
     expect(tag.errors.join("\n")).toMatch(/release.workflow.builds in a member: the tag trigger/);
   });
 });
+
+describe("the dispatch label input's description matches what the cut accepts", () => {
+  const description = (forge: (typeof FORGES)[number], over: Partial<ReleaseWorkflowInput> = {}): string => {
+    const doc = parseYAML(dispatch(forge, over)) as { on: { workflow_dispatch: { inputs: { label: { description: string } } } } };
+    return doc.on.workflow_dispatch.inputs.label.description;
+  };
+
+  for (const forge of FORGES.filter((f) => f !== "gitlab")) {
+    test(`${forge}: a v{version} tag template takes a bare version and drops a leading v`, () => {
+      const d = description(forge, { tags: { place: { member: null, path: null }, template: resolveTagTemplate({ name: "v{version}", floating: undefined }, null) } });
+      expect(d).toContain("a bare version such as 1.4.0");
+      expect(d).toContain("the tag template adds any v");
+      expect(d).not.toContain("v1.4.0");
+    });
+
+    test(`${forge}: release.version refuses a leading v`, () => {
+      expect(description(forge, { version: true })).toContain("no leading v");
+    });
+
+    test(`${forge}: with no tag template the label is the tag's as given`, () => {
+      expect(description(forge)).toContain("such as 1.4.0 (the tag carries it as given)");
+    });
+  }
+});
