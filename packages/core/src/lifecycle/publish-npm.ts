@@ -186,6 +186,10 @@ function run(bin: string, args: string[], ctx: PublishContextBase, cwd: string =
 export const NPM_REGISTRY_POLL_MS = 10_000;
 /** Between progress lines while the reveal waits for the registry (#4271). */
 export const NPM_REGISTRY_PROGRESS_MS = 60_000;
+/** How long the audit waits for the registry to serve a package's provenance attestation after the version (#5315). */
+export const NPM_ATTESTATION_WAIT_MS = 120_000;
+/** What `npm audit signatures` prints while the registry does not serve an attestation yet. */
+const NPM_ATTESTATION_NOT_YET = /\b404\b.*\/-\/npm\/v1\/attestations\/|\/-\/npm\/v1\/attestations\/.*\b404\b/;
 /** `npm view`'s answers for a version the registry does not serve yet; any other failure is the registry's error. */
 const NPM_VIEW_NOT_YET = /\bE404\b|\b404 Not Found\b|is not in (this|the npm) registry|No match found for version|\b(ETARGET|notarget)\b/;
 /** npm's errors for a version the registry does not serve yet. */
@@ -491,6 +495,23 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
           await served(ctx, pkgs);
           result = await npm(ctx, args, dir);
           for (const line of result.output) ctx.log(`  ${line}`);
+        }
+        // The registry serves the attestation some seconds after the version: while the audit fails only on that 404, wait and audit again (#5315).
+        if (result.code !== 0 && args[0] === "audit") {
+          const start = now();
+          while (result.code !== 0 && result.output.some((l) => NPM_ATTESTATION_NOT_YET.test(l))) {
+            if (now() - start >= NPM_ATTESTATION_WAIT_MS) {
+              throw new PublishTargetError(
+                "publish-npm-audit-failed",
+                `the registry did not serve the provenance attestation for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")} within ${Math.round(NPM_ATTESTATION_WAIT_MS / 1000)}s of the publish, so the attestation never appeared and was not verified, after latest moved: ${result.output.at(-1) ?? "npm printed nothing"}`,
+                "Each package was published. Once the registry serves the attestation, run the publish again: it publishes nothing twice and audits again.",
+              );
+            }
+            ctx.log("the registry does not serve the provenance attestation yet; waiting, then auditing again");
+            await sleep(NPM_REGISTRY_POLL_MS);
+            result = await npm(ctx, args, dir);
+            for (const line of result.output) ctx.log(`  ${line}`);
+          }
         }
         if (result.code !== 0) {
           throw new PublishTargetError(

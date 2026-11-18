@@ -673,6 +673,36 @@ describe("SBOMs and provenance (#4049)", () => {
       expect(installs(log)).toBe(0);
     });
 
+    const audits = (log: string) => readFileSync(log, "utf-8").split("\n").filter((l) => l.includes(`"args":["audit"`)).length;
+
+    test("an attestation 404 right after the publish waits and audits again (#5315)", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_ATTESTATION_404: "2" });
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(audits(log)).toBe(3);
+      expect(sleeps).toEqual([10_000, 10_000]);
+    });
+
+    test("an attestation that never appears fails after the window, saying so (#5315)", async () => {
+      const { log, deps, ctx, d } = lagged({ FAKE_NPM_ATTESTATION_404: "always" });
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-audit-failed");
+      expect(err.message).toContain("did not serve the provenance attestation");
+      expect(err.message).toContain("within 120s");
+      expect(err.message).toContain("never appeared");
+      expect(audits(log)).toBe(13);
+    });
+
+    test("an audit failure that is not the attestation 404 fails at once (#5315)", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_AUDIT_FAIL: "1" });
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-audit-failed");
+      expect(audits(log)).toBe(1);
+      expect(sleeps).toEqual([]);
+    });
+
     test("an install that fails with ETARGET waits and installs once more", async () => {
       const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_INSTALL_ETARGET: "1" });
       const [target] = await createPublishTargets([d], deps);

@@ -287,6 +287,16 @@ if (args[0] === "publish") {
   console.log("added " + Object.keys(deps).length + " packages");
 } else if (args[0] === "audit" && args[1] === "signatures") {
   const n = Object.keys(JSON.parse(fs.readFileSync("package.json", "utf-8")).dependencies || {}).length;
+  // FAKE_NPM_ATTESTATION_404=N answers the first N audits with the registry's attestation 404 ("always" never stops).
+  const lateAttest = process.env.FAKE_NPM_ATTESTATION_404;
+  if (lateAttest) {
+    const seen = fs.existsSync(".audit-count") ? Number(fs.readFileSync(".audit-count", "utf-8")) : 0;
+    fs.writeFileSync(".audit-count", String(seen + 1));
+    if (lateAttest === "always" || seen < Number(lateAttest)) {
+      console.error("npm error 404 Not Found - GET https://registry.npmjs.org/-/npm/v1/attestations/@acme%2fcore@1.0.0 - Not found");
+      process.exit(1);
+    }
+  }
   if (process.env.FAKE_NPM_AUDIT_FAIL) { console.error(n + " packages have invalid attestations"); process.exit(1); }
   console.log("audited " + n + " packages");
   console.log(n + " packages have verified registry signatures");
