@@ -177,6 +177,25 @@ describe("a package npm has never had", () => {
   });
 });
 
+describe("a member's forge notes file (#5319)", () => {
+  test("refuses the train before any member is cut when a member's file has no heading for its label", async () => {
+    const x = setup();
+    x.r.write(
+      "release/lex/chant.config.ts",
+      `export default { environments: ["npm"], release: { publish: [{ type: "forge", forge: "github", repo: "acme/lex", assets: [], notes: { file: "CHANGELOG.md", heading: "## [{version}]" } }] } };\n`,
+    );
+    x.r.write("release/lex/CHANGELOG.md", "# Changelog\n\n## [1.0.0]\n\n- first\n");
+    const head = x.r.commit("forge notes");
+    x.r.git(["tag", `ci/green/${head}`]);
+    let cuts = 0;
+    const err = await cutTrain({ cwd: x.nested, env: "npm", at: head, registry: npmVersions(x.npm), yes: true, noPush: true, cutter: async () => ({ tag: (cuts++, null) }) }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TrainCutError);
+    expect((err as TrainCutError).code).toBe("publish-forge-notes-missing");
+    expect((err as TrainCutError).message).toContain('nothing was cut: lex: the github release\'s notes come from CHANGELOG.md, and it has no heading "## [');
+    expect(cuts).toBe(0);
+  });
+});
+
 describe("release.train.check", () => {
   test("a failing release.train.check stops the train before any cut", async () => {
     const x = setup();
