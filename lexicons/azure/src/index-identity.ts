@@ -65,6 +65,10 @@ function generatedKinds(): ReadonlySet<string> | null {
 export function azureNodeKey(node: Pick<IRNode, "nativeId">): string | undefined {
   const id = node.nativeId;
   if (!id) return undefined;
+  // A resource group's id has no provider segment; its declaration spells
+  // `Microsoft.Resources/resourceGroups` and the group's name (#5264).
+  const group = /^\/subscriptions\/[^/]+\/resourcegroups\/([^/]+)$/i.exec(id);
+  if (group) return `microsoft.resources/resourcegroups/${group[1].toLowerCase()}`;
   const at = id.toLowerCase().lastIndexOf(PROVIDERS);
   if (at < 0) return undefined;
   const path = id.slice(at + PROVIDERS.length).toLowerCase();

@@ -139,9 +139,10 @@ describe("ARM Import Round-trip — testdata fixtures", () => {
     { file: "vnet-nsg.json", expectedResources: 3, contains: "VirtualNetwork" },
     { file: "aks-basic.json", expectedResources: 1, contains: "ManagedCluster" },
     { file: "function-app.json", expectedResources: 3, contains: "WebApp" },
-    { file: "keyvault-secrets.json", expectedResources: 2, contains: "Microsoft.KeyVault/vaults" },
-    { file: "sql-server-db.json", expectedResources: 5, contains: "Microsoft.Sql/servers" },
-    { file: "cosmos-account.json", expectedResources: 3, contains: "Microsoft.DocumentDB/databaseAccounts" },
+    // Child types are written as their classes (#5264).
+    { file: "keyvault-secrets.json", expectedResources: 2, contains: "new vaults_secrets(" },
+    { file: "sql-server-db.json", expectedResources: 5, contains: "new SqlFirewallRule(" },
+    { file: "cosmos-account.json", expectedResources: 3, contains: "new databaseAccounts_sqlDatabases_containers(" },
     { file: "container-instance.json", expectedResources: 1, contains: "containerGroups" },
     { file: "app-gateway.json", expectedResources: 3, contains: "applicationGateways" },
   ];

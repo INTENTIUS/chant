@@ -67,11 +67,11 @@ describe("azureDeclaredIdentity", () => {
 });
 
 describe("node keys and identities", () => {
-  test("the key is the id after its last /providers/, lowercased; a resource group has none", () => {
+  test("the key is the id after its last /providers/, lowercased; a resource group's is its type and name", () => {
     expect(azureNodeKey({ nativeId: `${RG}/providers/Microsoft.Network/virtualNetworks/ladybug-vnet/subnets/apps` })).toBe(
       "microsoft.network/virtualnetworks/ladybug-vnet/subnets/apps",
     );
-    expect(azureNodeKey({ nativeId: RG })).toBeUndefined();
+    expect(azureNodeKey({ nativeId: RG })).toBe("microsoft.resources/resourcegroups/ladybug-rg");
   });
 
   test("a resource answers to its ARM id as listed and lowercased", () => {

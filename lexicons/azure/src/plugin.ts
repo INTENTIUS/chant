@@ -16,6 +16,7 @@ import { fileURLToPath } from "url";
 import { moduleSourceDir } from "@intentius/chant/module-source";
 import { azureSerializer } from "./serializer";
 import { azureListedTypes } from "./listed-types";
+import { azureIndexImport } from "./index-import";
 import { azureIndexIdentity } from "./index-identity";
 import { azureReferenceCatalog } from "./reference-catalog";
 import { azureGraphEdges } from "./graph-edges";
@@ -504,6 +505,9 @@ export const tags = defaultTags([
   // The identifier a declaration spells, for `chant search --index` and the
   // identity edges over an index (#4538).
   indexIdentity: azureIndexIdentity,
+
+  // Typed source for indexed resources, for `chant import --index` (#5264).
+  indexImport: azureIndexImport,
 
   // How its resources reference each other, for chant's catalog pass over an
   // index and a declared graph (#4535; behold#1005 retires behold's matcher on it).

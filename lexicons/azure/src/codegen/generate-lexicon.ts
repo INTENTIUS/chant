@@ -26,6 +26,21 @@ export interface LexiconEntry {
   createOnly?: string[];
   writeOnly?: string[];
   /**
+   * Every property the generated class declares, resource-level fields and
+   * the names flattened up from ARM's `properties` object alike (#5264). An
+   * index import writes only these, since a listing also holds server-filled
+   * names the class does not accept.
+   */
+  declarable?: string[];
+  /** The declarable properties the schema requires. */
+  required?: string[];
+  /**
+   * When the class takes ARM's own `properties` object, the names that object
+   * declares and the ones it requires (#5264).
+   */
+  innerDeclarable?: string[];
+  innerRequired?: string[];
+  /**
    * ARM deployment scopes the resource can be declared at (#1545).
    * Absent means plain resource-group scope.
    */
@@ -85,6 +100,12 @@ export function generateLexiconJSON(
       const r = results.find((res) => res.resource.typeName === armType)!;
 
       const createOnly = CURATED_CREATE_ONLY[armType];
+      const declarable = r.resource.properties.map((p) => p.name).sort();
+      const required = r.resource.properties.filter((p) => p.required).map((p) => p.name).sort();
+      const propsType = r.resource.properties.find((p) => p.name === "properties")?.tsType;
+      const inner = propsType ? r.propertyTypes.find((t) => t.name === propsType) : undefined;
+      const innerDeclarable = inner ? inner.properties.map((p) => p.name).sort() : [];
+      const innerRequired = inner ? inner.properties.filter((p) => p.required).map((p) => p.name).sort() : [];
 
       return {
         resourceType: armType,
@@ -98,6 +119,10 @@ export function generateLexiconJSON(
         }),
         ...(r.resource.tagging && { tagging: r.resource.tagging }),
         ...(createOnly && { createOnly }),
+        ...(declarable.length > 0 && { declarable }),
+        ...(required.length > 0 && { required }),
+        ...(innerDeclarable.length > 0 && { innerDeclarable }),
+        ...(innerRequired.length > 0 && { innerRequired }),
         ...(r.resource.deployScopes && { deployScopes: r.resource.deployScopes }),
       };
     },
