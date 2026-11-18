@@ -17,6 +17,7 @@ import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import type { ObservationDepth } from "../../lifecycle/types";
 import { formatUnobserved, type RootRead } from "../../observation";
 import { readChantPackageVersion } from "../../package-version";
+import { applyLiveEndpoint } from "../../live-endpoint";
 import { loadChantConfig, matchesDeclaredEnvironment, resolveSourceDir } from "../../config";
 import { collectBuildRootContributors, loadPlugins, resolveProjectLexicons } from "../plugins";
 import { declaredBuildRootContributors, mergeDeclaredBuildRoots, withLexiconEdges } from "./declared-graph";
@@ -70,6 +71,17 @@ import {
  * thousands.
  */
 export async function runSearch(ctx: CommandContext): Promise<number> {
+  // The environment's declared endpoint (#5289) lives in the process env for
+  // the length of a live read, and is put back on every way out.
+  const endpoint = { restore: () => {} };
+  try {
+    return await searchAnswer(ctx, endpoint);
+  } finally {
+    endpoint.restore();
+  }
+}
+
+async function searchAnswer(ctx: CommandContext, endpoint: { restore: () => void }): Promise<number> {
   const { args } = ctx;
   const query = (args.path ?? "").trim();
   // A refusal (#4367): the error on stderr as always, and under --json the
@@ -163,6 +175,11 @@ export async function runSearch(ctx: CommandContext): Promise<number> {
       return refuse({ code: "build-failed", message: "Build failed — fix errors before searching live state" });
     }
     const observing = plugins.filter((p) => p.describeResources);
+    // An environment can declare its own endpoint (#1166, #5289), so a read
+    // against an emulator needs no exported AWS_ENDPOINT_URL. Ambient wins.
+    const applied = applyLiveEndpoint(config.environments, environment, observing);
+    endpoint.restore = applied.restore;
+    if (applied.notice) console.error(formatWarning({ message: applied.notice }));
     ambientKinds = observing.flatMap((p) => p.ambientKinds?.() ?? []);
     const stacks = (config.stacks ?? []).map((s) => ({ name: s.name, region: s.region, src: s.src }));
 

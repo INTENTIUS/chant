@@ -85,6 +85,61 @@ describe("search query-scoped drift (#1268)", () => {
     replaySnapshotsMock.mockReset();
   });
 
+  test("--live reads through the environment's declared endpoint, set only in config (#5289)", async () => {
+    delete process.env.AWS_ENDPOINT_URL;
+    loadChantConfigMock.mockResolvedValue({
+      config: { environments: [{ name: "dev", endpoint: "http://127.0.0.1:4566" }] },
+    });
+    const seen: (string | undefined)[] = [];
+    loadPluginsMock.mockResolvedValue([
+      createMockPlugin({
+        name: "aws",
+        emulator: {
+          spec: { name: "chant-aws", image: "aws:0", containerPort: 1, healthPath: "/h" },
+          env: (endpoint: string) => ({ AWS_ENDPOINT_URL: endpoint, AWS_ACCESS_KEY_ID: "test" }),
+        },
+        describeResources: async () => {
+          seen.push(process.env.AWS_ENDPOINT_URL);
+          return { webServer: { type: "AWS::EC2::Instance", physicalId: "i-1", status: "OK" } };
+        },
+      }),
+    ]);
+    const exit = await runSearch({ args: makeArgs({ path: "kind:EC2::Instance", live: true }), plugins: [], serializers: [] });
+    expect(exit).toBe(0);
+    expect(seen).toEqual(["http://127.0.0.1:4566"]);
+    expect(err.join("\n")).toContain("applied to AWS_ENDPOINT_URL");
+    // Put back afterwards, so it never leaks into the next invocation.
+    expect(process.env.AWS_ENDPOINT_URL).toBeUndefined();
+  });
+
+  test("--live keeps an ambient AWS_ENDPOINT_URL over the declared endpoint (#5289)", async () => {
+    process.env.AWS_ENDPOINT_URL = "http://ambient.example";
+    try {
+      loadChantConfigMock.mockResolvedValue({
+        config: { environments: [{ name: "dev", endpoint: "http://127.0.0.1:4566" }] },
+      });
+      const seen: (string | undefined)[] = [];
+      loadPluginsMock.mockResolvedValue([
+        createMockPlugin({
+          name: "aws",
+          emulator: {
+            spec: { name: "chant-aws", image: "aws:0", containerPort: 1, healthPath: "/h" },
+            env: (endpoint: string) => ({ AWS_ENDPOINT_URL: endpoint }),
+          },
+          describeResources: async () => {
+            seen.push(process.env.AWS_ENDPOINT_URL);
+            return { webServer: { type: "AWS::EC2::Instance", physicalId: "i-1", status: "OK" } };
+          },
+        }),
+      ]);
+      await runSearch({ args: makeArgs({ path: "kind:EC2::Instance", live: true }), plugins: [], serializers: [] });
+      expect(seen).toEqual(["http://ambient.example"]);
+      expect(process.env.AWS_ENDPOINT_URL).toBe("http://ambient.example");
+    } finally {
+      delete process.env.AWS_ENDPOINT_URL;
+    }
+  });
+
   test("--check-live without --at is refused", async () => {
     const exit = await runSearch({ args: makeArgs({ checkLive: true }), plugins: [], serializers: [] });
     expect(exit).toBe(1);
