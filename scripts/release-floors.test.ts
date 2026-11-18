@@ -345,7 +345,9 @@ describe("release floors resolve from the release tags, with no freeze between r
       const tsx = join(root, "node_modules", ".bin", "tsx");
       const run = (...args: string[]) => execFileSync(tsx, args, { cwd: repo, encoding: "utf-8", stdio: "pipe" });
       git("init", "-q");
-      write("scripts/release-floors.ts", readFileSync(join(root, "scripts/release-floors.ts"), "utf8"));
+      // The fixture holds none of the schema and docs files this repository's
+      // NEXT_RELEASE_TEXT lists, so the script's copy lists none.
+      write("scripts/release-floors.ts", freezeTextList(readFileSync(join(root, "scripts/release-floors.ts"), "utf8")));
       write("scripts/floor-table.ts", readFileSync(join(root, "scripts/floor-table.ts"), "utf8"));
       write("packages/core/package.json", JSON.stringify({ exports: { "./*": "./src/*.ts" } }));
       write("packages/core/src/release-floors.ts", 'export const NEXT_RELEASE = "0.124.54";\n');

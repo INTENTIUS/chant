@@ -214,7 +214,8 @@ for a query or another search flag given with `--capabilities`). Without
 | `uses[]` | the capabilities and helpers its rule refers to |
 | `rule` | the rule as written |
 | `helpers[]` | `{ name, rule }` for each rule the capabilities use that the catalog doesn't list |
-| `templates[]` | the [investigation templates](#investigation-templates), each `{ id, title, question, sources?, inputs, reads, query, note? }` |
+| `templates[]` | the [investigation templates](#investigation-templates), chant's and then the project's own, each `{ id, title, question, sources?, kinds?, inputs, reads, query, note?, origin }` |
+| `refused[]` | the project's template entries left out of `templates`, each `{ id?, file, field?, message }` |
 
 In a declared workspace, `chant workspace search --capabilities --json`
 prints the same document from the workspace root's chant, for every lexicon
@@ -271,6 +272,16 @@ chant ships the templates for behold and choudoufu to read as data, in the
 file `@intentius/chant/capabilities/templates.json` and in the `templates`
 field of the capabilities document. That field was added within contract 1,
 so the capabilities document's templates are written by chant `0.124.54` and newer.
+
+A project adds its own templates in `.chant/templates.json` at its workspace
+root, or at its project root when there is no workspace
+([Add an Investigation Template](/chant/guide/project-templates/)). They are
+listed after chant's, and each entry's `origin` is `chant` or `project`. An
+entry may carry `kinds`, the node kinds it applies to, as the graph holds
+them. A project entry that does not hold to the entry kind, or whose id is
+one chant ships, is left out of `templates` and listed under `refused` with
+the file and field at fault, so the rest still load. `origin`, `kinds` and
+`refused` are written by chant `0.124.103` and newer.
 
 ## Evaluation time
 

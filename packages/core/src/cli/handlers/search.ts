@@ -721,6 +721,7 @@ export async function printCapabilities(
   args: { json?: boolean; live?: boolean; env?: string; snapshot?: string; at?: string; index?: string; countBy?: string; explain?: boolean; show?: string },
   query: string,
   lexicons: string[],
+  dir: string = resolve("."),
 ): Promise<number> {
   const { capabilitiesDocument, capabilitiesFailure, formatCapabilities } = await import("../../workspace/capabilities-contract");
   const extra = [
@@ -740,7 +741,10 @@ export async function printCapabilities(
     if (args.json) console.log(JSON.stringify(await capabilitiesFailure(error)));
     return 1;
   }
-  const doc = await capabilitiesDocument(lexicons);
+  const doc = await capabilitiesDocument(lexicons, undefined, dir);
+  // A project template left out (behold#1142) is said on stderr, so a person
+  // sees it under --json too.
+  for (const r of doc.refused) console.error(`template refused: ${r.message}`);
   if (args.json) console.log(JSON.stringify(doc));
   else for (const line of formatCapabilities(doc)) console.log(line);
   return 0;

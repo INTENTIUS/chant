@@ -17,15 +17,40 @@
  * behold and choudoufu read it as data. The initial set is the one behold#1027
  * stubbed in behold's src/graph-db/templates.ts.
  *
+ * A project adds its own templates in `.chant/templates.json`, in the same
+ * shape (behold#1142). {@link templateCatalog} reads it from the workspace
+ * root, or from the project root when there is no workspace, and lists its
+ * entries after chant's with `origin: "project"`. An entry that does not hold
+ * to the entry kind, or that reuses one of chant's ids, is refused alone and
+ * listed under `refused`, so one bad entry never takes the rest with it: a
+ * reader such as choudoufu refuses a whole list on one bad entry.
+ *
  * Filling in: a path template's `{{<input>}}` is replaced by the input's
  * value, the resource's id for `{{node}}`. A Cypher template takes its inputs
  * as query parameters, never spliced into the text: the resource's key is
  * `$key` and every other input is `$<name>`.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { findProjectRoot, findWorkspaceRoot } from "../project-root";
+import { NEXT_RELEASE } from "../release-floors";
 import data from "./templates.json" with { type: "json" };
 
 /** The first chant whose capabilities document carries `templates` (#4531). */
 export const CAPABILITY_TEMPLATES_FLOOR = "0.124.54";
+
+/**
+ * The first chant whose capabilities document lists a project's own templates
+ * from `.chant/templates.json`, marks each entry's `origin`, may carry `kinds`,
+ * and lists refused project entries under `refused` (behold issue 1142).
+ */
+export const PROJECT_TEMPLATES_FLOOR = NEXT_RELEASE;
+
+/** Where a project declares its own templates, relative to the workspace or project root. */
+export const PROJECT_TEMPLATES_FILE = ".chant/templates.json";
+
+/** chant's own templates file, as a refusal names it. */
+export const CHANT_TEMPLATES_FILE = "@intentius/chant/capabilities/templates.json";
 
 /** The version of templates.json's shape. */
 export const TEMPLATES_DATA_VERSION = 1;
@@ -56,6 +81,8 @@ export interface TemplateEntry {
   question: string;
   /** The sources whose nodes it applies to (behold's source kinds); absent means every source. */
   sources?: string[];
+  /** The node kinds it applies to, as the graph holds them (`aws_s3_bucket`, `AWS::S3::Bucket`); absent means every kind. */
+  kinds?: string[];
   inputs: TemplateInput[];
   reads: TemplateReads;
   query: { kind: TemplateQueryKind; text: string };
@@ -63,8 +90,46 @@ export interface TemplateEntry {
   note?: string;
 }
 
-/** A templates file that does not hold to the entry kind, naming the template. */
-export class TemplateCatalogError extends Error {}
+/** Where a catalog entry came from: chant's own file, or the project's `.chant/templates.json`. */
+export type TemplateOrigin = "chant" | "project";
+
+/** An entry of the catalog the capabilities document lists. */
+export interface CatalogTemplate extends TemplateEntry {
+  origin: TemplateOrigin;
+}
+
+/** A project entry left out of the catalog, and why. */
+export interface RefusedTemplate {
+  /** The entry's id, when it has a usable one. */
+  id?: string;
+  /** The file it was read from, relative to the workspace or project root. */
+  file: string;
+  /** The field at fault, such as `templates[2].query.text`; absent when the file is not JSON. */
+  field?: string;
+  /** What is wrong, naming the file and the field. */
+  message: string;
+}
+
+/** What {@link templateCatalog} found: chant's templates, then the project's, and the project entries it refused. */
+export interface TemplateCatalog {
+  templates: CatalogTemplate[];
+  refused: RefusedTemplate[];
+}
+
+/**
+ * A templates file or entry that does not hold to the entry kind, naming the
+ * template. `field` is the path to the field at fault and `file` the file it
+ * was read from, when known.
+ */
+export class TemplateCatalogError extends Error {
+  constructor(
+    message: string,
+    readonly field?: string,
+    readonly file?: string,
+  ) {
+    super(message);
+  }
+}
 
 const ID = /^[a-z][a-z0-9-]*$/;
 const INPUT_NAME = /^[a-z][A-Za-z0-9_]*$/;
@@ -80,61 +145,96 @@ const str = (v: unknown): v is string => typeof v === "string" && v.trim() !== "
  * Read a templates file, checking each entry against the entry kind: a
  * unique id, exactly one resource input first, a query of a known kind
  * whose placeholders (path) or parameters (Cypher) are its inputs, and every
- * input used.
+ * input used. The first entry that does not hold is thrown.
  */
-export function parseTemplates(raw: unknown): TemplateEntry[] {
+export function parseTemplates(raw: unknown, file?: string): TemplateEntry[] {
+  const { templates, refused } = checkTemplates(raw, file);
+  if (refused.length > 0) throw refused[0];
+  return templates;
+}
+
+/**
+ * Check a templates file entry by entry: the entries that hold, and a
+ * {@link TemplateCatalogError} for each that does not. A file whose shape is
+ * wrong (not an object, another version, no list) is thrown whole. An id
+ * defined twice keeps its first entry.
+ */
+export function checkTemplates(raw: unknown, file?: string): { templates: TemplateEntry[]; refused: TemplateCatalogError[] } {
   const doc = raw as { version?: unknown; templates?: unknown };
-  if (!doc || typeof doc !== "object") throw new TemplateCatalogError("a templates file is an object");
-  if (doc.version !== TEMPLATES_DATA_VERSION) throw new TemplateCatalogError(`templates file version ${String(doc.version)} is not ${TEMPLATES_DATA_VERSION}`);
-  if (!Array.isArray(doc.templates)) throw new TemplateCatalogError("templates is a list");
+  const whole = (m: string, field?: string): never => {
+    throw new TemplateCatalogError(file ? `${file}${field ? ` ${field}` : ""}: ${m}` : m, field, file);
+  };
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) whole("a templates file is an object");
+  if (doc.version !== TEMPLATES_DATA_VERSION) whole(`templates file version ${String(doc.version)} is not ${TEMPLATES_DATA_VERSION}`, "version");
+  if (!Array.isArray(doc.templates)) whole("templates is a list", "templates");
   const seen = new Set<string>();
-  return doc.templates.map((t, i) => {
-    const e = t as Partial<TemplateEntry>;
-    const where = str(e?.id) ? `template ${e.id}` : `template ${i}`;
-    const fail = (m: string): never => {
-      throw new TemplateCatalogError(`${where}: ${m}`);
-    };
-    if (!e || typeof e !== "object") fail("is not an object");
-    if (!str(e.id) || !ID.test(e.id)) fail("needs an id of lowercase letters, digits and -");
-    if (seen.has(e.id!)) fail("is defined twice");
-    seen.add(e.id!);
-    if (!str(e.title)) fail("needs a title");
-    if (!str(e.question)) fail("needs the question it answers");
-    if (!READS.includes(e.reads as TemplateReads)) fail(`reads is one of ${READS.join(", ")}`);
-    if (e.sources !== undefined && (!Array.isArray(e.sources) || !e.sources.every(str))) fail("sources is a list of source kinds");
-    if (e.note !== undefined && !str(e.note)) fail("a note is text");
-    if (!Array.isArray(e.inputs)) fail("needs its inputs");
-    const names = new Set<string>();
-    for (const input of e.inputs!) {
-      if (!input || !str(input.name) || !INPUT_NAME.test(input.name)) fail("an input needs a name");
-      if (names.has(input.name)) fail(`input ${input.name} is listed twice`);
-      names.add(input.name);
-      if (!INPUT_KINDS.includes(input.kind)) fail(`input ${input.name}'s kind is one of ${INPUT_KINDS.join(", ")}`);
-      if (!str(input.description)) fail(`input ${input.name} needs a description`);
+  const templates: TemplateEntry[] = [];
+  const refused: TemplateCatalogError[] = [];
+  (doc.templates as unknown[]).forEach((t, i) => {
+    try {
+      templates.push(checkEntry(t, i, seen, file));
+    } catch (e) {
+      if (!(e instanceof TemplateCatalogError)) throw e;
+      refused.push(e);
     }
-    const resources = e.inputs!.filter((x) => x.kind === "resource");
-    if (resources.length !== 1 || e.inputs![0] !== resources[0]) fail("takes one resource input, first");
-    const q = e.query;
-    if (!q || !KINDS.includes(q.kind) || !str(q.text)) fail(`query is { kind: ${KINDS.join(" | ")}, text }`);
-    const resource = resources[0].name;
-    if (q!.kind === "path") {
-      if (/\$[A-Za-z_]/.test(q!.text)) fail("a path pattern takes {{input}} placeholders, not $parameters");
-      const used = new Set([...q!.text.matchAll(PLACEHOLDER)].map((m) => m[1]));
-      for (const u of used) if (!names.has(u)) fail(`{{${u}}} names no input`);
-      // A scope is where the query is read, not part of its text.
-      for (const input of e.inputs!) if (input.kind !== "scope" && !used.has(input.name)) fail(`the path pattern never uses ${input.name}`);
-    } else {
-      if (/\{\{/.test(q!.text)) fail("a Cypher query takes $parameters, never spliced {{input}} text");
-      if (!/^\s*(MATCH|OPTIONAL MATCH|WITH|CALL|UNWIND)\b/i.test(q!.text)) fail("a Cypher query starts with a reading clause");
-      if (/\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP)\b/i.test(q!.text)) fail("a Cypher query only reads");
-      if (!balanced(q!.text)) fail("its brackets do not balance");
-      const params = new Set([...q!.text.matchAll(PARAM)].map((m) => m[1]));
-      if (!params.has("key")) fail("a Cypher query binds the resource as $key");
-      for (const p of params) if (p !== "key" && !names.has(p)) fail(`$${p} names no input`);
-      for (const input of e.inputs!) if (input.name !== resource && input.kind !== "scope" && !params.has(input.name)) fail(`the query never uses $${input.name}`);
-    }
-    return e as TemplateEntry;
   });
+  return { templates, refused };
+}
+
+/** One entry, checked; `seen` holds the ids before it. */
+function checkEntry(t: unknown, i: number, seen: Set<string>, file?: string): TemplateEntry {
+  const e = t as Partial<TemplateEntry>;
+  const at = `templates[${i}]`;
+  const where = str(e?.id) ? `template ${e.id}` : `template ${i}`;
+  const fail = (m: string, field = ""): never => {
+    const path = `${at}${field}`;
+    throw new TemplateCatalogError(file ? `${file} ${path}: ${where}: ${m}` : `${where}: ${m}`, path, file);
+  };
+  if (!e || typeof e !== "object" || Array.isArray(e)) fail("is not an object");
+  if (!str(e.id) || !ID.test(e.id)) fail("needs an id of lowercase letters, digits and -", ".id");
+  if (seen.has(e.id!)) fail("is defined twice", ".id");
+  seen.add(e.id!);
+  if (!str(e.title)) fail("needs a title", ".title");
+  if (!str(e.question)) fail("needs the question it answers", ".question");
+  if (!READS.includes(e.reads as TemplateReads)) fail(`reads is one of ${READS.join(", ")}`, ".reads");
+  if (e.sources !== undefined && (!Array.isArray(e.sources) || !e.sources.every(str))) fail("sources is a list of source kinds", ".sources");
+  if (e.kinds !== undefined && (!Array.isArray(e.kinds) || e.kinds.length === 0 || !e.kinds.every(str))) fail("kinds is a list of node kinds, or absent for every kind", ".kinds");
+  if (e.note !== undefined && !str(e.note)) fail("a note is text", ".note");
+  if (!Array.isArray(e.inputs)) fail("needs its inputs", ".inputs");
+  const names = new Set<string>();
+  e.inputs!.forEach((input, j) => {
+    const f = `.inputs[${j}]`;
+    if (!input || !str(input.name) || !INPUT_NAME.test(input.name)) fail("an input needs a name", `${f}.name`);
+    if (names.has(input.name)) fail(`input ${input.name} is listed twice`, `${f}.name`);
+    names.add(input.name);
+    if (!INPUT_KINDS.includes(input.kind)) fail(`input ${input.name}'s kind is one of ${INPUT_KINDS.join(", ")}`, `${f}.kind`);
+    if (!str(input.description)) fail(`input ${input.name} needs a description`, `${f}.description`);
+  });
+  const resources = e.inputs!.filter((x) => x.kind === "resource");
+  if (resources.length !== 1 || e.inputs![0] !== resources[0]) fail("takes one resource input, first", ".inputs");
+  const q = e.query;
+  if (!q || typeof q !== "object") fail(`query is { kind: ${KINDS.join(" | ")}, text }`, ".query");
+  if (!KINDS.includes(q!.kind)) fail(`query is { kind: ${KINDS.join(" | ")}, text }`, ".query.kind");
+  if (!str(q!.text)) fail(`query is { kind: ${KINDS.join(" | ")}, text }`, ".query.text");
+  const text = ".query.text";
+  const resource = resources[0].name;
+  if (q!.kind === "path") {
+    if (/\$[A-Za-z_]/.test(q!.text)) fail("a path pattern takes {{input}} placeholders, not $parameters", text);
+    const used = new Set([...q!.text.matchAll(PLACEHOLDER)].map((m) => m[1]));
+    for (const u of used) if (!names.has(u)) fail(`{{${u}}} names no input`, text);
+    // A scope is where the query is read, not part of its text.
+    for (const input of e.inputs!) if (input.kind !== "scope" && !used.has(input.name)) fail(`the path pattern never uses ${input.name}`, text);
+  } else {
+    if (/\{\{/.test(q!.text)) fail("a Cypher query takes $parameters, never spliced {{input}} text", text);
+    if (!/^\s*(MATCH|OPTIONAL MATCH|WITH|CALL|UNWIND)\b/i.test(q!.text)) fail("a Cypher query starts with a reading clause", text);
+    if (/\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP)\b/i.test(q!.text)) fail("a Cypher query only reads", text);
+    if (!balanced(q!.text)) fail("its brackets do not balance", text);
+    const params = new Set([...q!.text.matchAll(PARAM)].map((m) => m[1]));
+    if (!params.has("key")) fail("a Cypher query binds the resource as $key", text);
+    for (const p of params) if (p !== "key" && !names.has(p)) fail(`$${p} names no input`, text);
+    for (const input of e.inputs!) if (input.name !== resource && input.kind !== "scope" && !params.has(input.name)) fail(`the query never uses $${input.name}`, text);
+  }
+  return e as TemplateEntry;
 }
 
 /** Whether (), [] and {} nest, outside quoted strings. */
@@ -160,6 +260,74 @@ let cache: TemplateEntry[] | undefined;
 export function investigationTemplates(): TemplateEntry[] {
   cache ??= parseTemplates(data);
   return cache;
+}
+
+/** The directory a project's templates file is read in: the workspace root, or the project root when `dir` is in no workspace. */
+export function templatesRoot(dir: string): string {
+  return findWorkspaceRoot(dir)?.dir ?? findProjectRoot(dir);
+}
+
+/**
+ * The template catalog for the project at `dir` (behold#1142): chant's
+ * templates, then the project's own from {@link PROJECT_TEMPLATES_FILE} at
+ * {@link templatesRoot}, each marked with its origin. A workspace member's
+ * own file is not read. A project entry that does not hold to the entry kind,
+ * or whose id is one of chant's, is left out and listed under `refused`, and
+ * the others load. A file that cannot be read as a templates file is refused
+ * whole, as one entry. No file means chant's templates alone.
+ */
+export function templateCatalog(dir: string): TemplateCatalog {
+  const chant: CatalogTemplate[] = investigationTemplates().map((t) => ({ ...t, origin: "chant" }));
+  const file = PROJECT_TEMPLATES_FILE;
+  let text: string;
+  try {
+    text = readFileSync(join(templatesRoot(dir), file), "utf-8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { templates: chant, refused: [] };
+    return { templates: chant, refused: [{ file, message: `${file}: cannot be read: ${(e as Error).message}` }] };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (e) {
+    return { templates: chant, refused: [{ file, message: `${file}: is not JSON: ${(e as Error).message}` }] };
+  }
+  let checked: ReturnType<typeof checkTemplates>;
+  try {
+    checked = checkTemplates(raw, file);
+  } catch (e) {
+    if (!(e instanceof TemplateCatalogError)) throw e;
+    return { templates: chant, refused: [refusal(e, file)] };
+  }
+  const refused = checked.refused.map((e) => refusal(e, file, (raw as { templates: unknown[] }).templates));
+  const chantIds = new Set(chant.map((t) => t.id));
+  const own: CatalogTemplate[] = [];
+  for (const t of checked.templates) {
+    if (chantIds.has(t.id)) {
+      const i = (raw as { templates: unknown[] }).templates.indexOf(t);
+      const field = `templates[${i}].id`;
+      refused.push({
+        id: t.id,
+        file,
+        field,
+        message: `${file} ${field}: template ${t.id}: ${CHANT_TEMPLATES_FILE} already defines ${t.id}, and an id keeps chant's meaning; rename this one`,
+      });
+      continue;
+    }
+    own.push({ ...t, origin: "project" });
+  }
+  return { templates: [...chant, ...own], refused };
+}
+
+function refusal(e: TemplateCatalogError, file: string, entries?: unknown[]): RefusedTemplate {
+  const index = e.field?.match(/^templates\[(\d+)\]/)?.[1];
+  const id = index !== undefined ? (entries?.[Number(index)] as { id?: unknown } | undefined)?.id : undefined;
+  return {
+    ...(typeof id === "string" && ID.test(id) ? { id } : {}),
+    file,
+    ...(e.field ? { field: e.field } : {}),
+    message: e.message,
+  };
 }
 
 /** A value spliced into a path pattern is one search term: letters, digits and `_ : . - / * ( ) , [ ]` only. */

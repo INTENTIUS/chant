@@ -16,7 +16,7 @@
 import { resolve } from "node:path";
 import type { ReasonCode } from "./reason-codes";
 import type { CapabilityEntry } from "../capabilities/catalog";
-import type { TemplateEntry } from "../capabilities/templates";
+import type { CatalogTemplate, RefusedTemplate } from "../capabilities/templates";
 
 /** The version of the `capabilities` document this chant writes. */
 export const CAPABILITIES_CONTRACT_VERSION = 1;
@@ -44,9 +44,17 @@ export interface CapabilitiesResult extends CapabilitiesHead {
   /**
    * The investigation templates (#4531), the catalog's second kind of entry.
    * Added within contract 1; a document from a chant older than
-   * CAPABILITY_TEMPLATES_FLOOR lacks it.
+   * CAPABILITY_TEMPLATES_FLOOR lacks it. From PROJECT_TEMPLATES_FLOOR it
+   * holds chant's templates and then the project's own from
+   * `.chant/templates.json` (behold#1142), each with its `origin`.
    */
-  templates: TemplateEntry[];
+  templates: CatalogTemplate[];
+  /**
+   * The project's template entries left out of `templates`, each naming the
+   * file and field at fault (behold#1142). Added within contract 1 at
+   * PROJECT_TEMPLATES_FLOOR.
+   */
+  refused: RefusedTemplate[];
 }
 
 export interface CapabilitiesFailure extends CapabilitiesHead {
@@ -63,11 +71,14 @@ async function head(): Promise<CapabilitiesHead> {
 /**
  * The catalog, with a support statement for each lexicon named. Each is
  * loaded on its own, so one that isn't installed is said to be, and the rest
- * still read.
+ * still read. The templates are the catalog for the project at `dir`:
+ * chant's, and the ones `.chant/templates.json` at its workspace or project
+ * root declares (behold#1142).
  */
 export async function capabilitiesDocument(
   lexicons: string[],
   load?: (name: string) => Promise<{ capabilityPack?: { mapping: unknown } }>,
+  dir: string = process.cwd(),
 ): Promise<CapabilitiesResult> {
   const loadPlugin = load ?? (await import("../cli/plugins")).loadPlugin;
   const { capabilityCatalog } = await import("../capabilities/catalog");
@@ -81,14 +92,15 @@ export async function capabilitiesDocument(
       mappings[name] = undefined;
     }
   }
-  const { investigationTemplates } = await import("../capabilities/templates");
+  const { templateCatalog } = await import("../capabilities/templates");
   const catalog = capabilityCatalog(mappings);
   for (const c of catalog.capabilities) {
     for (const name of notLoaded) {
       c.lexicons[name] = { code: "lexicon-not-loaded", message: `the ${name} lexicon isn't installed where this chant runs, so its mapping wasn't read` };
     }
   }
-  return { ...(await head()), ...catalog, templates: investigationTemplates() };
+  const { templates, refused } = templateCatalog(dir);
+  return { ...(await head()), ...catalog, templates, refused };
 }
 
 export async function capabilitiesFailure(error: CapabilitiesFailure["error"]): Promise<CapabilitiesFailure> {

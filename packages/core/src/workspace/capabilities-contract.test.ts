@@ -2,7 +2,8 @@
  * The `capabilities` document of the read contract (#4375): its schema, the
  * document `chant search --capabilities --json` prints, and its failure.
  */
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { contract, validSchema } from "./__fixtures__/contract-repo";
@@ -48,7 +49,7 @@ describe("capabilities.schema.json", () => {
 
 describe("the document", () => {
   test("lists the fifteen capabilities with a support statement for each lexicon asked about", async () => {
-    const doc = await capabilitiesDocument(["aws", "terraform", "no-such-lexicon"], load);
+    const doc = await capabilitiesDocument(["aws", "terraform", "no-such-lexicon"], load, tmpdir());
     expectValid(doc);
     expect(doc.contract).toBe(1);
     expect(doc.capabilities).toHaveLength(16);
@@ -70,11 +71,45 @@ describe("the document", () => {
     expect(doc.helpers.map((h) => h.name)).toEqual(["in-sg", "ingress-of", "world-open", "allows", "denies", "pivot"]);
     // #4531: the investigation templates ride on the same document.
     expect(doc.templates.map((t) => t.id)).toContain("ownership");
+    expect(doc.templates.every((t) => t.origin === "chant")).toBe(true);
+    expect(doc.refused).toEqual([]);
     expect(doc.templates.find((t) => t.id === "dependents")?.query).toEqual({ kind: "path", text: "->*{{node}}" });
     expect(schema.$defs.result.properties.templates.description).toContain("written by chant");
     for (const c of doc.capabilities) {
       expect(c.answers.length, c.name).toBeGreaterThan(0);
       expect(c.search, c.name).toBe(c.shape === "set" ? `cap:${c.name}` : `->[cap=${c.name}]`);
+    }
+  });
+
+  test("lists a project's own templates after chant's with their origin, and its refused entries (behold#1142)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chant-capabilities-templates-"));
+    try {
+      writeFileSync(join(dir, "package.json"), "{}");
+      mkdirSync(join(dir, ".chant"));
+      const own = {
+        id: "bucket-readers",
+        title: "Bucket readers",
+        question: "which functions read this bucket",
+        kinds: ["AWS::S3::Bucket"],
+        inputs: [{ name: "node", kind: "resource", description: "the bucket" }],
+        reads: "session",
+        query: { kind: "cypher", text: "MATCH (f:Resource)-[:REF]->(b:Resource {key: $key}) RETURN DISTINCT f.key AS key" },
+      };
+      writeFileSync(join(dir, ".chant", "templates.json"), JSON.stringify({ version: 1, templates: [own, { ...own, id: "ownership" }, { ...own, id: "broken", reads: "all" }] }));
+      const doc = await capabilitiesDocument([], load, dir);
+      expectValid(doc);
+      expect(doc.templates.at(-1)).toEqual({ ...own, origin: "project" });
+      expect(doc.templates.filter((t) => t.origin === "project")).toHaveLength(1);
+      expect(doc.templates.find((t) => t.id === "ownership")?.origin).toBe("chant");
+      expect(doc.refused.map((r) => [r.id, r.field])).toEqual([
+        ["broken", "templates[2].reads"],
+        ["ownership", "templates[1].id"],
+      ]);
+      // choudoufu refuses a whole list on one bad entry or a repeated id, so the list it reads holds neither.
+      expect(new Set(doc.templates.map((t) => t.id)).size).toBe(doc.templates.length);
+      for (const r of doc.refused) expect(r.message).toContain(`.chant/templates.json ${r.field}: `);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
