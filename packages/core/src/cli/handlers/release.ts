@@ -714,15 +714,17 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     const check =
       checkLines.length > 0
         ? async (at: string) => {
-            const { runToStderr } = await import("../../workspace/train-shell");
+            const { runToStderrCaptured, failedOutputBlock } = await import("../../workspace/train-shell");
             const env: NodeJS.ProcessEnv = { ...process.env, CHANT_RELEASE_COMMIT: at };
             delete env[RELEASE_LABEL_ENV];
             if (label !== null) env[RELEASE_LABEL_ENV] = label;
             if (digestsFile) env.CHANT_RELEASE_DIGESTS = digestsFile;
             for (const line of checkLines) {
               console.error(`check: ${line}`);
-              const code = await runToStderr(line, { cwd: cutCwd, env });
+              const { code, stdout, stderr } = await runToStderrCaptured(line, { cwd: cutCwd, env });
               if (code !== 0) {
+                // The refusal's message is one line, and a train shows only the end of it: print what the check said first.
+                console.error(failedOutputBlock("release.check", line, { stdout, stderr }));
                 throw new ReleaseCutError(
                   "release-check-failed",
                   `no release was cut: release.check failed (exit ${code}): ${line}`,

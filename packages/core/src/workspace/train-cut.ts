@@ -47,7 +47,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { runToStderr } from "./train-shell";
+import { runToStderr, tailLines } from "./train-shell";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -414,7 +414,10 @@ export const spawnMemberCut: MemberCutter = async (m, commit, o) => {
   const r = spawnSync(bin!, args, { cwd: resolve(o.root, m.dir), encoding: "utf-8", stdio: ["ignore", "pipe", o.yes ? "pipe" : "inherit"], maxBuffer: 256 * 1024 * 1024 });
   if (r.status !== 0) {
     const why = `${r.stderr ?? ""}`.trim().split("\n").filter(Boolean).slice(-3).join(" ");
-    throw new TrainCutError("train-cut-failed", `the cut of ${m.member} at ${m.label} failed${why ? `: ${why}` : ""}`, "Fix the cause and run the train again: members already cut from this commit are taken as they are.");
+    // The member's cut prints the failing check's output to its stderr; show its tail, not only the last line.
+    const output = o.yes ? tailLines(`${r.stderr ?? ""}`) : "";
+    const detail = output && output.includes("\n") ? `\n--- output of the cut of ${m.member} (stderr) ---\n${output}` : "";
+    throw new TrainCutError("train-cut-failed", `the cut of ${m.member} at ${m.label} failed${why ? `: ${why}` : ""}${detail}`, "Fix the cause and run the train again: members already cut from this commit are taken as they are.");
   }
   if (!o.yes) {
     if (r.stdout) process.stderr.write(r.stdout);
