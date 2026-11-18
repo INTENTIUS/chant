@@ -568,6 +568,27 @@ export async function cutTrain(q: TrainCutRun): Promise<TrainCutOutcome> {
     if (failed.length > 0) throw new TrainCutError("train-doctor-failed", `release doctor found a target that can't publish from here in ${failed.join(", ")}`, "Nothing was cut. Fix what the doctor reports and run the train again.");
   }
 
+  // #5319: a member's forge notes file needs the heading for the label the train cuts it at, before the first member is tagged.
+  {
+    const { loadChantConfig } = await import("../config");
+    const { checkForgeNotesFiles } = await import("../lifecycle/publish-forge");
+    const { PublishTargetError } = await import("../lifecycle/release-publish");
+    const { memberTags, renderReleaseTag } = await import("../lifecycle/release-tag");
+    for (const m of plan.members) {
+      if (m.resumed) continue;
+      const dir = resolve(root, m.dir);
+      try {
+        const decls = (await loadChantConfig(dir)).config.release?.publish ?? [];
+        if (!decls.some((d) => d.type === "forge" && d.notes?.file)) continue;
+        const tags = await memberTags(dir);
+        checkForgeNotesFiles(decls, dir, m.label, (l) => renderReleaseTag(tags.template, tags.place, l));
+      } catch (err) {
+        if (err instanceof PublishTargetError) throw new TrainCutError(err.code, `nothing was cut: ${m.member}: ${err.message}`, err.fix);
+        throw err;
+      }
+    }
+  }
+
   const cutter = q.cutter ?? spawnMemberCut;
   const tags: Record<string, string> = {};
   for (const m of plan.members) {

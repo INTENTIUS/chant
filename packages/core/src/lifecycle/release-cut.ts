@@ -158,6 +158,7 @@ export type ReleaseCutCode =
   | "publish-npm-carries-image"
   | "publish-npm-pack-failed"
   /** #5230: an npm target names a package the registry has never published, or the registry can't say. */
+  | "publish-forge-notes-missing"
   | "publish-npm-never-published"
   | "publish-npm-registry-unreadable";
 
@@ -641,10 +642,18 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     const { loadChantConfig } = await import("../config");
     const { checkPackagesPublished, npmPublishedLookup } = await import("./publish-npm");
     const { PublishTargetError } = await import("./release-publish");
+    const { memberTags, renderReleaseTag, ReleaseTagError } = await import("./release-tag");
     try {
-      checkPackagesPublished((await loadChantConfig(cwd, { fresh: true })).config.release?.publish ?? [], cwd, req.npmPublished ?? npmPublishedLookup());
+      const decls = (await loadChantConfig(cwd, { fresh: true })).config.release?.publish ?? [];
+      checkPackagesPublished(decls, cwd, req.npmPublished ?? npmPublishedLookup());
+      // #5319: a forge target's notes file needs the heading for this label, which the publish refuses without after the tag is pushed.
+      if (req.label !== null && decls.some((d) => d.type === "forge" && d.notes?.file)) {
+        const { checkForgeNotesFiles } = await import("./publish-forge");
+        const tags = await memberTags(cwd);
+        checkForgeNotesFiles(decls, cwd, req.label, (l) => renderReleaseTag(tags.template, tags.place, l));
+      }
     } catch (err) {
-      if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
+      if (err instanceof PublishTargetError || err instanceof ReleaseTagError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
       throw err;
     }
   }

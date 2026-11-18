@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRedactor } from "./publish-credentials";
 import { PublishDeclarationSchema } from "./publish-declaration";
-import { memberCommits, releaseNotesSection } from "./publish-forge";
+import { checkForgeNotesFiles, memberCommits, releaseNotesSection } from "./publish-forge";
 import { createPublishTargets } from "./publish-targets";
 import { PublishTargetError, type PublishContext } from "./release-publish";
 import { appendCut, makeRelease, persistRelease } from "./release-store";
@@ -405,5 +405,40 @@ describe("a forge release's generated notes (#5153)", () => {
     expect(() => decl({ ...GH, notes: { generate: "commits", types: ["feat"], exclude: ["docs"] } })).toThrow(/name one/);
     expect(() => decl({ ...GH, notes: { generate: "commits", exclude: ["^docs:"] } })).toThrow(/a commit type/);
     expect(() => decl({ ...GH, notes: { generate: "commits", exclude: ["docs", "test", "chore"], nonConventional: true } })).not.toThrow();
+  });
+});
+
+describe("checkForgeNotesFiles (#5319)", () => {
+  const decl = (notes: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ type: "forge", forge: "github", repo: "acme/api", notes, ...extra });
+  const tagOf = (l: string) => `release/${l}`;
+  const dir = () => {
+    const d = member();
+    writeFileSync(join(d, "CHANGELOG.md"), "# Changelog\n\n## [1.4.0] - 2026-11-01\n\n- a change\n\n## [1.3.0]\n\n- older\n");
+    return d;
+  };
+
+  test("passes when the file has the heading for the label, with the version or tag filled in", () => {
+    const d = dir();
+    expect(() => checkForgeNotesFiles([decl({ file: "CHANGELOG.md", heading: "## [{version}]" })], d, "v1.4.0", tagOf)).not.toThrow();
+    expect(() => checkForgeNotesFiles([decl({ file: "CHANGELOG.md", heading: "## [1.3.0]" })], d, "v1.4.0", tagOf)).not.toThrow();
+  });
+
+  test("refuses a label with no heading, with the publish's code and remedy", () => {
+    const err = (() => {
+      try {
+        checkForgeNotesFiles([decl({ file: "CHANGELOG.md", heading: "## [{version}]" })], dir(), "v1.5.0", tagOf);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(PublishTargetError);
+    expect((err as PublishTargetError).code).toBe("publish-forge-notes-missing");
+    expect((err as PublishTargetError).message).toContain('no heading "## [1.5.0]"');
+    expect((err as PublishTargetError).fix).toBe('Write the "## [1.5.0]" section in CHANGELOG.md, or change notes.heading.');
+  });
+
+  test("refuses a missing file, and leaves targets with no notes file alone", () => {
+    expect(() => checkForgeNotesFiles([decl({ file: "NOPE.md", heading: "## {version}" })], dir(), "v1.4.0", tagOf)).toThrow(/does not exist/);
+    expect(() => checkForgeNotesFiles([decl({ generate: "commits" }), { type: "npm" }], dir(), "v9.9.9", tagOf)).not.toThrow();
   });
 });

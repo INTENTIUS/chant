@@ -129,6 +129,39 @@ export function releaseNotesSection(page: string, heading: string, linkBase?: st
   return body.replace(/\]\((\/(?!\/)[^)\s]*)/g, (_, path: string) => `](${base}${path}`);
 }
 
+/**
+ * The section of the notes file a forge target names, for `values`, or
+ * undefined when its notes name no file. Throws `publish-forge-notes-missing`
+ * when the file or the heading is not there. The publish plans with it, and
+ * the cut checks with it before it tags (#5319).
+ */
+function forgeNotesFileSection(decl: ForgePublishDeclaration, cwd: string, values: { label: string; version: string; tag: string }): string | undefined {
+  const n = decl.notes;
+  if (!n?.file || !n.heading) return undefined;
+  const heading = fillNotesText(n.heading, values);
+  try {
+    return releaseNotesSection(readFileSync(memberFile(cwd, n.file), "utf8"), heading, n.linkBase);
+  } catch (err) {
+    const why = (err as NodeJS.ErrnoException).code === "ENOENT" ? "it does not exist" : (err as Error).message;
+    throw new PublishTargetError("publish-forge-notes-missing", `the ${decl.forge} release's notes come from ${n.file}, and ${why}`, `Write the "${heading}" section in ${n.file}, or change notes.heading.`);
+  }
+}
+
+/**
+ * Refuses a cut of `label` when a forge target's notes name a file with no
+ * section for it (#5319). Run by the cut before anything is recorded or
+ * tagged, and by the train cut for each member. `tagOf` gives the tag the cut
+ * will make for the label, which a heading may name as `{tag}`.
+ */
+export function checkForgeNotesFiles(decls: ReadonlyArray<{ type: string }>, cwd: string, label: string, tagOf: (label: string) => string): void {
+  for (const d of decls) {
+    if (d.type !== "forge") continue;
+    const decl = d as ForgePublishDeclaration;
+    if (!decl.notes?.file) continue;
+    forgeNotesFileSection(decl, cwd, { label, version: releaseVersion(label) ?? label, tag: decl.tag ?? tagOf(label) });
+  }
+}
+
 /** The variables a forge's token is read from, in order. */
 export function forgeTokenEnv(decl: Pick<ForgePublishDeclaration, "forge" | "tokenEnv">): string[] {
   if (decl.tokenEnv) return [decl.tokenEnv];
@@ -510,14 +543,7 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         'Set notes.generate to "commits" for notes from the conventional commits since the previous release.',
       );
     }
-    if (!n?.file || !n.heading) return undefined;
-    const heading = fillNotesText(n.heading, notesValues(ctx, tag));
-    try {
-      return releaseNotesSection(readFileSync(memberFile(ctx.cwd, n.file), "utf8"), heading, n.linkBase);
-    } catch (err) {
-      const why = (err as NodeJS.ErrnoException).code === "ENOENT" ? "it does not exist" : (err as Error).message;
-      throw new PublishTargetError("publish-forge-notes-missing", `the ${decl.forge} release's notes come from ${n.file}, and ${why}`, `Write the "${heading}" section in ${n.file}, or change notes.heading.`);
-    }
+    return forgeNotesFileSection(decl, ctx.cwd, notesValues(ctx, tag));
   };
   const notesValues = (ctx: PublishContext, tag: string) => {
     const label = ctx.label ?? tag;
