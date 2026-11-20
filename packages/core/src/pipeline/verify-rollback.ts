@@ -8,8 +8,11 @@
  *
  * Two failures count:
  *
- * - verify: a promote into the stage deployed, and a component's verify step
- *   (or any step after its apply) failed, so the run failed;
+ * - verify: a promote into the stage failed at a verify step, as
+ *   `isVerifyStep` (`../components/verify-step.ts`) names one: a step in a
+ *   phase named `Verify`, or of a wait-and-verify kind. The agent trigger of
+ *   #5339 reads a failed verify by the same function. A failed apply is not
+ *   one, so the stage holds as before;
  * - soak: a check of the stage's soak failed while a promote out of it read
  *   the soak (`./soak-gate.ts`).
  *
