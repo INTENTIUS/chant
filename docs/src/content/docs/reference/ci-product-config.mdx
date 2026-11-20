@@ -65,6 +65,8 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `environments.<name>.hold` | a manual hold: no release is promoted into the stage | `true`, or a map with `reason` and `until`, an ISO 8601 time | a stage's `hold` |
 | `environments.<name>.freeze` | the freeze windows in which no release is promoted into the stage | a list of maps with `from`, `until` (ISO 8601 times) and `reason` | a stage's `freeze` |
 | `environments.<name>.failure_tolerance` | the failed runs a wave of many targets lets through before the stage stops | a whole number of runs, or a share of the wave's runs such as `10%` | a stage's `failureTolerance`, a wave's `failureTolerance` |
+| `environments.<name>.after` | the stages a release applies in before the stage opens for it | a list of environment names; the stage before it in `promotion` when unset | a stage's `after` |
+| `environments.<name>.queue` | how a stage takes releases: one at a time, a newer release waiting replacing an older one | `replace` | a stage's `queue` |
 | `release.cut` | a merge cuts a release once the first stage applied | `true` or `false`; `true` when the product writes a pipeline | `release.cut` |
 | `release.label` | the label the merge's release is cut with | a label, or `auto` for the next version | `release.label`, `chant release cut <label>` |
 | `environments.<name>.config.<variable>`, `config_sets.<set>.config.<variable>` | a plain value the stage's jobs get as a variable | a string | `EnvironmentSets.environments.<name>.config` |

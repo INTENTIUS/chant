@@ -324,3 +324,71 @@ export async function readMemberGates(
   }
   return { gates, ledger };
 }
+
+/** One release as a stage's log names it (#5353). */
+export interface StatusStageRelease {
+  /** The digest the stage gate binds: the release's, or the promoted digests'. */
+  digest: string;
+  label: string | null;
+  /** When the line was written: the release reached, entered, or was replaced at the stage. */
+  at: string;
+}
+
+/** One stage of a pipeline that keeps a stage log (#5353): the release in it, the one waiting, and those replaced. */
+export interface StatusStageQueue {
+  /** The pipeline, the op its stage gates are recorded under. */
+  pipeline: string;
+  stage: string;
+  /** The release whose deploy into the stage started and has not finished, or null. */
+  inStage: StatusStageRelease | null;
+  /** The releases waiting for the stage, oldest first. */
+  waiting: StatusStageRelease[];
+  /** The waiting releases a newer one replaced, oldest first, each with the release that replaced it. */
+  replaced: (StatusStageRelease & { by: string; byLabel: string | null })[];
+}
+
+/** Reads each pipeline's `stages.jsonl` under a gate ledger directory at `commit`: pipeline name to contents. */
+export type StageLogReader = (gatesDir: string, commit: string, cwd: string) => Promise<Map<string, string>>;
+
+export const defaultStageLogReader: StageLogReader = async (gatesDir, commit, cwd) => {
+  const out = new Map<string, string>();
+  let names: string[];
+  try {
+    names = git(cwd, ["ls-tree", "--name-only", "-r", `${commit}:${gatesDir}`]).split("\n");
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    const m = /^([^/]+)\/stages\.jsonl$/.exec(name);
+    if (!m) continue;
+    try {
+      out.set(m[1]!, git(cwd, ["cat-file", "blob", `${commit}:${gatesDir}/${name}`]));
+    } catch {
+      // A log that can't be read is left out, as an unreadable change set is.
+    }
+  }
+  return out;
+};
+
+/** Every stage the logs under `gatesDir` name, by pipeline then in the order first logged. Empty when none is kept. */
+export async function readMemberStageQueues(gatesDir: string, commit: string | null, cwd: string, read: StageLogReader = defaultStageLogReader): Promise<StatusStageQueue[]> {
+  if (commit === null) return [];
+  const { parseStageLines, stageQueueOf, stagesInLog } = await import("../lifecycle/stage-log");
+  const files = await read(gatesDir, commit, cwd).catch(() => new Map<string, string>());
+  const out: StatusStageQueue[] = [];
+  for (const pipeline of [...files.keys()].sort()) {
+    const lines = parseStageLines(files.get(pipeline)!);
+    for (const stage of stagesInLog(lines)) {
+      const q = stageQueueOf(lines, stage);
+      const view = (l: { digest: string; label?: string; timestamp: string }): StatusStageRelease => ({ digest: l.digest, label: l.label ?? null, at: l.timestamp });
+      out.push({
+        pipeline,
+        stage,
+        inStage: q.inStage ? view(q.inStage) : null,
+        waiting: q.waiting.map(view),
+        replaced: q.replaced.map((l) => ({ ...view(l), by: l.by!, byLabel: l.byLabel ?? null })),
+      });
+    }
+  }
+  return out;
+}

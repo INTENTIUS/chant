@@ -5,8 +5,8 @@
  * `yodel.config.ts` itself, so the product writes the file from its config,
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
- * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `approval_rules`,
- * `release.cut`) onto a
+ * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `.after`, `.queue`,
+ * `approval_rules`, `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
  * {@link checkPipelineFile} is what `<product> ci --check` runs: it fails
  * when the committed file is not the one the config writes now.
@@ -41,6 +41,10 @@ export interface PipelineEnvironmentConfig {
   publish?: Record<string, { member?: string; output?: string; secret?: unknown }>;
   /** `reads.<variable>`: `{ stage, artifact }` (#5356). */
   reads?: Record<string, { stage: string; artifact: string }>;
+  /** The stages a release applies in before this one opens (#5353). */
+  after?: string[];
+  /** `replace`: one release at a time, a newer one waiting replacing an older (#5353). */
+  queue?: PipelineStage["queue"];
   [key: string]: unknown;
 }
 
@@ -143,6 +147,8 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(forge ? { forgeEnvironment: forge } : {}),
       ...(publishOf(env.publish) ? { publish: publishOf(env.publish)! } : {}),
       ...(env.reads && Object.keys(env.reads).length > 0 ? { reads: Object.fromEntries(Object.entries(env.reads).map(([k, r]) => [k, { stage: r.stage, artifact: r.artifact }])) } : {}),
+      ...(env.after && env.after.length > 0 ? { after: [...env.after] } : {}),
+      ...(env.queue !== undefined ? { queue: env.queue } : {}),
     };
   });
   const declaration: PipelineDeclaration = {

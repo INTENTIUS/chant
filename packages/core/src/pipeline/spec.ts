@@ -116,7 +116,27 @@ export interface PipelineStage {
    * refuses a read no earlier stage publishes. Absent: none.
    */
   reads?: Record<string, StageArtifactRead>;
+  /**
+   * The stages a release succeeds in before this one opens (#5353), by
+   * name: a release fans out to the stages that name one stage, and joins
+   * again at a stage that names several. The stage opens for a release only
+   * once that same release applied in each of them, and then through its
+   * own gate. Absent: the stage before it in `stages`. The first stage is
+   * the one a merge applies, and takes none.
+   */
+  after?: string[];
+  /**
+   * How the stage takes releases (#5353). `"replace"`: one release at a
+   * time. A newer release waiting for the stage replaces an older one still
+   * waiting, and a release already in the stage finishes before the next
+   * one enters. Absent: each promote goes through on its own.
+   */
+  queue?: PipelineStageQueue;
 }
+
+/** The values a stage's `queue` takes (#5353). */
+export const PIPELINE_STAGE_QUEUES = ["replace"] as const;
+export type PipelineStageQueue = (typeof PIPELINE_STAGE_QUEUES)[number];
 
 /**
  * The op-waves settings every stage shares: the Op, the plan and apply
@@ -160,7 +180,7 @@ const TOLERANCE = /^(100|[1-9]?[0-9])%$/;
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
 export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
@@ -270,6 +290,77 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   const replan = replanDependentsProblem(stage.replanDependents, `${at}.replanDependents`);
   if (replan) out.push(replan);
   out.push(...stagePublishProblems(stage.publish, at), ...stageReadsProblems(stage.reads, at));
+  if (stage.after !== undefined) {
+    if (!Array.isArray(stage.after) || stage.after.length === 0 || !stage.after.every((n) => typeof n === "string" && NAME.test(n))) out.push(`${at}.after must list the names of one or more stages`);
+    else {
+      if (i === 0) out.push(`${at} is the first stage, the one a merge applies, so it takes no after`);
+      if (name !== undefined && stage.after.includes(name)) out.push(`${at}.after names the stage itself`);
+      const twice = stage.after.filter((n, k) => stage.after !== undefined && (stage.after as string[]).indexOf(n) !== k);
+      if (twice.length > 0) out.push(`${at}.after names ${[...new Set(twice)].join(", ")} twice`);
+    }
+  }
+  if (stage.queue !== undefined && !(PIPELINE_STAGE_QUEUES as readonly unknown[]).includes(stage.queue)) out.push(`${at}.queue is ${PIPELINE_STAGE_QUEUES.join(", ")}`);
+  return out;
+}
+
+/**
+ * The stages each stage follows (#5353): its `after`, else the stage before
+ * it in the list, else none for the first.
+ */
+export function stageUpstreams(spec: Pick<PipelineDeclaration, "stages">, name: string): string[] {
+  const index = spec.stages.findIndex((s) => s.name === name);
+  if (index < 0) return [];
+  const stage = spec.stages[index]!;
+  if (stage.after !== undefined) return [...stage.after];
+  return index === 0 ? [] : [spec.stages[index - 1]!.name];
+}
+
+/**
+ * A cycle among the stages, as the stage names around it with the first
+ * repeated at the end, or undefined when there is none. Each stage follows
+ * {@link stageUpstreams}.
+ */
+export function stageCycle(spec: Pick<PipelineDeclaration, "stages">): string[] | undefined {
+  const state = new Map<string, "open" | "done">();
+  const path: string[] = [];
+  const visit = (name: string): string[] | undefined => {
+    if (state.get(name) === "done") return undefined;
+    if (state.get(name) === "open") return [...path.slice(path.indexOf(name)), name];
+    state.set(name, "open");
+    path.push(name);
+    for (const up of stageUpstreams(spec, name)) {
+      if (!spec.stages.some((s) => s.name === up)) continue;
+      const found = visit(up);
+      if (found) return found;
+    }
+    path.pop();
+    state.set(name, "done");
+    return undefined;
+  };
+  for (const s of spec.stages) {
+    const found = visit(s.name);
+    if (found) return found.reverse();
+  }
+  return undefined;
+}
+
+/** Whether a promote records its stages in the stage log (#5353): some stage declares `after` or `queue`. */
+export function pipelineTracksStages(spec: Pick<PipelineDeclaration, "stages">): boolean {
+  return spec.stages.some((s) => s.after !== undefined || s.queue !== undefined);
+}
+
+function graphProblems(stages: unknown[]): string[] {
+  const named = stages.filter((s): s is PipelineStage => isMap(s) && typeof s.name === "string" && Array.isArray(s.waves));
+  const names = new Set(named.map((s) => s.name));
+  const out: string[] = [];
+  for (const s of named) {
+    if (!Array.isArray(s.after)) continue;
+    const unknown = s.after.filter((n) => typeof n === "string" && !names.has(n));
+    if (unknown.length > 0) out.push(`stage "${s.name}".after names ${unknown.join(", ")}, which the pipeline has no stage for; its stages are ${[...names].join(", ")}`);
+  }
+  if (out.length > 0) return out;
+  const cycle = stageCycle({ stages: named });
+  if (cycle) out.push(`the stages ${cycle.join(" -> ")} form a cycle through after, so no release could open any of them; each stage follows its after, else the stage before it`);
   return out;
 }
 
@@ -287,6 +378,7 @@ export function pipelineSpecProblems(value: unknown): string[] {
   else {
     const seen = new Set<string>();
     value.stages.forEach((s, i) => out.push(...stageProblems(s, i, seen)));
+    if (out.length === 0) out.push(...graphProblems(value.stages));
     out.push(...stageArtifactsSpecProblems(value));
   }
   if (value.defaults !== undefined) {
@@ -384,6 +476,8 @@ export const PIPELINE_SPEC_SCHEMA = {
             type: "object",
             additionalProperties: { type: "object", required: ["stage", "artifact"], additionalProperties: false, properties: { stage: { type: "string", pattern: NAME.source }, artifact: { type: "string", minLength: 1 } } },
           },
+          after: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: NAME.source } },
+          queue: { enum: [...PIPELINE_STAGE_QUEUES] },
         },
       },
     },
