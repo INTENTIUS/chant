@@ -124,6 +124,8 @@ export * from "./pipeline/spec";
 export { foldPipelineSource, pipelineFindingLine, PIPELINE_FOLD_RULE, PIPELINE_MODULE, type PipelineFinding, type PipelineFold } from "./pipeline/fold";
 export { artifactsPublishHook, promotionOrderOf, pipelineStage, releaseCutHook, stageHeldAt, stageHeldLine, stageWavesName, stageWavesSpec, type StageHeld } from "./pipeline/stages";
 export { gitShowPipeline, promoteBase, readMemberPipeline, readPipelineAt, type PipelineRead, type PipelineShow } from "./pipeline/read";
+export { pipelineStageSpecFile } from "./pipeline/generate";
+export { pipelineStageShow, PROMOTE_STAGE_WAVES_FLOOR, runStageWaves, stageReleaseItems, stageRunSpec, stageRunsWaves, type StageWaveRan, type StageWavesRun } from "./pipeline/stage-waves";
 export {
   isReleaseRisk,
   laterStageRisk,

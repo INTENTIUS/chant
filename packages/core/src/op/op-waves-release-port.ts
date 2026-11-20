@@ -13,8 +13,12 @@ import { opWaveRiskLines, releaseOfCommit, type OpWaveReleaseOutcome, type OpWav
  * `maybeRecordAutoRelease`, which appends and pushes, with the release a cut
  * from the commit names when there is one. Loaded behind dynamic imports, so
  * the wave-job runtime bundle stays without them until a step applied.
+ *
+ * With `release` (#5427), the waves a promote runs for a release: every
+ * record names that release, with the step's plan digest, so the stages
+ * after it find the release applied here whichever commit the job ran at.
  */
-export function gitOpWaveReleasePort(opts: { cwd?: string; actor?: string } = {}): OpWaveReleasePort {
+export function gitOpWaveReleasePort(opts: { cwd?: string; actor?: string; release?: { releaseDigest: string } } = {}): OpWaveReleasePort {
   return {
     // #5387: each wave's change risk, on the commit's file, pushed with the release records after it.
     async recordRisk(requests) {
@@ -45,7 +49,7 @@ export function gitOpWaveReleasePort(opts: { cwd?: string; actor?: string } = {}
       const { runId, runOrigin } = resolveRunId();
       const out: OpWaveReleaseOutcome[] = [];
       for (const req of requests) {
-        const joined = req.gitSha ? releaseOfCommit(releases, cuts, { commit: req.gitSha, env: req.env, component: req.component }, templates) : null;
+        const joined: { releaseDigest: string; templatesDigest?: string } | null = opts.release ? { releaseDigest: opts.release.releaseDigest } : req.gitSha ? releaseOfCommit(releases, cuts, { commit: req.gitSha, env: req.env, component: req.component }, templates) : null;
         const got = await maybeRecordAutoRelease(
           {
             component: req.component,
@@ -54,7 +58,7 @@ export function gitOpWaveReleasePort(opts: { cwd?: string; actor?: string } = {}
             runId,
             ...(runOrigin ? { runOrigin } : {}),
             ...(req.approver ? { approver: req.approver } : {}),
-            ...(joined ? { releaseDigest: joined.releaseDigest, templatesDigest: joined.templatesDigest } : {}),
+            ...(joined ? { releaseDigest: joined.releaseDigest, ...(joined.templatesDigest ? { templatesDigest: joined.templatesDigest } : {}) } : {}),
             appliedDigest: { digest: req.planDigest, kind: "plan" },
           },
           { ...(opts.cwd ? { cwd: opts.cwd } : {}), ...(req.gitSha ? { gitSha: req.gitSha } : {}), ...(opts.actor ? { actor: opts.actor } : {}) },

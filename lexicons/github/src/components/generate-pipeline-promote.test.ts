@@ -73,3 +73,36 @@ describe("github pipeline promote: the verify-failed facts", () => {
     expect(yaml(input)).not.toContain("CHANT_AGENT_FACTS");
   });
 });
+
+// #5427: a stage whose command requests the forge's OIDC token itself, with no cloud trade.
+describe("github pipeline promote: idTokens", () => {
+  type Doc = { jobs: Record<string, { permissions?: Record<string, string>; steps: Array<{ name?: string; run?: string; env?: Record<string, string> }> }> };
+  const doc = (i: PipelinePromoteInput) => parseYAML(yaml(i)) as unknown as Doc;
+  const tokens = { ...input, stages: [{ name: "staging", idTokens: { AWS_ID_TOKEN: "sts.amazonaws.com" } }, { name: "prod" }] };
+
+  test("the job gets id-token: write, the step the audience, and the request variables stay", () => {
+    const jobs = doc(tokens).jobs;
+    expect(jobs["promote-staging"]!.permissions).toEqual({ contents: "write", "id-token": "write" });
+    const step = jobs["promote-staging"]!.steps.find((s) => s.run?.includes("components promote"))!;
+    expect(step.env).toMatchObject({ AWS_ID_TOKEN_AUDIENCE: "sts.amazonaws.com" });
+    expect(step.run).not.toContain("unset");
+    expect(jobs["promote-staging"]!.steps.some((s) => s.name?.startsWith("Trade"))).toBe(false);
+    expect(jobs["promote-prod"]!.permissions).toBeUndefined();
+  });
+
+  test("beside a trade, the request variables stay for the command", () => {
+    const both = doc({ ...input, stages: [{ name: "staging", cloud: { aws: { role: "arn:aws:iam::1:role/apply", region: "us-east-1", audience: "sts.amazonaws.com" } }, idTokens: { DB_TOKEN: "rds" } }] });
+    const job = both.jobs["promote-staging"]!;
+    expect(job.permissions).toEqual({ contents: "write", "id-token": "write" });
+    expect(job.steps.find((s) => s.run?.includes("components promote"))!.run).not.toContain("unset");
+  });
+
+  test("idTokens that are not { variable: audience } are refused", () => {
+    expect(() => yaml({ ...input, stages: [{ name: "staging", idTokens: { "1BAD": "aud" } }] })).toThrow(/not a variable name/);
+    expect(() => yaml({ ...input, stages: [{ name: "staging", idTokens: {} }] })).toThrow(/at least one token/);
+  });
+
+  test("without idTokens the file is as before", async () => {
+    await expect(yaml(input)).toMatchFileSnapshot("./__golden__/pipeline-promote.github.yml");
+  });
+});

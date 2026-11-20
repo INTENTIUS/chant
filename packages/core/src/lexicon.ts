@@ -1521,6 +1521,18 @@ export interface PipelinePromoteStageInputs {
   /** The stage's cloud identity, traded for before the checkout (`ci.identity`'s apply identity for the stage). */
   cloud?: import("./ci-identity").CloudTradeSpec;
   /**
+   * The OIDC tokens the promote's command requests itself (#5427), as `{
+   * <variable>: <audience> }`, an op wave's `idTokens`: a step that mints a
+   * database password from the job's identity with no `cloud` trade (the
+   * sql lexicon's `rds-iam`, `cloud-sql-iam`, `entra`). GitLab declares
+   * them as the job's `id_tokens:`. GitHub gives the job `id-token: write`
+   * and the promote's step the audience as `<variable>_AUDIENCE`, with the
+   * token request variables kept; Forgejo renders the same job, and its
+   * runner ignores `permissions:`. Absent: the job asks for no token unless
+   * `cloud` trades one.
+   */
+  idTokens?: Record<string, string>;
+  /**
    * The stage's agent steps (#5358): the variables holding their model keys.
    * Given, the promote gets a job before it that holds a read token only and
    * runs `pipeline agent run`, and the promote job records the answers with

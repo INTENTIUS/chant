@@ -84,6 +84,7 @@ A group whose rules a gate's targets leave out is dropped, and a gate left with 
 | `hooks` | `defaults.hooks`, then the stage's |
 | the last wave's `hooks.after.apply` | on the first stage, `<bin> release cut <label> --yes`, unless `release.cut` is `false`; then `<bin> pipeline artifacts publish --stage <name>` when the stage has `publish` |
 | `control` | on the first stage, the pipeline's `control` |
+| `release` | `defaults.release`; with a `defaults.step` and run targets that some other stage lacks (targets that name environments), `component` is `defaults.release.component`, else the pipeline's name |
 
 A wave job reads its spec, and its gate at the base commit, through `chant pipeline spec --stage <name>`, which folds `.chant/pipeline.ts` at the commit in `CHANT_WAVES_SPEC_AT`. A commit with no pipeline prints nothing, which a wave reads as a spec absent at base: it waits for an approval.
 
@@ -106,6 +107,20 @@ With a pipeline at the default branch's tip, `chant components promote --to <sta
 A stage with `reads` refuses the promote with exit 1 before its gate when no `--release` is named, or when an upstream stage has not published a read artifact for that release. A stage with `publish` publishes once the promote under `--release` deployed; a publish it refuses fails the promote with exit 1 after the deploy.
 
 `chant workspace train promote <env>` refuses with exit 3 when a member's pipeline holds the stage.
+
+A member with a `defaults.step` and its work in op waves, with `*.component.ts` files absent, promotes into a stage by that stage's op waves:
+
+| Case | Result |
+|---|---|
+| no `--release` | exit 1: the waves apply one release, and the stage's gate binds it |
+| `--digest`, `--plan-only`, `--wave-gate` or `--resume` | exit 1 |
+| the stage promoted from has no record of the release or of the commit it was cut from | exit 1 |
+| the stage's gate passes | the promote writes `stageRunSpec` to `.chant/op-waves/<pipeline>-<stage>.spec.json` (a step input `spec` names that file) and runs each wave in order as `chant run wave` does, with no stand-down |
+| a wave's gate | read from the pipeline at the tip through `pipelineStageShow`; the gate is decided on the wave's plan digest under op `<pipeline>-<stage>`, and a wave that waits exits 3 with its `chant approve` line |
+| the checkout lacks the release's commit | exit 1, before any wave plans |
+| a wave ends with another exit | the promote ends with it, and runs no wave after it |
+
+Its release records name the release (`releaseDigest`) with the step's plan digest (`digestKind: "plan"`). `@intentius/chant/pipeline` exports `runStageWaves`, `stageRunSpec`, `pipelineStageShow`, `stageReleaseItems` and `PROMOTE_STAGE_WAVES_FLOOR`. An engine that checks chant's wave decision again reads a stage's gate with `readOpWavePolicy(specFile, wave, base, cwd, pipelineStageShow())`.
 
 A stage with `after`, and a stage with `queue`, add these cases. A pipeline where some stage declares either keeps a log of its promotes at `_gates/<pipeline>/stages.jsonl` on `chant/lifecycle`.
 
