@@ -299,6 +299,12 @@ export interface PulumiUpArtifact {
   scratch: string;
   /** plunge's saved plan. plunge only. */
   planFile?: string;
+  /**
+   * The preview as a JSON document (`steps`, `diagnostics`, `changeSummary`),
+   * in `scratch`, for a wave's cost hold to price as `{planJson}` (#5341).
+   * Both engines write it.
+   */
+  planJson?: string;
   /** The scratch copy of the stack's config, when the step has `config`. */
   configFile?: string;
   /** CrossGuard's findings from the plan's preview. */
@@ -768,6 +774,14 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
     throw err;
   }
   const planDigest = read.part.member.planDigest!;
+  // #5341: the preview document beside the plan, which a wave's cost hold reads as {planJson}.
+  const planJson = join(files.scratch, `${fileSafe(r.member)}.preview.json`);
+  let wrotePreview = true;
+  try {
+    writeFileSync(planJson, JSON.stringify(read.preview), { mode: 0o600 });
+  } catch {
+    wrotePreview = false;
+  }
   const references = stackReferencesOf(read.prior, input);
   const planned = pulumiMemberPlannedOutputs(r.member, {
     part: read.part,
@@ -786,6 +800,7 @@ async function planStack(ctx: DeployContext, original: PulumiUpStepInput, opts: 
     shape: read.shape,
     scratch: files.scratch,
     ...(files.planFile ? { planFile: files.planFile } : {}),
+    ...(wrotePreview ? { planJson } : {}),
     ...(files.configFile ? { configFile: files.configFile } : {}),
     policy: read.policy,
     ...(packs.read ? { policyPacks: packs.read } : {}),

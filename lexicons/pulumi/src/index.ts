@@ -1,6 +1,7 @@
 export { pulumiPlugin } from "./plugin";
 export { PULUMI_REFERENCE_CATALOG, CATALOGUED_KINDS, REFERENCES_NOTHING, isUnresolvedKind } from "./reference-catalog";
-export { PULUMI_REFERENCE_CATALOG_FLOOR } from "./chant-floors";
+export { PULUMI_REFERENCE_CATALOG_FLOOR, PULUMI_COST_HOLD_FLOOR } from "./chant-floors";
+export { pulumiCostHold, type PulumiCostHold } from "./cost-hold";
 export { pulumiSerializer } from "./serializer";
 export { pulumiConfigSchema, pulumiMemberConfigSchema, type PulumiConfig } from "./config";
 export { readPulumiMember, PULUMI_EXPORT_FILE, type PulumiMemberConfig, type PulumiMemberReport } from "./workspace-member";
