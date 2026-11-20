@@ -6,16 +6,22 @@
  */
 
 import { quorumRuleSites, ruleNeedsProof, targetGlobMatch, type GateQuorumRule } from "./gate-quorum";
+import { NEXT_RELEASE } from "../release-floors";
 import type { GateApprovalSource, OpWave, OpWavesSpec } from "./op-waves";
 
 /**
  * Whether a rule that needs proof on a wave nothing can prove an approver
- * for refuses the spec (#5349). False in the release that adds the check:
- * the generator warns and writes the pipeline. The next release sets it to
- * true, and `generateOpWavesPipeline` then refuses the spec with the same
- * lines.
+ * for refuses the spec (#5349, #5379). True: `generateOpWavesPipeline`
+ * refuses the spec with the finding's lines and writes nothing.
  */
-export const UNPROVABLE_QUORUM_REFUSED = false;
+export const UNPROVABLE_QUORUM_REFUSED = true;
+
+/**
+ * The first chant whose `generateOpWavesPipeline` refuses an approval rule
+ * that needs proof where the signers file names nobody and no review mode
+ * applies (#5379), and writes nothing.
+ */
+export const UNPROVABLE_QUORUM_REFUSED_FLOOR = NEXT_RELEASE;
 
 /** What can prove an approver where the spec is built (#5349). */
 export interface OpWavesProofSources {

@@ -117,14 +117,14 @@ wave 2 (prod): approval group any release: waits for one of two-approvers, relea
 
 A group is dropped for a wave whose targets none of its rules cover, and a wave left with no rule needs one approval, so an `any` is met only by a rule that counts real approvers. The warnings below read every rule, grouped or not, and name it by where it is written, such as `approvals.quorum[0].any[0]`. A chant older than the release `GATE_REJECTION_FLOOR` in `@intentius/chant/op` names refuses a group or a `name`. A pipeline stage's gate takes the same groups ([Pipeline](/chant/reference/pipeline/#approval-rule-groups)).
 
-## Warnings when the pipeline is generated
+## Findings when the pipeline is generated
 
-`chant run --generate` checks the rules when it writes the pipeline, and `generateOpWavesPipeline` returns the same lines as `warnings` (`opWavesQuorumFindings` in `@intentius/chant/op`). The pipeline is still written, and each rule works as before.
+`chant run --generate` checks the rules when it writes the pipeline (`opWavesQuorumFindings` in `@intentius/chant/op`). The first finding is a warning: `generateOpWavesPipeline` returns its line as `warnings`, the pipeline is written, and the rule works as before. The second is a refusal.
 
 - A rule with a `count` above 1, no `roles` and no `proven`, on a wave whose mode takes plain lines. Set `proven: true`, or move the wave to `approval: "sealed"`, to clear it.
-- A rule that needs a proven approver (`roles`, `notAuthor` or `proven`) on a wave where nothing can prove one: the signers file in the repository the generator runs in (`.chant/allowed_signers`, or the file `.chant/trust.json` names) lists no key or passkey, and the wave's mode is not `pr-review`. That wave would wait for an approval that can never count. Add the approvers' keys to the signers file and approve with `chant approve --sign`, or set the wave's approval to `pr-review`, so the merged pull request's review proves its reviewers.
+- Refused: a rule that needs a proven approver (`roles`, `notAuthor` or `proven`) on a wave where nothing can prove one: the signers file in the repository the generator runs in (`.chant/allowed_signers`, or the file `.chant/trust.json` names) lists no key or passkey, and the wave's mode is not `pr-review`. That wave would wait for an approval that can never count. Add the approvers' keys to the signers file and approve with `chant approve --sign`, or set the wave's approval to `pr-review`, so the merged pull request's review proves its reviewers.
 
-The second warning becomes a refusal in a later release. The switch is one constant, `UNPROVABLE_QUORUM_REFUSED` in `packages/core/src/op/op-waves-quorum-warnings.ts`, which is `false` today. Set to `true`, `generateOpWavesPipeline` refuses the spec with the same lines and writes nothing. A spec the generator gives this warning for today is the only kind that switch refuses.
+`generateOpWavesPipeline` refuses the second spec with that line, `chant run --generate` exits 1, and nothing is written. A chant older than the release `UNPROVABLE_QUORUM_REFUSED_FLOOR` in `@intentius/chant/op` names warns and writes the pipeline.
 
 ## Approve a waiting wave
 
