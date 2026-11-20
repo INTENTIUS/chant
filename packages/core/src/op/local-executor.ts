@@ -767,6 +767,8 @@ function gateFn(step: GateStep): string {
  * key the entry declares, but a key only the Op declares (often a step output
  * the run computes) still reaches the policy. A field the entry leaves out
  * still comes from the Op, and `chant workspace check` (WSP153) reports it.
+ *
+ * #5388: `agentPassesAlone` comes from the entry alone, never from the Op.
  */
 export function resolveGateApproval(
   step: GateStep,
@@ -830,6 +832,8 @@ export function resolveGateApproval(
     mode: authored.mode ?? "log-only",
     ...(context ? { context } : {}),
     ...(authored.risk ? { risk: authored.risk } : {}),
+    // #5388: only the entry at base lets an agent's permit pass the gate alone.
+    ...(baseApproval?.agentPassesAlone === true ? { agentPassesAlone: true as const } : {}),
   };
 }
 

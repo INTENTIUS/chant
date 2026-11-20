@@ -6,6 +6,7 @@ import { NEXT_RELEASE } from "./release-floors";
 import type { FloorRow } from "./floor-table";
 
 export const FLOOR_ROWS: readonly FloorRow[] = [
+  { name: "AGENT_PASSES_ALONE_FLOOR", version: NEXT_RELEASE, gates: "The first chant whose agent permit passes an `enforce` Op gate alone only under `identity.gates.<gate>.agentPassesAlone` (#5388), and otherwise only beside a person's approval of the same plan; `chant build` warns while the key is set, names it for each enforced gate whose policy permits an agent, and refuses it on a pipeline stage's promote, skip, urgent, rollback or soak gate.", issue: "#5388", file: "op/agent-permit.ts", modules: ["@intentius/chant/op","@intentius/chant/op/agent-permit","@intentius/chant/op/index"] },
   { name: "CACHE4_PIN_FLOOR", version: "0.124.78", gates: "The first chant whose table has the `cache4` row (#4816).", issue: "#4816", file: "action-pins.ts", modules: ["@intentius/chant/action-pins"] },
   { name: "AGENT_GUARD_FLOOR", version: "0.124.77", gates: "The first chant with the shared agent guard (#4770).", issue: "#4770", file: "agent-guard.ts", modules: ["@intentius/chant/agent-guard","@intentius/chant/ci-product"] },
   { name: "CAPABILITY_TEMPLATES_FLOOR", version: "0.124.54", gates: "The first chant whose capabilities document carries `templates` (#4531).", issue: "#4531", file: "capabilities/templates.ts", modules: ["@intentius/chant/capabilities/templates"] },

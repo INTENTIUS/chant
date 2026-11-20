@@ -50,7 +50,8 @@ function ask(kind: "human" | "agent", plan: ChangeSetPart | undefined, extra: Re
 }
 
 /** A ledger in memory that a test appends approvals to between runs. */
-function memoryLedger() {
+/** `agentPassesAlone`: the gate's `identity.gates` entry at base sets it (chant#5388), so an agent's permit passes the gate alone. */
+function memoryLedger(agentPassesAlone = false) {
   const resolutions: GateResolutionRecord[] = [];
   const pending: PendingGateRecord[] = [];
   const port: GateLedgerPort = {
@@ -60,6 +61,7 @@ function memoryLedger() {
       pending.push(record);
       return { record, pushed: true };
     },
+    ...(agentPassesAlone ? { approvalRule: async (gate: string) => ({ requirement: { gate, class: null, agentPassesAlone: true }, refuses: () => null }) } : {}),
   };
   return { port, resolutions, pending };
 }
@@ -129,8 +131,19 @@ describe("#3182 Done when: a gate denies an agent's approval of a plan that dele
     expect(applied).toEqual([]);
   });
 
-  test("enforce: the same Op and pack let the agent through a plan that only adds a bucket", async () => {
+  test("enforce without agentPassesAlone at base: the agent's permit alone leaves the gate waiting for a person (chant#5388)", async () => {
     const ledger = memoryLedger();
+    const applied: string[] = [];
+    const op = estateApply({ policy, mode: "enforce" });
+    await runOpLocally(op, activitiesFor(ADDS_A_BUCKET, applied), {}, undefined, { gates: ledger.port, now: "2026-10-06T12:00:00.000Z" });
+    expect(await agentApproves(ledger, "2026-10-06T12:01:00.000Z")).toMatchObject({ decision: "allow" });
+    const second = await runOpLocally(op, activitiesFor(ADDS_A_BUCKET, applied), {}, undefined, { gates: ledger.port, now: "2026-10-06T12:02:00.000Z" });
+    expect(second.status).toBe("gated");
+    expect(applied).toEqual([]);
+  });
+
+  test("enforce with agentPassesAlone at base: the same Op and pack let the agent through a plan that only adds a bucket", async () => {
+    const ledger = memoryLedger(true);
     const applied: string[] = [];
     const op = estateApply({ policy, mode: "enforce" });
 

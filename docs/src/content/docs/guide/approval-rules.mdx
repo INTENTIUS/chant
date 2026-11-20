@@ -222,6 +222,26 @@ The rest of the `approval` block has the same exposure. Before chant#4404 a run 
 
 Each field is read on its own (`packages/core/src/op/local-executor.ts:768`). One the entry sets replaces the Op's. A `context` key the entry sets wins over the Op's key of that name. A key only the Op sets still reaches the policy, since the sql lexicon's gates hand a policy step outputs such as `verifiedRows` that no declaration can hold. A field the entry leaves out comes from the Op, so set `mode` and `policy` together: a base `policy` with no base `mode` lets the change pick `log-only`. The `policy` object is what the lexicon's helper renders, and a `version` that is not the digest of `text` is refused when the declaration is read (`packages/core/src/workspace/declaration.ts:1265`).
 
+### An agent's permit at base
+
+In `enforce`, an agent's permit passes an Op gate beside a person's approval of the same plan. To let it pass the gate with no person approving, the entry sets `agentPassesAlone`:
+
+```json
+"identity": {
+  "gates": {
+    "ship": {
+      "mode": "enforce",
+      "policy": { "kind": "gate-policy", "lexicon": "cedar", "name": "ship", "version": "sha256:...", "text": "..." },
+      "agentPassesAlone": true
+    }
+  }
+}
+```
+
+The key is read from the entry at base alone. An Op's `approval` block that sets it is refused at build (OPS015). `chant build` prints a warning for each gate of the member's Ops whose entry sets it, and refuses it on an entry that names a pipeline stage's gate: `<stage>`, `<stage>-skip`, `<stage>-urgent`, `<stage>-rollback` or `<stage>-soak`. A permit that reads the change risk counts only from a proven person, with the key or without it.
+
+A gate in `enforce` whose policy permits `Chant::Agent` and whose entry leaves the key out gets a build warning that names the key. Add `"agentPassesAlone": true` to the gate's entry to let the agent pass it alone. Without the key, the gate passes once a person approves beside the agent.
+
 ### Migrating a gate whose Op sets policy or mode
 
 A gate behaves differently only when its `identity.gates.<gate>` entry sets a field the Op also sets to something else. Adding `mode: "enforce"` to an entry makes a gate that ran in `log-only` start refusing approvals its policy denies, and a base `context` key can change what the policy sees. To move an Op's block to base:

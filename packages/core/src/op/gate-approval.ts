@@ -43,9 +43,9 @@ import { createHash } from "node:crypto";
 import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
 import { GATE_PLAN_CONTEXT_KEY } from "./gate-plan-context";
-import { GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isContextValue, isGatePolicyRef } from "./gate-approval-base";
+import { AGENT_PASSES_ALONE_KEY, GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isContextValue, isGatePolicyRef } from "./gate-approval-base";
 
-export { GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isGatePolicyRef } from "./gate-approval-base";
+export { AGENT_PASSES_ALONE_KEY, GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isGatePolicyRef } from "./gate-approval-base";
 import { quorumProblems, type GateQuorumRule, type GateQuorumSpec } from "./gate-quorum";
 import { CHANGE_RISK_CONTEXT_KEY, changeRiskProblems, type ChangeRiskSettings } from "../change-risk";
 
@@ -122,6 +122,13 @@ export interface ResolvedGateApproval {
   context?: Record<string, unknown>;
   /** `approval.risk` (#5325): a permit then counts only from a proven human. */
   risk?: Omit<ChangeRiskSettings, "questions">;
+  /**
+   * `identity.gates.<gate>.agentPassesAlone` at base (#5388): an agent's
+   * permit passes the gate in `enforce` with no person approving. Absent, an
+   * agent's permit passes it only beside a person's approval. Only the entry
+   * at base sets it; the Op's own `approval` block cannot.
+   */
+  agentPassesAlone?: true;
 }
 
 /**
@@ -240,6 +247,10 @@ export function gateApprovalProblems(approval: unknown): string[] {
     problems.push("`approval.mode: \"enforce\"` needs an `approval.policy` to enforce");
   }
 
+  if (a[AGENT_PASSES_ALONE_KEY] !== undefined) {
+    problems.push(`\`approval.${AGENT_PASSES_ALONE_KEY}\` is read only at base: set \`identity.gates.<gate>.${AGENT_PASSES_ALONE_KEY}\` in chant.workspace.json (#5388)`);
+  }
+
   if (a.risk !== undefined) {
     problems.push(...changeRiskProblems("approval.risk", a.risk, { quorum: true, questions: false }, (rules, at) => quorumProblems(rules, at, { notAuthor: false })));
   }
@@ -279,6 +290,8 @@ export interface GateBaseApproval {
   policy?: GatePolicyRef | null;
   mode?: GateApprovalMode | null;
   context?: Record<string, string | number | boolean | string[]> | null;
+  /** `identity.gates.<gate>.agentPassesAlone` (#5388): an agent's permit passes the gate in `enforce` with no person approving. */
+  agentPassesAlone?: boolean | null;
 }
 
 

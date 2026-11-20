@@ -1261,7 +1261,8 @@ describe("runApprove — a gate with an approval policy (#2508)", () => {
       },
     }));
     const out = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(out).toContain("In enforce mode this permit passes the gate on its own");
+    // #5388: no identity.gates entry sets agentPassesAlone, so the agent's permit needs a person beside it.
+    expect(out).toContain("In enforce mode an agent's permit passes the gate beside a person's approval of this plan; identity.gates.rollout-gate.agentPassesAlone at base lets it pass alone.");
     expect(out).toContain("An agent's approval does not count toward the quorum");
     errSpy.mockRestore();
   });

@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { buildCommand, buildCommandWatch, printErrors, printWarnings, resolveBuildFormat } from "../commands/build";
-import { formatError, formatInfo, formatSuccess, formatBold } from "../format";
+import { formatError, formatInfo, formatSuccess, formatBold, formatWarning } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
 import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
@@ -653,6 +653,52 @@ export async function gateEnvironmentBuildProblems(path: string): Promise<string
 }
 
 /**
+ * The build's findings for `identity.gates.<gate>.agentPassesAlone` (#5388),
+ * from the declaration of the workspace holding `path`. `stages` refuses the
+ * key on an entry naming one of those stages' gates; with `opsDir`, the Ops
+ * built there are read for the warnings. Undefined outside a workspace, or
+ * when the declaration does not read: the build reports that elsewhere.
+ */
+export async function agentPermitBuildCheck(
+  path: string,
+  options: { stages?: readonly { name: string }[]; opsDir?: string },
+): Promise<import("../../op/agent-permit").AgentPermitFindings | undefined> {
+  const found = findWorkspaceRoot(resolve(path));
+  if (!found) return undefined;
+  const { readDeclaration } = await import("../../workspace/declaration");
+  const { workingTree } = await import("../../workspace/tree");
+  let gates: Record<string, import("../../workspace/declaration").SignedGate>;
+  try {
+    gates = readDeclaration(workingTree(found.dir)).identity?.gates ?? {};
+  } catch {
+    return undefined;
+  }
+  if (!Object.values(gates).some((g) => g.agentPassesAlone === true) && !options.opsDir) return { warnings: [], refusals: [] };
+  const { agentPermitBuildFindings, opGatesWithApproval } = await import("../../op/agent-permit");
+  let ops: import("../../op/agent-permit").AgentPermitOpGate[] | undefined;
+  if (options.opsDir) {
+    const { existsSync, readdirSync, readFileSync } = await import("node:fs");
+    ops = [];
+    for (const name of existsSync(options.opsDir) ? readdirSync(options.opsDir).sort() : []) {
+      const file = join(options.opsDir, name, "op.json");
+      if (!existsSync(file)) continue;
+      try {
+        ops.push(...opGatesWithApproval(JSON.parse(readFileSync(file, "utf8")), name));
+      } catch {
+        // An op.json that does not parse is the build's own error to report.
+      }
+    }
+  }
+  return agentPermitBuildFindings({ gates, ...(ops ? { ops } : {}), ...(options.stages ? { stages: options.stages } : {}) });
+}
+
+/** Print the warnings of {@link agentPermitBuildCheck} over the Ops just built under `path`. */
+async function warnAgentPermits(path: string): Promise<void> {
+  const findings = await agentPermitBuildCheck(path, { opsDir: resolve(path, "dist", "ops") }).catch(() => undefined);
+  for (const message of findings?.warnings ?? []) console.error(formatWarning({ message }));
+}
+
+/**
  * Fold the member's `.chant/pipeline.ts` (#5324) and write the spec to
  * `.chant/pipeline.json`. The member is the project the build path belongs
  * to. A file outside the subset fails the build with its finding; it is
@@ -671,6 +717,8 @@ export async function foldMemberPipeline(path: string): Promise<number | undefin
   }
   // #5328: a stage that rolls back on a failed verify or soak applies only steps an earlier release restores.
   const refusals = await verifyRollbackBuildProblems(dir, read.spec);
+  // #5388: a stage gate never passes on an agent's permit alone.
+  refusals.push(...((await agentPermitBuildCheck(dir, { stages: read.spec.stages }))?.refusals ?? []));
   if (refusals.length > 0) {
     for (const message of refusals) console.error(formatError({ message }));
     return 1;
@@ -793,6 +841,7 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
       printErrors(result.errors);
       if (!result.success) failed = true;
     }
+    if (!failed) await warnAgentPermits(args.path);
     return failed ? 1 : 0;
   }
 
@@ -839,6 +888,8 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
     warnings = warnings.filter((w) => !w.includes('No serializer found for lexicon'));
   }
   printWarnings(warnings);
+  // #5388: agent permits on the Ops just built.
+  if (result.success) await warnAgentPermits(args.path);
   // #4116: errors that are imports of uninstalled packages are led by the dependencies message.
   if (!result.success) reportUninstalledDependencies(result.errors, resolve(args.path));
   printErrors(result.errors);

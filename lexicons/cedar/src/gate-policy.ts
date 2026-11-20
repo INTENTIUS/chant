@@ -67,6 +67,13 @@ function isDeclarable(value: unknown): value is Declarable {
  * not parse, so a broken policy fails where it is written and not at the
  * first `chant approve`.
  *
+ * In `enforce`, an agent's permit passes the gate beside a person's approval
+ * of the same plan. It passes the gate alone when the gate's
+ * `identity.gates.<gate>` entry in `chant.workspace.json` sets
+ * `agentPassesAlone: true` at base (chant#5388), as the example's entry does.
+ * `chant build` warns while the key is set, and refuses it on a pipeline
+ * stage's gate.
+ *
  * @example
  * ```ts
  * export const shipPolicy = gatePolicy("ship", {
@@ -77,6 +84,16 @@ function isDeclarable(value: unknown): value is Declarable {
  *     when: ['context.risk == "low"'],
  *   }),
  * });
+ * ```
+ *
+ * with the gate's entry at base, so the agent's permit passes `ship` alone:
+ *
+ * ```json
+ * "identity": {
+ *   "gates": {
+ *     "ship": { "mode": "enforce", "policy": <shipPolicy>, "agentPassesAlone": true }
+ *   }
+ * }
  * ```
  */
 export function gatePolicy(name: string, policies: GatePolicies): GatePolicyRef {
