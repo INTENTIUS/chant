@@ -74,6 +74,8 @@ export interface GenerateOpsPipelineResult {
   files?: OpPipelineFile[];
   /** Every generated job, for a machine-readable view. */
   jobs?: OpPipelineJob[];
+  /** The generator's warnings (#5329). */
+  warnings?: string[];
   error?: string;
 }
 
@@ -115,8 +117,8 @@ export async function generateOpsPipeline(
     };
   }
 
-  const { files, jobs } = plugin.generateOpPipeline(withOpSchedules(ops, discovered.ops), options);
-  return { success: true, files, jobs };
+  const { files, jobs, warnings } = plugin.generateOpPipeline(withOpSchedules(ops, discovered.ops), options);
+  return { success: true, files, jobs, ...(warnings && warnings.length > 0 ? { warnings } : {}) };
 }
 
 /** Result of generating an Op waves pipeline (#3679). */

@@ -287,6 +287,8 @@ After a new fact lands, the relay starts the alert agent's workflow with no inpu
 | Forgejo | a token of a user with write on Actions and read on the code | the same `workflow_dispatch` |
 | GitLab | a pipeline trigger token (Settings > CI/CD > Pipeline trigger tokens) | a pipeline of the default branch, with no variables |
 
+On GitLab that pipeline runs every job of `.gitlab-ci.yml` a trigger pipeline reaches, so guard each job of your own, a deploy job above all, with `- if: '$CI_PIPELINE_SOURCE == "trigger"'` and `when: never` first in its `rules`. [Answer a production alert](/chant/guide/agent-jobs/#answer-a-production-alert) has the rule and the generator's warning.
+
 The relay refuses to start with a dispatch token that can do more: on GitHub a classic token, an administrator's, or one that can write the repository's contents (the relay asks to create a ref on an all-zero commit, which such a token is refused); on Forgejo a token whose user may push or administers the repository; on GitLab anything the API takes as an access token. The dispatch token goes with `--repo`. Without one, the alert agent's schedule picks the facts up. A start that does not go through is logged, and the schedule picks the fact up too.
 
 ## See also

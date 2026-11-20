@@ -559,6 +559,13 @@ export const RUN_GROUP_KEYS: readonly RunGroupKey[] = ["commit", "pull-request"]
 /** Generic knobs for generate mode, applied once across every generated job (never per component). */
 export interface ComponentPipelineOptions {
   /**
+   * The project's own CI file (#5329), which `chant run --generate gitlab`
+   * reads when a spec sets an alert agent: the relay's trigger pipeline runs
+   * every job of it that a trigger pipeline reaches, and the generator warns
+   * about each one with no guard. `text` absent: the file could not be read.
+   */
+  projectCi?: { path: string; text?: string };
+  /**
    * A workflow-level run group (#4771), written on Forgejo only. Forgejo
    * gives a workflow with no workflow-level `concurrency:` a group per ref,
    * workflow and event, and cancels the run in progress when a push starts
@@ -1148,6 +1155,8 @@ export interface OpPipelineResult {
   files: OpPipelineFile[];
   /** Every generated job, in emit order — one per Op. */
   jobs: OpPipelineJob[];
+  /** What the generator says before the files are written (#5329), such as a job an alert's pipeline would start. */
+  warnings?: string[];
 }
 
 /**

@@ -23,6 +23,7 @@
  *    the generator unchanged.
  */
 
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
@@ -31,7 +32,7 @@ import { parseOpWavesSpec } from "../../op/op-waves-run";
 import { GENERATED_MARKER } from "../../discovery/files";
 import { findWorkspaceRoot } from "../../project-root";
 import type { ComponentPipelineOptions, ScheduledOpSpec } from "../../lexicon";
-import { formatBold, formatError, formatSuccess } from "../format";
+import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
 /** Where each forge reads its pipeline files from, relative to the repository root. `--output` overrides it. */
@@ -44,6 +45,22 @@ export const DEFAULT_OP_PIPELINE_DIRS: Record<string, string> = {
 };
 
 /** The first line of every file this command writes. */
+/** The repository's `.gitlab-ci.yml`, from the git root above `dir`, or its path alone when it cannot be read. */
+export function readProjectGitlabCi(dir: string): { path: string; text?: string } {
+  let top = dir;
+  try {
+    top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || dir;
+  } catch {
+    // Not a git checkout: the directory itself.
+  }
+  const path = join(top, ".gitlab-ci.yml");
+  try {
+    return { path: ".gitlab-ci.yml", text: readFileSync(path, "utf8") };
+  } catch {
+    return { path: ".gitlab-ci.yml" };
+  }
+}
+
 export function opPipelineHeader(provider: string, specFile?: string): string {
   const command = `chant run --generate ${provider}${specFile ? ` --spec ${specFile}` : ""}`;
   return `# ${GENERATED_MARKER}. Regenerate with: ${command}\n`;
@@ -184,11 +201,16 @@ export async function runOpGenerate(ctx: CommandContext): Promise<number> {
     }
     options = { ...options, forgeRepo: resolved.repo };
   }
+  // #5329: an alert agent's pipeline on GitLab starts the project's own jobs too, so the generator reads .gitlab-ci.yml to name the unguarded ones.
+  if (provider === "gitlab" && ops.some((s) => s.agent?.on === "alert") && !options?.projectCi) {
+    options = { ...options, projectCi: readProjectGitlabCi(process.cwd()) };
+  }
   const result = await generateOpsPipeline(ops, provider, plan ? { ...options, member: plan.member } : options);
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "Failed to generate Op pipelines" }));
     return 1;
   }
+  for (const w of result.warnings ?? []) console.error(formatWarning({ message: w }));
 
   if (plan && memberPipeline) {
     const header = memberPipeline.generatedHeader(plan.command);
@@ -198,7 +220,7 @@ export async function runOpGenerate(ctx: CommandContext): Promise<number> {
         path: memberPipeline.repoRelative(plan.ctx, join(plan.outDir, f.name)),
         content: header + f.yaml,
       }));
-      console.log(JSON.stringify({ member: plan.member.name, files, jobs: result.jobs ?? [] }, null, 2));
+      console.log(JSON.stringify({ member: plan.member.name, files, jobs: result.jobs ?? [], ...(result.warnings ? { warnings: result.warnings } : {}) }, null, 2));
       return 0;
     }
     for (const path of memberPipeline.writeMemberOpPipelines(plan, result.files ?? [])) {
@@ -216,7 +238,7 @@ export async function runOpGenerate(ctx: CommandContext): Promise<number> {
   }));
 
   if (args.format === "json") {
-    console.log(JSON.stringify({ files, jobs: result.jobs ?? [] }, null, 2));
+    console.log(JSON.stringify({ files, jobs: result.jobs ?? [], ...(result.warnings ? { warnings: result.warnings } : {}) }, null, 2));
     return 0;
   }
 

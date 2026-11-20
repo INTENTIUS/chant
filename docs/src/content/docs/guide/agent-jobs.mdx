@@ -57,6 +57,17 @@ An alert agent opens a pull request when a production alert names something the 
 
 The spec is a workflow of its own. [The relay](/chant/guide/notify/#take-production-alerts) checks each alert, writes it as a fact on `chant/lifecycle` signed with the relay key, and starts the workflow with no inputs. The workflow also runs every 15 minutes, or on the spec's own `cron` trigger, and picks up any fact whose start did not arrive. On GitLab the jobs run in the pipeline the relay's trigger token starts, and in a pipeline schedule with `CHANT_SCHEDULED_OP` set to the spec's name.
 
+On GitLab the relay's trigger token starts a pipeline of the whole `.gitlab-ci.yml`. Every job in it that a trigger pipeline reaches runs, a deploy job too, so an alert would start it. Put this first in the `rules` of each job of your own:
+
+```yaml
+rules:
+  - if: '$CI_PIPELINE_SOURCE == "trigger"'
+    when: never
+  # the job's own rules follow
+```
+
+A `$CI_PIPELINE_SOURCE != "trigger"` condition on each of its rules does the same. `chant run --generate gitlab` reads `.gitlab-ci.yml` when a spec sets an alert agent and warns about each job with no rules or with rules that have no condition on a trigger pipeline, the rule above in the warning. It warns as well about files the project includes, whose jobs it does not read, and when it cannot read the file at all. The generated file carries the same rule in its header.
+
 `chant agent prepare` reads the facts from the ledger and checks each signature with the relay key: the `CHANT_RELAY_KEY` secret, or the one `relayKeyEnv` names. A fact the relay key did not sign starts nothing. The decision step and the push job hold the key, and the model's step does not. Facts older than a day start nothing.
 
 One run answers one member's alerts. It takes the oldest new alert and every alert for the same member received within `window` minutes after it, 15 by default. An alert for that member that arrives later inside the same window joins that run and starts no other. Each alert reaches the prompt as JSON data: its source, the source's id, title, severity, member, time, link and details, cut to 20,000 characters in all. No header of the delivery reaches it.
