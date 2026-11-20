@@ -38,6 +38,11 @@ export const PULUMI_PREVIEW_OBSERVATION_FLOOR = NEXT_RELEASE;
 export const PULUMI_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first pulumi lexicon release whose `classifyDisruption` also answers from the plan attributes the preview depth writes on a node (`planActions`, `planReplacePaths`), so `chant lifecycle plan` reads an in-place, replace or destroy verdict for a member observed with `CHANT_PULUMI_OBSERVE=preview` (#5378).
+ */
+export const PULUMI_PREVIEW_DISRUPTION_FLOOR = NEXT_RELEASE;
+
+/**
  * The first pulumi lexicon release whose `pulumi-up` reports its `StackReference` reads through `graphReads` (`./pulumi-up`), so `chant graph --components` and `chant workspace graph` draw an edge from a stack to each stack it reads, naming the output, and a node marked external for a stack nothing applies (#5331).
  */
 export const PULUMI_STACK_REFERENCE_GRAPH_FLOOR = NEXT_RELEASE;
