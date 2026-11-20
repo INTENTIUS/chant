@@ -63,12 +63,12 @@ describe("pipelineFromConfig maps risk and replan_dependents", () => {
     const text = pipelineSource(declaration, { product: "plywood", config: "plywood.yml", command: "plywood ci" });
     const folded = foldPipelineSource(text, ".chant/pipeline.ts");
     expect("finding" in folded).toBe(false);
-    expect(folded).toMatchObject({ stages: expect.arrayContaining([expect.objectContaining({ name: "prod", replanDependents: ["app/*"] })]) });
+    expect("spec" in folded && folded.spec).toMatchObject({ stages: expect.arrayContaining([expect.objectContaining({ name: "prod", replanDependents: ["app/*"] })]) });
   });
 });
 
 describe("the pipeline generator hands the promote jobs the product's image and install lines", () => {
-  const spec = asPipelineSpec(pipelineFromConfig({ name: "shop", promotion: ["dev", "staging", "prod"], waves }));
+  const spec = asPipelineSpec(pipelineFromConfig({ name: "shop", promotion: ["dev", "staging", "prod"], defaults: { op: "shop", step: { kind: "pulumi-up", stack: "{target}" } }, waves }));
   const capture = () => {
     const promotes: Array<Record<string, unknown>> = [];
     const plugin = {
@@ -80,13 +80,16 @@ describe("the pipeline generator hands the promote jobs the product's image and 
 
   test("image and beforeScript reach the promote input", async () => {
     const { promotes, plugin } = capture();
-    await generatePipeline(spec, "github", { image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci"] }, plugin);
+    const got = await generatePipeline(spec, "github", { image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci"] }, plugin);
+    expect(got.error).toBeUndefined();
     expect(promotes[0]).toMatchObject({ image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci"] });
   });
 
   test("with neither, the input has neither key", async () => {
     const { promotes, plugin } = capture();
-    await generatePipeline(spec, "github", { beforeScript: [] }, plugin);
+    const got = await generatePipeline(spec, "github", { beforeScript: [] }, plugin);
+    expect(got.error).toBeUndefined();
+    expect(promotes).toHaveLength(1);
     expect(promotes[0]).not.toHaveProperty("image");
     expect(promotes[0]).not.toHaveProperty("beforeScript");
   });
