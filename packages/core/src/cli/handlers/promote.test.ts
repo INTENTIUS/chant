@@ -843,7 +843,7 @@ describe("chant components rollback", () => {
 
   test("an environment and --component are required", async () => {
     expect(await runComponentsRollback(rb({ component: undefined }))).toBe(1);
-    expect(errors.join("\n")).toMatch(/--component <name> or --release <label\|digest> are required/);
+    expect(errors.join("\n")).toMatch(/--component <name>, --release <label\|digest> or --requested are required/);
   });
 
   test("redeploys the previous release from its recorded digest and records what it restored", async () => {

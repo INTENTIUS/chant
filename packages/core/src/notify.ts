@@ -45,8 +45,9 @@ export const NOTIFY_SCHEMA_ID = "https://intentius.io/chant/schemas/notify/v1/no
  * and from `chant ci quarantine report` (#4677): a quarantined test passed in the scheduled run.
  * `urgent` (#5355): a promote passed a stage's gate on its urgent rule.
  * `soak` (#5326): a soak check failed, so the next stage or wave is held.
+ * `rollback-requested` (#5328): a stage's verify or soak failed, and the stage requested its rollback to its previous release, which waits for an approval.
  */
-export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent", "soak"] as const;
+export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent", "soak", "rollback-requested"] as const;
 export type NotifyEventKind = (typeof NOTIFY_EVENTS)[number];
 
 /** Where the run is: the CI run's page, the forge, the repository and commit. */
@@ -103,6 +104,8 @@ export interface NotifyEvent {
   ci?: NotifyCi;
   /** On `soak` (#5326): what soaks, what it holds, and the checks that failed. */
   soak?: NotifySoak;
+  /** On `rollback-requested` (#5328): what failed, the release the stage goes back to, its gate, and each member's state. */
+  rollback?: NotifyRollback;
   run?: NotifyRun;
   /** A report page for the run. */
   reportUrl?: string;
@@ -153,6 +156,23 @@ export interface NotifySoak {
   clockStart: string | null;
   due: string | null;
   checks: { name: string; kind: string; onFail: "restart" | "hold"; status: "failed" | "unknown"; detail: string; member?: string; targets?: string[] }[];
+}
+
+/**
+ * The rollback's part of a `rollback-requested` event (#5328): the stage,
+ * whether its verify or a soak check failed, the release that failed and the
+ * one the stage goes back to, the gate the rollback waits at, and each
+ * member's state with whether the rollback restores it (`requested`) or why
+ * not.
+ */
+export interface NotifyRollback {
+  stage: string;
+  failure: "verify" | "soak";
+  failed: { digest: string; label: string | null };
+  to: { digest: string; label: string | null };
+  gate: string;
+  members: { member: string; state: "applied" | "left-applied" | "rolled-back" | "not-applied"; rollback?: string }[];
+  detail?: string[];
 }
 
 /** What a product fills in; {@link makeNotifyEvent} adds the rest. */
@@ -220,6 +240,7 @@ const HEADLINE: Record<NotifyEventKind, string> = {
   "ci.stale": "has no green commit",
   urgent: "was promoted on its urgent rule",
   soak: "failed a soak check",
+  "rollback-requested": "requested a rollback",
 };
 
 /** The first line of every chat message: `<source>: <summary>`, or what happened to what when there is no summary. */

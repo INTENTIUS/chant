@@ -183,6 +183,8 @@ export interface ParsedArgs {
   urgent?: boolean;
   /** `chant components promote --to <stage> --pending` (#5326): run again the promotion into the stage that a soak holds, as its pending fact names it. */
   pendingPromotion?: boolean;
+  /** `chant components rollback <stage> --requested` (#5328): carry out the rollback the stage requested when its verify or soak failed, once its gate passes. */
+  rollbackRequested?: boolean;
   /** `chant release publish --allow-unsigned` (#4049): publish a release with no signature that verifies, with a warning. Never overrides identity.gates.release. */
   allowUnsigned?: boolean;
   /** `chant release publish --require-provenance` (#4049): refuse a run with no OIDC token, where it warns. */

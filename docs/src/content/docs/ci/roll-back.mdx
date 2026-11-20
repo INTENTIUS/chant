@@ -1,6 +1,6 @@
 ---
 title: Roll back
-description: 'Put an earlier release back in an environment through the same gate, or restore source for review.'
+description: 'Put an earlier release back in an environment through the same gate, have a stage request it after a failed verify or soak, or restore source for review.'
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/ci/roll-back/
@@ -32,6 +32,46 @@ A rollback cannot finish a deploy that failed partway. `chant workspace status` 
 ```sh
 chant components redeploy prod --component web
 ```
+
+## When a verify or soak fails
+
+By default a stage holds after a failed verify: it stays as applied, and `chant workspace status` prints the rollback line for a person to run. A stage in `.chant/pipeline.ts` can request that rollback itself instead:
+
+```ts
+{ name: "prod", waves: [...], onVerifyFail: "rollback" }
+```
+
+A product sets the same thing with `environments.<name>.on_verify_fail: rollback`.
+
+Two failures count. A promote into the stage deploys and then a component's verify step, or any later step, fails. Or a check of the stage's soak fails while a promote out of it reads the soak. Either way chant writes three things and exits 3:
+
+- a `failed` line on the stage's ledger (`<stage>/stage.jsonl` on `chant/lifecycle`), with each member's state;
+- a `rollback-requested` line bound to the stage's previous release, linked to the failure;
+- the pending fact of gate `<stage>-rollback` under the pipeline's op, bound to that release's digest.
+
+It also sends a `rollback-requested` [notify](/chant/guide/notify/) event. The request waits for a person, who approves the gate and runs the rollback:
+
+```sh
+chant approve <pipeline> prod-rollback --env prod --plan <digest>
+chant components rollback prod --requested
+```
+
+The second command reads the request and checks the gate. It then rolls back the members the request names, as `--release` does, and writes a `rolled-back` line that links the rollback to its request and its failure. The gate takes the stage gate's approval rules and approval mode. It waits for a person under every gate policy, `never` included, and counts an approval given after the request. The rollback spends that approval. A stage with `pauseAfterRollback` is paused once the rollback finishes.
+
+Each member is in one of four states after a failure:
+
+| State | Meaning | The request restores it |
+|---|---|---|
+| `applied` | it deployed, and the release ledger records it | when it ran the previous release |
+| `left-applied` | it failed after a step whose change stays, such as a `terraform-apply` with `noRollback` | when it ran the previous release |
+| `rolled-back` | it failed, and each of its steps was undone | it is back already |
+| `not-applied` | it stopped before its first change | it is unchanged |
+
+The promote prints each member's state, and the `failed` line records it.
+
+The stage holds, and says why, in three cases: the failed release is the first it ran, its newest earlier release is revoked or has been removed, or each member left applied is new since that release. A `rollback-held` line records the reason.
+
+`terraform-apply` and `pulumi-up` steps roll back this way. The rollback applies the root or the stack as the earlier release recorded it, which is a forward apply of that release, since both answer `releaseInputs`. `chant build` refuses `onVerifyFail: "rollback"` on a stage that applies a `sql-migrate` step, or a step that changes something through a kind without `releaseInputs`. The refusal names the step and the reason.
 
 ## Roll back in source
 

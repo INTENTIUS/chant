@@ -1520,7 +1520,10 @@ Component release ledger + status:
                             --release <label|digest> restores every component
                             of that release through the release gate (#4035);
                             a pipeline stage with pauseAfterRollback is
-                            paused once it finishes (#5355)
+                            paused once it finishes (#5355); --requested
+                            carries out the rollback a stage with
+                            onVerifyFail: "rollback" requested, once its
+                            <stage>-rollback gate is approved (#5328)
   components redeploy <env> Redeploy the release an environment's ledger
                             records as current, after a deploy that failed
                             partway (--component <name> [--digest <sha256:...>];
