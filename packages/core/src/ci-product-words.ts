@@ -749,3 +749,857 @@ export function productActionFromEnv(words: CiProductWords, env: Record<string, 
   if (parsed?.kind === "action") return { ...parsed, from: "dispatch" };
   return parsed?.kind === "refused" ? parsed : { kind: "refused", reason: `a dispatched action names a ${words.noun[0]} and an action` };
 }
+
+/*
+ * The product config vocabulary (#5343): one key and one set of value words
+ * per concept a CI product sets in its own config (terragucci.yml,
+ * plywood.yml, yodel.config.ts), each with the chant field it maps to. The
+ * reference page is docs/src/content/docs/reference/ci-product-config.mdx,
+ * and a test holds the two to the same keys.
+ *
+ * A key is written here in snake_case, dotted, as a YAML product spells it:
+ * `<name>` stands for any key of a map, `[]` for any item of a list. A
+ * product whose config is TypeScript spells each segment in camelCase
+ * (`not_author` is `notAuthor`); a hyphenated segment, such as
+ * `respond.wave-refused`, keeps its hyphen in both.
+ */
+
+/** How a product spells a key: snake_case (YAML) or camelCase (TypeScript). */
+export type ProductConfigCase = "snake" | "camel";
+
+/** The page section a word sits in. `stage` holds the words for stages and releases. */
+export type ProductConfigSection =
+  | "environments"
+  | "stage"
+  | "apply"
+  | "approval"
+  | "respond"
+  | "reports"
+  | "identity"
+  | "secrets"
+  | "notify"
+  | "agents"
+  | "jobs";
+
+/**
+ * The shape an alias's value has when it reads as the vocabulary key. A key
+ * that one product uses with another meaning is an alias only in that shape.
+ */
+export type ProductConfigAliasShape = "string" | "map" | "list-or-map" | "storage-url" | "forge-environments";
+
+/** A spelling one product accepts in place of the vocabulary's. */
+export interface ProductConfigAlias {
+  /** The product that accepts it. */
+  product: string;
+  /** The key it accepts, in the same notation as {@link ProductConfigWord.key}. Absent for a value alias. */
+  key?: string;
+  /** A value word it accepts: `[alias, word]`. */
+  value?: readonly [string, string];
+  /** The alias reads as the key only when its value has this shape. */
+  shape?: ProductConfigAliasShape;
+}
+
+/** One concept of product config: its key, its value words, and the chant field it maps to. */
+export interface ProductConfigWord {
+  key: string;
+  /** What the key sets, in a few words. */
+  concept: string;
+  section: ProductConfigSection;
+  /** The value words, when the value is one word from a list (or a list of them). */
+  values?: readonly string[];
+  /** A pattern a string value matches, when the value is not a word from a list. */
+  pattern?: string;
+  /** What the value is, for the page, when `values` does not say. */
+  value?: string;
+  /** The chant field, type or command the product maps the key onto. */
+  chant: string;
+  /** Other places the same word is set, such as a per-environment copy. */
+  also?: readonly string[];
+  /** The products that set the key with this spelling today. */
+  products: readonly string[];
+  aliases?: readonly ProductConfigAlias[];
+}
+
+const SECRET_NAME = "^[A-Za-z_][A-Za-z0-9_]*$";
+const DURATION = "^\\d+[mhd]$";
+const STORAGE_URL = "^(s3|gs|az|file)://\\S+$";
+const CRON = "^\\S+(\\s+\\S+){4}$";
+
+/** The CI products this vocabulary was settled across. */
+export const CI_PRODUCTS: readonly string[] = ["terragucci", "plywood", "sql-yodeler"];
+
+/** The vocabulary, in page order. */
+export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ */ Object.freeze([
+  // Environments
+  {
+    key: "environments.<name>",
+    concept: "an environment's settings, keyed by the environment's name",
+    section: "environments",
+    value: "a map per environment",
+    chant: "the names in `environments` of the member's `chant.config.ts`",
+    products: ["terragucci", "sql-yodeler"],
+  },
+  {
+    key: "forge_environments.<glob>",
+    concept: "the forge deployment environment the jobs of the members a glob matches run in",
+    section: "environments",
+    value: "a name, or `{ name, url }`",
+    chant: "a wave's `environment` in the op-waves spec",
+    also: ["environments.<name>.forge_environment"],
+    products: [],
+    aliases: [{ product: "plywood", key: "environments", shape: "forge-environments" }],
+  },
+  {
+    key: "gate",
+    concept: "when a wave waits for an approval",
+    section: "approval",
+    values: ["always", "on-destructive", "never"],
+    chant: "a wave's `gate` (`OpWaveGatePolicy`)",
+    also: ["environments.<name>.gate", "stacks.<name>.gate", "waves[].gate"],
+    products: ["terragucci", "plywood", "sql-yodeler"],
+    aliases: [{ product: "terragucci", value: ["on-destroy", "on-destructive"] }],
+  },
+  // Stage and release
+  {
+    key: "promotion",
+    concept: "the order a release moves through the environments, first to last",
+    section: "stage",
+    value: "a list of environment names",
+    chant: "`environments` in the member's `chant.config.ts`, in order, which `promotionOrder` reads and `chant components promote` follows",
+    products: [],
+  },
+  // Apply
+  {
+    key: "apply.when",
+    concept: "when a change applies",
+    section: "apply",
+    values: ["merge", "pull-request"],
+    chant: "`ci.workflow`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "apply.merge",
+    concept: "who merges a pull request that applied before merge",
+    section: "apply",
+    values: ["manual", "auto"],
+    chant: "`chant build --pr-loop --merge`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "apply.merge_token_env",
+    concept: "the variable holding the token that merges",
+    section: "apply",
+    pattern: SECRET_NAME,
+    chant: "`--merge-token-env`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "apply.merge_method",
+    concept: "how the merge is made",
+    section: "apply",
+    values: ["merge", "squash", "rebase"],
+    chant: "`--merge-method`",
+    products: ["plywood"],
+  },
+  {
+    key: "apply.requires",
+    concept: "the checks that pass before an apply",
+    section: "apply",
+    value: "a list of check names",
+    chant: "the pull request pipeline's required checks",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "branches.<branch>",
+    concept: "the members a branch applies, by glob",
+    section: "apply",
+    value: "a list of globs",
+    chant: "`ci.branches`",
+    products: ["plywood"],
+    aliases: [{ product: "terragucci", key: "apply.branches" }],
+  },
+  {
+    key: "labels.<label>",
+    concept: "the members a labelled pull request plans, by glob",
+    section: "apply",
+    value: "a list of globs",
+    chant: "`ci.labels`",
+    products: ["plywood"],
+  },
+  {
+    key: "locks.when",
+    concept: "when a pull request takes its locks, in the product's stage words",
+    section: "apply",
+    values: ["plan", "apply", "preview", "up"],
+    chant: "`ci.locks`",
+    products: ["plywood"],
+    aliases: [{ product: "terragucci", key: "locks", shape: "string" }],
+  },
+  {
+    key: "locks.grain",
+    concept: "what one lock covers",
+    section: "apply",
+    values: ["resource", "stack"],
+    chant: "`ci.lockGrain`",
+    products: ["plywood"],
+  },
+  {
+    key: "waves.canary",
+    concept: "the members that apply first, in a wave of their own",
+    section: "apply",
+    value: "a list of member names or globs",
+    chant: "the first wave of the op-waves spec",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "waves.after.<name>",
+    concept: "the members one member applies after",
+    section: "apply",
+    value: "a list of member names",
+    chant: "the wave order of the op-waves spec",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "parallelism",
+    concept: "how many members one job applies at once",
+    section: "jobs",
+    value: "a whole number",
+    chant: "the wave job's parallelism",
+    also: ["environments.<name>.parallelism"],
+    products: ["terragucci", "plywood"],
+  },
+  // Approval
+  {
+    key: "approval",
+    concept: "which approvals of a plan count",
+    section: "approval",
+    values: ["ledger", "pr-review", "sealed", "pull-request", "prow-labels"],
+    chant: "a wave's `approval` (`GateApprovalSource`)",
+    also: ["approval.mode", "waves[].approval", "environments.<name>.approval"],
+    products: ["terragucci", "plywood", "sql-yodeler"],
+  },
+  {
+    key: "approval_rules.<rule>.count",
+    concept: "how many distinct people approve",
+    section: "approval",
+    value: "a whole number, at least 1",
+    chant: "`count` of a quorum rule (`GateQuorumRule`)",
+    also: ["approval_rules[].count"],
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "approval_rules.<name>.quorum" }],
+  },
+  {
+    key: "approval_rules.<rule>.roles",
+    concept: "the roles a counted approver holds",
+    section: "approval",
+    value: "a list of role names",
+    chant: "`roles` of a quorum rule",
+    also: ["approval_rules[].roles"],
+    products: ["terragucci", "plywood"],
+    aliases: [{ product: "plywood", key: "approval_rules.<name>.role", shape: "string" }],
+  },
+  {
+    key: "approval_rules.<rule>.not_author",
+    concept: "a counted approver who is not the change's author",
+    section: "approval",
+    value: "true or false",
+    chant: "`notAuthor` of a quorum rule",
+    also: ["approval_rules[].not_author"],
+    products: ["terragucci"],
+  },
+  {
+    key: "policy.engine",
+    concept: "the policy engine",
+    section: "approval",
+    values: ["conftest", "opa"],
+    chant: "`ci.policy`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "policy.path",
+    concept: "the directory of policy rules in the repository",
+    section: "approval",
+    value: "a path relative to the repository root",
+    chant: "`ci.policy.path`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "policy.rego" }],
+  },
+  {
+    key: "policy.namespace",
+    concept: "the policy package the rules sit in",
+    section: "approval",
+    value: "a package name",
+    chant: "`ci.policy`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "policy.source",
+    concept: "a shared rule set from another repository",
+    section: "approval",
+    value: "a git source at a ref",
+    chant: "`ci.policy.source`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "evidence.identity",
+    concept: "the keyless identity that signs checks",
+    section: "approval",
+    values: ["oidc"],
+    chant: "`PipelineEvidence.identity`",
+    products: ["terragucci", "plywood", "sql-yodeler"],
+  },
+  {
+    key: "evidence.runner_key_secret",
+    concept: "the secret holding the runner key that signs checks",
+    section: "approval",
+    pattern: SECRET_NAME,
+    chant: "`PipelineEvidence.runnerKeySecret`",
+    products: ["terragucci", "plywood", "sql-yodeler"],
+  },
+  // Respond
+  {
+    key: "respond.wave-refused",
+    concept: "what follows a wave that applied nothing because its plan moved",
+    section: "respond",
+    values: ["diff", "off"],
+    chant: "`CiResponses[\"wave-refused\"]`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "respond.wave_refused" }],
+  },
+  {
+    key: "respond.apply-failed",
+    concept: "what follows a failed apply",
+    section: "respond",
+    values: ["triage", "off"],
+    chant: "`CiResponses[\"apply-failed\"]`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "respond.apply_failed" }],
+  },
+  {
+    key: "respond.description",
+    concept: "the pull request description check",
+    section: "respond",
+    values: ["check", "off"],
+    chant: "`CiResponses.description`",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "respond.drift",
+    concept: "what follows a drift the scheduled check finds",
+    section: "respond",
+    values: ["issue", "pull-request", "attribute", "up", "off"],
+    chant: "the scheduled drift Op's response",
+    products: ["terragucci", "plywood"],
+    aliases: [{ product: "plywood", value: ["none", "off"] }],
+  },
+  {
+    key: "drift.schedule",
+    concept: "when the scheduled drift check runs",
+    section: "respond",
+    pattern: CRON,
+    value: "a five-field cron line",
+    chant: "the scheduled drift Op's cron",
+    products: ["plywood"],
+    aliases: [{ product: "terragucci", key: "drift", shape: "string" }],
+  },
+  {
+    key: "decide.backend",
+    concept: "the service that answers a gate's questions",
+    section: "respond",
+    value: "a backend name",
+    chant: "`--decide-backend`",
+    products: ["terragucci", "plywood"],
+  },
+  // Reports
+  {
+    key: "reports.bucket",
+    concept: "where the jobs keep their reports and run index",
+    section: "reports",
+    pattern: STORAGE_URL,
+    value: "an `s3://`, `gs://`, `az://` or `file://` URL",
+    chant: "`ci.reportUrl`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "reports.url", shape: "storage-url" }],
+  },
+  {
+    key: "reports.url",
+    concept: "the browser address the reports are read at",
+    section: "reports",
+    pattern: "^https?://\\S+$",
+    value: "an `https://` URL",
+    chant: "the report links in the plan note",
+    products: ["terragucci"],
+  },
+  {
+    key: "telemetry.endpoint",
+    concept: "the OTLP/HTTP base URL traces go to",
+    section: "reports",
+    value: "a URL",
+    chant: "`OTEL_EXPORTER_OTLP_ENDPOINT`",
+    products: ["plywood"],
+  },
+  {
+    key: "telemetry.headers_secret",
+    concept: "the secret holding the OTLP headers",
+    section: "reports",
+    pattern: SECRET_NAME,
+    chant: "`OTEL_EXPORTER_OTLP_HEADERS`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "telemetry.headers_env" }],
+  },
+  {
+    key: "telemetry.trace_url",
+    concept: "a link to one trace, with `{trace_id}`",
+    section: "reports",
+    value: "a URL holding `{trace_id}`",
+    chant: "the trace link in the plan note",
+    products: ["terragucci"],
+  },
+  // Identity
+  {
+    key: "identity",
+    concept: "the cloud identities the jobs log in as",
+    section: "identity",
+    value: "a map per cloud, with a role per stage word and per environment",
+    chant: "`ci.identity` and the `ci-login` trade",
+    products: ["plywood"],
+    aliases: [
+      { product: "terragucci", key: "oidc" },
+      { product: "sql-yodeler", key: "ci.login" },
+    ],
+  },
+  {
+    key: "ephemeral",
+    concept: "a copy of the members per open pull request",
+    section: "identity",
+    value: "a map",
+    chant: "`ci.prEnvironment`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "review_stacks" }],
+  },
+  {
+    key: "ephemeral.ttl",
+    concept: "how long a pull request's copy lives after its last update",
+    section: "identity",
+    pattern: DURATION,
+    value: "a duration such as `48h`",
+    chant: "`ci.prEnvironment.ttl`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "review_stacks.ttl" }],
+  },
+  {
+    key: "forge",
+    concept: "the forge the repository is on",
+    section: "identity",
+    values: ["github", "gitlab", "forgejo"],
+    chant: "`ci.forge`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "forge.kind" }],
+  },
+  {
+    key: "forge_url",
+    concept: "the forge's address, for a forge not on https or the default port",
+    section: "identity",
+    value: "a URL",
+    chant: "the forge client's base URL",
+    products: [],
+    aliases: [
+      { product: "terragucci", key: "url" },
+      { product: "plywood", key: "forge.url" },
+    ],
+  },
+  {
+    key: "forges",
+    concept: "the forges the pipelines are rendered for",
+    section: "identity",
+    values: ["github", "gitlab", "forgejo"],
+    chant: "the generators `chant ci` runs",
+    products: ["sql-yodeler"],
+  },
+  // Secrets
+  {
+    key: "token_env",
+    concept: "the variable holding the forge token",
+    section: "secrets",
+    pattern: SECRET_NAME,
+    chant: "the forge client's token",
+    also: ["control.token_env", "agent.token_env"],
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "pass.secrets",
+    concept: "the CI secrets the jobs read as variables",
+    section: "secrets",
+    value: "a list of secret names",
+    chant: "the jobs' `env`",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "pass", shape: "list-or-map" }],
+  },
+  {
+    key: "pass.vars",
+    concept: "the CI variables the jobs read",
+    section: "secrets",
+    value: "a list of variable names",
+    chant: "the jobs' `env`",
+    products: ["terragucci"],
+  },
+  {
+    key: "env.<name>",
+    concept: "plain variables every job sets",
+    section: "secrets",
+    value: "a map of name to value",
+    chant: "the jobs' `env`",
+    products: ["terragucci", "plywood"],
+  },
+  // Notify
+  {
+    key: "notify.slack",
+    concept: "the secret holding a Slack incoming webhook's URL",
+    section: "notify",
+    pattern: SECRET_NAME,
+    chant: "`NotifyConfig.slack`",
+    products: ["terragucci", "sql-yodeler"],
+    aliases: [{ product: "plywood", key: "notify.slack.webhook" }],
+  },
+  {
+    key: "notify.teams",
+    concept: "the secret holding a Microsoft Teams incoming webhook's URL",
+    section: "notify",
+    pattern: SECRET_NAME,
+    chant: "`NotifyConfig.teams`",
+    products: ["terragucci", "sql-yodeler"],
+    aliases: [{ product: "plywood", key: "notify.teams.webhook" }],
+  },
+  {
+    key: "notify.webhook",
+    concept: "the secret holding a generic webhook's URL",
+    section: "notify",
+    pattern: SECRET_NAME,
+    chant: "`NotifyConfig.webhook`",
+    products: ["terragucci", "sql-yodeler"],
+    aliases: [{ product: "plywood", key: "notify.webhook.url" }],
+  },
+  {
+    key: "notify.webhook_key",
+    concept: "the secret holding the key a generic webhook's events are signed with",
+    section: "notify",
+    pattern: SECRET_NAME,
+    chant: "`NotifyConfig.key`",
+    products: ["terragucci"],
+    aliases: [
+      { product: "plywood", key: "notify.webhook.key" },
+      { product: "sql-yodeler", key: "notify.key" },
+    ],
+  },
+  {
+    key: "notify.events",
+    concept: "the events sent",
+    section: "notify",
+    values: ["waiting", "refused", "failed", "drift"],
+    chant: "`NotifyConfig.events`",
+    products: ["sql-yodeler"],
+    aliases: [{ product: "plywood", key: "notify.on" }],
+  },
+  {
+    key: "notify.relay_key",
+    concept: "the secret holding the key the relay checks Approve and Decline with",
+    section: "notify",
+    pattern: SECRET_NAME,
+    chant: "`NotifyConfig.relay`",
+    products: ["terragucci"],
+    aliases: [
+      { product: "plywood", key: "notify.relay" },
+      { product: "sql-yodeler", key: "notify.relay" },
+    ],
+  },
+  {
+    key: "notify.relay_name",
+    concept: "the relay's name as people mention it in Teams",
+    section: "notify",
+    value: "a name",
+    chant: "`NotifyConfig.relayName`",
+    products: ["sql-yodeler"],
+    aliases: [{ product: "terragucci", key: "notify.relay" }],
+  },
+  // Agents
+  {
+    key: "review.key_secret",
+    concept: "the secret holding the reviewing model's key",
+    section: "agents",
+    pattern: SECRET_NAME,
+    chant: "the review agent step's key variable",
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "review.key_env" }],
+  },
+  {
+    key: "review.command",
+    concept: "the model command, prompt on stdin and answer on stdout",
+    section: "agents",
+    value: "a command line",
+    chant: "the review agent step's command",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "review.timeout",
+    concept: "the minutes the review command may run",
+    section: "agents",
+    value: "a whole number",
+    chant: "the review agent step's timeout",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "agent.key_secret",
+    concept: "the secret holding the agent model's key",
+    section: "agents",
+    pattern: SECRET_NAME,
+    chant: "the agent job's key variable",
+    also: ["agent.comment.key_secret", "agent.drift.key_secret"],
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "agent.key_env" }],
+  },
+  {
+    key: "agent.comment",
+    concept: "an agent that answers a comment command",
+    section: "agents",
+    value: "true, or a map",
+    chant: "the comment agent's jobs",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "agent.drift",
+    concept: "an agent that opens a pull request for a drifted member",
+    section: "agents",
+    value: "true, or a map",
+    chant: "the drift Op's agent",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "control.repo",
+    concept: "the control repository told after each apply on merge",
+    section: "agents",
+    value: "host/owner/name or a URL",
+    chant: "the `<product>-applied` dispatch",
+    products: ["terragucci", "plywood"],
+  },
+  {
+    key: "runner",
+    concept: "the runner every job runs on, or one per stage word",
+    section: "jobs",
+    value: "a label, a list of labels, a runner group, or a map of `default` and the stage words",
+    chant: "a wave's `runner`",
+    also: ["environments.<name>.runner"],
+    products: ["terragucci"],
+    aliases: [{ product: "plywood", key: "runners" }],
+  },
+  {
+    key: "image",
+    concept: "the image every job runs in",
+    section: "jobs",
+    value: "an image reference, or a map with `name`",
+    chant: "the jobs' container",
+    products: ["terragucci", "plywood", "sql-yodeler"],
+  },
+] satisfies ProductConfigWord[]);
+
+/** The words for a release through the environments: the subcommands and flags a product's bin passes to `chant components`. */
+export const PRODUCT_RELEASE_WORDS = /* @__PURE__ */ Object.freeze({
+  /** `<product> promote --to <env> [--release <label>]`: `chant components promote`. */
+  promote: "promote",
+  /** `<product> rollback <env> --release <label>`: `chant components rollback`, the environment positional. */
+  rollback: "rollback",
+  /** `<product> redeploy <env>`: `chant components redeploy`. */
+  redeploy: "redeploy",
+  /** The environment a promote deploys to. */
+  to: "--to",
+  /** The environment a promote reads from; default the step before `--to` in `promotion`. */
+  from: "--from",
+  /** A release's label or digest. */
+  release: "--release",
+  /** Lets a promote skip an environment of `promotion`. */
+  allowSkip: "--allow-skip",
+  /** Prints the plan and changes nothing. */
+  dryRun: "--dry-run",
+} as const);
+
+/** Release command spellings a product accepts beside {@link PRODUCT_RELEASE_WORDS}: `rollback --env <env>` for the positional. */
+export const PRODUCT_RELEASE_ALIASES: readonly { product: string; command: string; alias: string; word: string }[] = /* @__PURE__ */ Object.freeze([
+  { product: "plywood", command: "rollback", alias: "--env <env>", word: "<env> (the positional, with --release)" },
+]);
+
+/** The kinds of an audit line, in the words a person reads: the event that happened. */
+export const PRODUCT_AUDIT_KINDS: Readonly<Record<string, readonly string[]>> = /* @__PURE__ */ Object.freeze({
+  /** An approval of a plan's digest; terragucci writes `approval`. */
+  approved: ["approval"],
+  /** A wave's apply; terragucci writes `apply`. */
+  applied: ["apply"],
+});
+
+/** One finding of {@link productConfigProblems}. */
+export interface ProductConfigProblem {
+  level: "error" | "warning";
+  /** Where in the config, dotted, as the product spells it. */
+  path: string;
+  /** The vocabulary key the finding is about. */
+  key: string;
+  message: string;
+}
+
+export interface ProductConfigOptions {
+  /** The product whose aliases are accepted. */
+  product: string;
+  /** How the product spells keys. Default `snake`. */
+  case?: ProductConfigCase;
+  /** Maps the vocabulary's keys may also sit under, such as sql-yodeler's `ci`. The top level is always read, and aliases are read there alone. */
+  scopes?: readonly string[];
+}
+
+/** One segment in the product's case: `not_author` → `notAuthor` under camelCase. */
+function spell(segment: string, kase: ProductConfigCase): string {
+  if (kase === "snake" || segment.startsWith("<")) return segment;
+  return segment.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+}
+
+function segments(key: string, kase: ProductConfigCase): string[] {
+  const out: string[] = [];
+  for (const raw of key.split(".")) {
+    if (raw.endsWith("[]")) {
+      out.push(spell(raw.slice(0, -2), kase), "[]");
+    } else {
+      out.push(spell(raw, kase));
+    }
+  }
+  return out;
+}
+
+function isMap(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Every concrete path a key pattern reaches in `doc`, with its value. */
+function resolve(doc: unknown, parts: readonly string[], at: string[] = []): { path: string; value: unknown }[] {
+  if (parts.length === 0) return [{ path: at.join("."), value: doc }];
+  const [head, ...rest] = parts;
+  if (head === "[]") {
+    if (!Array.isArray(doc)) return [];
+    return doc.flatMap((item, i) => resolve(item, rest, [...at.slice(0, -1), `${at[at.length - 1] ?? ""}[${i}]`]));
+  }
+  if (!isMap(doc)) return [];
+  if (head.startsWith("<")) return Object.entries(doc).flatMap(([k, v]) => resolve(v, rest, [...at, k]));
+  if (!Object.prototype.hasOwnProperty.call(doc, head)) return [];
+  return resolve(doc[head], rest, [...at, head]);
+}
+
+function hasShape(value: unknown, shape: ProductConfigAliasShape | undefined): boolean {
+  switch (shape) {
+    case undefined:
+      return value !== undefined;
+    case "string":
+      return typeof value === "string";
+    case "map":
+      return isMap(value);
+    case "list-or-map":
+      return Array.isArray(value) || isMap(value);
+    case "storage-url":
+      return typeof value === "string" && new RegExp(STORAGE_URL).test(value);
+    case "forge-environments":
+      return isMap(value) && Object.values(value).every((v) => typeof v === "string" || (isMap(v) && typeof v.name === "string"));
+  }
+}
+
+function spelled(key: string, kase: ProductConfigCase): string {
+  return segments(key, kase)
+    .join(".")
+    .replace(/\.\[\]/g, "[]");
+}
+
+/**
+ * Checks a product's config against the vocabulary: each alias the product
+ * accepts is a warning naming the vocabulary key, an alias set beside its key
+ * is an error, and a value outside a key's words or pattern is an error.
+ * Keys the vocabulary does not hold are the product's own and are not read.
+ * `promotion` is checked as a list of distinct environment names, each one a
+ * key of `environments` when the config has that map.
+ */
+export function productConfigProblems(config: unknown, options: ProductConfigOptions): ProductConfigProblem[] {
+  const kase = options.case ?? "snake";
+  const out: ProductConfigProblem[] = [];
+  if (!isMap(config)) return out;
+  const roots: { prefix: string; doc: unknown }[] = [{ prefix: "", doc: config }];
+  for (const scope of options.scopes ?? []) {
+    const doc = config[scope];
+    if (isMap(doc)) roots.push({ prefix: `${scope}.`, doc });
+  }
+  for (const { prefix, doc } of roots) {
+    const at = (p: string) => `${prefix}${p}`;
+    // The paths an alias of this product reads, so the key it shares a
+    // spelling with (plywood's storage `reports.url`) does not judge them.
+    const aliased = new Set<string>();
+    for (const word of PRODUCT_CONFIG_WORDS) {
+      const shown = spelled(word.key, kase);
+      for (const alias of word.aliases ?? []) {
+        // An alias names its full path, so it is read from the top level alone.
+        if (prefix !== "" || alias.product !== options.product || alias.key === undefined) continue;
+        for (const hit of resolve(doc, segments(alias.key, kase))) {
+          if (!hasShape(hit.value, alias.shape)) continue;
+          aliased.add(hit.path);
+          out.push({ level: "warning", path: at(hit.path), key: word.key, message: `is accepted as ${shown}, the vocabulary's key` });
+          // The key set beside its alias, where the alias does not sit inside
+          // it (plywood's `notify.slack.webhook` sits inside `notify.slack`).
+          if (!alias.key.includes("<") && resolve(doc, segments(word.key, kase)).some((h) => !hit.path.startsWith(`${h.path}.`))) {
+            out.push({ level: "error", path: at(hit.path), key: word.key, message: `and ${shown} are both set; set ${shown} alone` });
+          }
+        }
+      }
+    }
+    for (const word of PRODUCT_CONFIG_WORDS) {
+      const shown = spelled(word.key, kase);
+      const valueAliases = new Map((word.aliases ?? []).flatMap((a) => (a.product === options.product && a.value ? [a.value] : [])));
+      for (const key of [word.key, ...(word.also ?? [])]) {
+        for (const hit of resolve(doc, segments(key, kase))) {
+          if (aliased.has(hit.path)) continue;
+          const items = Array.isArray(hit.value) && word.values ? hit.value : [hit.value];
+          for (const item of items) {
+            if (typeof item !== "string") continue;
+            const accepted = valueAliases.get(item);
+            if (accepted !== undefined) {
+              out.push({ level: "warning", path: at(hit.path), key: word.key, message: `${item} is accepted as ${accepted}, the vocabulary's word` });
+            } else if (word.values && !word.values.includes(item)) {
+              out.push({ level: "error", path: at(hit.path), key: word.key, message: `is ${item}; ${shown} takes ${word.values.join(", ")}` });
+            } else if (word.pattern && !word.values && !new RegExp(word.pattern).test(item)) {
+              out.push({ level: "error", path: at(hit.path), key: word.key, message: `is ${item}; ${shown} is ${word.value ?? (word.pattern === SECRET_NAME ? "a secret or variable name" : `a value matching ${word.pattern}`)}` });
+            }
+          }
+        }
+      }
+    }
+    out.push(...promotionProblems(doc, prefix));
+  }
+  return out;
+}
+
+function promotionProblems(doc: unknown, prefix: string): ProductConfigProblem[] {
+  if (!isMap(doc) || doc.promotion === undefined) return [];
+  const path = `${prefix}promotion`;
+  const problem = (message: string): ProductConfigProblem => ({ level: "error", path, key: "promotion", message });
+  const order = doc.promotion;
+  if (!Array.isArray(order) || order.length === 0 || !order.every((n) => typeof n === "string" && n.trim() !== "")) {
+    return [problem("is a list of environment names, first to last")];
+  }
+  const out: ProductConfigProblem[] = [];
+  const seen = new Set<string>();
+  for (const name of order as string[]) {
+    if (/[*?[\]{}]/.test(name)) out.push(problem(`names ${name}, a pattern; each step is one environment`));
+    if (seen.has(name)) out.push(problem(`names ${name} twice; an environment is one step`));
+    seen.add(name);
+  }
+  const envs = doc.environments;
+  if (isMap(envs) && !hasShape(envs, "forge-environments")) {
+    for (const name of seen) if (!(name in envs)) out.push(problem(`names ${name}, which environments does not declare`));
+  }
+  return out;
+}
+
+/** The vocabulary's word for `key` (snake_case notation), or undefined. */
+export function productConfigWord(key: string): ProductConfigWord | undefined {
+  return PRODUCT_CONFIG_WORDS.find((w) => w.key === key);
+}

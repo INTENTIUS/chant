@@ -349,6 +349,7 @@ export default defineConfig({
 						{ label: 'Release Catalog', slug: 'reference/release-catalog' },
 						{ label: 'Security Features', slug: 'reference/security-features' },
 						{ label: 'CI Workflows', slug: 'reference/ci-workflows' },
+						{ label: 'CI Product Config Keys', slug: 'reference/ci-product-config' },
 						{ label: 'Exit Codes', slug: 'reference/exit-codes' },
 						{ label: 'Change-Set Document', slug: 'reference/change-set' },
 						{ label: 'Drift Record', slug: 'reference/drift-record' },

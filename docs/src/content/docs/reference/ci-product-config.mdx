@@ -1,0 +1,243 @@
+---
+title: CI Product Config Keys
+description: The one key and set of value words for each setting a CI product built on chant reads from its config, with the chant field it maps to and the older spellings each product accepts.
+diataxis: reference
+---
+
+terragucci, plywood and sql-yodeler each read a config file of their own (`terragucci.yml`, `plywood.yml`, `yodel.config.ts`) and map it onto the same chant mechanisms. This page holds the key for each setting, its value words, and the chant field it maps to, so a setting has one spelling in every product. The same table ships in code as `PRODUCT_CONFIG_WORDS` from `@intentius/chant/ci-product`, with `productConfigProblems`, which checks a product's config against it ([Checking a config](#checking-a-config)).
+
+## How keys are spelled
+
+- A key is written here in snake_case and dotted, as a YAML config spells it. A TypeScript config spells each part in camelCase: `approval_rules.<rule>.not_author` is `notAuthor`, `evidence.runner_key_secret` is `runnerKeySecret`. A hyphenated part keeps its hyphen in both, as `respond.wave-refused` does.
+- `<name>` in a key stands for any key of a map, and `[]` for any item of a list.
+- Value words are lower case and hyphenated: `on-destructive`, `pr-review`, `pull-request`.
+- `off` turns a response off. A setting that is absent is off, and a key added to this page is off until a config sets it.
+- A key ending in `_secret` names the forge secret (or GitLab CI/CD variable) holding a credential, such as a model key, OTLP headers or a webhook's URL. A key ending in `token_env` names the variable holding a forge token. The value is the name, and the credential itself is never written in the config.
+- A duration is a whole number and a unit, `m`, `h` or `d`: `30m`, `48h`, `3d`. A schedule is a five-field cron line under a `schedule` key.
+- Settings for one environment sit under `environments.<name>`, keyed by the environment's name.
+- Where a value names a stage of the pull request pipeline, it takes the product's own stage word from its [words](#stage-words): terragucci and sql-yodeler say `plan` and `apply`, plywood says `preview` and `up`. So `locks.when` is `plan` in one product and `preview` in another, and `runner` takes a map of `default` and the stage words.
+
+## Environments and stages
+
+A stage is an environment in promotion order. A release cut from what the first environment applied moves through the rest in that order, each behind its own gate.
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `environments.<name>` | an environment's settings, keyed by the environment's name | a map per environment | the names in `environments` of the member's `chant.config.ts` |
+| `promotion` | the order a release moves through the environments, first to last | a list of environment names | `environments` in the member's `chant.config.ts`, in order, which `promotionOrder` reads and `chant components promote` follows |
+| `forge_environments.<glob>`, `environments.<name>.forge_environment` | the forge deployment environment the jobs of the members a glob matches run in | a name, or `{ name, url }` | a wave's `environment` in the op-waves spec |
+
+`promotion` is its own key in every product. It lists each environment once, with no patterns, and in a product with an `environments` map every name it lists is a key of that map. The product writes the list into the member's `chant.config.ts` `environments`, which is where `chant components promote` reads the step before `--to`. sql-yodeler's `waves` already lists one environment per wave in order, and sql-yodeler reads that order as its promotion order.
+
+In plywood, `environments` maps a stack glob to a forge deployment environment. That map is `forge_environments` here, and the promotion order is `promotion`.
+
+### Promote, roll back and redeploy
+
+A product's bin passes these words to `chant components`, so each product's release commands read the same:
+
+| Command | chant | Words |
+|---|---|---|
+| `<product> promote --to <env> [--release <label>]` | `chant components promote` | `--to` is the environment deployed to. `--from` defaults to the environment before it in `promotion`. `--release` is a release's label or digest, and the deploy reads that release's templates for `--to`. |
+| `<product> rollback <env> --release <label>` | `chant components rollback` | the environment is the positional, and `--release` names the earlier release it goes back to |
+| `<product> redeploy <env>` | `chant components redeploy` | deploys the release the environment runs now |
+
+All three take `--dry-run`, which prints the plan and changes nothing. A promote that skips an environment of `promotion` is refused unless it passes `--allow-skip`. The words are `PRODUCT_RELEASE_WORDS` in code.
+
+In plywood, `rollback --release <label> --env <env>` is the alias for the positional. The positional reads as an environment with `--release`, and names a stack without it, as in `plywood rollback <stack> --digest <d>`.
+
+### Stage keys
+
+Keys that set how a stage behaves sit in this section, under `environments.<name>` when they differ per environment. Each key is added to this table, and to `PRODUCT_CONFIG_WORDS`, in the chant pull request that adds its mechanism, before any product reads it.
+
+{/* Each delivery mechanism issue (stages, risk, soak, canary, rollback on failure, agent steps, per-environment config and secrets, proven approvers) adds its rows here and in PRODUCT_CONFIG_WORDS with section "stage". */}
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `promotion` | the order of the stages | a list of environment names | `environments` in `chant.config.ts` |
+| `environments.<name>.gate` | when the stage's wave waits for an approval | `always`, `on-destructive`, `never` | the wave's `gate` |
+
+## Apply
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `apply.when` | when a change applies | `merge`, `pull-request` | `ci.workflow` |
+| `apply.merge` | who merges a pull request that applied before merge | `manual`, `auto` | `chant build --pr-loop --merge` |
+| `apply.merge_token_env` | the variable holding the token that merges | a secret or variable name | `--merge-token-env` |
+| `apply.merge_method` | how the merge is made | `merge`, `squash`, `rebase` | `--merge-method` |
+| `apply.requires` | the checks that pass before an apply | a list of check names | the pull request pipeline's required checks |
+| `branches.<branch>` | the members a branch applies, by glob | a list of globs | `ci.branches` |
+| `labels.<label>` | the members a labelled pull request plans, by glob | a list of globs | `ci.labels` |
+| `locks.when` | when a pull request takes its locks, in the product's stage words | `plan`, `apply`, `preview`, `up` | `ci.locks` |
+| `locks.grain` | what one lock covers | `resource`, `stack` | `ci.lockGrain` |
+| `waves.canary` | the members that apply first, in a wave of their own | a list of member names or globs | the first wave of the op-waves spec |
+| `waves.after.<name>` | the members one member applies after | a list of member names | the wave order of the op-waves spec |
+
+## Approval and policy
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `gate`, `environments.<name>.gate`, `stacks.<name>.gate`, `waves[].gate` | when a wave waits for an approval | `always`, `on-destructive`, `never` | a wave's `gate` (`OpWaveGatePolicy`) |
+| `approval`, `approval.mode`, `waves[].approval`, `environments.<name>.approval` | which approvals of a plan count | `ledger`, `pr-review`, `sealed`, `pull-request`, `prow-labels` | a wave's `approval` (`GateApprovalSource`) |
+| `approval_rules.<rule>.count`, `approval_rules[].count` | how many distinct people approve | a whole number, at least 1 | `count` of a quorum rule (`GateQuorumRule`) |
+| `approval_rules.<rule>.roles`, `approval_rules[].roles` | the roles a counted approver holds | a list of role names | `roles` of a quorum rule |
+| `approval_rules.<rule>.not_author`, `approval_rules[].not_author` | a counted approver who is not the change's author | `true` or `false` | `notAuthor` of a quorum rule |
+| `policy.engine` | the policy engine | `conftest`, `opa` | `ci.policy` |
+| `policy.path` | the directory of policy rules in the repository | a path relative to the repository root | `ci.policy.path` |
+| `policy.namespace` | the policy package the rules sit in | a package name | `ci.policy` |
+| `policy.source` | a shared rule set from another repository | a git source at a ref | `ci.policy.source` |
+| `evidence.identity` | the keyless identity that signs checks | `oidc` | `PipelineEvidence.identity` |
+| `evidence.runner_key_secret` | the secret holding the runner key that signs checks | a secret or variable name | `PipelineEvidence.runnerKeySecret` |
+
+`approval_rules` is a list in terragucci and a map of named rules in plywood; the keys inside a rule are the same in both.
+
+## Responses and drift
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `respond.wave-refused` | what follows a wave that applied nothing because its plan moved | `diff`, `off` | `CiResponses["wave-refused"]` |
+| `respond.apply-failed` | what follows a failed apply | `triage`, `off` | `CiResponses["apply-failed"]` |
+| `respond.description` | the pull request description check | `check`, `off` | `CiResponses.description` |
+| `respond.drift` | what follows a drift the scheduled check finds | `issue`, `pull-request`, `attribute`, `up`, `off` | the scheduled drift Op's response |
+| `drift.schedule` | when the scheduled drift check runs | a five-field cron line | the scheduled drift Op's cron |
+| `decide.backend` | the service that answers a gate's questions | a backend name | `--decide-backend` |
+
+The keys under `respond` are chant's event names, hyphenated as `CiResponses` spells them.
+
+## Reports and telemetry
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `reports.bucket` | where the jobs keep their reports and run index | an `s3://`, `gs://`, `az://` or `file://` URL | `ci.reportUrl` |
+| `reports.url` | the browser address the reports are read at | an `https://` URL | the report links in the plan note |
+| `telemetry.endpoint` | the OTLP/HTTP base URL traces go to | a URL | `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `telemetry.headers_secret` | the secret holding the OTLP headers | a secret or variable name | `OTEL_EXPORTER_OTLP_HEADERS` |
+| `telemetry.trace_url` | a link to one trace, with `{trace_id}` | a URL holding `{trace_id}` | the trace link in the plan note |
+
+## Identity, review environments and the forge
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `identity` | the cloud identities the jobs log in as | a map per cloud, with a role per stage word and per environment | `ci.identity` and the `ci-login` trade |
+| `ephemeral` | a copy of the members per open pull request | a map | `ci.prEnvironment` |
+| `ephemeral.ttl` | how long a pull request's copy lives after its last update | a duration such as `48h` | `ci.prEnvironment.ttl` |
+| `forge` | the forge the repository is on | `github`, `gitlab`, `forgejo` | `ci.forge` |
+| `forge_url` | the forge's address, for a forge on another scheme or port | a URL | the forge client's base URL |
+| `forges` | the forges the pipelines are rendered for | `github`, `gitlab`, `forgejo` | the generators `chant ci` runs |
+
+## Secrets and variables
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `token_env`, `control.token_env`, `agent.token_env` | the variable holding the forge token | a secret or variable name | the forge client's token |
+| `pass.secrets` | the CI secrets the jobs read as variables | a list of secret names | the jobs' `env` |
+| `pass.vars` | the CI variables the jobs read | a list of variable names | the jobs' `env` |
+| `env.<name>` | plain variables every job sets | a map of name to value | the jobs' `env` |
+
+## Notify
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `notify.slack` | the secret holding a Slack incoming webhook's URL | a secret or variable name | `NotifyConfig.slack` |
+| `notify.teams` | the secret holding a Microsoft Teams incoming webhook's URL | a secret or variable name | `NotifyConfig.teams` |
+| `notify.webhook` | the secret holding a generic webhook's URL | a secret or variable name | `NotifyConfig.webhook` |
+| `notify.webhook_key` | the secret holding the key a generic webhook's events are signed with | a secret or variable name | `NotifyConfig.key` |
+| `notify.events` | the events sent | `waiting`, `refused`, `failed`, `drift` | `NotifyConfig.events` |
+| `notify.relay_key` | the secret holding the key the relay checks Approve and Decline with | a secret or variable name | `NotifyConfig.relay` |
+| `notify.relay_name` | the relay's name as people mention it in Teams | a name | `NotifyConfig.relayName` |
+
+The relay has two settings, a secret key and a plain name, so each has its own key.
+
+## Agents and review
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `review.key_secret` | the secret holding the reviewing model's key | a secret or variable name | the review agent step's key variable |
+| `review.command` | the model command, prompt on stdin and answer on stdout | a command line | the review agent step's command |
+| `review.timeout` | the minutes the review command may run | a whole number | the review agent step's timeout |
+| `agent.key_secret`, `agent.comment.key_secret`, `agent.drift.key_secret` | the secret holding the agent model's key | a secret or variable name | the agent job's key variable |
+| `agent.comment` | an agent that answers a comment command | `true`, or a map | the comment agent's jobs |
+| `agent.drift` | an agent that opens a pull request for a drifted member | `true`, or a map | the drift Op's agent |
+| `control.repo` | the control repository told after each apply on merge | `host/owner/name` or a URL | the `<product>-applied` dispatch |
+
+## Jobs
+
+| Key | Sets | Value | chant |
+|---|---|---|---|
+| `parallelism`, `environments.<name>.parallelism` | how many members one job applies at once | a whole number | the wave job's parallelism |
+| `runner`, `environments.<name>.runner` | the runner every job runs on, or one per stage word | a label, a list of labels, a runner group, or a map of `default` and the stage words | a wave's `runner` |
+| `image` | the image every job runs in | an image reference, or a map with `name` | the jobs' container |
+
+## Stage words
+
+The stage and verb words a product shows people (`plan` or `preview`, `apply` or `up`, the comment commands, the status prefix) are its `CiProductWords`, passed to chant with each command; see `@intentius/chant/ci-product`. A config key never spells a stage word into its name: `identity` holds a role per stage word, as `runner` and `locks.when` hold one.
+
+## Audit entry kinds
+
+An audit line names the event that happened, in the past tense. `PRODUCT_AUDIT_KINDS` lists them.
+
+| Kind | Records | Also read |
+|---|---|---|
+| `approved` | an approval of a plan's digest | `approval` (terragucci) |
+| `applied` | a wave's apply | `apply` (terragucci) |
+
+## Spellings each product accepts
+
+Where a product spelled a setting another way, it keeps reading its spelling beside the key above. `productConfigProblems` reports each as a warning that names the key, and reports a spelling set beside its key as an error. An alias with a shape reads as the key only in that shape; in plywood, `reports.url` is the bucket when it holds a storage URL.
+
+| Product | Accepts | For |
+|---|---|---|
+| terragucci | `gate: on-destroy` | `gate: on-destructive` |
+| terragucci | `apply.branches` | `branches.<branch>` |
+| terragucci | `locks: <when>` | `locks.when` |
+| terragucci | `drift: <cron>` | `drift.schedule` |
+| terragucci | `oidc` | `identity` |
+| terragucci | `url` | `forge_url` |
+| terragucci | `notify.relay` | `notify.relay_name` |
+| plywood | `environments`, a glob to a name or `{ name, url }` | `forge_environments.<glob>` |
+| plywood | `approval_rules.<name>.quorum` | `approval_rules.<rule>.count` |
+| plywood | `approval_rules.<name>.role` | `approval_rules.<rule>.roles` |
+| plywood | `policy.rego` | `policy.path` |
+| plywood | `respond.wave_refused` | `respond.wave-refused` |
+| plywood | `respond.apply_failed` | `respond.apply-failed` |
+| plywood | `respond.drift: none` | `respond.drift: off` |
+| plywood | `reports.url`, a storage URL | `reports.bucket` |
+| plywood | `telemetry.headers_env` | `telemetry.headers_secret` |
+| plywood | `review_stacks` | `ephemeral` |
+| plywood | `review_stacks.ttl` | `ephemeral.ttl` |
+| plywood | `forge.kind` | `forge` |
+| plywood | `forge.url` | `forge_url` |
+| plywood | `pass`, a list or a map | `pass.secrets` |
+| plywood | `notify.slack.webhook` | `notify.slack` |
+| plywood | `notify.teams.webhook` | `notify.teams` |
+| plywood | `notify.webhook.url` | `notify.webhook` |
+| plywood | `notify.webhook.key` | `notify.webhook_key` |
+| plywood | `notify.on` | `notify.events` |
+| plywood | `notify.relay` | `notify.relay_key` |
+| plywood | `review.key_env` | `review.key_secret` |
+| plywood | `agent.key_env` | `agent.key_secret` |
+| plywood | `runners` | `runner` |
+| plywood | `rollback --env <env>` | `rollback <env>` |
+| sql-yodeler | `ci.login` | `identity` |
+| sql-yodeler | `notify.key` | `notify.webhook_key` |
+| sql-yodeler | `notify.relay` | `notify.relay_key` |
+
+sql-yodeler keeps its CI settings under `ci` in `yodel.config.ts` (`ci.evidence`, `ci.respond`, `ci.forges`), and the keys above apply inside it.
+
+## Checking a config
+
+```ts
+import { productConfigProblems, PRODUCT_CONFIG_WORDS_FLOOR } from "@intentius/chant/ci-product";
+
+const problems = productConfigProblems(config, { product: "plywood" });
+// [{ level: "warning", path: "respond.wave_refused", key: "respond.wave-refused",
+//    message: "is accepted as respond.wave-refused, the vocabulary's key" }]
+```
+
+`productConfigProblems(config, { product, case, scopes })` reads the parsed config:
+
+- each spelling of the table above that `product` accepts is a warning naming the key;
+- a spelling set beside its key is an error;
+- a value outside a key's words, or a secret name, URL, duration or cron line in the wrong form, is an error;
+- `promotion` is an error unless it is a list of distinct environment names, each a key of `environments` when the config has that map.
+
+`case: "camel"` reads a TypeScript config's camelCase keys, and `scopes: ["ci"]` also reads the keys under `ci`, as sql-yodeler keeps them. A key this page does not list is the product's own and is not read. `productConfigWord(key)` returns one row of the table. A product feature-detects all of this on `PRODUCT_CONFIG_WORDS_FLOOR`.
