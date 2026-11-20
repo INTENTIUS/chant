@@ -87,9 +87,16 @@ describe("pulumi member graph block (#3179)", () => {
     expect(edgesOf(ir)).toEqual(recordedEdges);
   });
 
-  test("inputs are not copied into the graph", async () => {
+  test("secrets are not copied into the graph", async () => {
     const { ir } = await graphOf(member);
     expect(JSON.stringify(ir)).not.toContain("ciphertext");
+  });
+
+  test("a node holds the inputs the reference catalog reads (#5330)", async () => {
+    // The default detail prints the scalar view; the catalog pass reads every attribute.
+    const { ir } = await graphOf(member);
+    const role = ir.nodes.find((n) => n.kind === "aws:iam/role:Role")!;
+    expect(role.attrs).toMatchObject({ name: "rec-r2-4507-web" });
   });
 
   test("a program with no export has no nodes, and the member says why", async () => {

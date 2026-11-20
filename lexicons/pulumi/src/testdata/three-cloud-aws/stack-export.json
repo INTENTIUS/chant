@@ -1,0 +1,224 @@
+{
+  "version": 3,
+  "deployment": {
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::pulumi:pulumi:Stack::three-cloud-aws-dev",
+        "custom": false,
+        "type": "pulumi:pulumi:Stack"
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:ec2/vpc:Vpc::network-vpc",
+        "custom": true,
+        "id": "vpc-0a1b2c",
+        "type": "aws:ec2/vpc:Vpc",
+        "inputs": {
+          "cidrBlock": "10.20.0.0/16"
+        },
+        "outputs": {
+          "cidrBlock": "10.20.0.0/16",
+          "arn": "arn:aws:ec2:us-east-1:111122223333:vpc/vpc-0a1b2c",
+          "id": "vpc-0a1b2c"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:ec2/subnet:Subnet::private-1",
+        "custom": true,
+        "id": "subnet-0d3e4f",
+        "type": "aws:ec2/subnet:Subnet",
+        "inputs": {
+          "vpcId": "vpc-0a1b2c",
+          "cidrBlock": "10.20.10.0/24",
+          "availabilityZone": "us-east-1a"
+        },
+        "outputs": {
+          "vpcId": "vpc-0a1b2c",
+          "cidrBlock": "10.20.10.0/24",
+          "availabilityZone": "us-east-1a"
+        },
+        "dependencies": [
+          "urn:pulumi:dev::three-cloud-aws::aws:ec2/vpc:Vpc::network-vpc"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:ec2/securityGroup:SecurityGroup::service",
+        "custom": true,
+        "id": "sg-05a6b7",
+        "type": "aws:ec2/securityGroup:SecurityGroup",
+        "inputs": {
+          "vpcId": "vpc-0a1b2c",
+          "name": "service-sg"
+        },
+        "outputs": {
+          "vpcId": "vpc-0a1b2c",
+          "name": "service-sg"
+        },
+        "dependencies": [
+          "urn:pulumi:dev::three-cloud-aws::aws:ec2/vpc:Vpc::network-vpc"
+        ]
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:ecs/cluster:Cluster::cluster",
+        "custom": true,
+        "id": "website",
+        "type": "aws:ecs/cluster:Cluster",
+        "inputs": {
+          "name": "website"
+        },
+        "outputs": {
+          "name": "website",
+          "arn": "arn:aws:ecs:us-east-1:111122223333:cluster/website",
+          "id": "arn:aws:ecs:us-east-1:111122223333:cluster/website"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:iam/role:Role::web",
+        "custom": true,
+        "id": "web-task-role",
+        "type": "aws:iam/role:Role",
+        "inputs": {
+          "name": "web-task-role",
+          "assumeRolePolicy": "{}",
+          "description": {
+            "4dabf18193072939515e22adb298388d": "1b47061264138c4ac30d75fd1eb44270",
+            "ciphertext": "v1:abc:def"
+          }
+        },
+        "outputs": {
+          "name": "web-task-role",
+          "arn": "arn:aws:iam::111122223333:role/web-task-role",
+          "id": "web-task-role"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:iam/rolePolicyAttachment:RolePolicyAttachment::web-logs",
+        "custom": true,
+        "id": "web-task-role-20261101",
+        "type": "aws:iam/rolePolicyAttachment:RolePolicyAttachment",
+        "inputs": {
+          "role": "web-task-role",
+          "policyArn": "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        },
+        "outputs": {
+          "role": "web-task-role",
+          "policyArn": "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:ecs/taskDefinition:TaskDefinition::web",
+        "custom": true,
+        "id": "website-web:1",
+        "type": "aws:ecs/taskDefinition:TaskDefinition",
+        "inputs": {
+          "family": "website-web",
+          "taskRoleArn": "arn:aws:iam::111122223333:role/web-task-role"
+        },
+        "outputs": {
+          "family": "website-web",
+          "arn": "arn:aws:ecs:us-east-1:111122223333:task-definition/website-web:1",
+          "id": "arn:aws:ecs:us-east-1:111122223333:task-definition/website-web:1"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:ecs/service:Service::web",
+        "custom": true,
+        "id": "website/web",
+        "type": "aws:ecs/service:Service",
+        "inputs": {
+          "name": "web",
+          "cluster": "arn:aws:ecs:us-east-1:111122223333:cluster/website",
+          "taskDefinition": "arn:aws:ecs:us-east-1:111122223333:task-definition/website-web:1",
+          "networkConfiguration": {
+            "subnets": [
+              "subnet-0d3e4f"
+            ],
+            "securityGroups": [
+              "sg-05a6b7"
+            ]
+          }
+        },
+        "outputs": {
+          "name": "web"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:eks/nodeGroup:NodeGroup::nodes",
+        "custom": true,
+        "id": "prod-eks:nodes",
+        "type": "aws:eks/nodeGroup:NodeGroup",
+        "inputs": {
+          "clusterName": "prod-eks",
+          "subnetIds": [
+            "subnet-0d3e4f"
+          ],
+          "password": "hunter2-not-secret-marked"
+        },
+        "outputs": {
+          "clusterName": "prod-eks",
+          "arn": "arn:aws:eks:us-east-1:111122223333:nodegroup/prod-eks/nodes/abc",
+          "id": "prod-eks:nodes"
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::kubernetes:apps/v1:Deployment::api",
+        "custom": true,
+        "id": "ci/api",
+        "type": "kubernetes:apps/v1:Deployment",
+        "inputs": {
+          "metadata": {
+            "name": "api",
+            "namespace": "ci"
+          },
+          "spec": {
+            "template": {
+              "spec": {
+                "serviceAccountName": "runner",
+                "containers": [
+                  {
+                    "name": "api",
+                    "image": "example/api:1",
+                    "env": [
+                      {
+                        "name": "ASSET_BUCKET",
+                        "value": "three-cloud-assets"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "outputs": {
+          "metadata": {
+            "name": "api",
+            "namespace": "ci"
+          }
+        },
+        "dependencies": []
+      },
+      {
+        "urn": "urn:pulumi:dev::three-cloud-aws::aws:s3/bucketV2:BucketV2::assets",
+        "custom": true,
+        "id": "three-cloud-assets",
+        "type": "aws:s3/bucketV2:BucketV2",
+        "inputs": {
+          "bucket": "three-cloud-assets"
+        },
+        "outputs": {
+          "bucket": "three-cloud-assets",
+          "arn": "arn:aws:s3:::three-cloud-assets",
+          "id": "three-cloud-assets"
+        },
+        "dependencies": []
+      }
+    ]
+  }
+}

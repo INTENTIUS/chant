@@ -21,6 +21,9 @@
  * - `describeResources`, engine facts for a member on plunge from `plunge
  *   graph --json` (`./describe-resources.ts`, #4529), and a plunge member's
  *   checked-in `engine-graph.json` in the member read (`./engine-graph.ts`);
+ * - a `referenceCatalog` (`./reference-catalog.ts`, #5330): ARN, id and name
+ *   references among the aws, gcp, azure and kubernetes providers' resources,
+ *   read by `chant workspace graph`'s catalog pass;
  * - the checks a pulumi surface admits (#4468): PUL101 over `pulumi.member`
  *   in source, PUL001 and PUL002 over the member read (`./lint/`);
  * - completion and hover over `Pulumi.yaml`, a stack's `Pulumi.<stack>.yaml`,
@@ -54,6 +57,7 @@ import { hover } from "./lsp/hover";
 import { PULUMI_RUNTIME_NAMES } from "./lsp/keys";
 import { pulumiInitTemplates } from "./init-templates";
 import { pulumiTemplateStack, reviewStackTeardown } from "./review-stack";
+import { PULUMI_REFERENCE_CATALOG } from "./reference-catalog";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -78,6 +82,8 @@ const loadSkills = createSkillsLoader(import.meta.url, [
 
 export const pulumiPlugin: LexiconPlugin = {
   name: "pulumi",
+  // How a stack's resources name each other, for chant's catalog pass over a declared graph (#5330); see its module doc.
+  referenceCatalog: PULUMI_REFERENCE_CATALOG,
   serializer: pulumiSerializer,
   configSchema: pulumiConfigSchema,
 

@@ -68,8 +68,27 @@ the URN after its stack and project, so `urn:pulumi:dev::shop::aws:s3/bucketV2:B
 in member `infra` is `infra/aws:s3/bucketV2:BucketV2::assets`. The change set
 and the drift records put a resource on the same node by the same rule
 (`@intentius/chant/pulumi-urn`). Edges come from `dependencies` and `parent`.
-Providers and the root stack have no node, and inputs and outputs are not
-copied, since an export can hold secrets.
+Providers and the root stack have no node. A node holds the values its
+resource names others by and is named by: its inputs as the export records them
+(`vpcId`, `metadata.namespace`), and under `outputs` its `id` and top-level
+string outputs such as `arn`. Secret envelopes, keys that read as credentials
+(`password`, `token`, `userData`), strings longer than 1024 characters and the
+`data` of a Kubernetes Secret or ConfigMap are left out.
+
+### Catalog edges
+
+`chant workspace graph` runs the lexicon's reference catalog over those values
+and draws an edge from a resource to the resource its input names, by ARN, id
+or name, for the aws, gcp, azure (azure-native and the classic provider) and
+kubernetes providers. The edge carries `origin: "derived"`, the rule that drew
+it and `grain: "property"`; a subnet in its VPC is containment, and a pair the
+export's `dependencies` already join gets no second edge. A reference can end
+at a resource another member declares: an `aws:eks/nodeGroup:NodeGroup`'s
+`clusterName` at a Terraform `aws_eks_cluster` of that name, a Deployment's
+`serviceAccountName` and `metadata.namespace` at the ServiceAccount and
+Namespace of a manifests member in the same namespace. A value that names no
+resource in the workspace is listed under `dangling`, and one that names several
+under `ambiguous`.
 
 With no export, or one that is not JSON, the member has no nodes and the
 graph's `meta.pulumiMember` is `{ exported: false, reason }`.
