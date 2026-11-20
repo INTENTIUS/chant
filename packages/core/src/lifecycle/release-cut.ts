@@ -977,6 +977,9 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     const { recordOverridesApplied } = await import("./override-ledger");
     await recordOverridesApplied([appliedOverride({ subject: greenOverrideSubject(commit), digest: p.override.digest, at: p.override.at, by: p.override.by }, { timestamp, runId, commit })], { cwd });
   }
+  // #5387: the change risk the waves that applied the commit scored, bound to the release on its cut line.
+  const { readReleaseRisk } = await import("./release-risk");
+  const risk = await readReleaseRisk(commit, { cwd });
   const outcome = await appendCut(
     {
       releaseDigest: release.releaseDigest,
@@ -993,6 +996,7 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       ...(p.override ? { override: p.override } : {}),
       ...(p.green ? { green: p.green } : {}),
       ...(req.intents && req.intents.length > 0 ? { intents: [...req.intents] } : {}),
+      ...(risk ? { risk } : {}),
     },
     { cwd },
   );

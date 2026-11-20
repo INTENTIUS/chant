@@ -34,7 +34,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 |---|---|
 | `name` | the environment's name. `components promote --to` takes it, the release ledger records under it, and a step's per-environment inputs are read by it |
 | `waves` | the op waves the stage applies, in order; each wave as in the [op-waves spec](/chant/guide/op-waves/) |
-| `gate` | `{ policy, approval, quorum, point, holds, urgent }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules and `all`/`any` groups, all of which must be met ([groups](#approval-rule-groups)); `holds` is `{ policy, cost, risk }`, where `risk` is `{ approveAbove, quorum }`: over the score the stage's waves wait and take `quorum` on top of the gate's own rules ([Change Risk](/chant/guide/change-risk/)); `urgent` is `{ role }`, the stage's [urgent rule](#the-urgent-rule) |
+| `gate` | `{ policy, approval, quorum, point, holds, urgent }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules and `all`/`any` groups, all of which must be met ([groups](#approval-rule-groups)); `holds` is `{ policy, cost, risk }`, where `risk` is `{ approveAbove, quorum }`: over the score the stage's waves wait and take `quorum` on top of the gate's own rules, and a promote into the stage reads the score its release carries the same way ([Change Risk](/chant/guide/change-risk/)); `urgent` is `{ role }`, the stage's [urgent rule](#the-urgent-rule) |
 | `hooks` | stage hooks, run after the pipeline's own |
 | `hold` | `true`, or `{ reason, until, description }` with an ISO 8601 time. `description` is what the person who lifts the hold reads first: the refused promote, `chant workspace status` and the plan note of the change that lifts it show it |
 | `freeze` | a list of `{ from, until, reason }` windows, ISO 8601 times |
@@ -120,6 +120,14 @@ A stage with `after`, and a stage with `queue`, add these cases. A pipeline wher
 | a queued stage, with a newer release waiting, or a release replaced there before | exit 1 (`pipeline-release-replaced`) |
 | a queued stage with another release in it | the gate is read, then exit 3 (`pipeline-stage-busy`) until that release's deploy finishes |
 | the release already in a queued stage | its deploy carries on without its gate read again |
+
+A promote under `--release` reads the change risk the release's cut carries at each gate whose stage sets `holds.risk`, the skip gates included:
+
+| Case | Result |
+|---|---|
+| the release carries no risk | the gate as without `holds.risk` |
+| the score is within `approveAbove`, or none is set | the gate as without `holds.risk`; it counts people's approvals only |
+| the score is above `approveAbove`, or a question's answer above its own threshold | the gate takes `holds.risk.quorum` on top of its own rules; under `policy: never` it waits for an approval, exit 3 (`pipeline-gate-waiting`) |
 
 A release is newer than another when it was cut later; without a cut time, the one that reached the stage later is newer. `chant workspace status --json` reads the log into `stageQueues` on the member. Each entry has `inStage`, `waiting` and `replaced`; a replaced entry carries `by`, the release that replaced it.
 

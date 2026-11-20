@@ -48,6 +48,15 @@
  * It skips no stage, `--allow-skip` or not, and the release must have
  * succeeded in every stage upstream of the one promoted to
  * ({@link urgentUpstreamStages}).
+ *
+ * A promote under a release reads the change risk its cut carries (#5387,
+ * `../lifecycle/release-risk.ts`) at each gate whose stage sets
+ * `holds.risk`. Over the stage's threshold the gate takes the risk's
+ * `quorum` rules on top of its own, and a gate whose policy is `never` waits
+ * for an approval of its own. The gate then counts only people's approvals,
+ * and a permit that reads the score only from a person `.chant/trust.json`
+ * at base proves. A release with no record, or a stage with no `holds.risk`,
+ * has the gate it had before.
  */
 
 import { createHash } from "node:crypto";
@@ -59,6 +68,8 @@ import { gateSealRefusal, type GateSigners } from "../lifecycle/gate-seal";
 import type { GateRejectionRecord } from "../lifecycle/gate-rejection";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import { stageHeldAt, stageHeldLine } from "./stages";
+import { stageRiskContext, stageRiskRead, type ReleaseRisk } from "../lifecycle/release-risk";
+import type { ResolvedGateApproval } from "../op/gate-approval";
 
 /** A refusal or a wait, with the exit code the promote ends with. */
 export interface PipelinePromoteStop {
@@ -199,6 +210,8 @@ export async function pipelinePromoteGates(input: {
    * `<stage>` or at `<stage>-urgent` stops it, and nothing is skipped.
    */
   urgent?: boolean;
+  /** The change risk the release's cut carries (#5387). Absent: the release carries none, and each gate is as it was. */
+  risk?: ReleaseRisk;
 }): Promise<PipelineGatesOutcome> {
   const { spec, port, digest } = input;
   const proof = input.proof ?? NO_PROOF;
@@ -249,9 +262,28 @@ export async function pipelinePromoteGates(input: {
     }
     return undefined;
   };
+  // #5387: each stage's reading of the release's risk, once, its line printed whatever the gate does.
+  const reads = new Map<string, ReturnType<typeof stageRiskRead>>();
+  const riskOf = (stage: PipelineStage) => {
+    if (!reads.has(stage.name)) {
+      const read = stageRiskRead(spec, stage.name, input.risk);
+      reads.set(stage.name, read);
+      if (read) lines.push(read.line);
+    }
+    return reads.get(stage.name);
+  };
+  const riskOver = (stage: PipelineStage): boolean => riskOf(stage)?.risk?.over === true;
   const check = async (stage: PipelineStage, gate: string) => {
-    const rules = stage.gate?.quorum;
+    const read = riskOf(stage);
     const rule = await ruleFor(stage, gate);
+    // #5387: an over risk adds its rules; a gate that read a record counts people only, and a permit that reads it only from a proven one.
+    const rules = [...(stage.gate?.quorum ?? []), ...(read?.rules ?? [])];
+    const context = read ? stageRiskContext(read) : undefined;
+    const approval: ResolvedGateApproval | undefined = read?.risk
+      ? { ...(rules.length > 0 ? { quorum: rules } : {}), mode: "enforce", risk: read.settings, ...(context ? { context } : {}) }
+      : rules.length > 0
+        ? { quorum: rules, mode: "enforce" }
+        : undefined;
     return evaluateGate(port, {
       rule,
       op: spec.name,
@@ -261,7 +293,7 @@ export async function pipelinePromoteGates(input: {
       now,
       description: gate.endsWith("-skip") ? `skip stage ${stage.name} of the pipeline ${spec.name}` : `promote into stage ${stage.name} of the pipeline ${spec.name}`,
       ...(input.gitSha ? { gitSha: input.gitSha } : {}),
-      ...(rules && rules.length > 0 ? { approval: { quorum: rules, mode: "enforce" as const } } : {}),
+      ...(approval ? { approval } : {}),
     });
   };
   const waiting = (gate: string, stage: PipelineStage): PipelineGatesOutcome => ({
@@ -269,7 +301,7 @@ export async function pipelinePromoteGates(input: {
     lines: [...lines],
     exitCode: 3,
     code: "pipeline-gate-waiting",
-    message: `${spec.name} ${gate} waits for an approval of ${digest}`,
+    message: `${spec.name} ${gate} waits for an approval of ${digest}${reads.get(stage.name)?.risk?.over ? `; ${reads.get(stage.name)!.line}` : ""}`,
     hint: approveCommand(spec.name, gate, stage.name, digest, stage.gate?.approval === "sealed"),
   });
 
@@ -281,7 +313,7 @@ export async function pipelinePromoteGates(input: {
     // #5354: a release rejected at a stage is not skipped past it either.
     const stop = await rejected(stage, [stage.name, gate]);
     if (stop) return stop;
-    if (stage.gate?.policy === "never") {
+    if (stage.gate?.policy === "never" && !riskOver(stage)) {
       await port.appendApplied?.({ version: 1, kind: "applied", op: spec.name, gate, planDigest: digest, approvedAt: now, approvedBy: "gate-policy-never", timestamp: now, ...(input.gitSha ? { commit: input.gitSha } : {}) });
       lines.push(`skipped ${stage.name}: its gate never waits`);
       continue;
@@ -302,7 +334,7 @@ export async function pipelinePromoteGates(input: {
     if (!got.passed) return { ...got, lines: [...lines, ...(got.lines ?? [])] };
     return { passed: true, lines: [...lines, ...got.lines], urgent: { approval: got.approval, role: got.role } };
   }
-  if (stage.gate?.policy === "never") {
+  if (stage.gate?.policy === "never" && !riskOver(stage)) {
     lines.push(`stage ${stage.name}: its gate never waits`);
     return { passed: true, lines };
   }
@@ -325,6 +357,8 @@ export interface PipelineEntryRelease {
   commit: string;
   /** When it was cut, which orders it against another release waiting. */
   cutAt?: string;
+  /** The change risk its cut carries (#5387), which each stage gate with `holds.risk` reads. */
+  risk?: ReleaseRisk;
 }
 
 const releaseName = (digest: string, label?: string): string => (label ? `${label} (${digest})` : digest);
@@ -372,7 +406,7 @@ export async function pipelineStageEntry(input: {
   // #5355: under --urgent the stage's urgent rule stands in for its gate, after its rejections, and nothing is skipped.
   let urgent: { approval: GateResolutionRecord; role: string } | undefined;
   const gates = async (skipped: readonly PipelineStage[]): Promise<PipelineGatesOutcome> => {
-    const got = await pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), ...(input.urgent ? { urgent: true } : {}), now: input.now });
+    const got = await pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.release?.risk ? { risk: input.release.risk } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), ...(input.urgent ? { urgent: true } : {}), now: input.now });
     if (got.passed && got.urgent) urgent = got.urgent;
     return got;
   };

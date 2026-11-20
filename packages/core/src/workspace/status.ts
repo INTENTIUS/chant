@@ -297,6 +297,20 @@ export interface StatusReleaseCut {
   timestamp: string;
   signature: string | null;
   signatureCheck: ReleaseSignatureCheck;
+  /**
+   * The change risk the cut carries (#5387): its score and level, and how
+   * each stage after the first whose gate sets `holds.risk` in the member's
+   * pipeline reads it. Absent when the cut carries none.
+   */
+  risk?: StatusReleaseRisk;
+}
+
+/** A cut's change risk as `workspace status` shows it (#5387). */
+export interface StatusReleaseRisk {
+  score: number;
+  level: "low" | "medium" | "high";
+  /** Each later stage that reads it, in the pipeline's order. Empty when the member has no pipeline, or no later stage sets `holds.risk`. */
+  stages: { stage: string; approveAbove: number | null; over: boolean }[];
 }
 
 /** The most paths `ship.pending.paths` lists; `files` still counts them all. */
@@ -861,6 +875,11 @@ async function readReleaseCuts(memberDir: string, rule: GateAdmissionRule): Prom
     const { cuts } = await readCuts(loc);
     const commits = new Map<string, string | null>();
     const out: StatusReleaseCut[] = [];
+    // #5387: how each later stage of the member's pipeline reads a cut's risk.
+    const { laterStageRisk } = await import("../lifecycle/release-risk");
+    const { readMemberPipeline } = await import("../pipeline/read");
+    const read = cuts.some((c) => c.risk) ? readMemberPipeline(memberDir) : undefined;
+    const pipeline = read?.status === "folded" ? read.spec : undefined;
     for (const c of cuts) {
       if (!commits.has(c.releaseDigest)) commits.set(c.releaseDigest, (await readRelease(c.releaseDigest, loc))?.commit ?? null);
       out.push({
@@ -871,6 +890,15 @@ async function readReleaseCuts(memberDir: string, rule: GateAdmissionRule): Prom
         timestamp: c.timestamp,
         signature: c.signature,
         signatureCheck: checkReleaseSignature(rule, c),
+        ...(c.risk
+          ? {
+              risk: {
+                score: c.risk.score,
+                level: c.risk.level,
+                stages: pipeline ? laterStageRisk(pipeline, { score: c.risk.score, reasons: c.risk.waves.flatMap((w) => w.risk.reasons ?? []) }).map(({ stage, approveAbove, over }) => ({ stage, approveAbove, over })) : [],
+              },
+            }
+          : {}),
       });
     }
     return out;
@@ -1057,9 +1085,13 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
   const cut = doc.members.filter((m) => (m.releaseCuts ?? []).length > 0);
   if (cut.length > 0) {
     lines.push("");
-    const rows: string[][] = [["MEMBER", "RELEASE", "COMMIT", "CUT BY", "SIGNATURE"]];
+    // #5387: a cut's change risk, and each later stage it is over at.
+    const risked = cut.some((m) => m.releaseCuts!.some((c) => c.risk));
+    const rows: string[][] = [["MEMBER", "RELEASE", "COMMIT", "CUT BY", "SIGNATURE", ...(risked ? ["RISK"] : [])]];
+    const riskCell = (r: StatusReleaseRisk | undefined): string =>
+      !r ? "-" : `${r.score.toFixed(2)} ${r.level}${r.stages.length > 0 ? ` (${r.stages.map((s) => `${s.stage} ${s.over ? "over" : "within"}${s.approveAbove !== null ? ` ${s.approveAbove}` : ""}`).join(", ")})` : ""}`;
     for (const m of cut) {
-      for (const c of m.releaseCuts!) rows.push([m.name, c.label ?? c.releaseDigest.slice(0, 24), c.commit?.slice(0, 12) ?? "-", c.actor, c.signatureCheck.status]);
+      for (const c of m.releaseCuts!) rows.push([m.name, c.label ?? c.releaseDigest.slice(0, 24), c.commit?.slice(0, 12) ?? "-", c.actor, c.signatureCheck.status, ...(risked ? [riskCell(c.risk)] : [])]);
     }
     lines.push(...table(rows));
   }

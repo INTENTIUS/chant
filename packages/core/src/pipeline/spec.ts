@@ -20,7 +20,7 @@
  */
 
 import { opWavesControlProblems, type GateApprovalSource, type OpWave, type OpWaveGatePolicy, type OpWaveHooks, type OpWavePoint, type OpWavesControl, type OpWavesSpec } from "../op/op-waves";
-import type { OpWaveHolds } from "../op/op-waves-capability-spec";
+import { opWaveHoldsProblems, type OpWaveHolds } from "../op/op-waves-capability-spec";
 import { quorumProblems, QUORUM_MAX_DEPTH, type GateQuorumNode } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
@@ -289,6 +289,8 @@ function gateProblems(gate: unknown, where: string): string[] {
   else if (gate.quorum !== undefined) out.push(...quorumProblems(gate.quorum, `${where}.gate.quorum`, { notAuthor: true, proven: true, combine: true }).map((p) => p.replace(/`/g, "")));
   if (gate.point !== undefined && typeof gate.point !== "string" && !isMap(gate.point)) out.push(`${where}.gate.point must name a decision point`);
   if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"?, "risk"? }`);
+  // #5387: a later stage's holds are read at promote, where no op-waves spec checks them, so they are checked here.
+  else if (gate.holds !== undefined) out.push(...opWaveHoldsProblems(gate.holds).map((p) => `${where}.gate: ${p}`));
   if (gate.urgent !== undefined) {
     if (!isMap(gate.urgent)) out.push(`${where}.gate.urgent must be { "role" }`);
     else {
