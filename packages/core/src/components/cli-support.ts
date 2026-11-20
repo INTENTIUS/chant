@@ -59,7 +59,7 @@ import type { FanOutPlan } from "./fan-out";
 import { componentSetFanOut, formRunGroups, planAndRunComponentGroup } from "./groups";
 import { applyConfigDefaults } from "./config-defaults";
 import { componentForEnvironment } from "./step-environments";
-import { withDeclaredReads } from "./declared-reads";
+import { graphReadsOf, withDeclaredReads, type PlacedGraphRead } from "./declared-reads";
 import { loadChantConfig, type ChantConfig } from "../config";
 
 /** One component in `chant list --components` output. */
@@ -171,7 +171,24 @@ export interface ComponentGraphResult {
   archetypes?: Record<string, Archetype>;
   /** Component name → the environments it declares (#3153), present only for components that declared them. */
   environments?: Record<string, ComponentEnvironmentDeclaration[]>;
+  /**
+   * The reads the components' capabilities find in the files their steps
+   * name (#5331), such as a Pulumi program's `StackReference`s, read for the
+   * run's environment. Present only when `computeComponentGraph` was asked to
+   * read them and found some.
+   */
+  reads?: PlacedGraphRead[];
   error?: string;
+}
+
+/** What `computeComponentGraph` reads besides the declarations. */
+export interface ComponentGraphOptions {
+  /**
+   * Also read the capabilities' graph reads (#5331), with each step resolved
+   * for `env` when one is given (#5360). The registry is the project's own
+   * unless `registry` is passed.
+   */
+  reads?: { env?: string; registry?: CapabilityRegistry };
 }
 
 /** Compute the components' dependency graph under `path`, for `chant graph --components`. */
@@ -179,6 +196,7 @@ export async function computeComponentGraph(
   path: string,
   sandbox?: boolean,
   buildParams?: BuildParamProvenance[],
+  options: ComponentGraphOptions = {},
 ): Promise<ComponentGraphResult> {
   // #1490 — without this the component graph is always the DEFAULT-parameter
   // graph. `discoverComponents` has honoured `buildParams` since #1108; every
@@ -225,7 +243,17 @@ export async function computeComponentGraph(
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges, files, liveNames, composites, archetypes, environments };
+    let reads: PlacedGraphRead[] = [];
+    if (options.reads) {
+      try {
+        const registry = options.reads.registry ?? (await buildCapabilityRegistry(await registryOptions(path)));
+        const env = options.reads.env;
+        reads = await graphReadsOf(driverComponents, registry, path, env !== undefined ? { env } : undefined);
+      } catch {
+        reads = [];
+      }
+    }
+    return { success: true, order, waves, edges, files, liveNames, composites, archetypes, environments, ...(reads.length > 0 ? { reads } : {}) };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };
@@ -933,4 +961,10 @@ export async function runComponents(
     }
     throw err;
   }
+}
+
+/** The options the project's own capability registry is built with. */
+async function registryOptions(path: string): Promise<Parameters<typeof buildCapabilityRegistry>[0]> {
+  const { config } = await loadChantConfig(path);
+  return { plugins: config.capabilities, lexicons: lexiconNames(config.lexicons) };
 }

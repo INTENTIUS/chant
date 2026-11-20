@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { layerWaves } from "@intentius/chant/gated-waves";
-import { pulumiDeclaredReads } from "./pulumi-up";
+import { pulumiDeclaredReads, pulumiGraphReads } from "./pulumi-up";
+import { PULUMI_STACK_REFERENCE_GRAPH_FLOOR } from "./chant-floors";
 import { parsePulumiStackName, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
 
 const ref = (stack: string, name: string, outputs: Record<string, unknown>, secret: string[] = []) => ({
@@ -111,5 +112,36 @@ describe("pulumi-up's declaredReads", () => {
   test("a reference to a stack outside the project adds no read", async () => {
     const app = project("app", exportOf([ref("prod", "acme/billing/prod", { invoiceQueue: "q" })]));
     expect(await pulumiDeclaredReads({ root: "/" }, [{ component: "app", index: 0, step: { dir: app, stack: "prod" } }], { exportStore: null })).toEqual([]);
+  });
+});
+
+describe("pulumi-up's graphReads (#5331)", () => {
+  test("the floor is a version or the next release", () => {
+    expect(PULUMI_STACK_REFERENCE_GRAPH_FLOOR).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test("a two-stack fixture: one edge per output, secret ones by name, the same reader as the wave order", async () => {
+    const network = project("network", exportOf([]));
+    const app = project("app", exportOf([ref("prod", "acme/network/prod", { vpcId: "vpc-1", token: "[secret]" }, ["token"])]));
+    const members = [
+      { component: "app", index: 0, step: { dir: app, stack: "prod" } },
+      { component: "network", index: 0, step: { dir: network, stack: "prod" } },
+    ];
+    const graph = await pulumiGraphReads({ root: "/" }, members, { exportStore: null });
+    expect(graph).toEqual([
+      { reader: "app", index: 0, upstream: "network", output: "token" },
+      { reader: "app", index: 0, upstream: "network", output: "vpcId" },
+    ]);
+    const ordered = await pulumiDeclaredReads({ root: "/" }, members, { exportStore: null });
+    expect(ordered.map((r) => `${r.reader}>${r.upstream}:${r.output}`)).toEqual(["app>network:vpcId"]);
+  });
+
+  test("a stack no step applies is external, named org/project/stack, with a bare name in the reader's project", async () => {
+    const app = project("app", exportOf([ref("prod", "acme/billing/prod", { invoiceQueue: "q" }), ref("prod", "shared", {})]));
+    const graph = await pulumiGraphReads({ root: "/" }, [{ component: "app", index: 0, step: { dir: app, stack: "prod" } }], { exportStore: null });
+    expect(graph).toEqual([
+      { reader: "app", index: 0, external: "acme/billing/prod", output: "invoiceQueue" },
+      { reader: "app", index: 0, external: "app/shared" },
+    ]);
   });
 });

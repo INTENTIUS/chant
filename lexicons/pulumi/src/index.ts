@@ -1,6 +1,6 @@
 export { pulumiPlugin } from "./plugin";
 export { PULUMI_REFERENCE_CATALOG, CATALOGUED_KINDS, REFERENCES_NOTHING, isUnresolvedKind } from "./reference-catalog";
-export { PULUMI_REFERENCE_CATALOG_FLOOR, PULUMI_COST_HOLD_FLOOR, PULUMI_PREVIEW_OBSERVATION_FLOOR } from "./chant-floors";
+export { PULUMI_REFERENCE_CATALOG_FLOOR, PULUMI_COST_HOLD_FLOOR, PULUMI_PREVIEW_OBSERVATION_FLOOR, PULUMI_STACK_REFERENCE_GRAPH_FLOOR } from "./chant-floors";
 export { pulumiCostHold, type PulumiCostHold } from "./cost-hold";
 export { observePreview, PLANNED_STATUS, PREVIEW_ATTRIBUTE_NAMES, PREVIEW_READ_REASONS, PREVIEW_SOURCE, previewReadReason, PULUMI_OBSERVE_ENV, type PulumiObserveDepth, type PreviewReadReason } from "./preview-observation";
 export { pulumiSerializer } from "./serializer";

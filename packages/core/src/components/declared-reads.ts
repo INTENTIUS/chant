@@ -13,7 +13,8 @@
  * value than the upstream applied is held for a round.
  */
 
-import type { CapabilityRegistry, DeclaredRead, DeclaredReadMember } from "./capability";
+import { NEXT_RELEASE } from "../release-floors";
+import type { CapabilityRegistry, DeclaredRead, DeclaredReadMember, GraphRead } from "./capability";
 import type { DriverComponent, DriverPhase, DriverStep } from "./driver";
 import { capabilitySteps } from "./wave-plan";
 import { componentForEnvironment, type StepEnvironmentOptions } from "./step-environments";
@@ -150,4 +151,68 @@ export async function withDeclaredReads(
   if (environment) components = components.map((c) => componentForEnvironment(c, environment.env, environment).component);
   const reads = await declaredReadsOf(components, registry, root);
   return reads.length > 0 ? applyDeclaredReads(components, reads) : [...components];
+}
+
+/**
+ * The first chant whose `chant graph --components` draws the reads a
+ * capability reports through `graphReads`: an edge from the reader to the
+ * component it reads, naming the output, and a node marked external for a
+ * stack no component deploys (#5331).
+ */
+export const GRAPH_READS_FLOOR = NEXT_RELEASE;
+
+/** A graph read with the kind of the step it names. */
+export type PlacedGraphRead = GraphRead & { index: number; kind: string };
+
+/**
+ * Each capability's graph reads among `components` (#5331): the reads
+ * {@link declaredReadsOf} would place, and those naming a stack outside the
+ * project. A capability without `graphReads` reports its `declaredReads`
+ * as they are. The steps are read for `environment` as `declaredReadsOf`
+ * reads them. A capability that throws reports none.
+ */
+export async function graphReadsOf(
+  components: readonly DriverComponent[],
+  registry: CapabilityRegistry,
+  root: string,
+  environment?: { env: string } & StepEnvironmentOptions,
+): Promise<PlacedGraphRead[]> {
+  if (environment) components = components.map((c) => componentForEnvironment(c, environment.env, environment).component);
+  const names = new Set(components.map((c) => c.name));
+  const byKind = new Map<string, DeclaredReadMember[]>();
+  for (const component of components) {
+    const seen = new Map<string, number>();
+    for (const step of capabilitySteps(component.deploy)) {
+      if (!registry.has(step.kind)) continue;
+      const index = seen.get(step.kind) ?? 0;
+      seen.set(step.kind, index + 1);
+      const { kind, ...rest } = step;
+      (byKind.get(kind) ?? byKind.set(kind, []).get(kind)!).push({ component: component.name, index, step: rest });
+    }
+  }
+  const out: PlacedGraphRead[] = [];
+  for (const [kind, members] of byKind) {
+    const capability = registry.resolve(kind);
+    let reported: GraphRead[];
+    try {
+      if (typeof capability.graphReads === "function") reported = await capability.graphReads({ root }, members);
+      else if (typeof capability.declaredReads === "function") {
+        reported = (await capability.declaredReads({ root }, members)).map((r) => ({ reader: r.reader, index: r.index ?? 0, upstream: r.upstream, output: r.output }));
+      } else continue;
+    } catch {
+      continue;
+    }
+    for (const r of reported ?? []) {
+      if (!names.has(r.reader) || r.reader === r.upstream) continue;
+      if (r.upstream !== undefined ? !names.has(r.upstream) : r.external === undefined) continue;
+      out.push({ ...r, index: r.index ?? 0, kind });
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      a.reader.localeCompare(b.reader) ||
+      a.index - b.index ||
+      (a.upstream ?? a.external ?? "").localeCompare(b.upstream ?? b.external ?? "") ||
+      (a.output ?? "").localeCompare(b.output ?? ""),
+  );
 }

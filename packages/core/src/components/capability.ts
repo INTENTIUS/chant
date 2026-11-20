@@ -395,6 +395,17 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   declaredReads?(ctx: DeclaredReadsContext, members: readonly DeclaredReadMember[]): Promise<DeclaredRead[]> | DeclaredRead[];
   /**
+   * Optional (#5331): the reads between this capability's steps for the
+   * component graph, beside {@link declaredReads}. It is asked the same way
+   * and answers from the same reader, and it also reports the reads whose
+   * upstream no component of the project deploys, which `declaredReads`
+   * leaves out because there is nothing to order. `chant graph --components`
+   * draws an edge for each: to the upstream component, or to a node marked
+   * external. The answer must come from the declaration and the files
+   * alone; a throw counts as no reads.
+   */
+  graphReads?(ctx: DeclaredReadsContext, members: readonly DeclaredReadMember[]): Promise<GraphRead[]> | GraphRead[];
+  /**
    * Optional (#4542): the local files a step deploys from when its input
    * names them indirectly, as `terraform-apply` names a root by key. A
    * release cut records them for the step's component, with their paths
@@ -556,6 +567,23 @@ export interface DeclaredRead {
   output: string;
   /** Where in the reader's step the reference goes, as a JSON Pointer. */
   at: string;
+}
+
+/**
+ * A read `graphReads` found (#5331): `reader`'s step `index` reads the output
+ * `output` of a stack, named by `upstream` when a component of the project
+ * deploys it, else by `external`.
+ */
+export interface GraphRead {
+  reader: string;
+  /** The reader's step, as {@link DeclaredReadMember.index}. Default 0. */
+  index?: number;
+  /** The component that deploys the stack read. Absent with {@link external}. */
+  upstream?: string;
+  /** The stack read when no component of the project deploys it, as the engine names it (`org/project/stack`). */
+  external?: string;
+  /** The output read, where the program shows it. Absent when it names none. */
+  output?: string;
 }
 
 /** One component of a group, as core hands it to the capability (ws-107). */

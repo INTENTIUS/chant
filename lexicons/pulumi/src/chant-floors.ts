@@ -36,3 +36,8 @@ export const PULUMI_PREVIEW_OBSERVATION_FLOOR = NEXT_RELEASE;
  * reads with ids from its export (#5338).
  */
 export const PULUMI_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first pulumi lexicon release whose `pulumi-up` reports its `StackReference` reads through `graphReads` (`./pulumi-up`), so `chant graph --components` draws an edge from a stack to each stack it reads, naming the output, and a node marked external for a stack no component deploys (#5331).
+ */
+export const PULUMI_STACK_REFERENCE_GRAPH_FLOOR = NEXT_RELEASE;
