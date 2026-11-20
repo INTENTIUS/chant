@@ -6,7 +6,7 @@
  */
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { costEstimateLines, costEstimateProblems, estimateCosts, policyCost } from "@intentius/chant/ci-product";
 import { opWaveCostVerdict, opWaveCosts, opWaveHoldsProblems } from "@intentius/chant/op/op-waves-capability";
@@ -19,6 +19,15 @@ describe("terraformCostHold", () => {
     expect(opWaveHoldsProblems({ cost: hold })).toEqual([]);
     expect(costEstimateProblems("ci.cost", hold)).toEqual([]);
     expect(() => terraformCostHold({ approveAbove: 1, command: ["infracost"] })).toThrow(/\{planJson\}/);
+  });
+
+  test("carries redactEnv and dropEnv as names, and leaves them out when unset", () => {
+    const hold = terraformCostHold({ approveAbove: 1, redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(hold).toEqual({ command: [...INFRACOST_ARGV], approveAbove: 1, format: "infracost", redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(opWaveHoldsProblems({ cost: hold })).toEqual([]);
+    expect(Object.keys(terraformCostHold({ approveAbove: 1 }))).toEqual(["command", "approveAbove", "format"]);
+    expect(() => terraformCostHold({ approveAbove: 1, redactEnv: ["p@ss word"] })).toThrow(/redactEnv.*names/);
+    expect(() => terraformCostHold({ approveAbove: 1, dropEnv: ["a=b"] })).toThrow(/dropEnv.*names/);
   });
 
   test("the plan note's estimate and the wave's hold read the same command over a root's plan document", () => {
@@ -34,7 +43,9 @@ describe("terraformCostHold", () => {
       return { status: 0, stdout: JSON.stringify({ currency: "EUR", totalMonthlyCost: "180", pastTotalMonthlyCost: "40", diffTotalMonthlyCost: "140" }), stderr: "" };
     };
     const estimate = estimateCosts(hold, [{ member: "envs/prod/network", artifact, empty: false }], dir, infracost);
-    expect(seen[0]).toEqual(["infracost", "breakdown", "--path", planJson, "--format", "json", "--log-level", "error"]);
+    // #5416: infracost reads a redacted copy of the document, under the same file name.
+    expect(seen[0]!.map((a) => (a.endsWith("tfplan.json") ? basename(a) : a))).toEqual(["infracost", "breakdown", "--path", "tfplan.json", "--format", "json", "--log-level", "error"]);
+    expect(seen[0]![3]).not.toBe(planJson);
     expect(estimate).toEqual({
       estimator: "infracost",
       format: "infracost",

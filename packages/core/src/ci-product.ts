@@ -115,8 +115,22 @@ export const PRODUCT_CONFIG_SCOPED_ALIASES_FLOOR = NEXT_RELEASE;
  * approvals, and it is off until `ci.cost` or `holds.cost` is set.
  */
 export const COST_ESTIMATE_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose cost estimate runs on a redacted plan without the forge tokens (#5416):
+ * `priceRuns`, and so `estimateCosts`, the plan note's `ci.cost`, an op wave's `holds.cost` and the
+ * pulumi cost hold, hand the command a copy of the plan document with its sensitive values replaced
+ * (`redactPlanJson`) and run it with the forge tokens left out of its environment (`costEnv`). A
+ * product's `run wave` job uses `holds.cost` and needs no after-plan hook of its own. `redactEnv` and
+ * `dropEnv` on a wave's `holds.cost` (and the terraform and pulumi presets) name more variables to
+ * redact and to drop; they hold names, never values.
+ */
+export const COST_REDACTED_FLOOR = NEXT_RELEASE;
 export {
   COST_ESTIMATE_FORMATS,
+  COST_REDACTED,
+  costEnv,
+  redactPlanJson,
   costEstimateLines,
   costEstimateOf,
   costEstimateProblems,
@@ -129,6 +143,7 @@ export {
   type CostEstimate,
   type CostEstimateExec,
   type CostEstimateFormat,
+  type CostEnvOptions,
   type CostEstimateSettings,
   type CostFigures,
   type CostRun,

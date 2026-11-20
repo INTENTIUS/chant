@@ -37,10 +37,12 @@ describe("the pull-request loop bundle", () => {
       // The product's words (#4550): no imports.
       "packages/core/src/ci-product-words.ts",
       "packages/core/src/content-digest.ts",
-      // The cost estimate's record and note lines (#5334): node built-ins only.
+      // The cost estimate's record and note lines (#5334): node built-ins only, and the token names above (#5416).
       "packages/core/src/cost-estimate.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",
+      // The forge token variables' names (#5416): the cost estimate leaves them out of its command's environment. No imports.
+      "packages/core/src/forge-token-vars.ts",
       "packages/core/src/intrinsic.ts",
       "packages/core/src/lifecycle/plan-digest.ts",
       "packages/core/src/plan-summary.ts",

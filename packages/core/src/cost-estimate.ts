@@ -20,13 +20,26 @@
  * here lets a plan apply without a person. A failed estimate never fails
  * the plan. It is off until `ci.cost` (or `holds.cost`) is set.
  *
- * The module imports only node built-ins, so the pull-request loop's bundle
- * carries it (`pr-loop-bundle.test.ts`).
+ * The command never sees what the plan keeps secret (#5416). Each plan
+ * document is copied with its sensitive values replaced (`redactPlanJson`),
+ * and `{planJson}` names the copy, which keeps the original's file name. The
+ * command runs with the forge tokens left out of its environment
+ * (`costEnv`), by name and by value. A product names more to remove with
+ * `redactEnv` (variables whose values are secret) and `dropEnv` (variables to
+ * leave out), on an op wave's `holds.cost` and the pulumi and terraform
+ * presets: names only, so a secret's value never sits in the spec. Both hold for every caller: the plan
+ * note, a policy's `input.cost`, an op wave's `holds.cost` and the pulumi
+ * cost hold, so a product's `run wave` job needs no hook of its own.
+ *
+ * The module imports only node built-ins and `./forge-token-vars`'s token names,
+ * so the pull-request loop's bundle carries it (`pr-loop-bundle.test.ts`).
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { FORGE_TOKEN_VARS } from "./forge-token-vars";
 
 /** The estimate shapes the command may print. */
 export const COST_ESTIMATE_FORMATS = ["infracost", "chant"] as const;
@@ -143,12 +156,130 @@ function planFileOf(artifact: unknown, cwd: string): string {
 }
 
 /** How the estimate command ran. `status` is null when it did not start. */
-export type CostEstimateExec = (argv: string[], cwd: string) => { status: number | null; stdout: string; stderr: string };
+export type CostEstimateExec = (argv: string[], cwd: string, env?: NodeJS.ProcessEnv) => { status: number | null; stdout: string; stderr: string };
 
-const defaultExec: CostEstimateExec = (argv, cwd) => {
-  const r = spawnSync(argv[0]!, argv.slice(1), { cwd, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
+/**
+ * What a product names for the cost command to lose, as names only: a
+ * secret's value reaches the job through a variable (the environment set's
+ * `secrets`, #5348, or a variable the job reads), so the spec holds the
+ * variable's name and the value is read from the job's environment when the
+ * estimate runs.
+ */
+export interface CostEnvOptions {
+  /** Variables whose values are secret: each value is replaced by `[redacted]` in the plan copy, and the variable is left out of the command's environment, by name and by value. */
+  redactEnv?: readonly string[];
+  /** Variables left out of the command's environment, by name and by value, beside the forge tokens. A value they hold is replaced by `[redacted]` in the plan copy too. */
+  dropEnv?: readonly string[];
+}
+
+/**
+ * `env` as the estimate command gets it (#5416): less every forge token, by
+ * name (`FORGE_TOKEN_VARS`) and by value, so a variable another name holds a
+ * token in goes too. Any other variable is kept.
+ */
+export function costEnv(env: NodeJS.ProcessEnv, extra: CostEnvOptions = {}): NodeJS.ProcessEnv {
+  const names = new Set<string>([...FORGE_TOKEN_VARS, ...(extra.redactEnv ?? []), ...(extra.dropEnv ?? [])]);
+  const held = new Set([...names].map((name) => env[name] ?? "").filter((v) => v !== ""));
+  const out: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (names.has(name)) continue;
+    if (value !== undefined && held.has(value)) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+const defaultExec: CostEstimateExec = (argv, cwd, env = costEnv(process.env)) => {
+  const r = spawnSync(argv[0]!, argv.slice(1), { cwd, env, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
   return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: `${r.stderr ?? ""}${r.error ? r.error.message : ""}` };
 };
+
+/** What stands where a sensitive value was (#5416). */
+export const COST_REDACTED = "[redacted]";
+
+type Json = Record<string, unknown>;
+const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** Replace what `mark` marks `true` in `value`; `mark` mirrors the value's shape, as terraform's `*_sensitive` does. */
+function cover(value: unknown, mark: unknown): unknown {
+  if (value === undefined) return value;
+  if (mark === true) return value === null ? null : COST_REDACTED;
+  if (Array.isArray(mark) && Array.isArray(value)) return value.map((v, i) => cover(v, mark[i]));
+  if (isObject(mark) && isObject(value)) {
+    const out: Json = { ...value };
+    for (const k of Object.keys(mark)) if (k in out) out[k] = cover(out[k], mark[k]);
+    return out;
+  }
+  return value;
+}
+
+/** Pulumi's secret wrapper: an object holding this key is a secret, and its other keys hold the value or its ciphertext. */
+const PULUMI_SECRET_SIG = "4dabf18193072939515e22adb298388d";
+
+/** Walk `plan`, covering each value a plan marks sensitive. */
+function coverMarked(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(coverMarked);
+  if (!isObject(node)) return node;
+  if (PULUMI_SECRET_SIG in node) return COST_REDACTED;
+  const out: Json = {};
+  for (const [k, v] of Object.entries(node)) out[k] = coverMarked(v);
+  // terraform: a change's before/after and a resource's values carry a sibling that marks what is sensitive.
+  for (const [value, mark] of [["before", "before_sensitive"], ["after", "after_sensitive"], ["values", "sensitive_values"]] as const) {
+    if (value in out && mark in node) out[value] = cover(out[value], node[mark]);
+  }
+  // terraform: an output marked sensitive.
+  if (node.sensitive === true && "value" in out) out.value = cover(out.value, true);
+  return out;
+}
+
+/** The string leaves of `raw` at each place `safe` holds the redaction mark. */
+function coveredStrings(raw: unknown, safe: unknown, out: Set<string>): void {
+  if (safe === COST_REDACTED) {
+    const leaves = (v: unknown): void => {
+      if (typeof v === "string") {
+        if (v !== "" && v !== COST_REDACTED) out.add(v);
+      } else if (Array.isArray(v)) v.forEach(leaves);
+      else if (isObject(v)) Object.values(v).forEach(leaves);
+    };
+    leaves(raw);
+  } else if (Array.isArray(raw) && Array.isArray(safe)) raw.forEach((r, i) => coveredStrings(r, safe[i], out));
+  else if (isObject(raw) && isObject(safe)) for (const k of Object.keys(raw)) if (k in safe) coveredStrings(raw[k], safe[k], out);
+}
+
+/** `value` with each of `secrets` replaced where a string is one, and cut out of a longer string when it is eight characters or more. */
+function scrub(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") {
+    if (secrets.includes(value)) return COST_REDACTED;
+    let text = value;
+    for (const secret of secrets) if (secret.length >= 8) text = text.split(secret).join(COST_REDACTED);
+    return text;
+  }
+  if (Array.isArray(value)) return value.map((v) => scrub(v, secrets));
+  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v, secrets)]));
+  return value;
+}
+
+/**
+ * A plan document with every sensitive value replaced by `COST_REDACTED`
+ * (#5416). It reads what terraform and OpenTofu mark (`before_sensitive`,
+ * `after_sensitive`, `sensitive_values`, a sensitive output) and what Pulumi
+ * wraps as a secret, then replaces each value it covered wherever else the
+ * document repeats it (a binary does not mark every copy), and the values of
+ * `extra`, such as the forge tokens the environment holds. The input is not
+ * changed.
+ */
+export function redactPlanJson(plan: unknown, extra: readonly string[] = []): unknown {
+  const marked = coverMarked(plan);
+  const found = new Set<string>(extra.filter((v) => v !== ""));
+  coveredStrings(plan, marked, found);
+  const secrets = [...found].sort((a, b) => b.length - a.length);
+  return secrets.length === 0 ? marked : scrub(marked, secrets);
+}
+
+/** The values of the forge tokens `env` holds, and of the variables `extra` names. */
+function tokenValues(env: NodeJS.ProcessEnv, extra: CostEnvOptions = {}): string[] {
+  return [...FORGE_TOKEN_VARS, ...(extra.redactEnv ?? []), ...(extra.dropEnv ?? [])].map((name) => env[name] ?? "").filter((v) => v !== "");
+}
 
 /** A member to price: its capability's artifact, and whether its plan changes nothing. `plan` fills `{plan}` when given, else the artifact's `planFile`. */
 export interface CostRun {
@@ -158,29 +289,53 @@ export interface CostRun {
   plan?: string;
 }
 
-/** Run `settings.command` over each run that changes something (#4545, #5334). A run with no estimate says why. */
-export function priceRuns(settings: Pick<CostEstimateSettings, "command" | "format">, runs: readonly CostRun[], cwd: string, exec: CostEstimateExec = defaultExec): MemberCost[] {
+/**
+ * Run `settings.command` over each run that changes something (#4545, #5334).
+ * The command reads a redacted copy of the plan document and runs without
+ * the forge tokens (#5416), and with `redactEnv` and `dropEnv` also the
+ * values and variables a product names. A run with no estimate says why.
+ */
+export function priceRuns(settings: Pick<CostEstimateSettings, "command" | "format"> & CostEnvOptions, runs: readonly CostRun[], cwd: string, exec: CostEstimateExec = defaultExec): MemberCost[] {
   const format = settings.format ?? "infracost";
   const out: MemberCost[] = [];
-  for (const run of runs) {
-    if (run.empty) continue;
-    const planJson = planJsonOf(run.artifact, cwd);
-    if (settings.command.some((a) => a.includes("{planJson}")) && !planJson) {
-      out.push({ member: run.member, error: "its plan names no plan document to price" });
-      continue;
+  let work: string | undefined;
+  try {
+    for (const run of runs) {
+      if (run.empty) continue;
+      const original = planJsonOf(run.artifact, cwd);
+      if (settings.command.some((a) => a.includes("{planJson}")) && !original) {
+        out.push({ member: run.member, error: "its plan names no plan document to price" });
+        continue;
+      }
+      let planJson = original;
+      if (original) {
+        try {
+          const redacted = JSON.stringify(redactPlanJson(JSON.parse(readFileSync(original, "utf-8")) as unknown, tokenValues(process.env, settings)));
+          // One directory per member, so two members' documents of one name never meet, and the copy keeps the name the estimator knows it by.
+          work ??= mkdtempSync(join(tmpdir(), "chant-cost-"));
+          const dir = mkdtempSync(join(work, "m-"));
+          planJson = join(dir, basename(original));
+          writeFileSync(planJson, redacted, { mode: 0o600 });
+        } catch (err) {
+          out.push({ member: run.member, error: `the plan document could not be read to redact it: ${err instanceof Error ? err.message : String(err)}` });
+          continue;
+        }
+      }
+      const plan = run.plan ?? planFileOf(run.artifact, cwd);
+      const argv = settings.command.map((a) => a.replaceAll("{target}", run.member).replaceAll("{plan}", plan).replaceAll("{planJson}", planJson ?? ""));
+      const r = exec(argv, cwd, costEnv(process.env, settings));
+      if (r.status !== 0) {
+        out.push({ member: run.member, error: `${argv[0]} ${r.status === null ? "did not run" : `exited ${r.status}`}: ${(r.stderr || r.stdout).trim().split("\n").slice(-2).join(" ")}` });
+        continue;
+      }
+      try {
+        out.push({ member: run.member, ...readCostEstimate(format, r.stdout) });
+      } catch (err) {
+        out.push({ member: run.member, error: `the estimate cannot be read: ${err instanceof Error ? err.message : String(err)}` });
+      }
     }
-    const plan = run.plan ?? planFileOf(run.artifact, cwd);
-    const argv = settings.command.map((a) => a.replaceAll("{target}", run.member).replaceAll("{plan}", plan).replaceAll("{planJson}", planJson ?? ""));
-    const r = exec(argv, cwd);
-    if (r.status !== 0) {
-      out.push({ member: run.member, error: `${argv[0]} ${r.status === null ? "did not run" : `exited ${r.status}`}: ${(r.stderr || r.stdout).trim().split("\n").slice(-2).join(" ")}` });
-      continue;
-    }
-    try {
-      out.push({ member: run.member, ...readCostEstimate(format, r.stdout) });
-    } catch (err) {
-      out.push({ member: run.member, error: `the estimate cannot be read: ${err instanceof Error ? err.message : String(err)}` });
-    }
+  } finally {
+    if (work) rmSync(work, { recursive: true, force: true });
   }
   return out;
 }
