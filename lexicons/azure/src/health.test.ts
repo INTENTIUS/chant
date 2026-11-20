@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { appRunningStatusEntry, containerAppEntry, observeHealthAzure } from "./health";
+import { appRunningStatusEntry, containerAppEntry, observeHealthAzure, parseArmId } from "./health";
 import type { AzHttp } from "./op/activities/az-apply";
 
 const AT = "2026-10-20T21:00:00.000Z";
@@ -62,5 +62,35 @@ describe("azure health (#4177)", () => {
     const r = await observeHealthAzure({ environment: "rg", buildOutput: "", entities, http: noRevisions });
     expect(r.entities).toEqual({});
     expect(r.unobserved.web?.reason).toBe("read-failed");
+  });
+
+  test("with recorded ARM ids the app is read in the id's subscription and resource group (#5338)", async () => {
+    const urls: string[] = [];
+    const http: AzHttp = async (_m, url) => {
+      urls.push(url);
+      if (url.includes("/revisions")) {
+        return { status: 200, text: JSON.stringify({ value: [{ name: "api--1", properties: { active: true, runningState: "Running" } }] }) };
+      }
+      return { status: 200, text: JSON.stringify({ id: "/x", properties: {} }) };
+    };
+    const r = await observeHealthAzure({
+      environment: "rg",
+      buildOutput: "",
+      entities: new Map([
+        ["app/azurerm_container_app.api", { entityType: "Microsoft.App/containerApps", props: {} }],
+        ["app/azurerm_container_app.gone", { entityType: "Microsoft.App/containerApps", props: {} }],
+      ]),
+      physicalIds: { "app/azurerm_container_app.api": "/subscriptions/sub-1/resourceGroups/prod-rg/providers/Microsoft.App/containerApps/api" },
+      http,
+      now,
+    });
+    expect(r.entities["app/azurerm_container_app.api"]).toMatchObject({ state: "healthy" });
+    expect(r.absent).toEqual(["app/azurerm_container_app.gone"]);
+    expect(urls[0]).toContain("/subscriptions/sub-1/resourceGroups/prod-rg/providers/Microsoft.App/containerApps/api?");
+  });
+
+  test("parseArmId reads an ARM resource id and nothing else", () => {
+    expect(parseArmId("/subscriptions/s/resourceGroups/rg/providers/Microsoft.App/containerApps/api")).toEqual({ subscriptionId: "s", resourceGroup: "rg", name: "api" });
+    expect(parseArmId("api")).toBeUndefined();
   });
 });

@@ -71,6 +71,40 @@ describe("chant lifecycle health (#4177)", () => {
     expectValid(json);
   });
 
+  test("a terraform root's resources are read by the provider lexicon with the engine's ids (#5338)", async () => {
+    buildMock.mockResolvedValue(buildResult([["app/aws_ecs_service.api", "terraform", "Terraform::Resource"], ["app/aws_s3_bucket.logs", "terraform", "Terraform::Resource"]]));
+    let ids: Readonly<Record<string, string>> | undefined;
+    const aws: LexiconPlugin = {
+      ...createMockPlugin({ name: "aws" }),
+      healthTypes: ["AWS::ECS::Service"],
+      observeHealth: async (o) => {
+        ids = o.physicalIds;
+        return { entities: { "app/aws_ecs_service.api": { type: "AWS::ECS::Service", state: "healthy", detail: "2/2 running", observedAt: "t" } }, unobserved: {}, absent: [] };
+      },
+    };
+    const terraform: LexiconPlugin = {
+      ...createMockPlugin({ name: "terraform" }),
+      healthTargets: async (o) => {
+        expect([...o.entities.keys()].sort()).toEqual(["app/aws_ecs_service.api", "app/aws_s3_bucket.logs"]);
+        return {
+          targets: { "app/aws_ecs_service.api": { lexicon: "aws", type: "AWS::ECS::Service", engineType: "aws_ecs_service", physicalId: "arn:svc" } },
+          unobserved: {},
+          absent: [],
+          uncovered: { "app/aws_s3_bucket.logs": "aws_s3_bucket" },
+        };
+      },
+    };
+    const exit = await runLifecycleHealth({ args: args({ json: true }), plugins: [terraform, aws], serializers: [terraform.serializer, aws.serializer] });
+    expect(exit).toBe(0);
+    expect(ids).toEqual({ "app/aws_ecs_service.api": "arn:svc" });
+    const json = JSON.parse(out[0]!);
+    expect(json.lexicons.terraform.entities["app/aws_ecs_service.api"].state).toBe("healthy");
+    expect(json.lexicons.aws).toBeUndefined();
+    expect(json.lexicons.terraform.entities["app/aws_s3_bucket.logs"]).toMatchObject({ type: "aws_s3_bucket", state: "unknown" });
+    expect(json.summary).toMatchObject({ healthy: 1, unknown: 1 });
+    expectValid(json);
+  });
+
   test("a reader that throws is not read, never unhealthy", async () => {
     buildMock.mockResolvedValue(buildResult([["web", "aws", "AWS::ECS::Service"]]));
     const plugin: LexiconPlugin = {

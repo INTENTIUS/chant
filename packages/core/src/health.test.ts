@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { healthApplicable, observeHealthFor, summarizeHealth, totalHealth, type HealthLexicon } from "./health";
+import {
+  healthApplicable,
+  observeEngineHealth,
+  observeHealthFor,
+  summarizeHealth,
+  totalHealth,
+  type EngineHealthLexicon,
+  type HealthLexicon,
+  type HealthReadOptions,
+} from "./health";
 
 const entities = new Map([
   ["web", { entityType: "AWS::ECS::Service", props: {} }],
@@ -58,5 +67,66 @@ describe("health reads (#4177)", () => {
       },
     ]);
     expect(s).toEqual({ healthy: 1, unhealthy: 1, unknown: 1, unobserved: 1, absent: 2 });
+  });
+});
+
+describe("engine health through the provider lexicons (#5338)", () => {
+  const declared = new Map([
+    ["app/aws_ecs_service.api", { entityType: "Terraform::Resource", props: { type: "aws_ecs_service" } }],
+    ["app/aws_route53_health_check.api", { entityType: "Terraform::Resource", props: { type: "aws_route53_health_check" } }],
+    ["app/azurerm_container_app.web", { entityType: "Terraform::Resource", props: { type: "azurerm_container_app" } }],
+    ["app/aws_ecs_service.gone", { entityType: "Terraform::Resource", props: { type: "aws_ecs_service" } }],
+  ]);
+  const engine: EngineHealthLexicon = {
+    name: "terraform",
+    healthTargets: async () => ({
+      targets: {
+        "app/aws_ecs_service.api": { lexicon: "aws", type: "AWS::ECS::Service", engineType: "aws_ecs_service", physicalId: "arn:svc" },
+        "app/aws_route53_health_check.api": { lexicon: "aws", type: "AWS::Route53::HealthCheck", engineType: "aws_route53_health_check", physicalId: "hc-1" },
+        "app/azurerm_container_app.web": { lexicon: "azure", type: "Microsoft.App/containerApps", engineType: "azurerm_container_app", physicalId: "/subscriptions/s/x" },
+      },
+      unobserved: {},
+      absent: ["app/aws_ecs_service.gone"],
+      uncovered: { "app/aws_s3_bucket.logs": "aws_s3_bucket" },
+    }),
+  };
+
+  test("each target is read by its provider with the engine's id; a provider not installed leaves a hole", async () => {
+    let seen: HealthReadOptions | undefined;
+    const aws: HealthLexicon = {
+      name: "aws",
+      healthTypes: ["AWS::ECS::Service"],
+      observeHealth: async (o) => {
+        seen = o;
+        return { entities: { "app/aws_ecs_service.api": { type: "AWS::ECS::Service", state: "healthy", detail: "2/2 running", observedAt: "t" } }, unobserved: {}, absent: [] };
+      },
+    };
+    const { result, error } = await observeEngineHealth(
+      engine,
+      { environment: "dev", buildOutput: "x", entities: declared },
+      async (l) => (l === "aws" ? aws : undefined),
+      () => new Date("2026-11-19T00:00:00.000Z"),
+    );
+    expect(error).toBeUndefined();
+    expect(seen?.physicalIds).toEqual({ "app/aws_ecs_service.api": "arn:svc" });
+    expect([...seen!.entities]).toEqual([["app/aws_ecs_service.api", { entityType: "AWS::ECS::Service", props: {} }]]);
+    expect(result.entities["app/aws_ecs_service.api"]?.state).toBe("healthy");
+    expect(result.unobserved["app/aws_route53_health_check.api"]).toMatchObject({ reason: "unsupported-kind", detail: "the aws lexicon has no health read for AWS::Route53::HealthCheck" });
+    expect(result.unobserved["app/azurerm_container_app.web"]).toMatchObject({ reason: "unsupported-kind", detail: "azurerm_container_app is read by the azure lexicon, which is not installed" });
+    expect(result.absent).toEqual(["app/aws_ecs_service.gone"]);
+    // A resource no provider reads is unknown, never left out: a soak must not pass on what nobody observed.
+    expect(result.entities["app/aws_s3_bucket.logs"]).toEqual({
+      type: "aws_s3_bucket",
+      state: "unknown",
+      detail: "no health read for aws_s3_bucket",
+      observedAt: "2026-11-19T00:00:00.000Z",
+    });
+    expect(summarizeHealth([result])).toMatchObject({ healthy: 1, unknown: 1 });
+  });
+
+  test("a thrown healthTargets is an error with no entries", async () => {
+    const broken: EngineHealthLexicon = { name: "pulumi", healthTargets: async () => { throw new Error("no export"); } };
+    const r = await observeEngineHealth(broken, { environment: "dev", buildOutput: "", entities: declared }, async () => undefined);
+    expect(r).toEqual({ result: { entities: {}, unobserved: {}, absent: [] }, error: "no export" });
   });
 });

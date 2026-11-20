@@ -156,6 +156,28 @@ export const terraformPlugin: LexiconPlugin = {
    * drift` reaches it through `chant lifecycle drift` in a member's reader
    * project. See `./drift-read.ts`.
    */
+  /**
+   * What applying a planned update costs, from the plan's own actions
+   * (#5338): in place, a replacement created first, or a delete first. It
+   * answers for a root read at the plan depth, whose blocks carry
+   * `planActions`; any other read leaves the update `unknown`. See
+   * `./disruption.ts`.
+   */
+  async classifyDisruption(options) {
+    const { classifyTerraformDisruption } = await import("./disruption");
+    return classifyTerraformDisruption(options);
+  },
+
+  /**
+   * Health for a root's resources through the provider lexicons (#5338):
+   * each covered type mapped to its provider's health type, with the id from
+   * the root's state. See `./health-targets.ts`.
+   */
+  async healthTargets(options) {
+    const { terraformHealthTargets } = await import("./health-targets");
+    return terraformHealthTargets(options);
+  },
+
   async readDrift(options) {
     const { readTerraformDrift } = await import("./drift-read");
     return readTerraformDrift(options);

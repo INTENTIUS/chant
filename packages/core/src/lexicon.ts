@@ -99,6 +99,8 @@ export type {
   HealthReadOptions,
   HealthReadResult,
   HealthState,
+  HealthTarget,
+  HealthTargetsResult,
 } from "./health";
 
 // The identity contract (#1982), re-exported from the same entry so a
@@ -2560,6 +2562,18 @@ export interface LexiconPlugin {
    * Endpoint overrides apply as on the other reads, so an emulator answers.
    */
   observeHealth?(options: import("./health").HealthReadOptions): Promise<import("./health").HealthReadResult>;
+
+  /**
+   * For an engine lexicon (terraform, pulumi): each declared resource whose
+   * engine type a provider lexicon reads health for, with that provider's
+   * health type and the id the engine recorded (a root's state, a stack's
+   * export) (#5338). `chant lifecycle health` hands each target to the
+   * provider's {@link observeHealth} with `physicalIds`. Every other
+   * resource goes in `uncovered` with its engine type, and core reports it
+   * `unknown`. An id that could not be read is `unobserved` with a reason; a
+   * resource the records do not hold is `absent`.
+   */
+  healthTargets?(options: import("./health").HealthReadOptions): Promise<import("./health").HealthTargetsResult>;
 
   /**
    * This lexicon's noise rules for deep observation (#1014): which fields are

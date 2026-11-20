@@ -67,6 +67,14 @@ export interface DisruptionQuery {
   type?: string;
   /** The attribute-level changes the entry carries. */
   deltas: AttributeChange[];
+  /**
+   * The entry's observed attributes now, in the lexicon's own observation
+   * shape, when the caller has them (#5338). A lexicon whose read carries
+   * the engine's own plan (terraform's plan depth puts `planActions` and
+   * `planReplacePaths` on each block) answers from these, since a delta
+   * lists only what moved since the last snapshot.
+   */
+  attributes?: Record<string, unknown>;
 }
 
 /** A lexicon's answer for one query. */
@@ -102,12 +110,16 @@ export function unknownDisruption(detail: string): DisruptionVerdict {
  * entries — the only party that can map its own observation's attribute paths
  * back onto spec properties.
  *
+ * `observed` is the same lexicon's read, keyed by entry name; each query
+ * then carries that entry's attributes (#5338).
+ *
  * Returns a new change set; the input is not mutated.
  */
 export async function annotateDisruption(
   cs: ChangeSet,
   environment: string,
   classify?: DisruptionClassifier,
+  observed?: Readonly<Record<string, { attributes?: Record<string, unknown> }>>,
 ): Promise<ChangeSet> {
   const updates = cs.entries.filter((e) => e.action === "update");
   if (updates.length === 0) return cs;
@@ -127,6 +139,7 @@ export async function annotateDisruption(
           name: e.name,
           ...(e.type ? { type: e.type } : {}),
           deltas: e.deltas ?? [],
+          ...(observed?.[e.name]?.attributes ? { attributes: observed[e.name]!.attributes } : {}),
         })),
       })) ?? {};
     } catch (err) {

@@ -141,3 +141,8 @@ export { pulumiPreview as pulumiPreviewStep, pulumiDrift as pulumiDriftStep } fr
 export { pulumiExitOf, pulumiPlanMoved, PULUMI_EXIT, PLUNGE_PLAN_MOVED_EXIT } from "./exit-codes";
 // Which stack outputs a preview changes, traced through the export (#4635).
 export { pulumiPlannedOutputChanges, type PulumiOutputChange, type PulumiPlannedOutputChanges } from "./planned-output-changes";
+
+// Disruption from a preview's steps and health through the provider lexicons (#5338).
+export { classifyPulumiDisruption, pulumiDisruptionQueries, pulumiStepsVerdict } from "./disruption";
+export { PULUMI_HEALTH_TYPES, pulumiHealthTargets, exportIds as pulumiExportIds } from "./health-targets";
+export { PULUMI_HEALTH_DISRUPTION_FLOOR } from "./chant-floors";

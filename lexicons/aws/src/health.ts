@@ -13,6 +13,11 @@
  *
  * Both go through the read transport's endpoint rule, so `AWS_ENDPOINT_URL`
  * (Floci) answers them.
+ *
+ * A terraform root's or pulumi stack's resources come with
+ * `options.physicalIds` (#5338): a health check's id and a service's ARN, as
+ * the engine recorded them. The stack list is then not read. A service is
+ * described in the region its ARN names.
  */
 
 import type { HealthEntry, HealthReadOptions, HealthReadResult, UnobservedEntity } from "@intentius/chant/lexicon";
@@ -134,6 +139,12 @@ export function clusterOfServiceArn(arn: string): string {
   return parts.length >= 3 ? parts[1]! : "default";
 }
 
+/** The region an ARN names (`arn:aws:ecs:<region>:...`), or undefined for one that names none. */
+export function regionOfArn(arn: string): string | undefined {
+  const region = arn.startsWith("arn:") ? arn.split(":")[3] : undefined;
+  return region ? region : undefined;
+}
+
 function holeFrom(type: string, err: unknown): UnobservedEntity {
   const detail = err instanceof AwsReadError && err.code ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
   const reason = /credential|token|expired|AccessDenied|not authorized|Unauthorized/i.test(detail) ? "no-credentials" : "read-failed";
@@ -209,7 +220,11 @@ export async function observeHealthAws(options: AwsHealthOptions): Promise<Healt
 
   const stackName = options.stack ?? options.environment;
   let physical: Map<string, string>;
-  try {
+  if (options.physicalIds) {
+    // An engine's records (#5338): a terraform root's state or a pulumi
+    // stack's export already hold each id, so no stack is read.
+    physical = new Map(Object.entries(options.physicalIds));
+  } else try {
     const resources = await describeStackResources(stackName, client);
     physical = new Map(resources.filter((r) => r.physicalId).map((r) => [r.logicalId, r.physicalId!]));
   } catch (err) {
@@ -221,7 +236,9 @@ export async function observeHealthAws(options: AwsHealthOptions): Promise<Healt
     return { entities, unobserved, absent };
   }
 
-  const services = new Map<string, Array<{ name: string; arn: string }>>();
+  // Keyed by cluster and the region the ARN names, so a service recorded in
+  // another region than the ambient one is described there.
+  const services = new Map<string, { cluster: string; region?: string; members: Array<{ name: string; arn: string }> }>();
   const checks: Array<{ name: string; id: string }> = [];
   for (const [name, { entityType }] of options.entities) {
     const id = physical.get(name);
@@ -231,9 +248,11 @@ export async function observeHealthAws(options: AwsHealthOptions): Promise<Healt
     }
     if (entityType === "AWS::ECS::Service") {
       const cluster = clusterOfServiceArn(id);
-      const list = services.get(cluster) ?? [];
-      list.push({ name, arn: id });
-      services.set(cluster, list);
+      const region = options.physicalIds ? regionOfArn(id) : undefined;
+      const key = `${cluster}\u0000${region ?? ""}`;
+      const group = services.get(key) ?? { cluster, ...(region ? { region } : {}), members: [] };
+      group.members.push({ name, arn: id });
+      services.set(key, group);
     } else if (entityType === "AWS::Route53::HealthCheck") {
       checks.push({ name, id });
     }
@@ -251,12 +270,13 @@ export async function observeHealthAws(options: AwsHealthOptions): Promise<Healt
   );
 
   await Promise.all(
-    [...services].map(async ([cluster, members]) => {
+    [...services.values()].map(async ({ cluster, region, members }) => {
+      const scoped: AwsReadClientOptions = region ? { ...client, region } : client;
       // DescribeServices takes at most ten services per call.
       for (let i = 0; i < members.length; i += 10) {
         const batch = members.slice(i, i + 10);
         try {
-          const { services: found, failures } = await describeServices(cluster, batch.map((m) => m.arn), client, http);
+          const { services: found, failures } = await describeServices(cluster, batch.map((m) => m.arn), scoped, http);
           for (const member of batch) {
             const service = found.find((s) => s.serviceArn === member.arn || s.serviceArn?.endsWith(`/${member.arn.split("/").pop()}`));
             const failure = failures.find((f) => f.arn === member.arn);

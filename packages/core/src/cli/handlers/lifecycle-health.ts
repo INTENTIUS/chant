@@ -7,6 +7,13 @@
  * entities whose types it names. An environment's declared endpoint is applied
  * for the read, as on the other live reads (#1166).
  *
+ * A terraform root or a pulumi stack is read through the provider lexicons
+ * (#5338): the engine lexicon's `healthTargets` maps each resource of a
+ * covered type to its provider's health type and the id from the root's
+ * state or the stack's export, and the provider's `observeHealth` reads it.
+ * A provider lexicon the project does not configure is loaded when it is
+ * installed.
+ *
  * The JSON is the {@link HEALTH_SCHEMA} shape. A single-stack project prints
  * `lexicons` at the top level; a multi-stack one nests them under `stacks`,
  * the same split `lifecycle diff --live --json` makes.
@@ -16,7 +23,17 @@ import { resolve } from "node:path";
 import { build } from "../../build";
 import { loadChantConfig } from "../../config";
 import { isObservableDeclarable } from "../../declarable";
-import { HEALTH_SCHEMA, healthApplicable, observeHealthFor, summarizeHealth, type HealthLexicon, type HealthReadResult } from "../../health";
+import {
+  HEALTH_SCHEMA,
+  healthApplicable,
+  observeEngineHealth,
+  observeHealthFor,
+  summarizeHealth,
+  type EngineHealthLexicon,
+  type HealthLexicon,
+  type HealthReadResult,
+} from "../../health";
+import type { LexiconPlugin } from "../../lexicon";
 import { applyLiveEndpoint } from "../../live-endpoint";
 import type { SerializerResult } from "../../serializer";
 import { CHANT_VERSION } from "../version";
@@ -38,16 +55,19 @@ export async function runLifecycleHealth(ctx: CommandContext): Promise<number> {
   }
 
   const readers = plugins.filter(
-    (p) => p.observeHealth && (p.healthTypes?.length ?? 0) > 0 && (!lexiconFilter || p.name === lexiconFilter),
+    (p) =>
+      ((p.observeHealth && (p.healthTypes?.length ?? 0) > 0) || p.healthTargets) &&
+      (!lexiconFilter || p.name === lexiconFilter),
   );
   if (readers.length === 0) {
     console.error(formatWarning({
       message: lexiconFilter
         ? `${lexiconFilter}: no health read in this lexicon`
-        : "No configured lexicon has a health read (aws, azure and gcp do)",
+        : "No configured lexicon has a health read (aws, azure and gcp do, and terraform and pulumi through them)",
     }));
     return 1;
   }
+  const provider = providerLookup(plugins);
 
   const projectRoot = resolve(".");
   const { config } = await loadChantConfig(projectRoot);
@@ -92,17 +112,26 @@ export async function runLifecycleHealth(ctx: CommandContext): Promise<number> {
             });
           }
         }
-        const entities = healthApplicable(plugin as HealthLexicon, declared);
-        if (entities.size === 0) continue;
         const raw = buildResult.outputs.get(plugin.name);
         const buildOutput = raw === undefined ? "" : typeof raw === "string" ? raw : (raw as SerializerResult).primary;
-        byLexicon[plugin.name] = await observeHealthFor(plugin as HealthLexicon, {
+        const scope = {
           environment,
           buildOutput,
-          entities,
           ...(target.stack ? { stack: target.stack } : {}),
           ...(target.region ? { region: target.region } : {}),
-        });
+        };
+        if (plugin.healthTargets) {
+          if (declared.size === 0) continue;
+          const { result, error } = await observeEngineHealth(plugin as EngineHealthLexicon, { ...scope, entities: declared }, provider);
+          if (error) console.error(formatWarning({ message: `${plugin.name}: the health targets could not be read: ${error}` }));
+          if (Object.keys(result.entities).length + Object.keys(result.unobserved).length + result.absent.length > 0) {
+            byLexicon[plugin.name] = result;
+          }
+          continue;
+        }
+        const entities = healthApplicable(plugin as HealthLexicon, declared);
+        if (entities.size === 0) continue;
+        byLexicon[plugin.name] = await observeHealthFor(plugin as HealthLexicon, { ...scope, entities });
       }
       if (target.stack) perStack[target.stack] = byLexicon;
       else single = byLexicon;
@@ -141,6 +170,24 @@ export async function runLifecycleHealth(ctx: CommandContext): Promise<number> {
     }
   }
   return anyBuildError ? 1 : 0;
+}
+
+/**
+ * The provider lexicon an engine's target names: a configured one, else the
+ * installed package, loaded once. Undefined when it is not installed.
+ */
+function providerLookup(plugins: readonly LexiconPlugin[]): (lexicon: string) => Promise<HealthLexicon | undefined> {
+  const loaded = new Map<string, Promise<HealthLexicon | undefined>>();
+  return (lexicon) => {
+    const configured = plugins.find((p) => p.name === lexicon);
+    if (configured) return Promise.resolve(configured as HealthLexicon);
+    let pending = loaded.get(lexicon);
+    if (!pending) {
+      pending = import("../plugins").then(({ loadPlugin }) => loadPlugin(lexicon) as Promise<HealthLexicon>).catch(() => undefined);
+      loaded.set(lexicon, pending);
+    }
+    return pending;
+  };
 }
 
 function renderHealth(byLexicon: ByLexicon): void {

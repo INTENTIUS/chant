@@ -1634,6 +1634,9 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         cs,
         environment,
         plugin.classifyDisruption ? (o) => plugin.classifyDisruption!(o) : undefined,
+        // Each query carries the entry's observed attributes (#5338), so a
+        // read that holds the engine's plan can be answered from it.
+        observed.resources,
       );
       merged.entries.push(...classified.entries);
       checked++;

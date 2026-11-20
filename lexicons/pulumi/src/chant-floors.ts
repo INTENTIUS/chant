@@ -27,3 +27,12 @@ export const PULUMI_COST_HOLD_FLOOR = NEXT_RELEASE;
  * The first pulumi lexicon release with the preview depth of `describeResources` (`CHANT_PULUMI_OBSERVE=preview`, `./preview-observation`): `pulumi preview --json` (or plunge's) marks each node with its planned operation in the terraform plan observation's attribute names, a stack with no export gets its nodes from the preview marked `planned`, and `rootReads["pulumi.members.<member>"]` says why a preview did not answer (#5332).
  */
 export const PULUMI_PREVIEW_OBSERVATION_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first pulumi lexicon release whose `classifyDisruption` classifies a
+ * planned update from a preview's steps (in place, replace, destroy), with
+ * `pulumiDisruptionQueries` for a preview in hand, and whose `healthTargets`
+ * reads a stack's covered resources through the aws, azure and gcp health
+ * reads with ids from its export (#5338).
+ */
+export const PULUMI_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;

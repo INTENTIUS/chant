@@ -5,6 +5,7 @@ import {
   healthCheckEntry,
   observeHealthAws,
   parseHealthCheckStatus,
+  regionOfArn,
   type AwsHealthHttp,
 } from "./health";
 import type { AwsReadHttp } from "./api/read-client";
@@ -132,5 +133,44 @@ describe("aws health (#4177)", () => {
   test("the plugin names the types it reads", () => {
     expect(awsPlugin.healthTypes).toEqual(["AWS::Route53::HealthCheck", "AWS::ECS::Service"]);
     expect(typeof awsPlugin.observeHealth).toBe("function");
+  });
+});
+
+describe("aws health from an engine's recorded ids (#5338)", () => {
+  test("reads the ids given, in the ARN's region, without reading a stack", async () => {
+    const calls: string[] = [];
+    const cfn: AwsReadHttp = async () => {
+      throw new Error("the stack list must not be read");
+    };
+    const http: AwsHealthHttp = async (method, url, init) => {
+      calls.push(`${method} ${url} ${init.body ?? ""}`);
+      if (url.includes("/healthcheck/")) return { status: 200, text: statusXml([{ region: "us-east-1", status: "Failure: timed out", time: "2026-10-20T20:58:00Z" }]) };
+      return {
+        status: 200,
+        text: JSON.stringify({ services: [{ serviceArn: "arn:aws:ecs:eu-west-1:0:service/main/api", status: "ACTIVE", desiredCount: 2, runningCount: 1 }], failures: [] }),
+      };
+    };
+    const r = await observeHealthAws({
+      environment: "dev",
+      buildOutput: "",
+      entities: new Map([
+        ["app/aws_ecs_service.api", { entityType: "AWS::ECS::Service", props: {} }],
+        ["app/aws_route53_health_check.api", { entityType: "AWS::Route53::HealthCheck", props: {} }],
+        ["app/aws_ecs_service.gone", { entityType: "AWS::ECS::Service", props: {} }],
+      ]),
+      physicalIds: { "app/aws_ecs_service.api": "arn:aws:ecs:eu-west-1:0:service/main/api", "app/aws_route53_health_check.api": "abc-123" },
+      http,
+      client: { http: cfn, env: ENV },
+      now,
+    });
+    expect(r.entities["app/aws_ecs_service.api"]).toMatchObject({ state: "unhealthy", detail: "1/2 running" });
+    expect(r.entities["app/aws_route53_health_check.api"]).toMatchObject({ state: "unhealthy" });
+    expect(r.absent).toEqual(["app/aws_ecs_service.gone"]);
+    expect(calls.some((c) => c.includes('"cluster":"main"'))).toBe(true);
+  });
+
+  test("regionOfArn reads the region field", () => {
+    expect(regionOfArn("arn:aws:ecs:eu-west-1:0:service/main/api")).toBe("eu-west-1");
+    expect(regionOfArn("abc-123")).toBeUndefined();
   });
 });
