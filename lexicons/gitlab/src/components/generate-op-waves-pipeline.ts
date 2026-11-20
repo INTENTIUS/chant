@@ -800,7 +800,8 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         ...(specTags ? { tags: specTags } : {}),
         // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
         ...(gate ? { timeout: `${timeout.minutes} minutes` } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), ...restVariables, ...starts, ...resume, [JOB_GUARD_ENV]: JSON.stringify(guard), ...summaryEnv },
+        // #5406: the summary's settings (#5335) and, with agentFacts, the facts' variables (#5357): the gate and record jobs respond for the wave.
+        variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), ...restVariables, ...starts, ...resume, [JOB_GUARD_ENV]: JSON.stringify(guard), ...summaryEnv, ...(opWavesAgentFactsEnv("gitlab", options.agentFacts) ?? {}) },
         rules: restRules,
         // The record job needs the gate job too, whose decision names the rows it leased (#4992).
         needs: needsOf(job.needs),

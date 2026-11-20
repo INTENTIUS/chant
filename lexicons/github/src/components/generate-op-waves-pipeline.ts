@@ -684,6 +684,7 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
       const startEnv = starts
         ? { [OP_WAVES_FOLLOW_ON_ENV]: opWavesFollowOnEnv(target), [FOLLOW_ON_TOKEN_ENV]: forge === "github" ? GITHUB_JOB_TOKEN : `\${{ secrets.${FORGE_TOKEN_VAR} }}` }
         : undefined;
+      const stepEnv = { ...(startEnv ?? {}), ...(commandToken?.env ?? {}), ...(opWavesAgentFactsEnv(forge, options.agentFacts) ?? {}) };
       const steps: Array<Record<string, unknown>> = [
         guardStep({ forge, job: opWaveSplitJobLabel(spec.name, job), product, branches, ...onDefault, ...(spec.runner !== undefined ? { runner: spec.runner } : {}), idToken: false, beforeMerge: { op: spec.name }, ...(rest ? { rest: k } : {}) }),
         checkoutStep(true),
@@ -704,7 +705,9 @@ function githubSplitJobsDoc(input: SplitJobsInput): Record<string, unknown> {
         ...(wave.setup ?? []).map(setupStepDoc),
         ...runSteps(options.beforeScript ?? []),
         // #5044: the job's token, so the gate job's and the record job's responses post.
-        { name: splitStepName(job), ...(startEnv || commandToken ? { env: { ...(startEnv ?? {}), ...(commandToken?.env ?? {}) } } : {}), run: job.command.join(" ") },
+        // #5406: with agentFacts, the failed apply's facts: the gate and record jobs respond for the wave (the plan and apply jobs
+        // return before they respond), so the relay key is on their command step alone, as it is on a wave job's.
+        { name: splitStepName(job), ...(Object.keys(stepEnv).length > 0 ? { env: stepEnv } : {}), run: job.command.join(" ") },
       ];
       if (gate) {
         steps.push(keepRecordStep(`Keep wave ${k}'s decision`, art.decision(k), restAt(job, job.record!)));
