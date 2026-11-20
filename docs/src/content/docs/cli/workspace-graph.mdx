@@ -77,6 +77,8 @@ The `links` section holds the [member links](#links), followed by the [record li
 
 Each lexicon's reference catalog says how its resources name each other: a Deployment's `serviceAccountName` names a ServiceAccount, a subnet's `vpc_id` names a VPC. `chant workspace graph` runs the catalog of every lexicon in the graph over the composed nodes, so a reference joins nodes of two members ([#5097](https://github.com/INTENTIUS/chant/issues/5097)). It is the pass `chant graph --live` and cloud indexes run (`reconstructIndexedEdges`, [#4522](https://github.com/INTENTIUS/chant/issues/4522)), and every join is exact: a value is matched against the values that identify a node of the kind the rule names, never against a near name.
 
+A catalog entry takes `aliases`, other lexicon names whose nodes it also reads: `{ lexicon: "terraform", catalog, aliases: ["choudoufu"] }` applies the terraform catalog to choudoufu roster nodes, whose `kind` is the provider type. The rule ids keep the catalog's own lexicon (`terraform:aws_db_instance:db_subnet_group_name`). `GRAPH_REFS_LEXICON_ALIAS_FLOOR` in `@intentius/chant/graph-refs` names the first release that carries it.
+
 The rules read nested attributes (`spec`, `metadata`, a terraform block's arguments), which only `--detail 3` prints, so the pass reads each member at `--detail 3` whatever tier the document is printed at. At `--detail 1` and `0` each edge, dangling holder and candidate moves to the node it is drawn as, its composite or its member's stack node, and an edge that falls inside one node is dropped. The pass does not run with `--live`, where each member's own chant runs its catalog on the account it read.
 
 What it finds goes in four places:
