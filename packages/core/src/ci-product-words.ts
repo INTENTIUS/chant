@@ -2176,6 +2176,9 @@ export function productConfigProblems(config: unknown, options: ProductConfigOpt
         if (prefix !== "" && parts[0] !== prefix.slice(0, -1)) continue;
         for (const hit of resolve(doc, prefix === "" ? parts : parts.slice(1))) {
           if (!hasShape(hit.value, alias.shape)) continue;
+          // The key sits inside the alias (plywood's `pass.secrets` inside
+          // `pass`): the value is written in the key's spelling, not the alias's.
+          if (!alias.key.includes("<") && resolve(doc, segments(word.key, kase)).some((h) => h.path.startsWith(`${hit.path}.`))) continue;
           aliased.add(hit.path);
           if (prefix === "") out.push({ level: "warning", path: at(hit.path), key: word.key, message: `is accepted as ${shown}, the vocabulary's key` });
           // The key set beside its alias, where the alias does not sit inside
