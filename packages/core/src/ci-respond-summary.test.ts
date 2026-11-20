@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { assertProductWords } from "./ci-product-words";
 import { parseRespondList, renderRefusedDiff, resolveResponses, respondMarker, type RefusedDiff } from "./ci-respond";
-import { respondOpWave } from "./ci-respond-run";
+import { respondOpWave, respondPrApply } from "./ci-respond-run";
+import type { PrReport } from "./pr-loop";
 import {
   WAVE_REFUSED_SUMMARY_FLOOR,
   WAVE_SUMMARY_COMMAND,
@@ -208,6 +209,45 @@ describe("the note", () => {
     await respondOpWave(spec, 1, { result }, { forge, env: {}, words: PLYWOOD, read: async () => undefined, summary: failing.deps });
     expect(posted[0]!.body).toMatch(/^<!-- chant:respond:wave-refused:[^\n]+\nThe summary was skipped: the model command was stopped/);
     expect(posted[0]!.body).toContain("updated nothing");
+  });
+});
+
+describe("the pull request apply job's refused wave (#5399)", () => {
+  const posted: { pr: number; marker: string; body: string }[] = [];
+  const forge = {
+    async upsertComment(pr: number, marker: string, body: string) {
+      posted.push({ pr, marker, body });
+      return { action: "created" as const, id: 1 };
+    },
+    async trackIssue() {
+      return { action: "opened" as const, number: 1 };
+    },
+  };
+  const entry = (action: string) => ({ member: "app", address: "aws_s3_bucket.logs", action, attributes: [], before: null, after: null });
+  const changeSet = (digest: string, planDigest: string, action: string) => ({ digest, members: [{ member: "app", lexicon: "terraform", planner: "terraform", status: "planned", planDigest }], entries: [entry(action)] });
+  const approvedSet = changeSet("jcs1-sha256:aaa", "jcs1-sha256:p1", "update");
+  const report = { stage: "apply", status: "refused", refusal: "plan-changed", op: "pr-12", env: "prod", pr: 12, digest: "jcs1-sha256:bbb", approval: { status: "changed", approved: "jcs1-sha256:aaa" }, changeSet: changeSet("jcs1-sha256:bbb", "jcs1-sha256:p2", "replace") } as unknown as PrReport;
+  const read = async (d: string) => (d === "jcs1-sha256:aaa" ? (approvedSet as never) : undefined);
+
+  test("CHANT_RESPOND=wave-refused=summary on the apply job posts the summary above the diff", async () => {
+    posted.length = 0;
+    const ok = harness();
+    const posts = await respondPrApply(forge, report, undefined, { read, env: { CHANT_RESPOND: "wave-refused=summary" }, words: PLYWOOD, summary: ok.deps });
+    expect(posts).toEqual([{ posted: true }]);
+    expect(posted).toHaveLength(1);
+    const body = posted[0]!.body;
+    expect(body).toContain("**Summary**");
+    expect(body.indexOf("**Summary**")).toBeLessThan(body.indexOf("updated nothing: its plans changed after the approval"));
+    expect(ok.records).toHaveLength(1);
+    expect(ok.calls[0]!.env.ANTHROPIC_API_KEY).toBe("sk-test");
+  });
+
+  test("with the default response the note is the diff alone and no model runs", async () => {
+    posted.length = 0;
+    const idle = harness();
+    await respondPrApply(forge, report, undefined, { read, env: {}, words: PLYWOOD, summary: idle.deps });
+    expect(posted[0]!.body).not.toContain("**Summary**");
+    expect(idle.calls).toHaveLength(0);
   });
 });
 

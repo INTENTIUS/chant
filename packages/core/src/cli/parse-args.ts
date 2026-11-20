@@ -695,6 +695,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (value === undefined || value.startsWith("-")) throw new Error("--decide-model needs a model id");
       result.decideModel = value;
+    } else if (arg === "--wave-summary") {
+      // `chant build --pr-loop --wave-summary <field>=<value>` (#5399): a setting of the refused-wave summary.
+      const raw = args[++i] ?? "";
+      const at = raw.indexOf("=");
+      if (at < 1) throw new Error(`--wave-summary needs <field>=<value>, such as keyEnv=MODEL_KEY: got "${raw}"`);
+      (result.waveSummary ??= {})[raw.slice(0, at)] = raw.slice(at + 1);
+    } else if (arg === "--agent-facts" || arg === "--agent-facts-key-env") {
+      // `chant build --pr-loop --agent-facts <trigger>[,<trigger>]` and `--agent-facts-key-env <NAME>` (#5399).
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-") || value === "") throw new Error(`${arg} needs ${arg === "--agent-facts" ? "a trigger list: --agent-facts apply-failed[,verify-failed]" : "a variable name: --agent-facts-key-env <NAME>"}`);
+      if (arg === "--agent-facts") result.agentFactsTriggers = value.split(",").map((t) => t.trim()).filter(Boolean);
+      else result.agentFactsKeyEnv = value;
     } else if (arg === "--merge" || arg === "--merge-token-env" || arg === "--merge-method") {
       // `chant components pr-apply --before-merge --merge auto --merge-token-env <VAR>` (#4636).
       const value = args[++i];

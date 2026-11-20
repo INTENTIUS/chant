@@ -101,6 +101,8 @@ import { commandWord, commentLine, PRODUCT_ACTION_ENV, PRODUCT_ACTION_EVENT_FLAG
 import { CHANT_EXIT } from "../exit-codes";
 import type { ControlTarget } from "../control/dispatch";
 import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
+import { NEXT_RELEASE } from "../release-floors";
+import { opWavesAgentFactsEnv, type AgentFactsOption } from "../ci-agent-triggers";
 import { waveSummaryJobEnv, type WaveSummarySpec } from "../ci-respond-summary-env";
 import type { PipelineEvidence } from "../ci-evidence-jobs";
 import type { PrCheckJobOptions } from "./pr-checks";
@@ -409,6 +411,13 @@ export interface PrLoopPipelineOptions {
    */
   waveSummary?: WaveSummarySpec;
   /**
+   * The facts the apply job records for an agent (#5357): with this set a
+   * failed apply carries `CHANT_AGENT_FACTS` and the relay key (on GitHub
+   * and Forgejo from the secret of its name), as a wave job does with the
+   * same option. Absent: the job carries neither.
+   */
+  agentFacts?: AgentFactsOption;
+  /**
    * The decide service the description check asks (#4629), from
    * `--decide-backend` and `--decide-model`: the plan-note job passes both
    * to `pr-post`. Needed with `respond.description: "check"`.
@@ -461,6 +470,11 @@ export function prLoopRespondEnv(options: Pick<PrLoopPipelineOptions, "respond" 
   const list = options.respond ? respondList(options.respond) : "";
   return list ? { [CI_RESPOND_ENV]: list } : {};
 }
+
+/**
+ * The first chant whose pull request loop takes `waveSummary` and `agentFacts` from `chant build --pr-loop` (#5399): `--wave-summary`, `--agent-facts` and `--agent-facts-key-env` put the refused-wave summary's settings and the failed-apply facts' relay key on the apply job, as a wave job carries them.
+ */
+export const PR_LOOP_AGENT_SETTINGS_FLOOR = NEXT_RELEASE;
 
 /** The variable the comment preview's plan reads the comment from (#4626); never a shell argument. */
 export const PREVIEW_COMMENT_ENV = "CHANT_PREVIEW_COMMENT";
@@ -987,8 +1001,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   };
   const bin = options.words?.bin;
   // #4629: the apply posts a failed apply's triage and a refused one's diff as CHANT_RESPOND says.
-  // #5335: with wave-refused: summary, the model's settings and key too.
-  const respondEnv = { ...prLoopRespondEnv(options), ...waveSummaryJobEnv(forge, options.respond?.["wave-refused"], options.waveSummary) };
+  // #5335: with wave-refused: summary, the model's settings and key too. #5399: with agentFacts, the facts a failed apply records and the relay key.
+  const respondEnv = { ...prLoopRespondEnv(options), ...waveSummaryJobEnv(forge, options.respond?.["wave-refused"], options.waveSummary), ...(opWavesAgentFactsEnv(forge, options.agentFacts) ?? {}) };
   const withRespond = (job: PrLoopJob): PrLoopJob => (Object.keys(respondEnv).length > 0 ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
   return [
     {

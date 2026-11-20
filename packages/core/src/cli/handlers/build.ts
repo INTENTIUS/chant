@@ -13,6 +13,8 @@ import type { PrLoopPipelineOptions } from "../../components/pr-pipeline";
 import { activeProductWords, isChantWords } from "../../ci-product-words";
 import { PR_APPLY_MERGES, PR_MERGE_METHODS } from "../../pr-merge";
 import { parseRespondList, type CiResponses } from "../../ci-respond";
+import { AGENT_FACTS_TRIGGERS, type AgentFactsOption, type AgentFactsTrigger } from "../../ci-agent-triggers";
+import { waveSummarySpecProblem, type WaveSummarySpec } from "../../ci-respond-summary-env";
 
 /**
  * The engine install lines the project's lexicons give (#4550,
@@ -72,7 +74,7 @@ async function engineSetupFor(path: string): Promise<string[]> {
  * (#4935) write the check job and the ref gate's status job. {@link prLoopFlagsProblem}
  * has checked all of them first.
  */
-function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
+export function prLoopOption(args: CommandContext["args"], reportUrl: string | undefined, requireReview = false, requireRunnerStart = false): PrLoopPipelineOptions {
   const respond = args.respond ? (parseRespondList(args.respond) as CiResponses) : undefined;
   // #4550: a product's bin set its words; the generated jobs answer its comment and run its bin.
   const words = activeProductWords();
@@ -108,6 +110,10 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
     ...(args.merge === "auto" && args.mergeTokenEnv ? { applyMerge: { tokenEnv: args.mergeTokenEnv, ...(args.mergeMethod ? { method: args.mergeMethod as "merge" | "squash" | "rebase" } : {}) } } : {}),
     // #4629: the responses on the apply and note jobs, and the description check's service.
     ...(respond && Object.keys(respond).length > 0 ? { respond } : {}),
+    // #5399: the refused-wave summary's settings; the jobs carry them only with wave-refused=summary.
+    ...(args.waveSummary ? (() => { const s = waveSummaryFromFlags(args.waveSummary); return "spec" in s ? { waveSummary: s.spec } : {}; })() : {}),
+    // #5399: the facts a failed apply records for an agent, with the relay key.
+    ...(() => { const f = agentFactsFromFlags(args); return "facts" in f && f.facts ? { agentFacts: f.facts } : {}; })(),
     ...(args.decideBackend && args.decideModel ? { decide: { backend: args.decideBackend, model: args.decideModel } } : {}),
     // #4935: the runner identity the note job signs with, the check job and the ref gate's status job.
     ...(args.evidenceRunnerKeySecret ? { evidence: { runnerKeySecret: args.evidenceRunnerKeySecret } } : {}),
@@ -123,7 +129,7 @@ function prLoopOption(args: CommandContext["args"], reportUrl: string | undefine
  * they do. Each value is refused by name, as `pr-apply` and `pr-post` refuse
  * it, so a build never writes a job that fails on its own line.
  */
-export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents"> & Partial<Pick<CommandContext["args"], "controlRepo" | "controlSettings" | "evidenceRunnerKeySecret" | "evidenceIdentity" | "evidenceAudience" | "checkJob" | "refGateStatus">>): string | undefined {
+export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" | "applyBeforeMerge" | "merge" | "mergeTokenEnv" | "mergeMethod" | "respond" | "decideBackend" | "decideModel" | "targetDependents"> & Partial<Pick<CommandContext["args"], "waveSummary" | "agentFactsTriggers" | "agentFactsKeyEnv" | "controlRepo" | "controlSettings" | "evidenceRunnerKeySecret" | "evidenceIdentity" | "evidenceAudience" | "checkJob" | "refGateStatus">>): string | undefined {
   const given = [
     ...(args.evidenceRunnerKeySecret !== undefined ? ["--evidence-runner-key-secret"] : []),
     ...(args.evidenceIdentity !== undefined ? ["--evidence-identity"] : []),
@@ -138,6 +144,9 @@ export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" |
     ...(args.respond !== undefined ? ["--respond"] : []),
     ...(args.decideBackend !== undefined ? ["--decide-backend"] : []),
     ...(args.decideModel !== undefined ? ["--decide-model"] : []),
+    ...(args.waveSummary !== undefined ? ["--wave-summary"] : []),
+    ...(args.agentFactsTriggers !== undefined ? ["--agent-facts"] : []),
+    ...(args.agentFactsKeyEnv !== undefined ? ["--agent-facts-key-env"] : []),
   ];
   if (!args.prLoop) return given.length > 0 ? `${given.join(", ")} set the pull request loop's jobs, so ${given.length === 1 ? "it needs" : "they need"} --pr-loop` : undefined;
   if (args.targetDependents) return "--target-dependents widens a --target, and the pull request's plan job plans with no target, so build takes no --target-dependents; give it in the preview comment beside --target";
@@ -163,7 +172,42 @@ export function prLoopFlagsProblem(args: Pick<CommandContext["args"], "prLoop" |
   const check = respond.description === "check";
   if (check && (!args.decideBackend || !args.decideModel)) return "--respond description=check asks a decide service, so it needs --decide-backend <name> and --decide-model <id>";
   if (!check && (args.decideBackend !== undefined || args.decideModel !== undefined)) return "--decide-backend and --decide-model name the description check's service, so they go with --respond description=check";
+  if (args.waveSummary !== undefined) {
+    const summary = waveSummaryFromFlags(args.waveSummary);
+    if ("error" in summary) return summary.error;
+    if (respond["wave-refused"] !== "summary") return "--wave-summary sets the refused-wave summary's model run, so it goes with --respond wave-refused=summary";
+  }
+  const facts = agentFactsFromFlags(args);
+  if ("error" in facts) return facts.error;
   return undefined;
+}
+
+/**
+ * The refused-wave summary's settings of `--wave-summary <field>=<value>`
+ * (#5399), with the numeric fields as numbers, or the reason they are not
+ * settings. The fields are those of {@link WaveSummarySpec}.
+ */
+export function waveSummaryFromFlags(flags: Record<string, string>): { spec: WaveSummarySpec } | { error: string } {
+  const spec: Record<string, string | number> = {};
+  for (const [field, value] of Object.entries(flags)) {
+    spec[field] = field === "timeout" || field === "maxRuns" || field === "maxCostUsd" ? (value.trim() === "" ? Number.NaN : Number(value)) : value;
+  }
+  const problem = waveSummarySpecProblem(spec);
+  return problem ? { error: `--wave-summary: ${problem}` } : { spec: spec as WaveSummarySpec };
+}
+
+/**
+ * The agent facts of `--agent-facts` and `--agent-facts-key-env` (#5399), or
+ * the reason they are not settings.
+ */
+export function agentFactsFromFlags(args: { agentFactsTriggers?: string[]; agentFactsKeyEnv?: string }): { facts?: AgentFactsOption } | { error: string } {
+  if (args.agentFactsTriggers === undefined) {
+    return args.agentFactsKeyEnv === undefined ? {} : { error: "--agent-facts-key-env names the relay key of the recorded facts, so it goes with --agent-facts" };
+  }
+  const unknown = args.agentFactsTriggers.filter((t) => !(AGENT_FACTS_TRIGGERS as readonly string[]).includes(t));
+  if (args.agentFactsTriggers.length === 0 || unknown.length > 0) return { error: `--agent-facts takes ${AGENT_FACTS_TRIGGERS.join(" or ")}${unknown.length ? `, not ${unknown.join(", ")}` : ""}` };
+  if (args.agentFactsKeyEnv !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(args.agentFactsKeyEnv)) return { error: `--agent-facts-key-env takes a variable name, not ${args.agentFactsKeyEnv}` };
+  return { facts: { triggers: args.agentFactsTriggers as AgentFactsTrigger[], ...(args.agentFactsKeyEnv ? { relayKeyEnv: args.agentFactsKeyEnv } : {}) } };
 }
 
 /**

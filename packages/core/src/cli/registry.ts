@@ -485,6 +485,12 @@ export interface ParsedArgs {
   decideBackend?: string;
   /** `pr-post --decide-model <id>` (#4629): the pinned model the description check asks. */
   decideModel?: string;
+  /** `chant build --pr-loop --wave-summary <field>=<value>` (#5399), repeatable: a setting of the refused-wave summary the apply job carries with `--respond wave-refused=summary`. The fields are those of `WaveSummarySpec`. */
+  waveSummary?: Record<string, string>;
+  /** `chant build --pr-loop --agent-facts <trigger>[,<trigger>]` (#5399): the facts the apply job records for an agent, as a waves pipeline's `agentFacts.triggers`. */
+  agentFactsTriggers?: string[];
+  /** `chant build --pr-loop --agent-facts-key-env <NAME>` (#5399): the secret or variable holding the relay key; default `CHANT_RELAY_KEY`. */
+  agentFactsKeyEnv?: string;
   /**
    * `chant build --pr-loop --apply-before-merge` and `chant ci run apply
    * --apply-before-merge` (#4301): the pipeline's apply job applies an open
