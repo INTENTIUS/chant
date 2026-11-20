@@ -27,7 +27,7 @@ export default pipeline({
   name: "${name}",
   defaults: { op: "${name}", step: { kind: "pulumi-up", stack: "{target}" }, runner: "ubuntu-latest" },
   stages: [
-${stages.map((s, i) => `    { name: "${s}", ${i > 0 ? `after: ["${stages[i - 1]}"], queue: "one-at-a-time", ` : ""}waves: [{ name: "${s}", runs: [{ target: "${s}" }] }], gate: { policy: "never" } },`).join("\n")}
+${stages.map((s, i) => `    { name: "${s}", ${i > 0 ? `after: ["${stages[i - 1]}"], queue: "replace",` : ""}waves: [{ name: "${s}", runs: [{ target: "${s}" }] }], gate: { policy: "never" } },`).join("\n")}
   ],
 });
 `;
