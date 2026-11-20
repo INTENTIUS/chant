@@ -119,20 +119,36 @@ export function applyFailedOfData(d: Record<string, unknown>): ApplyFailedRecord
   return d as unknown as ApplyFailedRecord;
 }
 
+/** The facts a job can record for an agent: a failed apply (#5357), a failed verify or soak (#5339). */
+export type AgentFactsTrigger = "apply-failed" | "verify-failed";
+export const AGENT_FACTS_TRIGGERS: readonly AgentFactsTrigger[] = ["apply-failed", "verify-failed"];
+
+/** Which facts a job records and with which relay key: a waves pipeline's or a promote's `agentFacts`. */
+export interface AgentFactsOption {
+  /** The secret (GitHub, Forgejo) or variable (GitLab) holding the relay key. Default `CHANT_RELAY_KEY`. */
+  relayKeyEnv?: string;
+  /** The facts the jobs record (#5339). Default `["apply-failed"]`. */
+  triggers?: AgentFactsTrigger[];
+}
+
 /**
  * The variables a wave job's command step takes to record its failed
- * applies (#5357): {@link AGENT_FACTS_ENV} and the relay key from the
+ * applies (#5357), and its failing soak checks with `verify-failed` in
+ * `triggers` (#5339): {@link AGENT_FACTS_ENV} and the relay key from the
  * forge's secret or variable. Undefined when `agentFacts` is absent.
  */
-export function opWavesAgentFactsEnv(forge: "github" | "gitlab" | "forgejo", agentFacts: { relayKeyEnv?: string } | undefined): Record<string, string> | undefined {
+export function opWavesAgentFactsEnv(forge: "github" | "gitlab" | "forgejo", agentFacts: AgentFactsOption | undefined): Record<string, string> | undefined {
   if (!agentFacts) return undefined;
   const name = agentFacts.relayKeyEnv ?? "CHANT_RELAY_KEY";
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`agentFacts.relayKeyEnv ${JSON.stringify(name)} is not a variable name`);
-  return { [AGENT_FACTS_ENV]: "apply-failed", CHANT_RELAY_KEY: forge === "gitlab" ? `$${name}` : `\${{ secrets.${name} }}` };
+  const triggers = agentFacts.triggers ?? ["apply-failed"];
+  const unknown = triggers.filter((t) => !AGENT_FACTS_TRIGGERS.includes(t));
+  if (triggers.length === 0 || unknown.length > 0) throw new Error(`agentFacts.triggers names ${AGENT_FACTS_TRIGGERS.join(" or ")}${unknown.length ? `, not ${unknown.map((t) => JSON.stringify(t)).join(", ")}` : ""}`);
+  return { [AGENT_FACTS_ENV]: [...new Set(triggers)].join(","), CHANT_RELAY_KEY: forge === "gitlab" ? `$${name}` : `\${{ secrets.${name} }}` };
 }
 
-/** Whether the job's {@link AGENT_FACTS_ENV} turns `trigger` on: a comma list such as `apply-failed`. */
-export function agentFactsOn(env: Record<string, string | undefined>, trigger: "apply-failed"): boolean {
+/** Whether the job's {@link AGENT_FACTS_ENV} turns `trigger` on: a comma list such as `apply-failed,verify-failed`. */
+export function agentFactsOn(env: Record<string, string | undefined>, trigger: AgentFactsTrigger): boolean {
   return (env[AGENT_FACTS_ENV] ?? "").split(",").map((t) => t.trim()).includes(trigger);
 }
 

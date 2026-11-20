@@ -17,6 +17,11 @@
  * stage gets a `recheck-<stage>` job, with the same identity, set and
  * environment, that runs `<bin> components promote --to <stage> --pending`:
  * the promotion a soak holds, tried again.
+ *
+ * With `agentFacts` (#5339) each promote and recheck step also holds
+ * `CHANT_AGENT_FACTS=verify-failed` and the relay key, so a failed verify
+ * step or a soak check that starts failing records a fact for the
+ * verify-failed agent.
  */
 
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
@@ -25,6 +30,7 @@ import { assertEnvironment, CI_IMAGE, environmentDoc, githubRunsOn } from "@inte
 import { checkoutStep, concurrency } from "./ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
+import { opWavesAgentFactsEnv } from "@intentius/chant/ci-agent-triggers";
 
 /** The env var a promote job reads the release from. */
 export const PROMOTE_RELEASE_ENV = "CHANT_PROMOTE_RELEASE";
@@ -47,8 +53,10 @@ export function assertPipelinePromote(input: PipelinePromoteInput): void {
 }
 
 /** The workflow document, before emission. */
-export function buildGithubPromoteDoc(input: PipelinePromoteInput, _dialect: { forge?: "github" | "forgejo" } = {}): GithubOpPipelineDoc {
+export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { forge?: "github" | "forgejo" } = {}): GithubOpPipelineDoc {
   assertPipelinePromote(input);
+  // #5339: the verify-failed facts' variables, on the command step alone.
+  const facts = input.agentFacts ? (opWavesAgentFactsEnv(dialect.forge ?? "github", { ...input.agentFacts, triggers: ["verify-failed"] }) ?? {}) : {};
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
   const jobsDoc: Record<string, unknown> = {};
@@ -56,7 +64,7 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, _dialect: { f
     if (stage.environment) assertEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
     // #5348: the stage's own identity, traded for before the checkout, and its config and secret set.
     const cloud = stage.cloud;
-    const job = (condition: string, step: string, command: string, env: Record<string, string>) => ({
+    const job = (condition: string, step: string, command: string, own: Record<string, string>) => ({
       if: condition,
       "runs-on": githubRunsOn(input.runner),
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
@@ -67,7 +75,7 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, _dialect: { f
       steps: [
         ...(cloud ? [{ name: "Trade the job's OIDC token for the stage's cloud identity", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : []),
         checkoutStep(true),
-        { name: step, ...(Object.keys({ ...stage.variables, ...env }).length > 0 ? { env: { ...(stage.variables ?? {}), ...env } } : {}), run: [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
+        { name: step, ...(Object.keys({ ...stage.variables, ...own, ...facts }).length > 0 ? { env: { ...(stage.variables ?? {}), ...own, ...facts } } : {}), run: [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
       ],
     });
     jobsDoc[`promote-${stage.name}`] = job(

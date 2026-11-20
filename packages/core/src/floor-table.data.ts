@@ -6,6 +6,7 @@ import { NEXT_RELEASE } from "./release-floors";
 import type { FloorRow } from "./floor-table";
 
 export const FLOOR_ROWS: readonly FloorRow[] = [
+  { name: "VERIFY_FAILED_AGENT_FLOOR", version: NEXT_RELEASE, gates: "The first chant whose agent jobs start from a failed verify or soak (#5339): `on: \"verify-failed\"`, the `verify-failed` facts a failing soak check or a failed verify step records with `CHANT_AGENT_FACTS` naming `verify-failed`, `productVerifyFailedAgent`, and the pipeline's promote jobs taking `agentFacts`.", issue: "#5339", file: "ci-agent-verify-failed.ts", modules: ["@intentius/chant/ci-agent-verify-failed","@intentius/chant/ci-product"] },
   { name: "CACHE4_PIN_FLOOR", version: "0.124.78", gates: "The first chant whose table has the `cache4` row (#4816).", issue: "#4816", file: "action-pins.ts", modules: ["@intentius/chant/action-pins"] },
   { name: "AGENT_GUARD_FLOOR", version: "0.124.77", gates: "The first chant with the shared agent guard (#4770).", issue: "#4770", file: "agent-guard.ts", modules: ["@intentius/chant/agent-guard","@intentius/chant/ci-product"] },
   { name: "CAPABILITY_TEMPLATES_FLOOR", version: "0.124.54", gates: "The first chant whose capabilities document carries `templates` (#4531).", issue: "#4531", file: "capabilities/templates.ts", modules: ["@intentius/chant/capabilities/templates"] },

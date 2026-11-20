@@ -430,7 +430,7 @@ export function alertAgentTrigger(spec: ScheduledOpSpec): OpTrigger & { kind: "c
   const given = spec.trigger ?? (spec.schedule ? { kind: "cron" as const, schedule: spec.schedule } : undefined);
   if (on === "schedule" && !given) throw new Error(`Scheduled Op "${spec.name}" sets a scheduled agent; give it a cron trigger, the schedule it runs on.`);
   const trigger = given ?? { kind: "cron" as const, schedule: AGENT_ALERT_SCHEDULE };
-  const what = on === "schedule" ? "a scheduled agent, which runs on its cron" : on === "apply-failed" ? "a failed-apply agent, which runs on a schedule" : "an alert agent, which runs when the relay starts it and on a schedule";
+  const what = on === "schedule" ? "a scheduled agent, which runs on its cron" : on === "apply-failed" ? "a failed-apply agent, which runs on a schedule" : on === "verify-failed" ? "a failed-verify agent, which runs on a schedule" : "an alert agent, which runs when the relay starts it and on a schedule";
   if (trigger.kind !== "cron") throw new Error(`Scheduled Op "${spec.name}" sets ${what}; give it a cron trigger${on === "schedule" ? "" : " or none"}.`);
   return trigger;
 }

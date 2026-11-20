@@ -298,16 +298,17 @@ The relay has two settings, a secret key and a plain name, so each has its own k
 | `review.key_secret` | the secret holding the reviewing model's key | a secret or variable name | the review agent step's key variable |
 | `review.command` | the model command, prompt on stdin and answer on stdout | a command line | the review agent step's command |
 | `review.timeout` | the minutes the review command may run | a whole number | the review agent step's timeout |
-| `agent.key_secret`, `agent.comment.key_secret`, `agent.drift.key_secret`, `agent.alert.key_secret`, `agent.apply-failed.key_secret`, `agent.schedule.key_secret` | the secret holding the agent model's key | a secret or variable name | the agent job's key variable |
+| `agent.key_secret`, `agent.comment.key_secret`, `agent.drift.key_secret`, `agent.alert.key_secret`, `agent.apply-failed.key_secret`, `agent.schedule.key_secret`, `agent.verify-failed.key_secret` | the secret holding the agent model's key | a secret or variable name | the agent job's key variable |
 | `agent.comment` | an agent that answers a comment command | `true`, or a map | the comment agent's jobs |
 | `agent.drift` | an agent that opens a pull request for a drifted member | `true`, or a map | the drift Op's agent |
 | `agent.alert` | an agent that opens a pull request for a production alert the relay recorded | `true`, or a map | `productAlertAgent`, the alert agent's workflow |
 | `agent.apply-failed` | an agent that opens a pull request for a failed apply, beside the triage comment | `true`, or a map | `productApplyFailedAgent`, the failed-apply agent's workflow, and `CHANT_AGENT_FACTS=apply-failed` on the apply jobs |
+| `agent.verify-failed` | an agent that opens a pull request when a stage's verify or soak fails after an apply | `true`, or a map | `productVerifyFailedAgent`, the failed-verify agent's workflow, and `agentFacts` with `verify-failed` among its triggers on the pipeline's jobs |
 | `agent.schedule` | an agent that does a recurring task on a cron and opens a pull request | a map with `cron` and `task` | `productScheduleAgent`, the scheduled agent's workflow |
 | `agent.schedule.cron` | when the scheduled agent runs | a five-field cron | the scheduled agent's `schedule` |
 | `agent.schedule.task` | what the scheduled agent does on each run | text, at most 4000 characters | the scheduled agent's `task` |
-| `agent.alert.window`, `agent.apply-failed.window`, `agent.schedule.window` | the minutes in which one member's alerts, failed applies or scheduled runs join one agent run | a whole number from 1 to 1440, 15 by default | the agent's `window` |
-| `agent.alert.relay_key_secret`, `agent.apply-failed.relay_key_secret` | the secret holding the relay key the alert and failed-apply facts are signed and checked with | a secret or variable name | the agent's `relayKeyEnv`, and the apply jobs' `agentFacts.relayKeyEnv` |
+| `agent.alert.window`, `agent.apply-failed.window`, `agent.schedule.window`, `agent.verify-failed.window` | the minutes in which one member's alerts, failed applies, failed verifies or scheduled runs join one agent run | a whole number from 1 to 1440, 15 by default | the agent's `window` |
+| `agent.alert.relay_key_secret`, `agent.apply-failed.relay_key_secret`, `agent.verify-failed.relay_key_secret` | the secret holding the relay key the alert, failed-apply and failed-verify facts are signed and checked with | a secret or variable name | the agent's `relayKeyEnv`, and the pipeline jobs' `agentFacts.relayKeyEnv` |
 | `control.repo` | the control repository told after each apply on merge | `host/owner/name` or a URL | the `<product>-applied` dispatch |
 
 ## Jobs

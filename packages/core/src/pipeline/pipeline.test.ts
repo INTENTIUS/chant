@@ -457,6 +457,19 @@ describe("the forge jobs", () => {
     expect(calls[1]).toEqual(["promote", { pipeline: "shop", stages: [{ name: "staging", environment: { name: "staging" } }, { name: "prod" }], bin: "npx --no-install plywood", runner: "ubuntu-latest" }]);
     await expect(generatePipeline(spec, "prow", {}, null)).resolves.toMatchObject({ success: false, error: expect.stringContaining("does not render a pipeline") });
   });
+
+  test("agentFacts naming verify-failed reaches the promote jobs too (#5339); naming apply-failed alone, only the waves", async () => {
+    const spec = folded();
+    const promotes: Array<Record<string, unknown>> = [];
+    const plugin = {
+      generateOpWavesPipeline: () => ({ files: [], jobs: [] }),
+      generatePipelinePromote: (i: Record<string, unknown>) => (promotes.push(i), []),
+    } as never;
+    await generatePipeline(spec, "github", { agentFacts: { relayKeyEnv: "OPS_RELAY", triggers: ["apply-failed", "verify-failed"] } }, plugin);
+    await generatePipeline(spec, "github", { agentFacts: { relayKeyEnv: "OPS_RELAY" } }, plugin);
+    expect(promotes[0]!.agentFacts).toEqual({ relayKeyEnv: "OPS_RELAY" });
+    expect(promotes[1]!.agentFacts).toBeUndefined();
+  });
 });
 
 test("the floor names the next release", () => {

@@ -163,3 +163,27 @@ describe("the failed-apply and scheduled agents on GitLab", () => {
     }
   });
 });
+
+// #5339: the failed-verify agent, in its schedule or a pipeline of the default branch started by hand.
+describe("the failed-verify agent on GitLab", () => {
+  const v = gen({ name: "chant-verify-failed-agent", agent: { on: "verify-failed" } });
+
+  test("runs in its schedule or a pipeline of the default branch started by hand, with the relay key off the model's step", () => {
+    expect(v.doc["chant-verify-failed-agent"]!.rules).toEqual([
+      { if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "chant-verify-failed-agent"' },
+      { if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CHANT_SCHEDULED_OP == "chant-verify-failed-agent"' },
+    ]);
+    expect(v.yaml).toContain("answers the failed verifies and soaks recorded under _alerts/");
+    const script = v.doc["chant-verify-failed-agent"]!.script;
+    expect(script.findIndex((l) => l.startsWith("unset CHANT_RELAY_KEY"))).toBeLessThan(script.findIndex((l) => l.includes("chant agent run")));
+    expect(() => gen({ name: "x", trigger: { kind: "push" } as never, agent: { on: "verify-failed" } })).toThrow(/failed-verify agent/);
+  });
+
+  test("every command line carries the settings' digest; it never applies, approves, merges or rolls back", () => {
+    const lines = Object.values(v.doc).flatMap((j) => j?.script ?? []).filter((l) => typeof l === "string" && l.includes("chant agent "));
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    for (const l of lines) expect(l).toMatch(/--digest sha256:[0-9a-f]{64}/);
+    const all = Object.values(v.doc).flatMap((j) => j?.script ?? []).join("\n");
+    expect(all).not.toMatch(/chant (run|approve)\b|components (promote|rollback)|merge_when_pipeline_succeeds|\bterraform apply\b|\bpulumi up\b/);
+  });
+});

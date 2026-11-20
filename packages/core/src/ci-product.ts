@@ -214,6 +214,7 @@ export {
   productApplyFailedAgent,
   productCommand,
   productScheduleAgent,
+  productVerifyFailedAgent,
   productDriftAgent,
   productPipelineJobs,
   productWavesSpec,
@@ -606,7 +607,16 @@ export { AGENT_JOIN_WINDOW_MINUTES } from "./agent-facts";
  * Every agent's settings are checked against the default branch. Feature-
  * detect on `AGENT_FACT_TRIGGERS_FLOOR`.
  */
-export { AGENT_FACT_TRIGGERS_FLOOR, AGENT_FACTS_ENV, APPLY_FAILED_ERROR_MAX, agentFactsOn, opWavesAgentFactsEnv, recordApplyFailed, type ApplyFailedRecord } from "./ci-agent-triggers";
+export { AGENT_FACT_TRIGGERS_FLOOR, AGENT_FACTS_ENV, AGENT_FACTS_TRIGGERS, APPLY_FAILED_ERROR_MAX, agentFactsOn, opWavesAgentFactsEnv, recordApplyFailed, type AgentFactsOption, type AgentFactsTrigger, type ApplyFailedRecord } from "./ci-agent-triggers";
+
+/**
+ * Agent jobs from a failed verify or soak (#5339): `productVerifyFailedAgent`
+ * returns the agent's Op spec. A pipeline's promote jobs and wave jobs record
+ * the facts with `agentFacts: { triggers: ["verify-failed"] }` (a failing soak
+ * check, a failed verify step), and a rollback the stage requested stands.
+ * Feature-detect on `VERIFY_FAILED_AGENT_FLOOR`.
+ */
+export { VERIFY_FAILED_AGENT_FLOOR, VERIFY_FAILED_OUTPUT_MAX, VERIFY_STEP_KINDS, isVerifyStep, recordVerifyFailed, type VerifyFailedRecord } from "./ci-agent-verify-failed";
 
 /**
  * The agent guard (#4770): a Claude Code PreToolUse hook on Bash and a

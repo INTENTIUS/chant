@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { parseYAML } from "@intentius/chant/yaml";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
 import { generateGitlabPipelinePromote } from "./generate-pipeline-promote";
 import { gitlabPlugin } from "../plugin";
@@ -57,5 +58,16 @@ describe("gitlab pipeline promote", () => {
 
   test("the plugin exposes it", () => {
     expect(gitlabPlugin.generatePipelinePromote!(input)).toHaveLength(1);
+  });
+});
+
+// #5339: with agentFacts, the promote and recheck jobs record failed verifies and soaks for the verify-failed agent.
+describe("gitlab pipeline promote: the verify-failed facts", () => {
+  test("each job's variables hold CHANT_AGENT_FACTS=verify-failed and the relay key; without agentFacts, nothing", () => {
+    const doc = parseYAML(yaml({ ...input, recheck: { schedule: "0 * * * *" }, agentFacts: { relayKeyEnv: "OPS_RELAY" } })) as unknown as Record<string, { variables?: Record<string, string> }>;
+    for (const name of ["promote-staging", "promote-prod", "recheck-staging", "recheck-prod"]) {
+      expect(doc[name]!.variables, name).toMatchObject({ CHANT_AGENT_FACTS: "verify-failed", CHANT_RELAY_KEY: "$OPS_RELAY" });
+    }
+    expect(yaml(input)).not.toContain("CHANT_AGENT_FACTS");
   });
 });

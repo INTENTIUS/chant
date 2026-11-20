@@ -12,6 +12,11 @@
  * on a scheduled pipeline (`$CI_PIPELINE_SOURCE == "schedule"`; the schedule
  * is the project's pipeline schedule, set to `recheck`'s cron line) and runs
  * `<bin> components promote --to <stage> --pending`.
+ *
+ * With `agentFacts` (#5339) each job's variables also hold
+ * `CHANT_AGENT_FACTS=verify-failed` and the relay key, so a failed verify
+ * step or a soak check that starts failing records a fact for the
+ * verify-failed agent.
  */
 
 import { assertGitlabEnvironment, assertRunnerLabels, CI_IMAGE, environmentDoc, GITLAB_FULL_HISTORY, gitlabTags } from "@intentius/chant/ci-jobs";
@@ -19,6 +24,7 @@ import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
 import { emitGitlabFile } from "./ci-jobs";
 import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
+import { opWavesAgentFactsEnv } from "@intentius/chant/ci-agent-triggers";
 
 const STAGE_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -37,6 +43,8 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
   const tags = gitlabTags(input.runner);
+  // #5339: with agentFacts, a failed verify or a soak check that starts failing records a fact for the verify-failed agent.
+  const facts = input.agentFacts ? (opWavesAgentFactsEnv("gitlab", { ...input.agentFacts, triggers: ["verify-failed"] }) ?? {}) : {};
   const job = (stage: PipelinePromoteInput["stages"][number], rule: string, command: string) => ({
     image: CI_IMAGE,
     ...(tags ? { tags } : {}),
@@ -45,7 +53,7 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
     resource_group: `${input.pipeline}-promote-${stage.name}`,
     // #5348: the stage's own identity and its config and secret set.
     ...(stage.cloud ? { id_tokens: gitlabTradeIdTokens(stage.cloud) } : {}),
-    variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}) },
+    variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}), ...facts },
     rules: [{ if: rule }],
     script: [...(stage.cloud ? gitlabTradeLines() : []), ...(stage.setup ?? []), command],
   });

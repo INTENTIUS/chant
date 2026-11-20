@@ -74,3 +74,17 @@ describe("the failed-apply and scheduled agents on Forgejo", () => {
     }
   });
 });
+
+// #5339: the failed-verify agent on Forgejo.
+describe("the failed-verify agent on Forgejo", () => {
+  test("runs on workflow_dispatch and its schedule, and lands with the relay key and the settings' digest", () => {
+    const out = generateForgejoOpPipeline([{ name: "chant-verify-failed-agent", agent: { on: "verify-failed" } }]);
+    const d = parseYAML(out.files[0]!.yaml) as unknown as { on: Record<string, unknown>; jobs: Record<string, { steps: Array<{ run?: string; env?: Record<string, string> }> }> };
+    expect(Object.keys(d.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    const land = d.jobs["chant-verify-failed-agent-push"]!.steps.at(-1)!;
+    expect(land.run).toMatch(/chant agent land --forge forgejo --output \.chant\/agent --digest sha256:[0-9a-f]{64}/);
+    expect(land.env?.CHANT_RELAY_KEY).toBeDefined();
+    const all = Object.values(d.jobs).flatMap((j) => j.steps.map((s) => s.run ?? "")).join("\n");
+    expect(all).not.toMatch(/chant (run|approve)\b|components (promote|rollback)|--admin|\bterraform apply\b|\bpulumi up\b/);
+  });
+});

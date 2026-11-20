@@ -1,6 +1,6 @@
 ---
 title: Let an Agent Change Code on Request
-description: Generate the agent jobs that answer an agent comment on a pull request, follow a drift check, answer a production alert or a failed apply, or run a task on a schedule, with a spend limit and the write token kept out of the model's job.
+description: Generate the agent jobs that answer an agent comment on a pull request, follow a drift check, answer a production alert, a failed apply or a failed verify or soak, or run a task on a schedule, with a spend limit and the write token kept out of the model's job.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/agent-jobs/.
@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-This guide is for a repository that wants a coding agent to change code when someone asks, when a drift check finds the cloud has moved, when a production alert fires, when an apply fails, or on a schedule. The agent runs as two generated jobs from a scheduled Op spec's `agent` ([#4616](https://github.com/INTENTIUS/chant/issues/4616)). The first runs the model with a read token. The second holds the write token and lands the change.
+This guide is for a repository that wants a coding agent to change code when someone asks, when a drift check finds the cloud has moved, when a production alert fires, when an apply fails, when a stage's verify or soak fails, or on a schedule. The agent runs as two generated jobs from a scheduled Op spec's `agent` ([#4616](https://github.com/INTENTIUS/chant/issues/4616)). The first runs the model with a read token. The second holds the write token and lands the change.
 
 Nothing the agent does applies, approves or merges. A change it pushes plans like any other, and a person reviews it.
 
@@ -97,6 +97,33 @@ A failed apply records one fact per member that did not apply under `_alerts/app
 The agent's workflow runs every 15 minutes, or on the spec's own `cron` trigger, and when started by hand on the default branch. On GitLab it runs in a pipeline schedule with `CHANT_SCHEDULED_OP` set to the spec's name, or in a pipeline of the default branch started by hand with the same variable. Each failure reaches the prompt as JSON data: the op, how the triage names the apply, the member, the exit code, the failed resources and the engine's error output, at most 8,000 characters per member and 20,000 in all. The change goes to `<product>/agent/<name>-<member>`. Each run record carries `trigger: "apply-failed"`, the facts it took, the member, its window, and the op and member of each failure.
 
 A CI product gets the spec from `productApplyFailedAgent(words, options)`, and the wave jobs' variables from `opWavesAgentFactsEnv(forge, { relayKeyEnv })`.
+
+## Answer a failed verify or soak
+
+A failed-verify agent opens a pull request when a stage's verify step fails after a promote, or when one of its soak checks starts failing. It reads the same kind of fact as a failed-apply agent, so the joining, the limits and the push job's checks are the same. Add a spec whose `agent` has `on: "verify-failed"`:
+
+```json
+{ "name": "chant-verify-failed-agent", "agent": { "on": "verify-failed", "maxRuns": 4, "maxCostUsd": 10 } }
+```
+
+chant records the facts itself, so no webhook is involved. Give the pipeline's generator `agentFacts` with `verify-failed` among its triggers:
+
+```ts
+{ agentFacts: { relayKeyEnv: "CHANT_RELAY_KEY", triggers: ["apply-failed", "verify-failed"] } }
+```
+
+Each promote and recheck job's command step then holds `CHANT_AGENT_FACTS=verify-failed` and the relay key, and so does each wave job's. A job of your own that runs `chant components promote` records the same facts with both variables set.
+
+- A soak check that starts failing records one fact per check and member, at the same moment the `soak` notify event goes out. A check that keeps failing records nothing more; a check whose reading is unknown records nothing.
+- A promote or redeploy whose verify step failed records one fact per failed step. A verify step is a step in a phase named `Verify`, or a step of kind `health-gate`, `wait-endpoint`, `wait-cluster-healthy` or `http-check` (`VERIFY_STEP_KINDS`).
+
+The facts go under `_alerts/verify-failed.jsonl` on `chant/lifecycle`, signed with the relay key. The same check failing again for the same release is the same fact. Recording one changes nothing else: the soak still holds, and the promote exits as it would have.
+
+Each failure reaches the prompt as JSON data: the stage, whether a verify or a soak failed, the step or check and its kind, the member, the component, the release, and the step's error or the check's output, at most 8,000 characters per failure and 20,000 in all. The change goes to `<product>/agent/<name>-<member>`, or `<product>/agent/<name>` for a failure that names no member. Each run record carries `trigger: "verify-failed"`, the facts it took, the member, its window, and the stage, kind, check and member of each failure.
+
+When the stage requests a rollback on the failure, that rollback stands. It waits at the stage's gate as before, and the agent's pull request goes forward as a new release once a person merges it. The prompt tells the model to leave the rollback alone, and the pull request says the same.
+
+A CI product gets the spec from `productVerifyFailedAgent(words, options)`, and feature-detects on `VERIFY_FAILED_AGENT_FLOOR`.
 
 ## Run a task on a schedule
 

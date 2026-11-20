@@ -226,6 +226,8 @@ export function gitlabAgentHeader(jobName: string, s: AgentSettings, tokenVar = 
         ? `#   ${jobName}: answers the alerts the relay recorded, in a pipeline its trigger token starts and in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}[-<member>], with the relay key in ${s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV}`
         : s.on === "apply-failed"
           ? `#   ${jobName}: answers the failed applies recorded under _alerts/, in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}[-<member>], with the relay key in ${s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV}`
+          : s.on === "verify-failed"
+            ? `#   ${jobName}: answers the failed verifies and soaks recorded under _alerts/, in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}[-<member>], with the relay key in ${s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV}`
           : s.on === "schedule"
             ? `#   ${jobName}: runs its task in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}`
             : `#   ${jobName}: after the drift check exits ${CHANT_EXIT.drift}, opens or updates a merge request from ${s.branch}`,
