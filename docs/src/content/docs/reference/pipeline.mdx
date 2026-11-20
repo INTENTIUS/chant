@@ -39,7 +39,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `hold` | `true`, or `{ reason, until, description }` with an ISO 8601 time. `description` is what the person who lifts the hold reads first: the refused promote, `chant workspace status` and the plan note of the change that lifts it show it |
 | `freeze` | a list of `{ from, until, reason }` windows, ISO 8601 times |
 | `failureTolerance` | failed runs a wave lets through: a whole number, or a share such as `"10%"`. A wave's own wins. Default `0` |
-| `canary` | `true` marks the canary stage |
+| `canary` | `true` marks the canary stage. Its `soak` holds every stage after it: a promote into any stage downstream of the canary reads the canary's soak through gate `<canary>-soak` before that stage's gate. The stage needs a `soak` with at least one check. A wave takes `canary: true` too: the stage's first wave, whose soak (its own, else the stage's) holds every wave after it. See [The canary](/chant/guide/soak/#the-canary) |
 | `forgeEnvironment` | the forge deployment environment of the stage's jobs, unless a wave names its own |
 | `pauseAfterRollback` | `true` pauses the stage once a rollback of it finishes ([Pause and resume](#pause-and-resume)). Default `false` |
 | `replanDependents` | the members whose dependents are planned again when an output they read changes: once a wave of the stage applied, its job runs `chant components replan` for the runs it applied. A stage's list, else `defaults.replanDependents`. Absent, no step runs |

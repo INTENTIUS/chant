@@ -176,7 +176,7 @@ environments: [
 ],
 ```
 
-The canary is declared and shown, not enforced. chant records it in `promotionOrder` and does nothing else with it yet. Promote deploys to a canary step like any other step, with no traffic split or hold.
+chant records the mark in `promotionOrder`. An `environments` entry carries no soak checks, so a canary here holds no step after it, and `chant lint` warns on it (COR027). The canary that holds the steps after it is a stage of the member's [pipeline](/chant/guide/pipeline/) marked `canary: true`: its [soak](/chant/guide/soak/#the-canary) holds every stage after it, and the pipeline takes such a stage only with soak checks.
 
 #### The workflow that deploys an environment
 

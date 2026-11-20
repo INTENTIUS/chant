@@ -1259,6 +1259,15 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "`description` of a stage's `hold` (#5354)",
     products: [],
   },
+  // #5327: the canary stage, written into `.chant/pipeline.ts` by `pipelineFromConfig`.
+  {
+    key: "environments.<name>.canary",
+    concept: "the canary stage, whose soak holds every stage after it",
+    section: "stage",
+    value: "`true` or `false`",
+    chant: "a stage's `canary` in `.chant/pipeline.ts`, which takes a `soak` with at least one check",
+    products: [],
+  },
   // #5326: soak checks that hold the next stage, written into `.chant/pipeline.ts` by `pipelineFromConfig`.
   {
     key: "environments.<name>.soak.duration",
@@ -1382,7 +1391,7 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     concept: "the members that apply first, in a wave of their own",
     section: "apply",
     value: "a list of member names or globs",
-    chant: "the first wave of the op-waves spec",
+    chant: "the first wave of the op-waves spec, marked `canary` (#5327): its soak, the environment's soak unless the wave has its own, holds every wave after it",
     products: ["terragucci", "plywood"],
   },
   {

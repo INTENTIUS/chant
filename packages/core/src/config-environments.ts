@@ -20,8 +20,10 @@ import type { ChantConfig } from "./config";
  *
  * The array's order is the member's promotion order (#4030, see
  * `./workspace/promotion-order.ts`), and `canary: true` marks a step as the
- * canary step of that order. The canary is declared and surfaced; chant does
- * not yet act on it.
+ * canary step of that order. An `environments` entry carries no soak, so a
+ * canary here holds nothing, and `chant lint` warns (COR027,
+ * `./lint/canary-checks.ts`). The canary that holds the steps after it is a
+ * stage of `.chant/pipeline.ts` marked `canary`, with a soak (#5327).
  *
  * `executor` names the forge and the committed workflow that deploys the
  * environment (#4402), so a reader such as behold knows a release there runs

@@ -78,8 +78,9 @@ function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | undefined
 /**
  * The op-waves spec stage `name` runs: its waves under its gate. The first
  * stage also carries the release cut and the control dispatch, since it is
- * the stage a merge applies. Throws on a stage the pipeline lacks, or a
- * spec no job could run.
+ * the stage a merge applies. A canary wave with no soak of its own takes
+ * the stage's (#5327). Throws on a stage the pipeline lacks, or a spec no
+ * job could run.
  */
 export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
   const index = spec.stages.findIndex((s) => s.name === name);
@@ -97,6 +98,8 @@ export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
       ...(w.approval ?? gate.approval ? { approval: w.approval ?? gate.approval } : {}),
       ...(w.environment ?? stage.forgeEnvironment ? { environment: w.environment ?? stage.forgeEnvironment } : {}),
       ...(tolerance !== undefined && tolerance !== 0 ? { failureTolerance: tolerance } : {}),
+      // #5327: a canary wave that declares no soak takes the stage's, so a product's waves.canary needs no key of its own.
+      ...(w.canary && w.soak === undefined && stage.soak !== undefined ? { soak: structuredClone(stage.soak) } : {}),
     };
     const cut = first && k === stage.waves.length - 1 ? releaseCutHook(spec) : undefined;
     const publish = cut ? artifactsPublishHook(spec, stage.name) : undefined;

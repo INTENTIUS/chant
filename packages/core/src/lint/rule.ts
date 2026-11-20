@@ -75,7 +75,7 @@ export interface LintDiagnostic {
  */
 export interface LintProjectConfig {
   /** Declared environments — a bare name or `{ name, endpoint }` (#1166). */
-  environments?: Array<string | { name: string; endpoint?: string }>;
+  environments?: Array<string | { name: string; endpoint?: string; canary?: boolean }>;
   /** Ownership marking config — `env` is a literal or a build-parameter reference (#1396). */
   ownership?: { stack?: string; env?: string | { param: string }; enabled?: boolean };
 }

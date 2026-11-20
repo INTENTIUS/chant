@@ -146,6 +146,22 @@ export interface FanOutWaveGate {
    * since a gate nobody approved stops every wave after it.
    */
   waitingEarlier?: ReadonlyArray<{ wave: number; gate: string; components: readonly string[] }>;
+  /**
+   * The canary's soak (#5327, `--canary`): read before each wave after the
+   * canary wave plans, given that wave's number. The caller reads the
+   * canary wave's record (this attempt's, else the one `--resume` carried)
+   * through `onWaveSettled`. Held, the run
+   * stops there with nothing in that wave or after it applied, as at a gate
+   * nobody approved. Absent: no soak.
+   */
+  soak?: (wave: number) => Promise<FanOutSoakHold | undefined>;
+}
+
+/** A canary soak that holds a wave (#5327): what the run says, and the soak gate's pending fact when this run recorded it. */
+export interface FanOutSoakHold {
+  message: string;
+  hint: string;
+  pending?: PendingGateRecord;
 }
 
 /** Thrown when `FanOutWaveGate.only` names a wave whose predecessors have not all applied. */
@@ -301,6 +317,8 @@ export interface FanOutRunResult {
   gate?: PendingGateRecord;
   /** With `waveGate`: each wave this attempt planned, in order, the one it stopped at included. */
   waves?: WaveRecord[];
+  /** With `waveGate.soak` (#5327): the canary soak that stopped the run; `status` is then `gated`. */
+  soak?: FanOutSoakHold;
   /** What {@link FanOutRunOptions.hold} held back, in plan order. Absent when nothing was. */
   held?: FanOutHeld[];
   /**
@@ -626,6 +644,7 @@ async function runGatedWaves(
   const blockedBy = new Map<string, string>();
   const waves: WaveRecord[] = [];
   let gatedFact: PendingGateRecord | undefined;
+  let soakHeld: FanOutSoakHold | undefined;
 
   const markBlocked = (root: string): void => {
     for (const [component, by] of downstreamWithin(components, left, [root])) {
@@ -673,6 +692,15 @@ async function runGatedWaves(
       }
       if (waveGate.only !== undefined && waveNum > waveGate.only) return { end: "stop" };
       if (runnable.length === 0) return { end: "next" };
+      // #5327: the canary's soak holds every wave after the canary, before anything of it plans.
+      if (waveGate.soak && waveNum > 1) {
+        const held = await waveGate.soak(waveNum);
+        if (held) {
+          soakHeld = held;
+          gatedFact ??= held.pending;
+          return { end: "stop" };
+        }
+      }
 
       const gateName = waveGateName(waveGate.gate, waveNum);
       const contexts = new Map(runnable.map((name) => [name, fanOutContext(options, name)]));
@@ -830,6 +858,8 @@ async function runGatedWaves(
         status: waveFailures.length > 0 ? "failed" : "applied",
         approvedBy: check.resolution.resolvedBy,
         ...(waveFailures.length > 0 ? { failed: waveFailures } : {}),
+        // #5327: when the wave's applies ended, the clock a canary's soak counts from.
+        settledAt: options.now ?? new Date().toISOString(),
       };
       waves.push(settled);
       options.onWaveSettled?.(settled);
@@ -849,7 +879,7 @@ async function runGatedWaves(
 
   // #4291: a member of this job's wave that an earlier job's failure blocked fails the job, though the rest of the wave applied.
   const blockedHere = waveGate.only !== undefined && (plan.waves[waveGate.only - 1] ?? []).some((name) => blockedBy.has(name));
-  const status: FanOutRunResult["status"] = failed.length > 0 || blockedHere ? "fail" : gatedFact ? "gated" : "ok";
+  const status: FanOutRunResult["status"] = failed.length > 0 || blockedHere ? "fail" : gatedFact || soakHeld ? "gated" : "ok";
   emit?.({ type: "run-settle", status: status === "fail" ? "failed" : status, durationMs: null });
 
   return {
@@ -863,5 +893,6 @@ async function runGatedWaves(
     componentOutputs,
     ...(gatedFact ? { gate: gatedFact } : {}),
     waves,
+    ...(soakHeld ? { soak: soakHeld } : {}),
   };
 }

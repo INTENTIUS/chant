@@ -144,7 +144,8 @@
             }
           ],
           "status": "applied",
-          "approvedBy": "ana"
+          "approvedBy": "ana",
+          "settledAt": "2026-10-11T00:00:00.000Z"
         },
         {
           "wave": 2,
@@ -168,7 +169,8 @@
               "error": "a cannot plan"
             }
           ],
-          "approvedBy": "ana"
+          "approvedBy": "ana",
+          "settledAt": "2026-10-11T00:00:00.000Z"
         }
       ]
     },
@@ -305,7 +307,8 @@
           }
         ],
         "status": "applied",
-        "approvedBy": "ana"
+        "approvedBy": "ana",
+        "settledAt": "2026-10-11T00:00:00.000Z"
       },
       {
         "wave": 2,
@@ -329,7 +332,8 @@
             "error": "a cannot plan"
           }
         ],
-        "approvedBy": "ana"
+        "approvedBy": "ana",
+        "settledAt": "2026-10-11T00:00:00.000Z"
       }
     ],
     "components": [

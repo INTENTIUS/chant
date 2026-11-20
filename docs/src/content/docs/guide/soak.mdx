@@ -86,6 +86,32 @@ A person ends a soak by approving its gate: `chant approve <pipeline> <stage>-so
 
 For a wave, the gate is `<gate>-wave-<k>-soak` under the op-waves spec's name, where `k` is the wave that soaks.
 
+## The canary
+
+A stage marked `canary: true` holds every stage after it through its soak, and the next stage too. A promote into any stage downstream of the canary, through the stages between or through `after`, reads the canary's soak before that stage's gate, after the soak of the stage it promotes from. It is the same soak with the same gate, `<canary>-soak`, and the same clock, so ending it early once lets every later stage through it. A promote from a later stage reads it again, and a release that skipped the canary with `--allow-skip` has no apply there to start the clock, so it holds until it is promoted through the canary or a person ends the canary's soak.
+
+```ts
+stages: [
+  { name: "dev", waves: [{ name: "dev", runs: [{ target: "dev" }] }] },
+  {
+    name: "canary",
+    canary: true,
+    waves: [{ name: "canary", runs: [{ target: "prod-canary" }] }],
+    soak: { duration: "6h", checks: [{ kind: "prometheus", url: "https://prometheus.example", query: "sum(rate(http_requests_total{code=~\"5..\"}[5m]))", max: 1 }] },
+  },
+  { name: "prod-eu", waves: [{ name: "eu", runs: [{ target: "prod-eu" }] }] },
+  { name: "prod-us", waves: [{ name: "us", runs: [{ target: "prod-us" }] }] },
+],
+```
+
+Here a promotion into `prod-us` waits for the soak of `prod-eu`, then for the canary's. A canary stage takes a soak with at least one check, its own or an override's; the build refuses one without.
+
+A wave takes `canary: true` as well: the first wave of a stage, the members that apply before the rest. Its soak holds every later wave's job, not only the next one, through gate `<gate>-wave-1-soak`. A canary wave with no soak of its own takes the stage's, so a product that puts its `waves.canary` members in a first wave marks that wave and needs no other key. In an op-waves spec a product writes directly, a canary wave with no soak checks is a warning from the generator, and the waves after it go on as they did.
+
+`chant components fan-out --canary <component> --wave-gate <gate>` holds the waves after the canary through the soak of the pipeline stage named by `--env`, read at the default branch's tip. The clock starts when the canary wave's applies ended. While it holds, the fan-out exits 3 before the next wave plans, and approving `fan-out <gate>-wave-1-soak` ends it early. Without `--wave-gate`, every wave runs in one go, so a fan-out whose stage declares a soak refuses `--canary`.
+
+A canary in a member's `environments` carries no soak checks, so `chant lint` warns on it (COR027) when the member has no pipeline.
+
 ## In the plan note
 
 A pull request's plan note gets a Soak section whenever the pipeline at the base commit declares one: each stage's soak with the stages it holds, and each wave's with the wave it holds, so a reviewer sees every soak the change passes through before it merges.
@@ -93,3 +119,5 @@ A pull request's plan note gets a Soak section whenever the pipeline at the base
 ## In a product
 
 A product writes `environments.<name>.soak` and `recheck.schedule` from its config into `.chant/pipeline.ts` with `pipelineFromConfig`; the keys are in [CI product config](/chant/reference/ci-product-config/). A product that decides a soak itself calls `decideSoak` and `soakCheckReader` from `@intentius/chant/pipeline`, and feature-detects all of this on `SOAK_FLOOR`.
+
+A product maps `environments.<name>.canary` onto the stage's `canary`, and its `waves.canary` onto `canary: true` on the first wave it already builds from that list; the canary wave then takes the stage's soak. It feature-detects the canary on `CANARY_FLOOR`.

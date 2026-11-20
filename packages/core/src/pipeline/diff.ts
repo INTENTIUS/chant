@@ -5,7 +5,7 @@
  */
 
 import { readPipelineAt, type PipelineShow, gitShowPipeline, type PipelineRead } from "./read";
-import { stageUpstreams, type PipelineHold, type PipelineSpec, type PipelineStage } from "./spec";
+import { canaryStagesBefore, stageUpstreams, type PipelineHold, type PipelineSpec, type PipelineStage } from "./spec";
 import { isQuorumAll, isQuorumAny, isQuorumGroup, quorumNodes, type GateQuorumNode } from "../op/gate-quorum";
 import { soakSummary } from "./soak";
 
@@ -21,7 +21,11 @@ export function pipelineSoakSection(spec: PipelineSpec | undefined): string | un
   for (const stage of spec.stages) {
     stage.waves.forEach((w, k) => {
       const next = stage.waves[k + 1];
-      if (w.soak && next) lines.push(`- In \`${stage.name}\`, wave \`${next.name}\` waits for wave \`${w.name}\` to soak: ${soakSummary(w.soak)}.`);
+      // #5327: a canary wave with no soak of its own takes the stage's, and holds every wave after it.
+      const soak = w.soak ?? (w.canary ? stage.soak : undefined);
+      if (!soak || !next) return;
+      if (w.canary) lines.push(`- In \`${stage.name}\`, every wave after the canary wave \`${w.name}\` waits for it to soak: ${soakSummary(soak)}.`);
+      else lines.push(`- In \`${stage.name}\`, wave \`${next.name}\` waits for wave \`${w.name}\` to soak: ${soakSummary(soak)}.`);
     });
     if (!stage.soak) continue;
     const holds = spec.stages.filter((s) => stageUpstreams(spec, s.name).includes(stage.name)).map((s) => `\`${s.name}\``);
@@ -30,6 +34,9 @@ export function pipelineSoakSection(spec: PipelineSpec | undefined): string | un
         ? `- A promotion from \`${stage.name}\` into ${holds.join(", ")} waits for \`${stage.name}\` to soak: ${soakSummary(stage.soak)}.`
         : `- \`${stage.name}\` soaks after it applies: ${soakSummary(stage.soak)}.`,
     );
+    // #5327: the canary's soak holds every stage after it, not only the next.
+    const later = stage.canary ? spec.stages.filter((s) => canaryStagesBefore(spec, s.name).some((c) => c.name === stage.name) && !stageUpstreams(spec, s.name).includes(stage.name)).map((s) => `\`${s.name}\``) : [];
+    if (later.length > 0) lines.push(`- \`${stage.name}\` is the canary: a promotion into ${later.join(", ")} waits for its soak too.`);
   }
   if (lines.length === 0) return undefined;
   return ["### Soak", "", "Once this merges, the change passes through these soaks. Each one holds and never approves; a person can end one early through its gate.", "", ...lines].join("\n").split("<!--").join("&lt;!--");

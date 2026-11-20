@@ -235,7 +235,7 @@
           }
         },
         "promotionOrder": {
-          "description": "The member's promotion order (#4030): the literal entries of the environments array in its chant.config.ts, in order, with a pattern entry such as pr-* left out. A release moves from each step to the next, and components promote --to defaults --from to the step before. Empty when the config declares no environments, and null when it could not be read. canary is declared and shown only; no chant command acts on it yet. Optional: written from chant 0.124.28, absent from older output.",
+          "description": "The member's promotion order (#4030): the literal entries of the environments array in its chant.config.ts, in order, with a pattern entry such as pr-* left out. A release moves from each step to the next, and components promote --to defaults --from to the step before. Empty when the config declares no environments, and null when it could not be read. canary marks the canary step: in a pipeline its soak holds every stage after it, and an environments entry has no soak, so chant lint warns on one. Optional: written from chant 0.124.28, absent from older output.",
           "type": ["array", "null"],
           "items": {
             "type": "object",

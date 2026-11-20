@@ -75,6 +75,21 @@ export const RELEASE_RISK_FLOOR = NEXT_RELEASE;
 export const SOAK_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant that enforces the canary (#5327): a stage's `canary` in
+ * `.chant/pipeline.ts` holds every stage after it through its soak
+ * (`canaryStagesBefore`, `pipelinePromoteSoaks`), and a canary stage takes
+ * a soak with checks; an op wave's `canary` marker (`OpWave.canary`, the
+ * first wave) holds every later wave's job through its soak, takes its
+ * stage's soak when it declares none, and warns with no checks
+ * (`opWavesCanaryWarnings`); `components fan-out --canary --wave-gate`
+ * holds the waves after the canary through the soak of the pipeline stage
+ * it runs in; and lint warns (COR027) on a canary in `environments`. A
+ * product feature-detects the marker on this name before it sets it from
+ * its `waves.canary`.
+ */
+export const CANARY_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */
@@ -107,6 +122,7 @@ export {
 export { lineDiff, pipelineChange, pipelineChangeSection, pipelineSoakSection, pipelineSpecLines, type PipelineChange } from "./pipeline/diff";
 export {
   decideSoak,
+  soakCheckCount,
   soakCheckName,
   soakDurationMs,
   soakGlobMatch,
@@ -135,7 +151,8 @@ export {
 } from "./pipeline/soak";
 export { driftNamedTargets, healthVerdict, runRecordSoakSources, soakCheckReader, type SoakApplyState, type SoakDenial, type SoakExecResult, type SoakSources } from "./pipeline/soak-checks";
 export { soakAtGate, stageSoakGate, waveSoakGate, SOAK_FACT_EXPIRY, type SoakGateInput, type SoakGateOutcome } from "./pipeline/soak-gate";
-export { pipelinePromoteSoak } from "./pipeline/promote";
+export { pipelinePromoteSoak, pipelinePromoteSoaks } from "./pipeline/promote";
+export { opWavesCanaryWarnings } from "./op/op-waves";
 export {
   gitStageArtifactPort,
   parseStageArtifactRecords,

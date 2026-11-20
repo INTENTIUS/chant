@@ -90,6 +90,7 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `agent.wave-refused.max_runs` | the most refused-wave summaries per day | a whole number | `WaveSummarySpec.maxRuns` (`CHANT_WAVE_SUMMARY_MAX_RUNS`) |
 | `agent.wave-refused.max_cost_usd` | the most US dollars the refused-wave summaries may cost per day | a number above 0 | `WaveSummarySpec.maxCostUsd` (`CHANT_WAVE_SUMMARY_MAX_COST_USD`) |
 | `approval_rules.<rule>.proven`, `approval_rules[].proven` | a rule's count met only by approvers a seal or a review proves | `true` or `false` | `proven` of a quorum rule (`GateQuorumRule`) |
+| `environments.<name>.canary` | the canary stage, whose soak holds every stage after it | `true` or `false` | a stage's `canary` in `.chant/pipeline.ts`, which takes a `soak` with at least one check |
 | `environments.<name>.soak.duration` | how long a stage's soak checks must keep passing after its last apply before a release is promoted into the next stage | a duration, or `0` to wait for the checks alone | a stage's `soak.duration` in `.chant/pipeline.ts` |
 | `environments.<name>.soak.checks[].kind` | what one soak check reads | `http`, `prometheus`, `cloudwatch-alarm`, `command`, `health`, `drift`, `apply`, `policy` | a soak check's `kind` (`SoakCheck`), with that kind's settings beside it |
 | `environments.<name>.soak.checks[].on_fail` | what a failing soak check does: start the soak over once it passes again, or hold with the elapsed time kept | `restart`, `hold` | a soak check's `onFail`; `restart` when unset |
@@ -213,7 +214,7 @@ The mechanism ships as `resolveEnvironmentSet` and `environmentSetJobInputs` fro
 | `labels.<label>` | the members a labelled pull request plans, by glob | a list of globs | `ci.labels` |
 | `locks.when` | when a pull request takes its locks, in the product's stage words | `plan`, `apply`, `preview`, `up` | `ci.locks` |
 | `locks.grain` | what one lock covers | `resource`, `stack` | `ci.lockGrain` |
-| `waves.canary` | the members that apply first, in a wave of their own | a list of member names or globs | the first wave of the op-waves spec |
+| `waves.canary` | the members that apply first, in a wave of their own | a list of member names or globs | the first wave of the op-waves spec, marked `canary`: its soak, the environment's soak unless the wave has its own, holds every wave after it |
 | `waves.after.<name>` | the members one member applies after | a list of member names | the wave order of the op-waves spec |
 
 ## Approval and policy

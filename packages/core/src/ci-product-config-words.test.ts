@@ -54,6 +54,13 @@ describe("the vocabulary (#5343)", () => {
     expect(productConfigWord("config_sets.<set>")?.section).toBe("stage");
   });
 
+  test("the canary stage has its own key, which pipelineFromConfig reads (#5327)", () => {
+    const word = productConfigWord("environments.<name>.canary");
+    expect(word?.section).toBe("stage");
+    expect(word?.chant).toContain("`canary`");
+    expect(PAGE).toContain("| `environments.<name>.canary` |");
+  });
+
   test("the floor names the next release", () => {
     expect(PRODUCT_CONFIG_WORDS_FLOOR).toBe(NEXT_RELEASE);
   });
