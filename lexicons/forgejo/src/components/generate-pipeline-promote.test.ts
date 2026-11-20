@@ -71,3 +71,21 @@ describe("forgejo pipeline promote: the verify-failed facts", () => {
     expect(yaml(input)).not.toContain("CHANT_AGENT_FACTS");
   });
 });
+
+// #5425: the product's image and install lines, as the wave jobs take them.
+describe("forgejo pipeline promote: the product's image and install lines", () => {
+  type Doc = { jobs: Record<string, { container: string; steps: Array<{ run?: string }> }> };
+
+  test("every job runs in the image and installs before its command", () => {
+    const doc = parseYAML(yaml({ ...input, recheck: { schedule: "0 * * * *" }, image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci --ignore-scripts"] })) as unknown as Doc;
+    for (const name of ["promote-staging", "promote-prod", "recheck-staging", "recheck-prod"]) {
+      expect(doc.jobs[name]!.container, name).toBe("ghcr.io/intentius/plunge:1");
+      const run = doc.jobs[name]!.steps.find((s) => s.run?.includes("components promote"))!.run!;
+      expect(run.indexOf("npm ci --ignore-scripts"), name).toBeLessThan(run.indexOf("components promote"));
+    }
+  });
+
+  test("with neither set, the file is the golden's", async () => {
+    await expect(yaml({ ...input, image: undefined, beforeScript: undefined })).toMatchFileSnapshot("./__golden__/pipeline-promote.forgejo.yml");
+  });
+});

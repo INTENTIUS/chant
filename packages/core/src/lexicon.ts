@@ -1507,6 +1507,18 @@ export interface PipelinePromoteInput {
    * before.
    */
   agentFacts?: { relayKeyEnv?: string };
+  /**
+   * The container image every promote, recheck and agent job runs in, as
+   * {@link OpWavesPipelineOptions.image} gives it to the wave jobs (#5425).
+   * Absent: the forge's default image, and the file is as before.
+   */
+  image?: string;
+  /**
+   * Install lines every job runs before its command, as
+   * {@link OpWavesPipelineOptions.beforeScript} gives them to the wave jobs
+   * (#5425). Absent: none, and the file is as before.
+   */
+  beforeScript?: string[];
 }
 
 /**

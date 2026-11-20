@@ -71,11 +71,14 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
   const tags = gitlabTags(input.runner);
+  // #5425: the product's image and install lines, as the wave jobs take them.
+  const image = input.image ?? CI_IMAGE;
+  const install = input.beforeScript ?? [];
   // #5339: with agentFacts, a failed verify or a soak check that starts failing records a fact for the verify-failed agent.
   const facts = input.agentFacts ? (opWavesAgentFactsEnv("gitlab", { ...input.agentFacts, triggers: ["verify-failed"] }) ?? {}) : {};
   const job = (stage: PipelinePromoteInput["stages"][number], rule: string, command: string, after: { job: string; record: string } | undefined = undefined) => ({
     ...(after ? { needs: [{ job: after.job, artifacts: true }] } : {}),
-    image: CI_IMAGE,
+    image,
     ...(tags ? { tags } : {}),
     timeout: `${timeout.minutes} minutes`,
     ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
@@ -85,7 +88,7 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
     variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}), ...facts },
     // With agent steps, the promote runs when a step failed too, so it records why and holds.
     rules: [{ if: rule, ...(after ? { when: "always" } : {}) }],
-    script: [...(stage.cloud ? gitlabTradeLines() : []), ...(stage.setup ?? []), ...(after ? [after.record] : []), command],
+    script: [...(stage.cloud ? gitlabTradeLines() : []), ...install, ...(stage.setup ?? []), ...(after ? [after.record] : []), command],
   });
   const rule = (stage: string) => `$CI_PIPELINE_SOURCE == "web" && $CHANT_PROMOTE_STAGE == "${stage}"`;
   const entries: Array<readonly [string, unknown]> = input.stages.flatMap((stage): Array<readonly [string, unknown]> => {
@@ -98,12 +101,12 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
           [
             agentJob,
             {
-              image: CI_IMAGE,
+              image,
               ...(tags ? { tags } : {}),
               timeout: `${timeout.minutes} minutes`,
               variables: { ...GITLAB_FULL_HISTORY },
               rules: [{ if: rule(stage.name) }],
-              script: [LEDGER_FETCH, PLAIN_REMOTE, GITLAB_DROP_FORGE_TOKENS, `${bin} pipeline agent run --stage ${stage.name} --release "$CHANT_PROMOTE_RELEASE" --output ${dir}`],
+              script: [LEDGER_FETCH, PLAIN_REMOTE, GITLAB_DROP_FORGE_TOKENS, ...install, `${bin} pipeline agent run --stage ${stage.name} --release "$CHANT_PROMOTE_RELEASE" --output ${dir}`],
               artifacts: { when: "always", paths: [dir], expire_in: "7 days" },
             },
           ],

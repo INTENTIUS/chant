@@ -106,3 +106,30 @@ describe("github pipeline promote: idTokens", () => {
     await expect(yaml(input)).toMatchFileSnapshot("./__golden__/pipeline-promote.github.yml");
   });
 });
+
+// #5425: the product's image and install lines, as the wave jobs take them.
+describe("github pipeline promote: the product's image and install lines", () => {
+  const withProduct = { ...input, recheck: { schedule: "0 * * * *" }, image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci --ignore-scripts"] };
+  type Doc = { jobs: Record<string, { container: string; steps: Array<{ run?: string }> }> };
+
+  test("every job runs in the image and installs before its command", () => {
+    const doc = parseYAML(yaml(withProduct)) as unknown as Doc;
+    for (const name of ["promote-staging", "promote-prod", "recheck-staging", "recheck-prod"]) {
+      expect(doc.jobs[name]!.container, name).toBe("ghcr.io/intentius/plunge:1");
+      const run = doc.jobs[name]!.steps.find((s) => s.run?.includes("components promote"))!.run!;
+      expect(run.indexOf("npm ci --ignore-scripts"), name).toBeGreaterThanOrEqual(0);
+      expect(run.indexOf("npm ci --ignore-scripts"), name).toBeLessThan(run.indexOf("components promote"));
+    }
+  });
+
+  test("the agent job takes them too", () => {
+    const agentInput = { ...withProduct, stages: [{ name: "staging", agentSteps: { keyEnvs: ["MODEL_KEY"] } }] };
+    const doc = parseYAML(yaml(agentInput)) as unknown as Doc;
+    expect(doc.jobs["agent-staging"]!.container).toBe("ghcr.io/intentius/plunge:1");
+    expect(doc.jobs["agent-staging"]!.steps.some((s) => s.run === "npm ci --ignore-scripts")).toBe(true);
+  });
+
+  test("with neither set, the file is the golden's", async () => {
+    await expect(yaml({ ...input, image: undefined, beforeScript: undefined })).toMatchFileSnapshot("./__golden__/pipeline-promote.github.yml");
+  });
+});
