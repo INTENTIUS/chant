@@ -43,6 +43,13 @@ export interface DeriveFanOutOptions {
    * (`fanOutRegistry`) is built for it.
    */
   registry?: CapabilityRegistry;
+  /**
+   * The environment the fan-out plans or runs in (#5360). Each step's
+   * `environments` is resolved for it before the reads and the plan read the
+   * steps, a pull request's `pr-<n>` through its template. Absent: the steps
+   * are read as declared.
+   */
+  env?: string;
 }
 
 export interface DerivedFanOut {
@@ -87,7 +94,7 @@ export async function deriveFanOut(options: DeriveFanOutOptions): Promise<Derive
   const { config } = options.config ? { config: options.config } : await loadChantConfig(options.path);
   const defaulted = resolved.targets.map((component) => applyConfigDefaults(component, config));
   // #4466: the reads a capability finds in its steps' files, such as a template's Fn::ImportValue, order and hold like declared ones.
-  const components = await withDeclaredReads(defaulted, options.registry ?? (await fanOutRegistry(options.path, config)), options.path);
+  const components = await withDeclaredReads(defaulted, options.registry ?? (await fanOutRegistry(options.path, config)), options.path, options.env !== undefined ? { env: options.env } : undefined);
 
   const signal = componentsForUnits(components, options.units);
   const plan = planFanOut({

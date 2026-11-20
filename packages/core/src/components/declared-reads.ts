@@ -16,6 +16,7 @@
 import type { CapabilityRegistry, DeclaredRead, DeclaredReadMember } from "./capability";
 import type { DriverComponent, DriverPhase, DriverStep } from "./driver";
 import { capabilitySteps } from "./wave-plan";
+import { componentForEnvironment, type StepEnvironmentOptions } from "./step-environments";
 
 /** A declared read with the kind of the step it names. */
 export type PlacedRead = DeclaredRead & { index: number; kind: string };
@@ -63,7 +64,15 @@ export async function declaredReadsOf(
   components: readonly DriverComponent[],
   registry: CapabilityRegistry,
   root: string,
+  /**
+   * The run's environment (#5360): each step is read with its
+   * `environments` entry for it, so a stack or root that sits only in the
+   * map is the one the capability reads. A step that does not name it is
+   * read as declared.
+   */
+  environment?: { env: string } & StepEnvironmentOptions,
 ): Promise<PlacedRead[]> {
+  if (environment) components = components.map((c) => componentForEnvironment(c, environment.env, environment).component);
   const names = new Set(components.map((c) => c.name));
   const byKind = new Map<string, DeclaredReadMember[]>();
   for (const component of components) {
@@ -127,8 +136,18 @@ export function applyDeclaredReads(components: readonly DriverComponent[], reads
   });
 }
 
-/** {@link declaredReadsOf} and {@link applyDeclaredReads} in one: `components` with their declared reads written in. */
-export async function withDeclaredReads(components: readonly DriverComponent[], registry: CapabilityRegistry, root: string): Promise<DriverComponent[]> {
+/**
+ * {@link declaredReadsOf} and {@link applyDeclaredReads} in one: `components`
+ * with their declared reads written in. With `environment`, the components
+ * come back resolved for it (#5360), the reads written into the resolved steps.
+ */
+export async function withDeclaredReads(
+  components: readonly DriverComponent[],
+  registry: CapabilityRegistry,
+  root: string,
+  environment?: { env: string } & StepEnvironmentOptions,
+): Promise<DriverComponent[]> {
+  if (environment) components = components.map((c) => componentForEnvironment(c, environment.env, environment).component);
   const reads = await declaredReadsOf(components, registry, root);
   return reads.length > 0 ? applyDeclaredReads(components, reads) : [...components];
 }

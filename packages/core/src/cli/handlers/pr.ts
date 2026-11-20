@@ -277,6 +277,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
       buildParams: paramsResolution.provenance,
       config,
       registry,
+      env: args.env ?? "local",
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

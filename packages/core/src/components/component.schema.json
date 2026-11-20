@@ -208,6 +208,15 @@
           "type": "object",
           "description": "Named inputs passed into an apply step, each of which may be a literal or any WiringValue reference — most commonly a stackOutput reference imported from another component's stack.",
           "additionalProperties": { "$ref": "#/$defs/WiringValue" }
+        },
+        "environments": {
+          "type": "object",
+          "description": "The step's inputs per environment, keyed by environment name. For the run's environment, that entry's keys replace the step's own, one level deep, before the capability sees its input. An environment the map does not name is refused before anything runs.",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": { "not": { "enum": ["kind", "environments"] } }
+          }
         }
       }
     },

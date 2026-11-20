@@ -247,6 +247,7 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
       buildParams: paramsResolution.provenance,
       config,
       registry,
+      env: args.env ?? "local",
       ...(args.canary?.length ? { canary: args.canary } : {}),
     });
   } catch (err) {

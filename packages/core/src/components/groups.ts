@@ -26,6 +26,7 @@
  *   release, `components fan-out` and `run --components` run (#4465).
  */
 
+import { stepInputForEnvironment } from "./step-environments";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { groupDigest } from "./group-digest";
 
@@ -265,8 +266,10 @@ function groupMembers(
     const component = byName.get(name);
     const at = component ? groupStepOf(component, registry) : undefined;
     if (!component || !at) throw new Error(`${name} has no ${group.capability} step to plan in its group`);
-    const { kind: _kind, ...step } = at.step;
+    const { kind: _kind, ...declared } = at.step;
     const base = ctxOf(name);
+    // #5360: the step's inputs for this environment.
+    const step = stepInputForEnvironment(declared, base.env, { component: name, phase: "deploy", kind: at.step.kind });
     assertTargetsAccepted(component, registry, base);
     assertPlanFlagsAccepted(component, registry, base);
     const reads = groupReadsOf(step, inGroup, name);

@@ -64,6 +64,7 @@ import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSettleStatus } from "../run-event";
+import { componentsForEnvironment, stepInputForEnvironment } from "./step-environments";
 import { gateEventsOf, joinRunEventSinks, progressSinkOf, type RunEventSink } from "../run-event-stream";
 
 export type { RunProgressEvent } from "./run-progress";
@@ -595,11 +596,14 @@ async function runCapabilityStep(
   phaseOutputs: Record<string, Record<string, unknown>>,
   componentOutputs: Record<string, Record<string, unknown>>,
 ): Promise<{ record: DriverStepRecord; resolvedInput: Record<string, unknown>; output?: unknown }> {
-  const { kind, ...rest } = step;
-  const resolvedInput = resolveStepInput(rest, phaseOutputs, componentOutputs);
+  const { kind, ...declared } = step;
   const start = Date.now();
   let lease: RowLease | undefined;
+  let resolvedInput: Record<string, unknown> = declared;
   try {
+    // #5360: the step's inputs for this environment, before the capability sees them.
+    const rest = stepInputForEnvironment(declared, ctx.env, { component: ctx.component, phase: phaseName, kind });
+    resolvedInput = resolveStepInput(rest, phaseOutputs, componentOutputs);
     const capability = registry.resolve(kind);
     // #4594: on the resource grain, a run that plans inside its steps leases the step's rows first and applies the plan it leased for.
     const leased = await leaseCapabilityStep(capability, ctx, resolvedInput);
@@ -1354,6 +1358,8 @@ export async function runInterpretDriver(
   registry: CapabilityRegistry,
   options: InterpretRunOptions,
 ): Promise<DriverRunResult> {
+  // #5360: each step's inputs for this environment; a step that names others is refused before the first wave.
+  components = componentsForEnvironment(components, options.env);
   const graph = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
   // ws-107 (#4465): the grouped waves, and each member's group.

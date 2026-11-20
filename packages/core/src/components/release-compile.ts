@@ -59,6 +59,7 @@ import { RELEASE_DIGESTS_ENV } from "../lifecycle/release-images";
 
 /** The deploy step fields whose literal file paths are a component's templates. */
 export { TEMPLATE_FIELDS } from "./deploy-inputs";
+import { componentForEnvironment } from "./step-environments";
 import { DEPLOY_INPUT_FIELDS, directoryFiles, ignoredByGit, TEMPLATE_FIELDS, walkFiles } from "./deploy-inputs";
 
 /** The prefix a step may write before an archive-relative template path. */
@@ -349,7 +350,8 @@ async function loadComponents(
     config,
     params: resolved.provenance.map(({ name, value, source }) => ({ name, value, source })),
     declared: all.length,
-    components: enabled.map((c) => ({ component: applyConfigDefaults(c, config), file: fileOf.get(c.name)! })),
+    // #5360: each step's inputs for this environment, so its target's files are the ones recorded.
+    components: enabled.map((c) => ({ component: componentForEnvironment(applyConfigDefaults(c, config), env).component, file: fileOf.get(c.name)! })),
   };
 }
 

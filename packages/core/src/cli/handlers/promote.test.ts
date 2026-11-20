@@ -63,6 +63,9 @@ vi.mock("../../components/fan-out-support", () => ({
       registry.register({ kind, async run(ctx: DeployContext, input: unknown) { ran.push(`${ctx.env}:${kind}`); stepInputs.push({ kind, input }); return output(ctx); } } as never);
     step("docker-build", () => ({ digest: "sha256:rebuilt" }));
     step("publish-image", () => ({ digest: publishedDigest, uri: `reg/api@${publishedDigest}` }));
+    // #5360: engine steps whose target follows the environment.
+    step("pulumi-up", () => ({}));
+    step("terraform-apply", () => ({}));
     step("apply", (ctx) => {
       if (ctx.component === failApplyFor) throw applyError ?? new Error("apply failed");
       return {};
@@ -1264,5 +1267,97 @@ describe("a promote that applies partly records what the environment runs (#4035
     expect(await runComponentsPromote(ctx({ release: "v2.0.0" }))).toBe(0);
     expect(appendReleaseRecordMock).toHaveBeenCalledTimes(2);
     expect(outcomes).toEqual([]);
+  });
+});
+
+describe("a step's target per environment on promote, rollback and redeploy (#5360)", () => {
+  const engines = (envs: string[]): DriverComponent => ({
+    ...api,
+    name: "api",
+    deploy: [
+      ...api.deploy.slice(0, 2),
+      {
+        phase: "Apply",
+        steps: [
+          { kind: "terraform-apply", vars: { image: "@Publish.digest" }, environments: Object.fromEntries(envs.map((e) => [e, { root: `envs/${e}/network` }])) },
+          { kind: "pulumi-up", dir: "infra/shop", environments: Object.fromEntries(envs.map((e) => [e, { stack: `acme/shop/${e}` }])) },
+        ],
+      },
+    ],
+  });
+  const engineInputs = () => stepInputs.filter((s) => s.kind === "pulumi-up" || s.kind === "terraform-apply").map((s) => s.input);
+
+  beforeEach(() => {
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [engines(["dev", "staging", "prod"])] });
+  });
+
+  test("a promote applies the target of --to only, and records it under --to", async () => {
+    expect(await runComponentsPromote(ctx({}))).toBe(0);
+    expect(ran).toEqual(["prod:publish-image", "prod:terraform-apply", "prod:pulumi-up"]);
+    expect(engineInputs()).toEqual([
+      { root: "envs/prod/network", vars: { image: "sha256:api" } },
+      { dir: "infra/shop", stack: "acme/shop/prod" },
+    ]);
+    expect(appendReleaseRecordMock).toHaveBeenCalledTimes(1);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ component: "api", env: "prod", promotedFrom: { env: "staging" } });
+  });
+
+  test("an environment the steps do not name is refused before anything runs, listing the ones they name", async () => {
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [engines(["dev", "staging"])] });
+    expect(await runComponentsPromote(ctx({}))).toBe(1);
+    const out = errors.join("\n");
+    expect(out).toContain('its terraform-apply step in phase "Apply" can\'t run in prod: its `environments` names dev, staging, and not prod');
+    expect(out).toContain('its pulumi-up step in phase "Apply" can\'t run in prod');
+    expect(out).toMatch(/nothing was deployed/);
+    expect(ran).toEqual([]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+  });
+
+  test("a rollback and a redeploy apply the target of the environment they act on", async () => {
+    const prod = (digest: string, timestamp: string, runId: string): ReleaseRecord => ({ ...staging, env: "prod", digest, timestamp, runId });
+    readReleaseLedgerMock.mockResolvedValue({ records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")], malformed: 0 });
+    const at = (path: string) => ctx({ migrateFrom: undefined, migrateTo: undefined, path, extraPositional: "prod", component: "api" });
+    expect(await runComponentsRollback(at("rollback"))).toBe(0);
+    expect(ran).toEqual(["prod:terraform-apply", "prod:pulumi-up"]);
+    expect(engineInputs()).toEqual([
+      { root: "envs/prod/network", vars: { image: "sha256:old" } },
+      { dir: "infra/shop", stack: "acme/shop/prod" },
+    ]);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", digest: "sha256:old" });
+
+    ran.length = 0;
+    stepInputs.length = 0;
+    appendReleaseRecordMock.mockClear();
+    expect(await runComponentsRedeploy(at("redeploy"))).toBe(0);
+    expect(engineInputs()).toEqual([
+      { root: "envs/prod/network", vars: { image: "sha256:new" } },
+      { dir: "infra/shop", stack: "acme/shop/prod" },
+    ]);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", digest: "sha256:new" });
+  });
+
+  test("under --release, the release's files for --to are the ones the environment's entry names", async () => {
+    const prodTemplate = `{"env":"prod"}\n`;
+    const templateOnly: DriverComponent = {
+      ...api,
+      deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", environments: { staging: { root: "envs/staging", template: "dist/staging.json" }, prod: { root: "envs/prod", template: "dist/prod.json" } } }] }],
+    };
+    const release = makeRelease({
+      member: null,
+      commit: "abc123".padEnd(40, "0"),
+      artifactDigests: [],
+      targets: [
+        { env: "staging", templates: [{ component: "api", path: "dist/staging.json", digest: contentDigest(`{"env":"staging"}\n`) }], params: [] },
+        { env: "prod", templates: [{ component: "api", path: "dist/prod.json", digest: contentDigest(prodTemplate) }], params: [] },
+      ],
+    });
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [templateOnly] });
+    releaseFixture = { release, label: "v1.0.0" };
+    storedTemplate = prodTemplate;
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(ran).toEqual(["prod:terraform-apply"]);
+    const pinned = `.chant/release-templates/${release.targets.find((t) => t.env === "prod")!.templates[0].digest.replace(/:/g, "_")}/prod.json`;
+    expect(engineInputs()).toEqual([{ root: "envs/prod", template: pinned }]);
+    expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", releaseDigest: release.releaseDigest });
   });
 });

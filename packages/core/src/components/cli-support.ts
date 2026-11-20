@@ -58,6 +58,7 @@ import type { RowLeasePort } from "./row-lease";
 import type { FanOutPlan } from "./fan-out";
 import { componentSetFanOut, formRunGroups, planAndRunComponentGroup } from "./groups";
 import { applyConfigDefaults } from "./config-defaults";
+import { componentForEnvironment } from "./step-environments";
 import { withDeclaredReads } from "./declared-reads";
 import { loadChantConfig, type ChantConfig } from "../config";
 
@@ -751,13 +752,17 @@ export async function runComponents(
   // exporter. A single name runs on its own, against seeded outputs.
   let resolvedTargets: DriverComponent[];
   let added = resolved.added ?? [];
+  // #5360: each step's inputs for this environment, before the reads, the plan or the run read them.
+  const forEnv = (component: DriverComponent): DriverComponent => componentForEnvironment(applyConfigDefaults(component, config), env).component;
   if (resolved.list) {
-    const enabled = await withDeclaredReads(resolved.list.enabled.map((component) => applyConfigDefaults(component, config)), registry, path);
+    const enabled = await withDeclaredReads(resolved.list.enabled.map(forEnv), registry, path, { env });
     ({ targets: resolvedTargets, added } = dependencyClosure(resolved.list.named, enabled));
   } else {
-    const defaulted = resolved.targets.map((component) => applyConfigDefaults(component, config));
-    resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path) : defaulted;
+    const defaulted = resolved.targets.map(forEnv);
+    resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path, { env }) : defaulted;
   }
+  const unnamed = resolvedTargets.flatMap((component) => componentForEnvironment(component, env).refusals);
+  if (unnamed.length > 0) return { success: false, selected: [], error: unnamed.map((r) => r.message).join("\n") };
   if (options.prepare) {
     const prepared = await options.prepare(resolvedTargets, { inputs: resolved.inputs ?? {} });
     if ("error" in prepared) return { success: false, selected: [], error: prepared.error };

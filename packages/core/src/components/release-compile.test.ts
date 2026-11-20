@@ -137,6 +137,21 @@ describe("compileEnvironment", () => {
     });
   });
 
+  test("records the files of the environment's own entry in a step's environments (#5360)", async () => {
+    await withTestDir(async (dir) => {
+      writeFileSync(
+        join(dir, "net.component.ts"),
+        `export const net = { name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [
+          { kind: "cfn-deploy", environments: { staging: { template: "dist/staging.json" }, prod: { template: "dist/prod.json" } } },
+        ] }] };`,
+      );
+      mkdirSync(join(dir, "dist"), { recursive: true });
+      writeFileSync(join(dir, "dist", "staging.json"), "{}\n");
+      writeFileSync(join(dir, "dist", "prod.json"), `{"prod":true}\n`);
+      expect((await compileEnvironment({ projectDir: dir }, "prod")).templates).toEqual([{ component: "net", path: "dist/prod.json", content: `{"prod":true}\n` }]);
+    });
+  });
+
   test("refuses when a template a deploy names does not exist after the build", async () => {
     await withTestDir(async (dir) => {
       project(dir);
