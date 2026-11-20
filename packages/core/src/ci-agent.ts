@@ -861,7 +861,7 @@ export async function runAgent(i: RunInput): Promise<{ rc: AgentRc; changed: boo
 // ── agent land ─────────────────────────────────────────────────────────────
 
 /** How a run ended, as its record says. */
-export type AgentResult = "pushed" | "opened" | "updated" | "refused" | "stopped" | "failed" | "idle";
+export type AgentResult = "pushed" | "opened" | "updated" | "summarized" | "refused" | "stopped" | "failed" | "idle";
 
 export interface LandOutcome {
   result: AgentResult;
@@ -923,7 +923,7 @@ export function agentRunRecordInput(o: {
   window?: { from: string; until: string };
   alerts?: Array<{ source: string; sourceId: string }>;
 }): OpRunRecordInput {
-  const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated";
+  const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated" || o.result === "summarized";
   const durationMs = Math.max(0, Date.parse(o.ended) - Date.parse(o.started)) || 0;
   const outcome = {
     trigger: o.settings.on,

@@ -14,6 +14,7 @@ import type { PrReport } from "./pr-loop";
 import type { OpWavesSpec } from "./op/op-waves";
 import type { RunOpWaveResult } from "./op/op-waves-run";
 import type { OpWaveOutcome } from "./op/op-waves-notify";
+import { renderRefusedSummary, summarizeRefusedWave, type WaveSummaryDeps } from "./ci-respond-summary";
 import {
   changeSetDiff,
   checkDescription,
@@ -50,6 +51,28 @@ export const ledgerChangeSetReader: ChangeSetReader = async (digest) => {
 const log = (line: string): void => {
   process.stderr.write(line + "\n");
 };
+
+/** Whether the `wave-refused` response posts anything: `diff` or `summary`. */
+const refusedOn = (mode: CiResponses["wave-refused"]): boolean => mode === "diff" || mode === "summary";
+
+/**
+ * The `wave-refused` note: the diff, and with `summary` (#5335) a model's
+ * summary above it, or the diff alone saying why the summary was skipped.
+ * Never throws.
+ */
+export async function refusedNote(refused: RefusedDiff, mode: CiResponses["wave-refused"], words: CiProductWords, summary?: WaveSummaryDeps): Promise<string> {
+  const diff = renderRefusedDiff(refused, words);
+  if (mode !== "summary") return diff;
+  // Held and declined waves carry no diff: the note is the diff's text alone.
+  if (refused.reason !== "moved" || refused.members.length === 0) return diff;
+  try {
+    const outcome = await summarizeRefusedWave(refused, words, summary);
+    if (outcome.status === "skipped") log(`${words.product}: the refused wave's summary was skipped: ${outcome.reason}`);
+    return renderRefusedSummary(diff, outcome);
+  } catch (err) {
+    return renderRefusedSummary(diff, { status: "skipped", reason: err instanceof Error ? err.message : String(err) });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // pr-apply
@@ -91,7 +114,7 @@ export async function respondPrApply(
   forge: Pick<PrForge, "upsertComment" | "trackIssue"> | undefined,
   report: PrReport,
   given?: CiResponses,
-  opts: { read?: ChangeSetReader; env?: Record<string, string | undefined>; words?: CiProductWords } = {},
+  opts: { read?: ChangeSetReader; env?: Record<string, string | undefined>; words?: CiProductWords; summary?: WaveSummaryDeps } = {},
 ): Promise<RespondPost[]> {
   if (!forge || report.pr === null) return [];
   const responses = resolveResponses(given, opts.env, log);
@@ -103,9 +126,9 @@ export async function respondPrApply(
       const triage = triageOfPrReport(report, words);
       if (triage) posts.push(await postResponse(forge, "apply-failed", place, { pr: report.pr }, renderTriage(triage, words)));
     }
-    if (responses["wave-refused"] === "diff") {
+    if (refusedOn(responses["wave-refused"])) {
       const refused = await refusedOfPrReport(report, opts.read, words);
-      if (refused) posts.push(await postResponse(forge, "wave-refused", place, { pr: report.pr }, renderRefusedDiff(refused, words)));
+      if (refused) posts.push(await postResponse(forge, "wave-refused", place, { pr: report.pr }, await refusedNote(refused, responses["wave-refused"], words, summaryDeps(opts))));
     }
   } catch (err) {
     posts.push({ posted: false, warning: `the responses were not posted: ${err instanceof Error ? err.message : String(err)}` });
@@ -192,7 +215,7 @@ export async function respondOpWave(
   spec: OpWavesSpec,
   k: number,
   outcome: OpWaveOutcome,
-  opts: { forge?: Pick<PrForge, "upsertComment" | "trackIssue" | "pullRequestFor">; head?: string; read?: ChangeSetReader; env?: Record<string, string | undefined>; words?: CiProductWords } = {},
+  opts: { forge?: Pick<PrForge, "upsertComment" | "trackIssue" | "pullRequestFor">; head?: string; read?: ChangeSetReader; env?: Record<string, string | undefined>; words?: CiProductWords; summary?: WaveSummaryDeps } = {},
 ): Promise<RespondPost[]> {
   const forge = opts.forge;
   if (!forge) return [];
@@ -201,12 +224,12 @@ export async function respondOpWave(
   const posts: RespondPost[] = [];
   try {
     const triage = responses["apply-failed"] === "triage" ? triageOfOpWave(spec, k, outcome, words) : undefined;
-    const refused = responses["wave-refused"] === "diff" && outcome.result ? await refusedOfOpWave(spec, k, outcome.result, opts.read, words) : undefined;
+    const refused = refusedOn(responses["wave-refused"]) && outcome.result ? await refusedOfOpWave(spec, k, outcome.result, opts.read, words) : undefined;
     if (!triage && !refused) return [];
     const place = `${spec.name}:wave-${k}`;
     const where = (await opWavePlace(forge, outcome.result, opts.head)) ?? { issue: `${words.product}: ${spec.name} wave ${k}` };
     if (triage) posts.push(await postResponse(forge, "apply-failed", place, where, renderTriage(triage, words)));
-    if (refused) posts.push(await postResponse(forge, "wave-refused", place, where, renderRefusedDiff(refused, words)));
+    if (refused) posts.push(await postResponse(forge, "wave-refused", place, where, await refusedNote(refused, responses["wave-refused"], words, summaryDeps(opts))));
   } catch (err) {
     posts.push({ posted: false, warning: `the responses were not posted: ${err instanceof Error ? err.message : String(err)}` });
   }
@@ -285,6 +308,12 @@ export function backendDescriptionAsk(backend: import("./op/decide-config").Deci
 
 const DESCRIPTION_INSTRUCTIONS: string = DESCRIPTION_QUESTION.instructions;
 const DESCRIPTION_CRITERIA: Record<string, string> = DESCRIPTION_QUESTION.criteria;
+
+/** The summary's ports: the caller's, reading the same variables the responses were read from. */
+function summaryDeps(opts: { env?: Record<string, string | undefined>; summary?: WaveSummaryDeps }): WaveSummaryDeps | undefined {
+  if (opts.summary) return opts.env && !opts.summary.env ? { ...opts.summary, env: opts.env } : opts.summary;
+  return opts.env ? { env: opts.env } : undefined;
+}
 
 function firstLine(text: string): string {
   return text.split("\n")[0]!.trim();

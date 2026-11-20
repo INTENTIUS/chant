@@ -72,6 +72,11 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `environments.<name>.secrets.<variable>.forge_secret`, `config_sets.<set>.secrets.<variable>.forge_secret` | the forge secret a set's secret is kept in | a secret or variable name | `forgeSecret` of an `EnvironmentSecretRef` |
 | `environments.<name>.imports`, `config_sets.<set>.imports` | the shared sets a set takes first, in order | a list of `config_sets` names | `EnvironmentSet.imports` |
 | `config_sets.<set>` | a shared set of config and secrets that environments import | a map of `config`, `secrets` and `imports` | `EnvironmentSets.configSets` |
+| `agent.wave-refused.command` | the model command that summarizes a refused wave, prompt on stdin and summary on stdout | a command line | `WaveSummarySpec.command` (`CHANT_WAVE_SUMMARY_COMMAND`) |
+| `agent.wave-refused.key_secret` | the secret holding the summarizing model's key | a secret or variable name | `WaveSummarySpec.keyEnv` (`CHANT_WAVE_SUMMARY_KEY_ENV`) |
+| `agent.wave-refused.timeout` | the minutes the summary command may run | a whole number | `WaveSummarySpec.timeout` (`CHANT_WAVE_SUMMARY_TIMEOUT`) |
+| `agent.wave-refused.max_runs` | the most refused-wave summaries per day | a whole number | `WaveSummarySpec.maxRuns` (`CHANT_WAVE_SUMMARY_MAX_RUNS`) |
+| `agent.wave-refused.max_cost_usd` | the most US dollars the refused-wave summaries may cost per day | a number above 0 | `WaveSummarySpec.maxCostUsd` (`CHANT_WAVE_SUMMARY_MAX_COST_USD`) |
 
 A product writes one component per member and puts each environment's target in its step's `environments` map, keyed by environment name. Before the step's capability sees its input, chant merges the entry for the run's environment over the step's own input, so `promote --to staging` applies the staging target and records it under staging, and `rollback` and `redeploy` pick the target of the environment they act on. An environment the map does not name is refused before anything runs, and the refusal lists the environments it names. A pull request's environment `pr-<n>` takes its template environment's entry.
 
@@ -143,6 +148,10 @@ chant reads the sets from `ci.environmentSets` in the workspace declaration, bes
 
 The mechanism ships as `resolveEnvironmentSet` and `environmentSetJobInputs` from `@intentius/chant/components`, and a product feature-detects it on `ENVIRONMENT_SETS_FLOOR`.
 
+### Refused wave summary
+
+`respond.wave-refused: summary` turns the summary on, and the `agent.wave-refused` keys set the model it runs. The note holds the diff `diff` posts with a model's summary above it; a run past a limit, or one that fails, posts the diff alone and says the summary was skipped. Each summary is one run record under op `<product>-refused-wave` with its prompt digest and cost, and `max_runs` and `max_cost_usd` count those records over the last day. The command defaults to the review command with `--output-format json`, the key to `ANTHROPIC_API_KEY`, the timeout to 10 minutes. The job carries the model's key in the variable `key_secret` names. The summary approves nothing and changes no exit code. A product feature-detects it on `WAVE_REFUSED_SUMMARY_FLOOR`.
+
 ## Apply
 
 | Key | Sets | Value | chant |
@@ -181,7 +190,7 @@ The mechanism ships as `resolveEnvironmentSet` and `environmentSetJobInputs` fro
 
 | Key | Sets | Value | chant |
 |---|---|---|---|
-| `respond.wave-refused` | what follows a wave that applied nothing because its plan moved | `diff`, `off` | `CiResponses["wave-refused"]` |
+| `respond.wave-refused` | what follows a wave that applied nothing because its plan moved | `diff`, `summary`, `off` | `CiResponses["wave-refused"]` |
 | `respond.apply-failed` | what follows a failed apply | `triage`, `off` | `CiResponses["apply-failed"]` |
 | `respond.description` | the pull request description check | `check`, `off` | `CiResponses.description` |
 | `respond.drift` | what follows a drift the scheduled check finds | `issue`, `pull-request`, `attribute`, `up`, `off` | the scheduled drift Op's response |

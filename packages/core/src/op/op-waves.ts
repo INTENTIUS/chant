@@ -628,7 +628,8 @@ export interface OpWavesSpec {
   notify?: NotifyConfig;
   /**
    * The responses a wave job posts (#4629, `../ci-respond.ts`): a refused
-   * wave's diff (`wave-refused: diff`, on by default) and a failed apply's
+   * wave's diff (`wave-refused: diff`, on by default, or `summary` with a
+   * model's summary above it, #5335) and a failed apply's
    * triage (`apply-failed: triage`, on by default), on the pull request the
    * wave applies or a tracking issue. `off` turns one off. A job's
    * `CHANT_RESPOND` sits under these.
@@ -1176,7 +1177,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     const respond = spec.respond as unknown;
     if (respond === null || typeof respond !== "object" || Array.isArray(respond)) throw new Error(`${where}: respond must be an object of event to mode, such as { "wave-refused": "off" }.`);
     // The wave events and their modes, as ../ci-respond.ts's CI_RESPONSES has them.
-    const modes: Record<string, readonly string[]> = { "wave-refused": ["diff", "off"], "apply-failed": ["triage", "off"] };
+    const modes: Record<string, readonly string[]> = { "wave-refused": ["diff", "summary", "off"], "apply-failed": ["triage", "off"] };
     for (const [event, mode] of Object.entries(respond as Record<string, unknown>)) {
       if (event === "description") throw new Error(`${where}: respond: the description check runs in the plan-note job, so an op waves spec takes only wave-refused and apply-failed.`);
       const allowed = modes[event];

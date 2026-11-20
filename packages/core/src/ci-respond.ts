@@ -5,7 +5,9 @@
  * - `wave-refused: diff`: a wave that applied nothing because its plan moved
  *   since the approval, another run held it, or its decision point declined
  *   it posts which members moved and what moved in them, from the approved
- *   change set and the current one.
+ *   change set and the current one. `wave-refused: summary` (#5335, off
+ *   unless set) posts the same diff with a model's summary above it
+ *   (`./ci-respond-summary.ts`); the summary approves nothing.
  * - `apply-failed: triage`: a failed apply posts the members and resources
  *   that failed with the engine's error, from the run record (an op wave's)
  *   or the apply report (`pr-apply`'s).
@@ -33,7 +35,7 @@ export type CiRespondEvent = "wave-refused" | "apply-failed" | "description";
 
 /** Each event's modes; the first is its default. */
 export const CI_RESPONSES = {
-  "wave-refused": ["diff", "off"],
+  "wave-refused": ["diff", "summary", "off"],
   "apply-failed": ["triage", "off"],
   description: ["off", "check"],
 } as const satisfies Record<CiRespondEvent, readonly string[]>;
