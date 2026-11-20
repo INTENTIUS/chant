@@ -175,7 +175,7 @@ export async function generateOpWavesPipeline(
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
-  // #5349: rules no approver can meet (refused once UNPROVABLE_QUORUM_REFUSED is true), and counts plain lines can meet.
+  // #5349: rules no approver can meet (refused, #5379), and counts plain lines can meet.
   const findings = opWavesQuorumFindings(spec, proof ?? (await opWavesProofSourcesAt(cwd ?? process.cwd())));
   if (findings.refusals.length > 0) return { success: false, error: findings.refusals.join("\n") };
   // #5327: a canary wave with no soak checks holds nothing; existing config warns.

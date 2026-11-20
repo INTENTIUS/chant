@@ -70,7 +70,7 @@ export {
   opWaveShare,
   opWavesCanaryWarnings,
 } from "./op-waves";
-export { opWavesQuorumFindings, opWavesQuorumWarnings, opWavesUnprovableQuorum, PLAIN_APPROVAL_MODES, UNPROVABLE_QUORUM_REFUSED, type OpWavesProofSources } from "./op-waves-quorum-warnings";
+export { opWavesQuorumFindings, opWavesQuorumWarnings, opWavesUnprovableQuorum, PLAIN_APPROVAL_MODES, UNPROVABLE_QUORUM_REFUSED, UNPROVABLE_QUORUM_REFUSED_FLOOR, type OpWavesProofSources } from "./op-waves-quorum-warnings";
 export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesApprovals, OpWavesDigest, OpWavesInvolved, OpWavesOverride, OpWavesSpec } from "./op-waves";
 export {
   OP_WAVE_APPLY_OUTCOMES,

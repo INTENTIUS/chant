@@ -10,7 +10,8 @@ import { quorumProblems, quorumRuleLine, quorumRuleProgress, ruleNeedsProof, typ
 import { evaluateGate, memoryGateLedgerPort } from "./gate";
 import { gateApprovalProblems } from "./gate-approval";
 import { assertOpWavesSpec, type OpWavesSpec } from "./op-waves";
-import { opWavesQuorumFindings, opWavesQuorumWarnings, opWavesUnprovableQuorum, UNPROVABLE_QUORUM_REFUSED } from "./op-waves-quorum-warnings";
+import { opWavesQuorumFindings, opWavesQuorumWarnings, opWavesUnprovableQuorum, UNPROVABLE_QUORUM_REFUSED, UNPROVABLE_QUORUM_REFUSED_FLOOR } from "./op-waves-quorum-warnings";
+import { NEXT_RELEASE } from "../release-floors";
 import { opWavesProofSourcesAt } from "./generate-pipeline";
 import { runOpWave, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
 import { waveSetDigest } from "../gated-waves";
@@ -187,17 +188,36 @@ describe("rules no approver can meet (#5349)", () => {
     expect(opWavesUnprovableQuorum({ ...spec, point: "ship", approvals: { quorum: [{ count: 1, roles: ["platform"] }] } }, nobody)).toEqual([]);
   });
 
-  test("this release warns and writes the pipeline; the flag turns the same lines into a refusal", () => {
-    expect(UNPROVABLE_QUORUM_REFUSED).toBe(false);
+  test("the spec is refused with the finding's lines, and a signer or pr-review lifts the refusal", () => {
+    expect(UNPROVABLE_QUORUM_REFUSED).toBe(true);
     const s = withRules([{ count: 1, roles: ["platform"] }, { count: 2 }]);
-    const now = opWavesQuorumFindings(s, nobody);
-    expect(now.refusals).toEqual([]);
-    expect(now.warnings).toHaveLength(2);
-    expect(now.warnings.some((w) => /needs a proven approver/.test(w))).toBe(true);
-    const next = opWavesQuorumFindings(s, nobody, true);
-    expect(next.refusals).toEqual(opWavesUnprovableQuorum(s, nobody));
-    expect(next.warnings).toEqual(opWavesQuorumWarnings(s));
-    expect(opWavesQuorumFindings(s, someone, true).refusals).toEqual([]);
+    const found = opWavesQuorumFindings(s, nobody);
+    expect(found.refusals).toEqual(opWavesUnprovableQuorum(s, nobody));
+    expect(found.refusals).toHaveLength(1);
+    expect(found.refusals[0]).toMatch(/needs a proven approver/);
+    expect(found.warnings).toEqual(opWavesQuorumWarnings(s));
+    expect(opWavesQuorumFindings(s, someone).refusals).toEqual([]);
+    expect(opWavesQuorumFindings(s, nobody, false)).toEqual({ warnings: [...opWavesQuorumWarnings(s), ...found.refusals], refusals: [] });
+  });
+
+  test("generateOpWavesPipeline returns the lines as its error and writes nothing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "op-waves-refused-"));
+    const { generateOpWavesPipeline } = await import("./generate-pipeline");
+    const result = await generateOpWavesPipeline(
+      { name: "deploys", op: "deploy", plan: ["tool", "plan", "{target}", "--out", "{plan}"], approvals: { quorum: [{ count: 1, roles: ["platform"] }] }, waves: [{ name: "prod", runs: [{ target: "prod-eu" }] }] },
+      "github",
+      { specFile: "waves.json" },
+      root,
+      nobody,
+    );
+    expect(result.success).toBe(false);
+    expect(result.files).toBeUndefined();
+    expect(result.error).toMatch(/^wave 1 \(prod\): approvals.quorum\[0\] needs a proven approver/);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("the floor is exported", () => {
+    expect(UNPROVABLE_QUORUM_REFUSED_FLOOR).toBe(NEXT_RELEASE);
   });
 
   test("the generator reads the signers file in the repository it runs in", async () => {
