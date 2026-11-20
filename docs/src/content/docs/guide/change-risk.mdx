@@ -1,0 +1,118 @@
+---
+title: Change Risk
+description: Score each change set from 0 to 1 from its deletes, replacements, disruption, migrations, reach, dependents and review, and let a score over a threshold ask for more approvals.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/change-risk/.
+  Add a `ci.risk` block to this repository's `chant.workspace.json` with the threshold and questions I give, and a `holds.risk` to the stage gates I name in `.chant/pipeline.ts`.
+  Open a pull request. Explain in its description that the settings take effect once the pull request is merged, because they are read at base.
+  Never deploy to a real cloud account or shared environment, approve (`chant approve`), merge, or cut a release (`chant release cut --yes`).
+---
+
+chant rates each change set from 0 to 1 and keeps the reasons behind the number. Over a threshold the rating asks for more approvals. A plan then needs an approval of its own digest, and a stage's wave waits for a second approver or a named role when its gate asks for one. Under the threshold every gate works as before, and a low rating passes no gate.
+
+## Turn it on for pull requests
+
+Set `ci.risk` in the workspace declaration and merge it. `pr-plan` and `pr-apply` read it at base, so a pull request cannot raise its own threshold or drop a question.
+
+```json
+{
+  "ci": {
+    "risk": {
+      "approveAbove": 0.6,
+      "questions": [
+        { "id": "customer-data", "text": "Does this change touch where customer data is stored?", "weight": 0.8, "approveAbove": 0.5 },
+        { "id": "network", "text": "Does it change who can reach the service over the network?", "weight": 0.5 }
+      ]
+    }
+  }
+}
+```
+
+The plan note shows the record with each reason that counted. The report carries it as `risk`, and the change set stored for the gate keeps it. A [gate policy](/chant/guide/gate-policy/) reads it as `input.risk`.
+
+A plan over `approveAbove` needs an approval of its own digest, as a policy hold asks. So does a plan with an answer over its question's `approveAbove`. A green commit's plan then does not apply under the approvals of the merges it carries.
+
+## How the score is made
+
+Each reason gives a value from 0 to 1 and has a weight. The score is the chance that at least one reason bites:
+
+```
+score = 1 - (1 - weight1 * value1) * (1 - weight2 * value2) * ...
+```
+
+A reason only raises the score. The same facts always give the same score, and the weights are fixed in `CHANGE_RISK_WEIGHTS` (`packages/core/src/change-risk.ts`).
+
+A reason that counts things turns its count into a value as `1 - 2^(-n / half)`: `half` things give 0.5, and more approach 1.
+
+| Reason | What it counts | Weight | half |
+|---|---|---:|---:|
+| `destroys` | resources the change set deletes | 0.7 | 1 |
+| `replacements` | resources it replaces | 0.5 | 1 |
+| `disruption.destroy` | replacements that delete the old resource first, so a window has nothing there | 0.6 | 1 |
+| `disruption.rolling` | updates that roll a workload | 0.2 | 2 |
+| `disruption.unknown` | updates and replacements no lexicon could classify | 0.3 | 2 |
+| `sql.destructive` | destructive sql migration classes, from the new migration files and the engine's own classes | 0.7 | 1 |
+| `members` | members changed beyond the first | 0.2 | 2 |
+| `environments` | environments reached beyond the first | 0.3 | 1 |
+| `dependents` | graph nodes that read a changed node and are not changed themselves | 0.3 | 4 |
+| `review` | the review agent's level: `low` 0, `medium` 0.5, `high` 1, and 0.5 when there is no review | 0.5 | |
+| `question.<id>` | the review's answer to a question, from 0 to 1, and 1 when there is no answer | the question's `weight` | |
+
+Each lexicon's classifier gives the disruption classes; the terraform and pulumi lexicons both classify ([lifecycle](/chant/cli/lifecycle/)). The dependents come from the member's `chant graph --format ir`. A graph read that fails is logged, and then no dependents count. The review reason appears once the job has looked for the pull request's review.
+
+The level is `low` under 0.3, `medium` from 0.3 and `high` from 0.6.
+
+A change set that deletes one resource and replaces one, in one member and one environment, scores `1 - (1 - 0.35) * (1 - 0.25)`, which is 0.5125, `medium`.
+
+## Questions for the review agent
+
+The [review agent](/chant/guide/review-agent/) reads `ci.risk.questions` from `chant.workspace.json` on the base branch and asks the model each one. The model ends with one `answer <id>: <number>` line per question, and the note's result line records the answers. Each answer then counts as a reason with its question's weight.
+
+An answer reads `unknown` if the model gave none or its command failed, or if the job found no review on the pull request. It also reads `unknown` for every question once the change set is larger than the prompt carries, since the model never saw all of it.
+
+`unknown` counts as 1 and is above every question's `approveAbove`. The other reasons count as usual.
+
+## Hold a stage's waves on the score
+
+A stage's gate takes `holds.risk` in `.chant/pipeline.ts`, as an Op waves spec does. The wave rates its runs' change sets together with the engine's destructive classes and the stage's environment. Its decision keeps the record, and each run's policy reads it as `input.risk`.
+
+```typescript
+{
+  name: "prod",
+  waves: [{ name: "prod", runs: [{ target: "prod-eu" }, { target: "prod-us" }] }],
+  gate: {
+    policy: "on-destructive",
+    holds: { risk: { approveAbove: 0.4, quorum: [{ count: 2 }, { count: 1, roles: ["sre"] }] } },
+  },
+}
+```
+
+Over `approveAbove` the wave waits for an approval whatever its gate's policy says. Its gate also takes the `quorum` rules on top of its own. Here that means two approvers, one of whom holds `sre` in `.chant/trust.json` at base. Under the threshold the wave's gate stays the stage's. A run whose plan gave no change set holds the wave too. The holds are read at base with the rest of the wave's rules. The pull request's review answers the questions, so `holds.risk` takes only `approveAbove` and `quorum`.
+
+## Read the score in a Cedar gate policy
+
+An Op's `gate` step with `approval.risk` gets the record as `context.changeRisk` when its `plan` names a step that returned a change set (`terraformPlan`, `composeChangeSet`), the same step `context.plan` comes from. Cedar has no decimals, so the score is `percent`, from 0 to 100:
+
+```typescript
+gate("ship", {
+  plan: plan.out.planDigest,
+  approval: {
+    policy: gatePolicy("ship", {
+      lowRisk: new Policy({ effect: "permit", action: { eq: PASS_GATE_ACTION }, when: ["context.changeRisk.percent < 30"] }),
+    }),
+    mode: "enforce",
+    risk: { approveAbove: 0.6, quorum: [{ count: 2 }] },
+  },
+});
+```
+
+`context.changeRisk` holds `percent`, `level`, `over` and `reasons`, the ids of the reasons that counted. The cedar lexicon's `gateCedarSchema()` declares it, so `validateGatePolicy` checks a rule against it.
+
+A permit that reads the rating passes the gate only from a human whose approval `.chant/trust.json` at base proves with a seal. An agent's permit counts for nothing, whatever the policy says. chant treats a gate as reading the rating if it sets `approval.risk` or its policy names `changeRisk`. Above `approveAbove`, the Op gate's rules grow by the `quorum` list.
+
+## Limits
+
+The rating never lets a plan apply with nobody approving it. Every risk setting refuses `allow_unattended` and `approveBelow`, and the rating never reaches a product's unattended-apply setting. A low rating passes no gate: under the threshold a plan needs its approval as before.
+
+Without any of `ci.risk`, `holds.risk` and `approval.risk`, chant makes no record.

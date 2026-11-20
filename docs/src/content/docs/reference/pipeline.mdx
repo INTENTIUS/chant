@@ -34,7 +34,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 |---|---|
 | `name` | the environment's name. `components promote --to` takes it, the release ledger records under it, and a step's per-environment inputs are read by it |
 | `waves` | the op waves the stage applies, in order; each wave as in the [op-waves spec](/chant/guide/op-waves/) |
-| `gate` | `{ policy, approval, quorum, point, holds }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules; `holds` is `{ policy, cost }` |
+| `gate` | `{ policy, approval, quorum, point, holds }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules; `holds` is `{ policy, cost, risk }`, where `risk` is `{ approveAbove, quorum }`: over the score the stage's waves wait and take `quorum` on top of the gate's own rules ([Change Risk](/chant/guide/change-risk/)) |
 | `hooks` | stage hooks, run after the pipeline's own |
 | `hold` | `true`, or `{ reason, until }` with an ISO 8601 time |
 | `freeze` | a list of `{ from, until, reason }` windows, ISO 8601 times |

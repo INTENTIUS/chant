@@ -121,6 +121,12 @@ export interface ReviewAgentArgs {
   keyEnv?: string;
   /** Minutes the command may run. Default: 10. */
   timeout?: number;
+  /**
+   * Questions the review answers from 0 to 1 (#5325). Default: `ci.risk.questions`
+   * in `chant.workspace.json` on the base branch, so a pull request cannot
+   * change what it is asked.
+   */
+  questions?: ReviewQuestion[];
 }
 
 export interface ReviewAgentResult {
@@ -136,6 +142,8 @@ export interface ReviewAgentResult {
   mergeRequest?: string;
   /** `handoff` mode: the file the review was written to. */
   recordFile?: string;
+  /** The answers to the questions (#5325), when any were asked. */
+  answers?: ReviewAnswers;
 }
 
 /** The note's hidden marker, keyed on the Op. Its prefix differs from every `reconcilePr` and behaviour marker. */
@@ -151,22 +159,77 @@ const SHA = /^[0-9a-f]{40,64}$/;
  * read and the risk it named. A gate policy reads it back with
  * {@link parseReviewResult}, and counts it only for the head it is applying.
  */
-export function reviewResultMarker(head: string, risk: ReviewRisk | "unknown"): string {
-  return `${RESULT_PREFIX}${JSON.stringify({ head, risk })} -->`;
+export function reviewResultMarker(head: string, risk: ReviewRisk | "unknown", answers?: ReviewAnswers): string {
+  return `${RESULT_PREFIX}${JSON.stringify({ head, risk, ...(answers && Object.keys(answers).length > 0 ? { answers } : {}) })} -->`;
 }
 
-/** The head and risk a review note's first result line holds, or undefined when it has none. */
-export function parseReviewResult(body: string): { head: string; risk: ReviewRisk | "unknown" } | undefined {
+/**
+ * The review's answer to each question a team wrote (#5325), by the
+ * question's id: from 0 (no concern) to 1, or `unknown` when the review gave
+ * none, or the plan was larger than the prompt carries.
+ */
+export type ReviewAnswers = Record<string, number | "unknown">;
+
+/** A question as the review agent asks it: its id and its text. */
+export interface ReviewQuestion {
+  id: string;
+  text: string;
+}
+
+const ANSWER_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Answers read back as untrusted data: each id and value checked, anything else dropped. */
+export function readReviewAnswers(value: unknown): ReviewAnswers | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: ReviewAnswers = {};
+  for (const [id, v] of Object.entries(value as Record<string, unknown>)) {
+    if (!ANSWER_ID.test(id)) continue;
+    if (v === "unknown") out[id] = "unknown";
+    else if (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1) out[id] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** The head, risk and answers a review note's first result line holds, or undefined when it has none. */
+export function parseReviewResult(body: string): { head: string; risk: ReviewRisk | "unknown"; answers?: ReviewAnswers } | undefined {
   const m = /^<!-- chant-review-result (\{[^\n]*?\}) -->$/m.exec(body);
   if (!m) return undefined;
   try {
-    const v = JSON.parse(m[1]!) as { head?: unknown; risk?: unknown };
+    const v = JSON.parse(m[1]!) as { head?: unknown; risk?: unknown; answers?: unknown };
     if (typeof v.head !== "string" || !SHA.test(v.head)) return undefined;
     const risk = (REVIEW_RISKS as readonly string[]).includes(v.risk as string) ? (v.risk as ReviewRisk) : "unknown";
-    return { head: v.head, risk };
+    const answers = readReviewAnswers(v.answers);
+    return { head: v.head, risk, ...(answers ? { answers } : {}) };
   } catch {
     return undefined;
   }
+}
+
+/** Why every answer is `unknown` when the change set did not fit the prompt. */
+export const REVIEW_TOO_LARGE = "the plan is larger than the review's prompt carries";
+
+/** Whether a change set is cut in the prompt: too large for the model's context, so no answer about it stands. */
+export function changeSetTooLarge(doc: ChangeSetDocument): boolean {
+  return changeSetText(doc).length > MAX_CHANGES;
+}
+
+/**
+ * The review's answers to `questions`: each `answer <id>: <0 to 1>` line the
+ * review ends with, the last one for an id winning. A question with no such
+ * line is `unknown`, and with `tooLarge` every one is.
+ */
+export function answersOf(review: string, questions: readonly ReviewQuestion[], tooLarge = false): ReviewAnswers {
+  const out: ReviewAnswers = {};
+  for (const q of questions) out[q.id] = "unknown";
+  if (tooLarge) return out;
+  const ids = new Set(questions.map((q) => q.id));
+  for (const line of review.split(/\r?\n/)) {
+    const m = /^[\s>*_`-]*answer\s+([a-z0-9][a-z0-9_-]{0,63})\s*:\s*[*_`]*\s*([01](?:\.\d+)?)\b/i.exec(line);
+    if (!m || !ids.has(m[1]!.toLowerCase())) continue;
+    const n = Number(m[2]);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out[m[1]!.toLowerCase()] = n;
+  }
+  return out;
 }
 
 /** The prefix every Op's review note starts with, for a reader that does not know the Op. */
@@ -227,6 +290,8 @@ export interface ReviewPromptParts {
   instructions?: string;
   instructionsPath: string;
   base: string;
+  /** Questions to answer (#5325), from the base branch. */
+  questions?: readonly ReviewQuestion[];
 }
 
 /** The review's prompt. Everything the author wrote and everything made from the change is quoted as data. */
@@ -256,6 +321,14 @@ export function reviewPrompt(p: ReviewPromptParts): string {
     "",
     `<change_set digest="${p.changeSet.digest}">\n${quoted(cut(changeSetText(p.changeSet), MAX_CHANGES, "change set"))}\n</change_set>`,
     "",
+    ...(p.questions && p.questions.length > 0
+      ? [
+          "After the risk line, answer each question below on a line of its own, exactly `answer <id>: <number>`, where the number runs from 0 (the change set gives no reason for concern) to 1 (it gives every reason). The questions come from the base branch.",
+          "",
+          ...p.questions.map((q) => `- ${q.id}: ${quoted(q.text.replace(/\s+/g, " ").trim())}`),
+          "",
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -273,18 +346,23 @@ export function riskOf(review: string): ReviewRisk | "unknown" {
 const shortDigest = (d: string): string => d.replace(/^(jcs1-)?sha256:/, "").slice(0, 12);
 
 /** The note's body. The review is the model's text: shown, never trusted, and no HTML comment of it survives. */
-export function reviewNoteBody(o: { review: string; exitCode: number | null; digest: string; instructions: "base" | "none"; head?: string }): string {
+export function reviewNoteBody(o: { review: string; exitCode: number | null; digest: string; instructions: "base" | "none"; head?: string; answers?: ReviewAnswers }): string {
   const ok = o.exitCode === 0;
   const risk = ok ? riskOf(o.review) : "unknown";
+  // #5325: a failed command answers nothing.
+  const answers = o.answers && !ok ? Object.fromEntries(Object.keys(o.answers).map((id) => [id, "unknown" as const])) : o.answers;
   const text = cut(o.review.replace(/<!--/g, "&lt;!--").trim(), MAX_REVIEW, "review");
   const lines = [
     // Ours, and first: the review's own `<!--` is escaped below, so no later marker of this kind is the model's.
-    ...(o.head !== undefined ? [reviewResultMarker(o.head, risk), ""] : []),
+    ...(o.head !== undefined ? [reviewResultMarker(o.head, risk, answers), ""] : []),
     `### Review of change set \`${shortDigest(o.digest)}\``,
     "",
     `Risk: **${risk}**. A model compared the title and description with the change set. This note approves nothing and gates nothing.`,
   ];
   if (o.instructions === "none") lines.push("", "> The base branch has no review instructions, so the model had only chant's.");
+  if (answers && Object.keys(answers).length > 0) {
+    lines.push("", `Answers: ${Object.entries(answers).map(([id, a]) => `${id} ${a}`).join(", ")}.`);
+  }
   lines.push("");
   if (!ok) lines.push(`The review command stopped with ${o.exitCode === null ? "no exit code" : `exit code ${o.exitCode}`}; the job's log has its output.`, "");
   if (text) lines.push(text);
@@ -399,6 +477,21 @@ export interface ReviewAgentDeps {
   readFile?: (path: string) => Promise<string>;
 }
 
+/** `ci.risk.questions` of the declaration a `show` reads at `base`, or none (#5325). */
+async function questionsAtBase(show: ShowAtBase, base: string, signal?: AbortSignal): Promise<ReviewQuestion[]> {
+  const text = await show(base, "chant.workspace.json", signal);
+  if (text === undefined) return [];
+  try {
+    const raw = (JSON.parse(text) as { ci?: { risk?: { questions?: unknown } } }).ci?.risk?.questions;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((q): q is { id: string; text: string } => q !== null && typeof q === "object" && typeof q.id === "string" && ANSWER_ID.test(q.id) && typeof q.text === "string")
+      .map((q) => ({ id: q.id, text: q.text }));
+  } catch {
+    return [];
+  }
+}
+
 /** The event payload `GITHUB_EVENT_PATH` names, or undefined when there is none or it does not parse. */
 function eventFrom(env: Record<string, string | undefined>, read: (path: string) => Promise<string>): () => Promise<unknown> {
   return async () => {
@@ -455,17 +548,22 @@ export function createReviewAgent(deps: ReviewAgentDeps = {}): (args: ReviewAgen
     const title = args.title ?? fromEvent?.title ?? "";
     const description = args.description ?? fromEvent?.description ?? "";
 
+    const questions = args.questions ?? (await questionsAtBase(show, base, signal));
     const prompt = reviewPrompt({
       title,
       description,
       changeSet: doc,
+      ...(questions.length > 0 ? { questions } : {}),
       ...(diff !== undefined ? { diff } : {}),
       ...(instructions !== undefined ? { instructions } : {}),
       instructionsPath: path,
       base,
     });
     const outcome = await run(args.command ?? REVIEW_COMMAND, prompt, reviewCommandEnv(env, args.keyEnv ?? REVIEW_KEY_ENV), (args.timeout ?? 10) * 60_000, signal);
+    // #5325: a plan the prompt cut answers every question unknown.
+    const answers = questions.length > 0 ? answersOf(outcome.exitCode === 0 ? outcome.stdout : "", questions, changeSetTooLarge(doc)) : undefined;
     const summary = reviewNoteBody({
+      ...(answers ? { answers } : {}),
       review: outcome.stdout,
       exitCode: outcome.exitCode,
       digest: doc.digest ?? "",
@@ -477,6 +575,7 @@ export function createReviewAgent(deps: ReviewAgentDeps = {}): (args: ReviewAgen
       risk: outcome.exitCode === 0 ? riskOf(outcome.stdout) : "unknown",
       exitCode: outcome.exitCode,
       summary,
+      ...(answers ? { answers } : {}),
     };
     if (mode === "report") return result;
     if (mode === "handoff") {
@@ -488,6 +587,7 @@ export function createReviewAgent(deps: ReviewAgentDeps = {}): (args: ReviewAgen
         exitCode: outcome.exitCode,
         digest: doc.digest ?? "",
         instructions: instructions !== undefined ? "base" : "none",
+        ...(answers ? { answers } : {}),
       };
       await write(recordFile, `${JSON.stringify(record)}\n`);
       return { ...result, recordFile };
@@ -513,6 +613,8 @@ export interface ReviewRecord {
   exitCode: number | null;
   digest: string;
   instructions: "base" | "none";
+  /** The answers to the questions (#5325), when any were asked. */
+  answers?: ReviewAnswers;
 }
 
 /** The most bytes of a record the note job reads. {@link MAX_REVIEW} characters of review fit well inside it. */
@@ -537,6 +639,7 @@ export function readReviewRecord(text: string): ReviewRecord | undefined {
     exitCode,
     digest,
     instructions: r.instructions === "base" ? "base" : "none",
+    ...(readReviewAnswers(r.answers) ? { answers: readReviewAnswers(r.answers)! } : {}),
   };
 }
 

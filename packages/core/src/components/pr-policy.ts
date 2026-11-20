@@ -23,8 +23,9 @@
  *
  * A policy also reads `input.review` (#4326): the risk the pull request's
  * review note names, when the review agent posted one ({@link policyReviewOf}),
- * and `input.cost` (#5334): the plan's cost estimate with `ci.cost` at base
- * (`./pr-cost.ts`).
+ * `input.cost` (#5334): the plan's cost estimate with `ci.cost` at base
+ * (`./pr-cost.ts`), and `input.risk` (#5325): the change risk with `ci.risk`
+ * at base (`./pr-risk.ts`).
  *
  * `ci.policy.source` (#4613) names a shared repository and ref instead of
  * the workspace's own directory. The source is named at base, fetched once
@@ -56,7 +57,8 @@ import type { PolicyCost } from "../cost-estimate";
 import type { GateLedgerPort } from "../op/gate";
 import type { PrPolicyReport } from "../pr-loop";
 import type { PrForge } from "../pr-forge";
-import { parseReviewResult, REVIEW_MARKER_PREFIX, type ReviewRisk } from "../op/activities/review-agent";
+import { parseReviewResult, REVIEW_MARKER_PREFIX, type ReviewAnswers, type ReviewRisk } from "../op/activities/review-agent";
+import type { ChangeRisk } from "../change-risk";
 
 /** `ci.policy` as read at base. */
 export interface PrLoopPolicy {
@@ -153,6 +155,13 @@ export interface PrPolicyInput {
    * Absent when no estimate is set.
    */
   cost?: PolicyCost;
+  /**
+   * The change risk (#5325), with `ci.risk` at base on the pull-request path,
+   * or a wave's `holds.risk`: the score from 0 to 1, its level, each reason
+   * with its weight, and whether a threshold is crossed. Absent when no risk
+   * is set. A policy may add holds on it; nothing in it passes a gate.
+   */
+  risk?: ChangeRisk;
 }
 
 /**
@@ -170,6 +179,8 @@ export interface PolicyReview {
   head: string | null;
   /** Why nothing was found, for the log. Absent when a review was. */
   reason?: string;
+  /** The review's answers to `ci.risk.questions` (#5325), by id. Absent when none were asked. */
+  answers?: ReviewAnswers;
 }
 
 /**
@@ -198,7 +209,7 @@ export async function policyReviewOf(forge: PrForge | undefined, pr: number | nu
   if (!note) return none(`#${pr} has no review note written by the run's token`);
   const result = parseReviewResult(note.body);
   if (!result) return none(`the review note on #${pr} names no head and risk`);
-  return { found: true, risk: result.risk, head: result.head };
+  return { found: true, risk: result.risk, head: result.head, ...(result.answers ? { answers: result.answers } : {}) };
 }
 
 /** The Rego directory a read names: the source's `path`, else `ci.policy.path`, else the default, and whether one was named. */

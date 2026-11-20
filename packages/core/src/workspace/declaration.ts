@@ -38,6 +38,7 @@ import { quorumProblems, type GateQuorumSpec } from "../op/gate-quorum";
 import { gateBaseApprovalProblems, type GateApprovalMode, type GatePolicyRef } from "../op/gate-approval";
 import { assertGatePolicySettings, type GatePolicySettings } from "../gate-policy";
 import { costEstimateProblems, type CostEstimateSettings } from "../cost-estimate";
+import { changeRiskProblems, type ChangeRiskSettings } from "../change-risk";
 
 export const DECLARATION_SCHEMA_ID = schema.$id;
 export const DECLARATION_FILES = ["chant.workspace.json", "chant.workspace.jsonc"] as const;
@@ -472,6 +473,14 @@ export interface CiDeclaration {
    * the declaration sets none.
    */
   cost?: CostEstimateSettings;
+  /**
+   * `ci.risk` (#5325): the change risk the pull-request jobs score, read
+   * from the declaration at base, which the plan note shows, the stored
+   * change set keeps, and the policy reads as `input.risk`. Over
+   * `approveAbove`, the plan needs an approval of its own digest. Absent
+   * when the declaration sets none.
+   */
+  risk?: Omit<ChangeRiskSettings, "quorum">;
   /**
    * `ci.identity` (#4296): `cloud` gives each cloud's plan and apply
    * identities by environment and member globs (../ci-identity.ts), and
@@ -1483,6 +1492,14 @@ function ciCostOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLoc
   return structuredClone(raw as CostEstimateSettings);
 }
 
+/** A `ci.risk` block (#5325), refused when it sets anything the pull-request jobs do not read. Null when absent. */
+function ciRiskOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): Omit<ChangeRiskSettings, "quorum"> | null {
+  if (raw === undefined) return null;
+  const problems = changeRiskProblems("ci.risk", raw, { quorum: false, questions: true });
+  if (problems.length > 0) throw new WorkspaceReadError("declaration-invalid", problems.join("; ").replaceAll("`", ""), at("/ci/risk"));
+  return structuredClone(raw as Omit<ChangeRiskSettings, "quorum">);
+}
+
 /**
  * `ci.identity.cloud` (#4296), copied without its `x-` keys. A rule that
  * plans as an identity some rule applies as is refused: the plan runs the
@@ -1513,10 +1530,11 @@ function environmentSetsOf(raw: unknown, at: (pointer: string, key?: boolean) =>
 
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { forge?: ForgeKind; system?: CiSystem; reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; environmentSets?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; cost?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
+  const block = raw as { forge?: ForgeKind; system?: CiSystem; reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; environmentSets?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; cost?: unknown; risk?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   const cost = ciCostOf(block.cost, at);
+  const risk = ciRiskOf(block.risk, at);
   // #5170: the forge and its CI system, each defaulting from the other.
   let forgeCi: ForgeCi | undefined;
   if (block.forge !== undefined || block.system !== undefined) {
@@ -1536,6 +1554,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     ...(block.lockGrain !== undefined ? { lockGrain: block.lockGrain } : {}),
     ...(policy ? { policy } : {}),
     ...(cost ? { cost } : {}),
+    ...(risk ? { risk } : {}),
     ...(block.identity?.cloud !== undefined ? { identity: { cloud: cloudIdentityOf(block.identity.cloud, at) } } : {}),
     ...(block.environmentSets !== undefined ? { environmentSets: environmentSetsOf(block.environmentSets, at) } : {}),
     ...(block.prEnvironment !== undefined

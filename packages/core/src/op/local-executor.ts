@@ -43,8 +43,9 @@ import { resolveGateAliases } from "./gate-alias";
 import { gatePointOf } from "./gate-point";
 import { evaluatePointGate, workspaceGatePointAsker, type GatePointAsker } from "./gate-point-run";
 import type { GateBaseApproval, ResolvedGateApproval } from "./gate-approval";
-import { quorumRules, quorumRulesFor, type GateQuorumSpec } from "./gate-quorum";
-import { GATE_PLAN_CONTEXT_KEY, gatePlanSummaryOfResult } from "./gate-plan-context";
+import { quorumRules, quorumRulesFor, type GateQuorumRule, type GateQuorumSpec } from "./gate-quorum";
+import { changeSetOfResult, GATE_PLAN_CONTEXT_KEY, gatePlanSummaryOfResult } from "./gate-plan-context";
+import { CHANGE_RISK_CONTEXT_KEY, changeRiskContext, changeRiskQuorum, scoreChangeRisk } from "../change-risk";
 import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPointWait, type WaitingPoint } from "./steward-points";
@@ -805,16 +806,30 @@ export function resolveGateApproval(
     const summary = gatePlanSummaryOfResult(resultsById.get(step.plan.step));
     if (summary) context = { ...(context ?? {}), [GATE_PLAN_CONTEXT_KEY]: summary };
   }
+  // #5325: with approval.risk, the plan's change set is scored and the record
+  // goes under context.changeRisk; over its threshold the gate takes the
+  // risk's rules on top of its own. It only ever adds an approval.
+  let riskRules: GateQuorumRule[] = [];
+  if (authored.risk && isStepOutputRef(step.plan)) {
+    const changeSet = changeSetOfResult(resultsById.get(step.plan.step));
+    if (changeSet) {
+      const risk = scoreChangeRisk({ changeSet, ...(env !== undefined ? { environments: [env] } : {}) }, authored.risk);
+      context = { ...(context ?? {}), [CHANGE_RISK_CONTEXT_KEY]: changeRiskContext(risk) };
+      riskRules = changeRiskQuorum(risk, authored.risk);
+    }
+  }
   // #4290: the rules this run's gate takes, by its environment. A rule with
   // `targets` never covers a run with no environment. One rule with no
   // `targets` keeps its own shape, so a standing pending fact still matches.
-  const single = quorum !== undefined && !Array.isArray(quorum) && (quorum as { targets?: unknown }).targets === undefined;
-  const rules = quorum ? quorumRulesFor(quorumRules(quorum), env !== undefined ? [env] : []) : [];
+  const single = riskRules.length === 0 && quorum !== undefined && !Array.isArray(quorum) && (quorum as { targets?: unknown }).targets === undefined;
+  const rules = [...(quorum ? quorumRules(quorum) : []), ...riskRules];
+  const taken = rules.length > 0 ? quorumRulesFor(rules, env !== undefined ? [env] : []) : [];
   return {
-    ...(single ? { quorum } : rules.length > 0 ? { quorum: rules } : {}),
+    ...(single ? { quorum } : taken.length > 0 ? { quorum: taken } : {}),
     ...(authored.policy ? { policy: authored.policy } : {}),
     mode: authored.mode ?? "log-only",
     ...(context ? { context } : {}),
+    ...(authored.risk ? { risk: authored.risk } : {}),
   };
 }
 

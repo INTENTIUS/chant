@@ -15,7 +15,7 @@
  *   `Chant::Agent` and `Chant::Action::"PassGate"` without a cast.
  *
  * A gate's own `approval.context` keys differ per gate, so the schema declares
- * only `planDigest` and `plan` unless {@link gateCedarSchema} is told the rest.
+ * only `planDigest`, `plan` and `changeRisk` (chant#5325) unless {@link gateCedarSchema} is told the rest.
  * Every context attribute is optional: a gate with no plan, or a plan step
  * that returned no change set, has neither.
  */
@@ -77,7 +77,7 @@ export function gateCedarSchema(options: GateCedarSchemaOptions = {}): string {
   const extra = Object.entries(options.context ?? {});
   for (const [key, type] of extra) {
     if (!IDENT.test(key)) throw new Error(`gateCedarSchema: context attribute "${key}" is not a Cedar identifier`);
-    if (key === "plan" || key === "planDigest") throw new Error(`gateCedarSchema: context attribute "${key}" is chant's own`);
+    if (key === "plan" || key === "planDigest" || key === "changeRisk") throw new Error(`gateCedarSchema: context attribute "${key}" is chant's own`);
     if (type.trim() === "") throw new Error(`gateCedarSchema: context attribute "${key}" has no type`);
   }
   const summary = Object.entries(GATE_PLAN_SUMMARY_CEDAR_TYPES)
@@ -86,6 +86,7 @@ export function gateCedarSchema(options: GateCedarSchemaOptions = {}): string {
   const context = [
     `      "planDigest"?: String,`,
     `      "plan"?: PlanSummary,`,
+    `      "changeRisk"?: ChangeRisk,`,
     ...extra.map(([k, t]) => `      "${k}"?: ${t},`),
   ].join("\n");
   return `// The request chant builds for a gate approval (chant#2508, #3182).
@@ -93,6 +94,15 @@ namespace Chant {
   // context.plan: the plan's change-set summary (GatePlanSummary).
   type PlanSummary = {
 ${summary}
+  };
+
+  // context.changeRisk: the change risk of a gate that sets approval.risk (chant#5325).
+  // A permit that reads it passes the gate only from a human the trust at base proves.
+  type ChangeRisk = {
+    "percent": Long,
+    "level": String,
+    "over": Bool,
+    "reasons": Set<String>,
   };
 
   // A role a human or agent claimed when approving.

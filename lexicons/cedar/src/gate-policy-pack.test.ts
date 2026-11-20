@@ -259,4 +259,14 @@ describe("the gate's Cedar schema (#3182)", () => {
     expect(validateGatePolicy(risky, { context: { risk: "String" } })).toEqual({ errors: [], warnings: [] });
     expect(() => gateCedarSchema({ context: { plan: "String" } })).toThrow("chant's own");
   });
+
+  test("context.changeRisk (chant#5325) is declared, with the fields core's changeRiskContext builds", () => {
+    const reads = gatePolicy("risk", {
+      lowRisk: new Policy({ effect: "permit", when: ['context has changeRisk && context.changeRisk.percent < 30 && context.changeRisk.level == "low" && !context.changeRisk.over && !context.changeRisk.reasons.contains("destroys")'] }),
+    });
+    expect(validateGatePolicy(reads)).toEqual({ errors: [], warnings: [] });
+    const typo = gatePolicy("typo", { typo: new Policy({ effect: "permit", when: ["context has changeRisk && context.changeRisk.score < 30"] }) });
+    expect(validateGatePolicy(typo).errors.map((e) => e.policyId)).toEqual(["typo"]);
+    expect(() => gateCedarSchema({ context: { changeRisk: "String" } })).toThrow("chant's own");
+  });
 });

@@ -114,6 +114,24 @@ hold_costly contains msg if {
 
 In an [Op waves](/chant/guide/op-waves/#policy-holds) job with both `holds.policy` and `holds.cost`, each run's policy reads the wave's estimate as `input.cost` and the run's own figures as `input.cost.member`.
 
+### The change risk
+
+With `ci.risk` in the declaration at base, `pr-plan` and `pr-apply` score the change set before the policy runs, and the policy reads the record as `input.risk`: `score` from 0 to 1, `level`, each reason in `reasons` with its `weight`, `value` and `contribution`, `approveAbove` and `over`. [Change Risk](/chant/guide/change-risk/) lists every reason. A wave with `holds.risk` hands each run's policy its own record the same way.
+
+```rego
+package main
+
+hold_risky contains msg if {
+  input.risk.score > 0.5
+  some r in input.risk.reasons
+  r.id == "destroys"
+  r.count > 0
+  msg := sprintf("risk %v with %v deletes", [input.risk.score, r.count])
+}
+```
+
+A rule can hold or deny on the score. No rule lets a low score pass the gate.
+
 ## What each rule does
 
 Rules are counted by name, as conftest counts them (`packages/core/src/gate-policy.ts:88`).

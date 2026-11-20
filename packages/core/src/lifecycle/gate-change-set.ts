@@ -30,7 +30,7 @@ import { resolveMemberLedger } from "./member-ledger";
  * Reads the node ids of the graph of the project at `projectDir`, with each
  * node's source file (relative to `projectDir`) when the graph gives one.
  */
-export type GraphIdReader = (projectDir: string) => Promise<{ ids: string[]; sources?: Record<string, string> } | { error: string }>;
+export type GraphIdReader = (projectDir: string) => Promise<{ ids: string[]; sources?: Record<string, string>; edges?: Array<{ from: string; to: string }> } | { error: string }>;
 
 const GRAPH_TIMEOUT_MS = 300_000;
 
@@ -40,7 +40,7 @@ const GRAPH_TIMEOUT_MS = 300_000;
  * one), as `chant workspace graph` runs each member. `args` are passed after
  * `graph --format ir`, such as the run's `--param` flags.
  */
-export async function readGraphIds(projectDir: string, args: readonly string[] = []): Promise<{ ids: string[]; sources: Record<string, string> } | { error: string }> {
+export async function readGraphIds(projectDir: string, args: readonly string[] = []): Promise<{ ids: string[]; sources: Record<string, string>; edges: Array<{ from: string; to: string }> } | { error: string }> {
   const { readerToolchain, resolveToolchain } = await import("../workspace/member-commands");
   const { readMemberIr } = await import("../workspace/compose-graph");
   const { findWorkspaceRoot } = await import("../project-root");
@@ -71,7 +71,8 @@ export async function readGraphIds(projectDir: string, args: readonly string[] =
   if ("reason" in read) return { error: read.reason.message };
   const sources: Record<string, string> = {};
   for (const n of read.ir.nodes) if (n.sourceLoc?.file) sources[n.id] = n.sourceLoc.file;
-  return { ids: read.ir.nodes.map((n) => n.id), sources };
+  // #5325: the edges too, from the reader to what it reads, for the change risk's dependents.
+  return { ids: read.ir.nodes.map((n) => n.id), sources, edges: (read.ir.edges ?? []).map((e) => ({ from: e.from, to: e.to })) };
 }
 
 let graphReaderOverride: GraphIdReader | undefined;

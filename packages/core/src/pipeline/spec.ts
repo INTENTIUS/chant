@@ -63,7 +63,7 @@ export interface PipelineGate {
   quorum?: GateQuorumRule[];
   /** A decision point the gate asks in place of the ledger. */
   point?: string | OpWavePoint;
-  /** The policy and cost holds the stage's waves run over their plans. */
+  /** The policy, cost and risk holds the stage's waves run over their plans. `risk` (#5325) holds a wave over its threshold and adds its `quorum` rules. */
   holds?: OpWaveHolds;
 }
 
@@ -254,7 +254,7 @@ function gateProblems(gate: unknown, where: string): string[] {
   if (gate.approval !== undefined && !["ledger", "pr-review", "sealed", "pull-request"].includes(gate.approval as string)) out.push(`${where}.gate.approval is ledger, pr-review, sealed or pull-request`);
   if (gate.quorum !== undefined && !Array.isArray(gate.quorum)) out.push(`${where}.gate.quorum must be a list of rules`);
   if (gate.point !== undefined && typeof gate.point !== "string" && !isMap(gate.point)) out.push(`${where}.gate.point must name a decision point`);
-  if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"? }`);
+  if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"?, "risk"? }`);
   return out;
 }
 

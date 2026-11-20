@@ -144,6 +144,9 @@ import type { ComponentEnvironmentDeclaration } from "../../components/component
 import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
 import { estimatePrSet, prLoopCostAt, type PrLoopCost } from "../../components/pr-cost";
 import { policyCost, signedAmount, type CostEstimate } from "../../cost-estimate";
+import { prLoopRiskAt, prRiskDependents, scorePrSet, type PrLoopRisk } from "../../components/pr-risk";
+import type { ChangeRisk } from "../../change-risk";
+import type { PolicyReview } from "../../components/pr-policy";
 import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, preparePrPolicyEngine, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
@@ -204,6 +207,14 @@ export interface Prepared {
   cost: PrLoopCost;
   /** The plan's estimate under it, for the report's `cost` and the policy's `input.cost`. */
   costEstimate?: CostEstimate;
+  /** `ci.risk` from the declaration at base (#5325). */
+  risk: PrLoopRisk;
+  /** The change risk under it, for the report's `risk`, the stored change set and the policy's `input.risk`, with the digest it scored. */
+  riskRecord?: { digest: string; risk: ChangeRisk };
+  /** The pull request's review, read once per job. */
+  review?: PolicyReview;
+  /** The `chant graph` flags the job's graph reads take: its `--param` and `--params-file`. */
+  graphArgs: string[];
   /** `pr-apply --before-merge` (#4301): the requires checks, for the report's `beforeMerge`. */
   beforeMerge?: PrBeforeMerge;
 }
@@ -329,6 +340,14 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     return fail(err instanceof Error ? err.message : String(err));
   }
   if (cost.note) console.error(formatInfo(cost.note));
+  // #5325: the change risk, read from the declaration at base like the cost.
+  let risk: PrLoopRisk;
+  try {
+    risk = prLoopRiskAt(projectPath, base);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  if (risk.note) console.error(formatInfo(risk.note));
 
   const env = args.env ?? "local";
   const routedAway = member ? await routing(ctx, stage, projectPath, member, base, forge) : undefined;
@@ -361,6 +380,8 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     ...(routedAway ? { routedAway } : {}),
     policy,
     cost,
+    risk,
+    graphArgs: [...(args.param ?? []).flatMap((kv) => ["--param", kv]), ...(args.paramsFile ? ["--params-file", args.paramsFile] : [])],
   };
 }
 
@@ -758,6 +779,7 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
   if (p.policyReport) report = { ...report, policy: p.policyReport };
   if (p.costEstimate) report = { ...report, cost: p.costEstimate };
+  if (p.riskRecord && p.riskRecord.digest === report.digest) report = { ...report, risk: p.riskRecord.risk };
   if (p.beforeMerge) report = { ...report, beforeMerge: p.beforeMerge };
   // #4617: with a checkout of the control repo named, its entries and apply records mark the cross-stack edges.
   if (report.crossStackEdges?.length && process.env.CHANT_CONTROL_DIR) {
@@ -838,9 +860,41 @@ interface PolicyJudged {
 async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
   // #5334: the cost estimate first, so the policy reads it as input.cost. It only ever adds a hold.
   const costHeld = priceSet(p, at.set);
+  // #5325: then the change risk, so the policy reads it as input.risk. It only ever adds a hold.
+  const risk = await riskOfSet(p, at.set.doc, at.pr);
+  const riskHeld = risk?.over ? `the change risk (${risk.score.toFixed(2)}, ${risk.level}) is over ci.risk: ${risk.overBy.join("; ")}, so the plan needs an approval of its own digest` : undefined;
+  if (riskHeld) console.error(formatInfo(riskHeld));
   const judged = await judgePolicyOnly(p, at);
-  if (!costHeld) return judged;
-  return { ...judged, held: true, heldBy: [...(judged.heldBy ?? []), costHeld] };
+  const added = [costHeld, riskHeld].filter((w): w is string => w !== undefined);
+  if (added.length === 0) return judged;
+  return { ...judged, held: true, heldBy: [...(judged.heldBy ?? []), ...added] };
+}
+
+/** The pull request's review, read once per job (#4326). */
+async function reviewOnce(p: Prepared, pr: number | null): Promise<PolicyReview> {
+  p.review ??= await policyReviewOf(p.forge, pr);
+  return p.review;
+}
+
+/**
+ * The change risk of a planned change set under `ci.risk` at base (#5325),
+ * scored once per digest and kept on `p`: the review's level and answers,
+ * the new migration files, and the dependents in the member's graph.
+ * Undefined when the base sets no `ci.risk`.
+ */
+async function riskOfSet(p: Prepared, doc: PrPlanSet["doc"], pr: number | null): Promise<ChangeRisk | undefined> {
+  if (!p.risk.settings) return undefined;
+  if (p.riskRecord?.digest === doc.digest) return p.riskRecord.risk;
+  const review = await reviewOnce(p, pr);
+  const migrations = await newMigrations(p);
+  const { gateGraphReader } = await import("../../lifecycle/gate-change-set");
+  const graph = await prRiskDependents(doc, resolve("."), gateGraphReader(p.graphArgs));
+  if ("error" in graph) console.error(formatInfo(`risk: the graph could not be read, so no dependents count: ${graph.error}`));
+  const risk = scorePrSet(p.risk, { doc, env: p.env, review, migrations, ...("dependents" in graph ? { dependents: graph.dependents } : {}) });
+  if (!risk) return undefined;
+  p.riskRecord = { digest: doc.digest, risk };
+  console.error(formatInfo(`risk: ${risk.score.toFixed(2)} (${risk.level})`));
+  return risk;
 }
 
 /** Price the planned set under `ci.cost` at base (#5334), keeping the estimate on `p`. The hold's reason when the plan is over `approveAbove`. */
@@ -858,11 +912,11 @@ function priceSet(p: Prepared, set: PrPlanSet): string | undefined {
 
 async function judgePolicyOnly(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
   // The review is read only when a policy will run: a workspace with no policy makes no forge call for it.
-  const review = p.policy.settings ? await policyReviewOf(p.forge, at.pr) : undefined;
+  const review = p.policy.settings ? await reviewOnce(p, at.pr) : undefined;
   // #4774: with ci.policy.install, the engine is fetched here, once, and only for a stage that runs the policy.
   p.policy = await preparePrPolicyEngine(p.policy);
   const cost = p.costEstimate ? policyCost(p.costEstimate) : undefined;
-  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc, ...(review ? { review } : {}), ...(cost ? { cost } : {}) });
+  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc, ...(review ? { review } : {}), ...(cost ? { cost } : {}), ...(p.riskRecord?.digest === at.set.doc.digest ? { risk: p.riskRecord.risk } : {}) });
   if (!verdict) return { held: false };
   const report = prPolicyReport(verdict, p.policy.base);
   p.policyReport = report;
@@ -1233,7 +1287,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   // #4022: keep the change set the gate binds on chant/lifecycle under its
   // digest before deciding the gate, so the plan an approval bound, or the
   // one a pending fact waits on, can be read once this job is gone.
-  await storeChangeSetForGate(ctx, p, set.doc);
+  await storeChangeSetForGate(ctx, p, set.doc, pr);
 
   let approval: PrApproval;
   let via: "merges" | "gate" = "gate";
@@ -2066,7 +2120,10 @@ function emitReviewStop(events: RunEventStream | undefined, message: string): vo
  * way. A change set that never reaches the remote throws
  * `LifecyclePushLostError`, which stops the stage.
  */
-async function storeChangeSetForGate(ctx: CommandContext, p: Prepared, doc: PrPlanSet["doc"]): Promise<void> {
+async function storeChangeSetForGate(ctx: CommandContext, p: Prepared, planned: PrPlanSet["doc"], pr?: number | null): Promise<void> {
+  // #5325: with ci.risk at base, the change set is stored with its risk record (not part of its digest).
+  const risk = pr !== undefined ? await riskOfSet(p, planned, pr) : undefined;
+  const doc = risk ? { ...planned, risk } : planned;
   const { storeGateChangeSet, gateGraphReader } = await import("../../lifecycle/gate-change-set");
   const { pushLifecycleRebasing, LifecyclePushLostError } = await import("../../lifecycle/git");
   const graphArgs = [
@@ -2349,7 +2406,7 @@ async function prApplyWaves(
       if (set.policyDenied) return stop(report({ status: "plan-failed", message: "The policy denied a member's plan, so nothing was applied." }), CHANT_EXIT.denied);
       return stop(report({ status: "plan-failed", message: "A member failed to plan, so there is no plan to compare with the approved one. Nothing was applied." }), 1);
     }
-    await storeChangeSetForGate(ctx, p, set.doc);
+    await storeChangeSetForGate(ctx, p, set.doc, pr);
     // #4294: the policy at base judges the whole change set, before the pull request's gate.
     judged = await judgePolicy(p, { stage: "apply", op, pr, set });
     if (judged.stop) return stop(report({ status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);

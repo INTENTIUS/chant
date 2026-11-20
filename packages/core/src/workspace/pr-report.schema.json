@@ -430,6 +430,38 @@
         "over": { "type": "boolean", "description": "With approveAbove: the change is over it, or a member has no estimate." }
       }
     },
+    "risk": {
+      "type": "object",
+      "description": "Added within contract version 1 by #5325, written by the chant that carries CHANGE_RISK_FLOOR. The change risk under ci.risk at base: the score from 0 to 1, its level, each reason with its weight, value and contribution, and whether a threshold is crossed. The policy reads the same record as input.risk, and the stored change set keeps it. Absent when the base sets no ci.risk, or the stage reached no plan to score.",
+      "required": ["version", "score", "level", "reasons", "approveAbove", "over", "overBy"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "level": { "enum": ["low", "medium", "high"] },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "weight", "value", "contribution", "detail"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "description": "destroys, replacements, disruption.destroy, disruption.rolling, disruption.unknown, sql.destructive, members, environments, dependents, review, or question.<id>." },
+              "weight": { "type": "number" },
+              "count": { "type": "integer", "minimum": 0 },
+              "value": { "type": "number" },
+              "contribution": { "type": "number" },
+              "detail": { "type": "string" },
+              "answer": { "oneOf": [{ "type": "number" }, { "const": "unknown" }] },
+              "approveAbove": { "type": "number" }
+            }
+          }
+        },
+        "approveAbove": { "type": ["number", "null"] },
+        "over": { "type": "boolean" },
+        "overBy": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "policy": {
       "type": "object",
       "description": "Added within contract version 1 by #4294, written by chant 0.124.41 and newer. What ci.policy in the workspace declaration at base said about the change set. Absent when the base sets no policy, or the stage reached no plan to judge.",

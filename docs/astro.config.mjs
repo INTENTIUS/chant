@@ -231,6 +231,7 @@ export default defineConfig({
 								{ label: 'Review a Pull Request with a Model', slug: 'guide/review-agent' },
 								{ label: 'Let an Agent Change Code on Request', slug: 'guide/agent-jobs' },
 								{ label: 'Policy at the Gate', slug: 'guide/gate-policy' },
+								{ label: 'Change Risk', slug: 'guide/change-risk' },
 								{ label: 'Apply on Merge (opt-in)', slug: 'guide/apply-on-merge' },
 								{ label: 'Keep Going Past a Failed Member', slug: 'guide/failed-member-blocks' },
 								{ label: 'Move off Apply on Merge', slug: 'guide/move-off-apply-on-merge' },

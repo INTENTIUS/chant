@@ -54,7 +54,7 @@ import { isModelAuthored } from "../lifecycle/gate-origin";
 import { appliedGatePath, isApprovalSpent, parseAppliedGateFile, parseAppliedGateLines, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { gatedRequestAttachmentPath } from "../lifecycle/gated-request-digest";
 import { sortedJsonReplacer } from "../utils";
-import { gateContextDigest, type GateApprover, type GateBaseApproval, type ResolvedGateApproval } from "./gate-approval";
+import { gateContextDigest, gatePermitReadsRisk, type GateApprover, type GateBaseApproval, type ResolvedGateApproval } from "./gate-approval";
 import {
   quorumNeed, quorumRuleProgress, quorumRules, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
   type GateQuorumJudge, type GateQuorumRuleProgress, type GateQuorumSpec,
@@ -681,7 +681,8 @@ export interface GateTally {
  * `enforce` (#2512), and evaluated under the context the gate resolves now
  * (#3774). A `log-only` decision never changes the outcome, even
  * after the gate switches to `enforce`, and a `deny` never removes a human's approval: a policy can add
- * a way through the gate but cannot take one away.
+ * a way through the gate but cannot take one away. A permit that reads the change risk (#5325,
+ * {@link gatePermitReadsRisk}) counts only from a human `judge` proves: an agent's is refused.
  */
 export function tallyGateApprovals(
   records: GateResolutionRecord[],
@@ -697,6 +698,7 @@ export function tallyGateApprovals(
   const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
   const rules = quorumRules(approval.quorum);
   const context = gateContextDigest(approval.context);
+  const readsRisk = gatePermitReadsRisk(approval);
 
   // Each human once: their newest approval, or their newest proven one when they have one.
   const byActor = new Map<string, { record: GateResolutionRecord; proven: boolean }>();
@@ -722,7 +724,9 @@ export function tallyGateApprovals(
     if (
       sinceStanding && approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
       decision.mode === "enforce" && decision.version === approval.policy.version &&
-      decision.contextDigest === context && (!permit || at(r) >= at(permit))
+      decision.contextDigest === context && (!permit || at(r) >= at(permit)) &&
+      // #5325: a permit that reads the change risk counts only from a human the trust at base proves; an agent's is refused.
+      (!readsRisk || (approverOf(r).kind === "human" && judge(r).proven))
     ) {
       permit = r;
     }
@@ -1003,7 +1007,9 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
         : since;
     // #4290: who an approval proves, and their roles at base, for rules that read them.
     // #4333: a caller's judge applies to every rule, since it may leave out everyone involved in the change.
-    const judge = input.judge ?? (quorumRules(input.approval.quorum).some(ruleNeedsProof) ? ((await port.quorumJudge?.(input.gate)) ?? UNPROVEN_JUDGE) : UNPROVEN_JUDGE);
+    // #5325: a permit that reads the change risk needs the approver proven too.
+    const needsProof = quorumRules(input.approval.quorum).some(ruleNeedsProof) || gatePermitReadsRisk(input.approval);
+    const judge = input.judge ?? (needsProof ? ((await port.quorumJudge?.(input.gate)) ?? UNPROVEN_JUDGE) : UNPROVEN_JUDGE);
     const tally = tallyGateApprovals(resolutions, input.gate, since, input.planDigest, input.approval, humansSince, judge);
     if (tally.permit) {
       return { satisfied: true, resolution: tally.permit, via: "policy", approvals: tally.counted };
