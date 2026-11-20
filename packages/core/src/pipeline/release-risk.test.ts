@@ -9,6 +9,7 @@
 import { describe, expect, test } from "vitest";
 import { memoryGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
+import type { GateRejectionRecord } from "../lifecycle/gate-rejection";
 import { scoreChangeRisk, type ChangeRisk } from "../change-risk";
 import {
   asPipelineSpec,
@@ -199,6 +200,45 @@ describe("the rules a reading keeps, on the promote path", () => {
     await promote(spec, port, LOW);
     const { gatePermitReadsRisk } = await import("../op/gate-approval");
     expect(gatePermitReadsRisk((port as ReturnType<typeof memoryGateLedgerPort>).appended[0]!.approval!)).toBe(true);
+  });
+});
+
+describe("rejections and the urgent path come before any risk reading", () => {
+  const rejection = (gate = "prod"): GateRejectionRecord => ({
+    version: 1,
+    kind: "rejection",
+    op: "shop",
+    gate,
+    rejectedBy: "alice",
+    reason: "the migration locks the orders table",
+    timestamp: "2026-11-20T09:40:00Z",
+    planDigest: DIGEST,
+    environment: "prod",
+    releaseDigest: DIGEST,
+    approver: { kind: "human" },
+  });
+
+  test("a rejected release stays rejected whatever its score", async () => {
+    for (const policy of ["never", "always"] as const) {
+      for (const risk of [LOW, HIGH, undefined]) {
+        const spec = shop({ policy, risk: { approveAbove: 0.5 } });
+        const port = memoryGateLedgerPort({ rejections: [rejection()], resolutions: [approval("bob", { releaseDigest: DIGEST }), approval("carol", { releaseDigest: DIGEST })] });
+        const out = await pipelinePromoteGates({ spec, to: "prod", skipped: [], digest: DIGEST, releaseDigest: DIGEST, port, now, ...(risk ? { risk } : {}) });
+        expect(out, `${policy} ${risk?.score}`).toMatchObject({ passed: false, exitCode: 8, code: "pipeline-release-rejected" });
+        // Stopped before the risk was read: no line about it.
+        expect(out.passed === false && (out.lines ?? []).some((l) => l.includes("change risk"))).toBe(false);
+      }
+    }
+  });
+
+  test("the urgent rule stands in for the gate before the risk is read", async () => {
+    const base = shop({ risk: { approveAbove: 0.1, quorum: [{ count: 3 }] } });
+    const spec = asPipelineSpec({ ...base, stages: base.stages.map((s) => (s.name === "prod" ? { ...s, gate: { ...s.gate, urgent: { role: "sre-lead" } } } : s)) });
+    const urgent = approval("github:erin", { gate: "prod-urgent", approver: { kind: "human" } });
+    const port: GateLedgerPort = { ...memoryGateLedgerPort({ resolutions: [urgent] }), quorumJudge: async () => (r) => ({ proven: r.resolvedBy === "github:erin", roles: r.resolvedBy === "github:erin" ? ["sre-lead"] : [] }) };
+    const out = await pipelinePromoteGates({ spec, to: "prod", skipped: [], digest: DIGEST, releaseDigest: DIGEST, port, now, urgent: true, risk: HIGH });
+    expect(out).toMatchObject({ passed: true, urgent: { role: "sre-lead" } });
+    expect(out.passed && out.lines.some((l) => l.includes("change risk"))).toBe(false);
   });
 });
 
