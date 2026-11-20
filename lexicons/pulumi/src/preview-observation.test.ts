@@ -200,7 +200,7 @@ describe("when the preview did not answer", () => {
     expect(previewReadReason("the pulumi binary was not found on PATH; install pulumi to plan this member")).toBe("no-binary");
     const fake = fakeBinary({ stdout: "not json" });
     const obs = normalizeObservation(await describePulumiResources({ entities: new Map() }, { member: { dir: unexported, label: "app" }, run: fake.run, exportStore: null, env: ENV }));
-    expect(obs.rootReads["pulumi.members.app"]).toMatchObject({ depth: "preview", fellBackTo: "declared", reason: "preview-failed" });
+    expect(obs.rootReads!["pulumi.members.app"]).toMatchObject({ depth: "preview", fellBackTo: "declared", reason: "preview-failed" });
   });
 
   test("a member on plunge falls back to plunge's records", async () => {
@@ -214,7 +214,7 @@ describe("when the preview did not answer", () => {
     const dir = join(testdata, "plunge-graph");
     const obs = normalizeObservation(await describePulumiResources({ entities: new Map() }, { member: { dir, label: "app", engine: "plunge" }, plunge, exportStore: null, env: ENV }));
     expect(calls.map((c) => c[0])).toEqual(["preview", "graph"]);
-    expect(obs.rootReads["pulumi.members.app"]).toEqual({ depth: "preview", fellBackTo: "state", reason: "no-credentials" });
+    expect(obs.rootReads!["pulumi.members.app"]).toEqual({ depth: "preview", fellBackTo: "state", reason: "no-credentials" });
     expect(Object.keys(obs.resources).length).toBeGreaterThan(0);
   });
 
