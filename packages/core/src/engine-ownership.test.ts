@@ -14,8 +14,8 @@ import {
   engineOwnershipOfDrift,
   type DriftRecord,
 } from "./drift-record";
-import { ENGINE_OWNERSHIP_FLOOR, ENGINE_OWNERSHIP_ROWS_FLOOR, engineOwnershipRowsOf, mergeOwnershipRows, withOwnershipRows } from "./engine-facts";
-import { carryEngineFacts, type IRNode } from "./graph-ir";
+import { ENGINE_OWNERSHIP_FLOOR, ENGINE_OWNERSHIP_ROWS_FLOOR, UNDECLARED_LIVE_NODES_FLOOR, engineOwnershipRowsOf, mergeOwnershipRows, withOwnershipRows } from "./engine-facts";
+import { buildLiveGraphIr, carryEngineFacts, type IRNode } from "./graph-ir";
 import { mergeObservations, normalizeObservation, observation } from "./observation";
 import { NEXT_RELEASE } from "./release-floors";
 
@@ -128,5 +128,25 @@ describe("facts.ownershipRows (#5402)", () => {
     const facts = (SCHEMA.$defs as unknown as Record<string, { properties: Record<string, unknown> }>).EngineFacts.properties;
     expect(facts.ownershipRows).toMatchObject({ $ref: "#/$defs/EngineOwnershipRows" });
     expect(ENGINE_OWNERSHIP_ROWS_FLOOR).toBe(NEXT_RELEASE);
+  });
+});
+
+describe("undeclared live objects on an observation (#5429)", () => {
+  it("normalizes, merges per node with present winning, and becomes live nodes only where a caller adds them", () => {
+    const stray = { type: "aws_cloudwatch_log_group", status: "orphan", ownership: "owned" as const, physicalId: "/s", attributes: { address: "aws_cloudwatch_log_group.stray" } };
+    const a = normalizeObservation({ ...observation({}), undeclared: { "r/stray": stray, "r/x": stray } });
+    const b = normalizeObservation(observation({ "r/x": { type: "t", status: "bound" } }));
+    expect(a.undeclared).toEqual({ "r/stray": stray, "r/x": stray });
+    const merged = mergeObservations([a, b]);
+    expect(merged.undeclared).toEqual({ "r/stray": stray });
+    expect(merged.resources).not.toHaveProperty("r/stray");
+    expect(normalizeObservation(observation({})).undeclared).toBeUndefined();
+
+    const ir = buildLiveGraphIr([{ lexicon: "terraform", resources: merged.resources }, { lexicon: "terraform", resources: merged.undeclared! }]);
+    expect(ir.nodes.find((n) => n.id === "r/stray")).toEqual({ id: "r/stray", kind: "aws_cloudwatch_log_group", lexicon: "terraform", physicalId: "/s", ownership: "owned", attrs: { address: "aws_cloudwatch_log_group.stray" } });
+  });
+
+  it("the floor is the next release", () => {
+    expect(UNDECLARED_LIVE_NODES_FLOOR).toBe(NEXT_RELEASE);
   });
 });

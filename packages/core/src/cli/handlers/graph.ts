@@ -297,6 +297,8 @@ async function runGraphLive(
     let annotations: Record<string, Record<string, unknown>> | undefined;
     // An engine's facts about what the read did not return as present (#5333).
     let engineFacts: ObserveResult["engineFacts"];
+    // Live objects no declared entity names (#5429): live nodes, never in the diff.
+    let undeclared: ObserveResult["undeclared"];
     // Which read answered each root (#4452), carried onto the IR as written.
     let rootReads: Record<string, RootRead> | undefined;
     // A replay is a graph of what was recorded, so it must not reach the provider
@@ -329,6 +331,7 @@ async function runGraphLive(
       observations = observeResult.observations;
       annotations = observeResult.annotations;
       engineFacts = observeResult.engineFacts;
+      undeclared = observeResult.undeclared;
       rootReads = observeResult.rootReads;
       const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
@@ -350,7 +353,10 @@ async function runGraphLive(
 
     // Both paths land here: a replay rejoins the live pipeline at exactly this
     // point, which is what makes every fold and overlay below shared.
-    ir = buildLiveGraphIr(observations);
+    // An object the read found live that nothing declares (#5429) is a live
+    // node like any other, so the overlay paints it as provisioned and
+    // undeclared. It joins here only: `observations` stays what the diff reads.
+    ir = buildLiveGraphIr(undeclared ? [...observations, ...undeclared] : observations);
 
     // The estate was asked for and nothing came back. Say that once, and say
     // that a recording exists — the per-entity warnings above describe the same

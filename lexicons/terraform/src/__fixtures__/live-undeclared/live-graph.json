@@ -1,0 +1,629 @@
+{
+  "version": 1,
+  "meta": {
+    "engineGraph": {
+      "format": 1,
+      "engine": {
+        "name": "choudoufu"
+      },
+      "scope": {
+        "kind": "estate",
+        "estate": "tlmig-sample-monolith"
+      },
+      "markerScheme": {
+        "ownerKey": "tofu-estate",
+        "addressKey": "tofu-address",
+        "continuationKeys": [
+          "tofu-address-2",
+          "tofu-address-3",
+          "tofu-address-4"
+        ],
+        "encoding": {
+          "tags": "escaped",
+          "labels": "escaped"
+        }
+      },
+      "gaps": [
+        {
+          "address": "aws_cloudwatch_log_group.stray",
+          "reason": "not-in-configuration",
+          "detail": "the live plan names an address no block of this configuration declares"
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "aws_cloudwatch_log_group.stray",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.stray"
+      },
+      "physicalId": "/tlmig-sample/stray",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "tlmig-sample-monolith",
+          "address": "aws_cloudwatch_log_group.stray",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/stray"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_a_0",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_a_0"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 40
+      },
+      "physicalId": "/tlmig-sample/team-a/svc-0",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-a/svc-0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_a_1",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_a_1"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 45
+      },
+      "physicalId": "/tlmig-sample/team-a/svc-1",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-a/svc-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_a_2",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_a_2"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 50
+      },
+      "physicalId": "/tlmig-sample/team-a/svc-2",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-a/svc-2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_b_0",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_b_0"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 77
+      },
+      "physicalId": "/tlmig-sample/team-b/svc-0",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-b/svc-0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_b_1",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_b_1"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 82
+      },
+      "physicalId": "/tlmig-sample/team-b/svc-1",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-b/svc-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_b_2",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_b_2"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 87
+      },
+      "physicalId": "/tlmig-sample/team-b/svc-2",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-b/svc-2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_c_0",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_c_0"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 114
+      },
+      "physicalId": "/tlmig-sample/team-c/svc-0",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-c/svc-0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_c_1",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_c_1"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 119
+      },
+      "physicalId": "/tlmig-sample/team-c/svc-1",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-c/svc-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_cloudwatch_log_group.team_c_2",
+      "kind": "aws_cloudwatch_log_group",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_cloudwatch_log_group.team_c_2"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 124
+      },
+      "physicalId": "/tlmig-sample/team-c/svc-2",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "/tlmig-sample/team-c/svc-2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_policy.team_a",
+      "kind": "aws_iam_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_policy.team_a"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 30
+      },
+      "physicalId": "arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "tlmig-sample-monolith",
+          "address": "aws_iam_policy.team_a",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_policy.team_b",
+      "kind": "aws_iam_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_policy.team_b"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 67
+      },
+      "physicalId": "arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "tlmig-sample-monolith",
+          "address": "aws_iam_policy.team_b",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_policy.team_c",
+      "kind": "aws_iam_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_policy.team_c"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 104
+      },
+      "physicalId": "arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy",
+      "facts": {
+        "ownership": "bound",
+        "markers": {
+          "owner": "tlmig-sample-monolith",
+          "address": "aws_iam_policy.team_c",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "ownedBy": "marker",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role.team_a",
+      "kind": "aws_iam_role",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role.team_a"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 19
+      },
+      "physicalId": "tlmig-sample-team-a-role",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-a-role"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role.team_b",
+      "kind": "aws_iam_role",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role.team_b"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 56
+      },
+      "physicalId": "tlmig-sample-team-b-role",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-b-role"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role.team_c",
+      "kind": "aws_iam_role",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role.team_c"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 93
+      },
+      "physicalId": "tlmig-sample-team-c-role",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-c-role"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role_policy.team_a_inline",
+      "kind": "aws_iam_role_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role_policy.team_a_inline"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 24
+      },
+      "physicalId": "tlmig-sample-team-a-role:tlmig-sample-team-a-inline",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-a-role:tlmig-sample-team-a-inline"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role_policy.team_b_inline",
+      "kind": "aws_iam_role_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role_policy.team_b_inline"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 61
+      },
+      "physicalId": "tlmig-sample-team-b-role:tlmig-sample-team-b-inline",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-b-role:tlmig-sample-team-b-inline"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role_policy.team_c_inline",
+      "kind": "aws_iam_role_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role_policy.team_c_inline"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 98
+      },
+      "physicalId": "tlmig-sample-team-c-role:tlmig-sample-team-c-inline",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-c-role:tlmig-sample-team-c-inline"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role_policy_attachment.team_a",
+      "kind": "aws_iam_role_policy_attachment",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role_policy_attachment.team_a"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 35
+      },
+      "physicalId": "tlmig-sample-team-a-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-a-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role_policy_attachment.team_b",
+      "kind": "aws_iam_role_policy_attachment",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role_policy_attachment.team_b"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 72
+      },
+      "physicalId": "tlmig-sample-team-b-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-b-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_iam_role_policy_attachment.team_c",
+      "kind": "aws_iam_role_policy_attachment",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_iam_role_policy_attachment.team_c"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 109
+      },
+      "physicalId": "tlmig-sample-team-c-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "name",
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "tlmig-sample-team-c-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy"
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "aws_iam_role_policy.team_a_inline",
+      "to": "aws_iam_role.team_a",
+      "kind": "ref",
+      "viaAttr": "role",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy.team_b_inline",
+      "to": "aws_iam_role.team_b",
+      "kind": "ref",
+      "viaAttr": "role",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy.team_c_inline",
+      "to": "aws_iam_role.team_c",
+      "kind": "ref",
+      "viaAttr": "role",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy_attachment.team_a",
+      "to": "aws_iam_policy.team_a",
+      "kind": "ref",
+      "viaAttr": "policy_arn",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy_attachment.team_a",
+      "to": "aws_iam_role.team_a",
+      "kind": "ref",
+      "viaAttr": "role",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy_attachment.team_b",
+      "to": "aws_iam_policy.team_b",
+      "kind": "ref",
+      "viaAttr": "policy_arn",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy_attachment.team_b",
+      "to": "aws_iam_role.team_b",
+      "kind": "ref",
+      "viaAttr": "role",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy_attachment.team_c",
+      "to": "aws_iam_policy.team_c",
+      "kind": "ref",
+      "viaAttr": "policy_arn",
+      "grain": "block"
+    },
+    {
+      "from": "aws_iam_role_policy_attachment.team_c",
+      "to": "aws_iam_role.team_c",
+      "kind": "ref",
+      "viaAttr": "role",
+      "grain": "block"
+    }
+  ],
+  "groups": {}
+}
