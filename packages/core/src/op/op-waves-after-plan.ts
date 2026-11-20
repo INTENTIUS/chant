@@ -49,6 +49,8 @@
 
 import { isAbsolute } from "node:path";
 import type { ChangeSetPart } from "../change-set";
+import type { ChangeRisk } from "../change-risk";
+import { NEXT_RELEASE } from "../release-floors";
 import type { OpRunPolicyRow } from "./runtime";
 import type { WaveMember } from "../wave-engine";
 import { OP_WAVE_HOOK_FAILURES, opWaveHookRuns, type OpWaveHookFailure } from "./op-waves";
@@ -84,6 +86,18 @@ export interface OpWaveAnswerApproval {
   review?: { pr: number; head: string; reviewers: string[] };
 }
 
+/**
+ * The first chant whose after-plan hooks get the wave's change risk (#5422):
+ * `risk` on `OpWaveAfterPlanRun` and `OpWaveAfterPlanWave`, the record
+ * `input.risk` has in `holds.policy`, present when the wave's `holds.risk`
+ * scored it. A product feature-detects it on this name.
+ *
+ * The record is read-only context. A hook's answer has no field that changes
+ * it, and it keeps #5325's rules on this path: it adds approval requirements
+ * and never lets a plan apply without an approval.
+ */
+export const OP_WAVE_AFTER_PLAN_RISK_FLOOR = NEXT_RELEASE;
+
 /** One planned run, as an after-plan hook in the job's process sees it (#4614). */
 export interface OpWaveAfterPlanRun {
   /** The spec's name and `op`. */
@@ -110,6 +124,15 @@ export interface OpWaveAfterPlanRun {
   destructive: boolean;
   /** The rows chant's `holds.policy` gave the run (source `ci.policy`), empty when no policy ran. */
   policy: OpRunPolicyRow[];
+  /**
+   * The wave's change risk (#5422), as `input.risk` gives it to `holds.policy`
+   * (#5325): the score, its level, each reason with its weight, and whether a
+   * threshold is crossed. Present when the wave's `holds.risk` scored it, the
+   * same record for every run of the wave. A product puts it on its plan
+   * report's `risk`, which the plan note's risk table reads. A copy: changing
+   * it changes nothing in the wave.
+   */
+  risk?: ChangeRisk;
   /** The job's directory. */
   cwd: string;
 }
@@ -133,6 +156,8 @@ export interface OpWaveAfterPlanWave {
   job: OpWaveAfterPlanRun["job"];
   /** The runs the hook is for, in the wave's order, as its `run` saw each. */
   runs: OpWaveAfterPlanRun[];
+  /** The wave's change risk (#5422), as on each of its runs: for the wave's own report. A copy. */
+  risk?: ChangeRisk;
   cwd: string;
 }
 
@@ -369,7 +394,7 @@ export async function runOpWaveAfterPlanHooks(
     let problem: string | undefined;
     let answer: OpWaveAfterPlanWaveResult | void = undefined;
     try {
-      answer = await hook.wave({ spec: first.spec, op: first.op, wave: first.wave, waveName: first.waveName, job: first.job, runs: [...mine], cwd: first.cwd });
+      answer = await hook.wave({ spec: first.spec, op: first.op, wave: first.wave, waveName: first.waveName, job: first.job, runs: [...mine], ...(first.risk ? { risk: structuredClone(first.risk) } : {}), cwd: first.cwd });
       const wrong = opWaveAfterPlanWaveResultProblems(answer, targets);
       if (wrong.length > 0) problem = `${label} answered with ${wrong.join("; ")}`;
     } catch (err) {

@@ -659,7 +659,9 @@ export {
  * `OP_WAVE_AFTER_PLAN_FLOOR`.
  */
 export { OP_WAVE_AFTER_PLAN_FLOOR } from "./op/runtime";
-export type { OpWaveAfterPlanHook, OpWaveAfterPlanResult, OpWaveAfterPlanRun, ProductWaveHook } from "./op/op-waves-after-plan";
+/** The first chant whose after-plan hooks get the wave's change risk as `risk` (#5422), the shape `input.risk` has. */
+export { OP_WAVE_AFTER_PLAN_RISK_FLOOR } from "./op/op-waves-after-plan";
+export type { OpWaveAfterPlanHook, OpWaveAfterPlanResult, OpWaveAfterPlanRun, OpWaveAfterPlanWave, ProductWaveHook } from "./op/op-waves-after-plan";
 
 /**
  * The standing pending gates waiting on a plan digest, with the pull request

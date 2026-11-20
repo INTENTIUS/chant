@@ -1748,6 +1748,8 @@ async function runAfterPlan(
       empty: m.empty === true,
       destructive: m.destructive === true,
       policy: row ? [row] : [],
+      // #5422: the wave's change risk, a copy per run so a hook cannot change the record the decision keeps.
+      ...(ctx.risk ? { risk: structuredClone(ctx.risk) } : {}),
       cwd,
     };
   });
