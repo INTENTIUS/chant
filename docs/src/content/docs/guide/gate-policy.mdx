@@ -132,6 +132,22 @@ hold_risky contains msg if {
 
 A rule can hold or deny on the score. No rule lets a low score pass the gate.
 
+### Agent step answers
+
+A promote into a stage with [agent steps](/chant/reference/pipeline/#agent-steps) and `holds.policy` on its gate runs the policy at base before the gate, with each step's answer as `input.agent.<step>`: the `answer` that matched the step's schema, with its `release`, `promptDigest`, `schemaDigest` and `costUsd`. The input has no change set, since a promote is gated before it plans.
+
+```rego
+package main
+
+deny_watch_orders contains msg if {
+  some service in input.agent.watch.answer.services
+  service == "orders"
+  msg := "the soak would watch orders; promote it in the maintenance window"
+}
+```
+
+A deny refuses the promote. The stage's gate then waits for a person's approval, whatever the policy said, and an approval an agent recorded does not count.
+
 ## What each rule does
 
 Rules are counted by name, as conftest counts them (`packages/core/src/gate-policy.ts:88`).

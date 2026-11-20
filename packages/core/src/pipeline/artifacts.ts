@@ -184,7 +184,7 @@ export function stageReadsProblems(reads: unknown, at: string): string[] {
  * `stageUpstreams` in ./spec, which this module cannot import at load. A
  * cycle or an unknown name ends that path.
  */
-function ancestorsOf(stages: Array<Partial<PipelineStage>>, index: number): Set<number> {
+export function ancestorsOf(stages: Array<Partial<PipelineStage>>, index: number): Set<number> {
   const found = new Set<number>();
   const visit = (i: number): void => {
     const stage = stages[i]!;

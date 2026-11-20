@@ -44,6 +44,7 @@ describe("the weights are pinned (#5325)", () => {
       environments: 0.3,
       dependents: 0.3,
       review: 0.5,
+      agent: 0.5,
     });
     expect(CHANGE_RISK_HALF).toEqual({
       destroys: 1,

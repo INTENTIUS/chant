@@ -216,14 +216,21 @@ const rulesLine = (rules: readonly GateQuorumRule[]): string =>
 /**
  * How stage `stage` reads `record` (#5387). Undefined when the stage sets no
  * `holds.risk`, so the record is not read at all.
+ *
+ * `extra` are reasons the stage adds at its own gate (#5358): its agent
+ * steps' levels (`agentStepRiskReasons`). Each raises the score as a reason
+ * of the record would, `1 - (1 - score) * (1 - contribution)`, and never
+ * lowers it.
  */
-export function stageRiskRead(spec: Pick<PipelineSpec, "stages" | "defaults">, stage: string, record: ReleaseRisk | undefined): StageRiskRead | undefined {
+export function stageRiskRead(spec: Pick<PipelineSpec, "stages" | "defaults">, stage: string, record: ReleaseRisk | undefined, extra: readonly ChangeRiskReason[] = []): StageRiskRead | undefined {
   const settings = stageRiskSettings(spec, stage);
   if (!settings) return undefined;
-  if (!record) {
+  if (!record && extra.length === 0) {
     return { stage, settings, rules: [], line: `stage ${stage}: the release carries no change risk, so holds.risk reads no score and the gate is as it would be without it` };
   }
-  const risk = releaseRiskAt(record, settings);
+  const base = record ? { score: record.score, reasons: record.waves.flatMap((w) => w.risk.reasons ?? []) } : { score: 0, reasons: [] as ChangeRiskReason[] };
+  const score = round(1 - extra.reduce((p, r) => p * (1 - Math.min(1, Math.max(0, r.contribution))), 1 - base.score));
+  const risk = riskAtThreshold({ score, reasons: [...base.reasons, ...extra] }, settings);
   const rules = changeRiskQuorum(risk, settings);
   const head = `stage ${stage}: the release's change risk is ${risk.score.toFixed(2)} (${risk.level})`;
   const line = risk.over

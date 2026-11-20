@@ -54,6 +54,7 @@ import {
 import { policyEngineBinary, type PolicyEngineBinaryOptions } from "../policy-engine";
 import type { ChangeSetDocument } from "../change-set";
 import type { PolicyCost } from "../cost-estimate";
+import type { PolicyAgentAnswer } from "../pipeline/agent-steps";
 import type { GateLedgerPort } from "../op/gate";
 import type { PrPolicyReport } from "../pr-loop";
 import type { PrForge } from "../pr-forge";
@@ -162,6 +163,14 @@ export interface PrPolicyInput {
    * is set. A policy may add holds on it; nothing in it passes a gate.
    */
   risk?: ChangeRisk;
+  /**
+   * The answers of a stage's agent steps (#5358), by step name, when a
+   * promote runs the stage gate's policy: each step's JSON answer with its
+   * release, prompt digest, schema digest and cost
+   * (`../pipeline/agent-steps.ts`). A model's reading, one fact among the
+   * others; a policy can deny or hold on it and never pass a gate with it.
+   */
+  agent?: Record<string, PolicyAgentAnswer>;
 }
 
 /**

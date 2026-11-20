@@ -7,8 +7,9 @@
  * class of each change (`./lifecycle/disruption.ts`, the terraform and
  * pulumi classifiers), the sql lexicon's destructive migration classes, how
  * many members and environments the change reaches, what depends on the
- * changed nodes in the graph, the review agent's level, and the review's
- * answers to the questions a team writes. Each reason gives a value from 0
+ * changed nodes in the graph, the review agent's level, the level each
+ * agent step of a stage answers (#5358), and the review's answers to the
+ * questions a team writes. Each reason gives a value from 0
  * to 1, and the score is the chance that at least one of them bites:
  *
  *   score = 1 - (1 - w1 * v1) * (1 - w2 * v2) * ...
@@ -69,6 +70,8 @@ export const CHANGE_RISK_WEIGHTS = {
   dependents: 0.3,
   /** The review agent's level. */
   review: 0.5,
+  /** An agent step's level (#5358): its answer's `risk`, one reason per step. */
+  agent: 0.5,
 } as const;
 
 /** A reason chant computes. */
@@ -78,7 +81,7 @@ export type ChangeRiskFactReason = keyof typeof CHANGE_RISK_WEIGHTS;
  * How a count becomes a value: `1 - 2^(-n / half)`, so `half` items give 0.5
  * and more approach 1. Members and environments count those beyond the first.
  */
-export const CHANGE_RISK_HALF: Readonly<Record<Exclude<ChangeRiskFactReason, "review">, number>> = {
+export const CHANGE_RISK_HALF: Readonly<Record<Exclude<ChangeRiskFactReason, "review" | "agent">, number>> = {
   destroys: 1,
   replacements: 1,
   "disruption.destroy": 1,
@@ -139,6 +142,13 @@ export interface ChangeRiskFacts {
   dependents?: readonly string[];
   /** The review agent's level and answers, when a review was looked for. */
   review?: { risk: ChangeRiskReviewLevel; answers?: Readonly<Record<string, number | "unknown">>; unknownBecause?: string };
+  /**
+   * Each agent step's level (#5358), by step name: the `risk` its answer
+   * names (`../pipeline/agent-steps.ts`, `agentStepRiskLevels`). Each is one
+   * reason `agent.<step>`, weighed as the review's level is. A step whose
+   * answer names no level adds nothing.
+   */
+  agent?: Readonly<Record<string, ChangeRiskReviewLevel>>;
 }
 
 /** One reason, as the record keeps it. */
@@ -216,6 +226,22 @@ export function graphDependents(doc: Pick<ChangeSetDocument, "entries">, edges: 
  * level, and whether a threshold in `settings` is crossed. Pure: the same
  * facts and settings give the same record.
  */
+/**
+ * The reasons agent steps' levels give (#5358), `agent.<step>` in step-name
+ * order, each weighed as the review's level is. Empty when there are none.
+ * A promote folds them into the release's score at a stage gate.
+ */
+export function agentStepRiskReasons(levels: ChangeRiskFacts["agent"]): ChangeRiskReason[] {
+  const weight = CHANGE_RISK_WEIGHTS.agent;
+  return Object.keys(levels ?? {})
+    .sort()
+    .map((step) => {
+      const level = levels![step]!;
+      const value = CHANGE_RISK_REVIEW_VALUES[level] ?? CHANGE_RISK_REVIEW_VALUES.unknown;
+      return { id: `agent.${step}`, weight, value, contribution: round(weight * value), detail: `agent step ${step} answered ${level}` };
+    });
+}
+
 export function scoreChangeRisk(facts: ChangeRiskFacts, settings: ChangeRiskSettings = {}): ChangeRisk {
   const entries = facts.changeSet.entries ?? [];
   const count = (pred: (e: ChangeSetEntry) => boolean): number => entries.filter(pred).length;
@@ -230,7 +256,7 @@ export function scoreChangeRisk(facts: ChangeRiskFacts, settings: ChangeRiskSett
   const environments = new Set(facts.environments ?? []);
   const dependents = new Set(facts.dependents ?? []);
 
-  const counted = (id: Exclude<ChangeRiskFactReason, "review">, n: number, detail: string, over = n): ChangeRiskReason => {
+  const counted = (id: Exclude<ChangeRiskFactReason, "review" | "agent">, n: number, detail: string, over = n): ChangeRiskReason => {
     const weight = CHANGE_RISK_WEIGHTS[id];
     const value = saturate(over, CHANGE_RISK_HALF[id]);
     return { id, weight, count: n, value, contribution: round(weight * value), detail };
@@ -252,6 +278,7 @@ export function scoreChangeRisk(facts: ChangeRiskFacts, settings: ChangeRiskSett
     const value = CHANGE_RISK_REVIEW_VALUES[facts.review.risk] ?? CHANGE_RISK_REVIEW_VALUES.unknown;
     reasons.push({ id: "review", weight, value, contribution: round(weight * value), detail: `the review's level is ${facts.review.risk}` });
   }
+  reasons.push(...agentStepRiskReasons(facts.agent));
 
   const overBy: string[] = [];
   for (const q of settings.questions ?? []) {

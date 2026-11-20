@@ -1021,7 +1021,7 @@ export async function runAgent(i: RunInput): Promise<{ rc: AgentRc; changed: boo
 // ── agent land ─────────────────────────────────────────────────────────────
 
 /** How a run ended, as its record says. */
-export type AgentResult = "pushed" | "opened" | "updated" | "summarized" | "refused" | "stopped" | "failed" | "idle";
+export type AgentResult = "pushed" | "opened" | "updated" | "summarized" | "answered" | "refused" | "stopped" | "failed" | "idle";
 
 export interface LandOutcome {
   result: AgentResult;
@@ -1087,7 +1087,7 @@ export function agentRunRecordInput(o: {
   /** For `on: "verify-failed"` (#5339): the stage, kind, check and member of each failed verify or soak the run answers. */
   verifies?: Array<{ stage: string; kind: "verify" | "soak"; check: string; member: string }>;
 }): OpRunRecordInput {
-  const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated" || o.result === "summarized";
+  const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated" || o.result === "summarized" || o.result === "answered";
   const durationMs = Math.max(0, Date.parse(o.ended) - Date.parse(o.started)) || 0;
   const outcome = {
     trigger: o.settings.on,

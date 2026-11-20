@@ -1520,6 +1520,13 @@ export interface PipelinePromoteStageInputs {
   setup?: string[];
   /** The stage's cloud identity, traded for before the checkout (`ci.identity`'s apply identity for the stage). */
   cloud?: import("./ci-identity").CloudTradeSpec;
+  /**
+   * The stage's agent steps (#5358): the variables holding their model keys.
+   * Given, the promote gets a job before it that holds a read token only and
+   * runs `pipeline agent run`, and the promote job records the answers with
+   * `pipeline agent record` before it promotes.
+   */
+  agentSteps?: { keyEnvs: string[] };
 }
 
 export interface OpWavesPipelineResult {

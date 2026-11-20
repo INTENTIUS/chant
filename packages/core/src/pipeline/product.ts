@@ -6,7 +6,7 @@
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
  * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `.after`, `.queue`,
- * `.urgent`, `.pause_after_rollback`,
+ * `.urgent`, `.pause_after_rollback`, `.agent_steps`,
  * `approval_rules`, `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
  * {@link checkPipelineFile} is what `<product> ci --check` runs: it fails
@@ -54,6 +54,9 @@ export interface PipelineEnvironmentConfig {
   pauseAfterRollback?: boolean;
   /** `soak`: `{ duration, checks, overrides }`; a check's `on_fail` and `timeout_seconds` in snake_case or camelCase (#5326). */
   soak?: SoakConfig;
+  /** `agent_steps.<step>`: `prompt`, `reads`, `schema`, `command`, `key_secret`, `timeout`, `max_runs`, `max_cost_usd` (#5358), snake_case or camelCase. */
+  agent_steps?: Record<string, AgentStepConfig>;
+  agentSteps?: Record<string, AgentStepConfig>;
   [key: string]: unknown;
 }
 
@@ -78,6 +81,46 @@ function soakOf(soak: SoakConfig | undefined): Soak | undefined {
     ...(soak.checks ? { checks: soakChecksOf(soak.checks) } : {}),
     ...(soak.overrides ? { overrides: soak.overrides.map((o) => ({ members: [...o.members], ...(o.duration !== undefined ? { duration: o.duration } : {}), ...(o.checks ? { checks: soakChecksOf(o.checks) } : {}) })) } : {}),
   };
+}
+
+/** One agent step as a config spells it (#5358). */
+export interface AgentStepConfig {
+  prompt: string;
+  reads?: Record<string, { stage: string; artifact: string } | { step: string }>;
+  schema: Record<string, unknown>;
+  command?: string;
+  key_secret?: string;
+  keySecret?: string;
+  timeout?: number;
+  max_runs?: number;
+  maxRuns?: number;
+  max_cost_usd?: number;
+  maxCostUsd?: number;
+}
+
+/** A stage's `agentSteps` from `environments.<name>.agent_steps` (#5358). The schema is kept as written. */
+function agentStepsOf(steps: Record<string, AgentStepConfig> | undefined): PipelineStage["agentSteps"] | undefined {
+  if (!steps || Object.keys(steps).length === 0) return undefined;
+  return Object.fromEntries(
+    Object.entries(steps).map(([name, c]) => {
+      const keyEnv = c.key_secret ?? c.keySecret;
+      const maxRuns = c.max_runs ?? c.maxRuns;
+      const maxCostUsd = c.max_cost_usd ?? c.maxCostUsd;
+      return [
+        name,
+        {
+          prompt: c.prompt,
+          ...(c.reads && Object.keys(c.reads).length > 0 ? { reads: Object.fromEntries(Object.entries(c.reads).map(([k, r]) => [k, "step" in r ? { step: r.step } : { stage: r.stage, artifact: r.artifact }])) } : {}),
+          schema: structuredClone(c.schema),
+          ...(c.command ? { command: c.command } : {}),
+          ...(keyEnv ? { keyEnv } : {}),
+          ...(c.timeout !== undefined ? { timeout: c.timeout } : {}),
+          ...(maxRuns !== undefined ? { maxRuns } : {}),
+          ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+        },
+      ];
+    }),
+  );
 }
 
 /** One approval rule as a config spells it: `count`, `roles`, `not_author`, `targets`, `proven`, `name`. */
@@ -196,6 +239,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(tolerance !== undefined ? { failureTolerance: tolerance } : {}),
       ...(forge ? { forgeEnvironment: forge } : {}),
       ...(publishOf(env.publish) ? { publish: publishOf(env.publish)! } : {}),
+      ...(agentStepsOf(env.agent_steps ?? env.agentSteps) ? { agentSteps: agentStepsOf(env.agent_steps ?? env.agentSteps)! } : {}),
       ...(env.reads && Object.keys(env.reads).length > 0 ? { reads: Object.fromEntries(Object.entries(env.reads).map(([k, r]) => [k, { stage: r.stage, artifact: r.artifact }])) } : {}),
       ...(env.after && env.after.length > 0 ? { after: [...env.after] } : {}),
       ...(env.queue !== undefined ? { queue: env.queue } : {}),

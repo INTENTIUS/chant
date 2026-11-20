@@ -56,6 +56,8 @@ const REPLACED = {
   "package-version.ts": `export function readChantPackageVersion() { return ${JSON.stringify(version)}; }`,
   "workspace/ajv2020.ts":
     'export function loadAjv2020() { const mod = require("ajv/dist/2020"); return mod.default ?? mod; }',
+  "pipeline/agent-ajv.ts":
+    'export function loadAgentAjv() { const mod = require("ajv/dist/2020"); return mod.default ?? mod; }',
 };
 
 /** The modules reachable from the entry without crossing a dynamic import. */
