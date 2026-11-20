@@ -65,6 +65,7 @@
  * Its jobs carry `rest: true`.
  */
 
+import { NEXT_RELEASE } from "../release-floors";
 import { OP_WAVES_WAVE_ENV } from "./follow-on-run";
 import { opWaveOutcomePath, opWaveRecordPath, type OpWaveJob, type OpWavesSpec } from "./op-waves";
 
@@ -187,3 +188,8 @@ export function opWaveSplitJobLabel(spec: string, job: Pick<OpWaveSplitJob, "pha
 export function opWaveSplitWaveJobs(jobs: readonly OpWaveSplitJob[], k: number): string[] {
   return jobs.filter((j) => j.wave === k).map((j) => j.jobName);
 }
+
+/**
+ * The first chant whose before-merge split jobs carry `agentFacts` (#5406): the gate and record jobs, which respond for a wave, hold `CHANT_AGENT_FACTS` and the relay key on their command step, so a failed apply records its fact for the failed-apply agent as a wave job does.
+ */
+export const OP_WAVES_SPLIT_AGENT_FACTS_FLOOR = NEXT_RELEASE;
