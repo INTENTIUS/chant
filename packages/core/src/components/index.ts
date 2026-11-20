@@ -238,6 +238,30 @@ export {
 } from "./fan-out-support";
 export { applyDeclaredReads, declaredReadsOf, graphReadsOf, withDeclaredReads, GRAPH_READS_FLOOR, type PlacedRead, type PlacedGraphRead } from "./declared-reads";
 export {
+  changedOutputs,
+  dependentsOfChange,
+  gitOutputRecordPort,
+  outputDigests,
+  OUTPUT_RECORDS_FILE,
+  parseOutputRecords,
+  replanAfterApply,
+  replanDescription,
+  replanGate,
+  replanNames,
+  replanNote,
+  upstreamReadsOf,
+  UPSTREAM_REPLAN_FLOOR,
+  type ChangedDependent,
+  type OutputRecord,
+  type OutputRecordPort,
+  type ReplanOptions,
+  type ReplanPlanned,
+  type ReplanPlanner,
+  type ReplanResult,
+  type UpstreamChange,
+  type UpstreamRead,
+} from "./upstream-replan";
+export {
   EcsFargateComponent,
   type EcsFargateComponentConfig,
   LambdaComponent,

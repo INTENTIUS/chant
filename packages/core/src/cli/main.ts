@@ -1481,6 +1481,13 @@ Component release ledger + status:
                             records as current, after a deploy that failed
                             partway (--component <name> [--digest <sha256:...>];
                             --dry-run prints the plan; gates still apply)
+  components replan        After --component <a,b> applied in --env <env>,
+                            compare their outputs with the last recorded ones,
+                            list the dependents that read a changed output,
+                            and plan the dependents of the members the stage's
+                            replanDependents names; the plan waits at
+                            <gate>-replan and nothing applies (--gate, --op,
+                            --dry-run, --json)
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -1681,8 +1688,8 @@ Options:
                         chant.config.ts's build.sandbox: true; #1045)
   --param <name=value>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
-                        components redeploy, components pr-env up,
-                        release cut) Bind a
+                        components redeploy, components replan,
+                        components pr-env up, release cut) Bind a
                         declared build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
@@ -1694,8 +1701,8 @@ Options:
                         chant.template.json declares instead (#2627).
   --params-file <path>  (build, graph, run --components, components fan-out,
                         components promote, components rollback,
-                        components redeploy, components pr-env up,
-                        release cut) JSON file
+                        components redeploy, components replan,
+                        components pr-env up, release cut) JSON file
                         of { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
                         init --from refuses it: pass --param instead.
@@ -2212,6 +2219,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "components promote", handler: runComponentsPromote },
   { name: "components rollback", handler: runComponentsRollback },
   { name: "components redeploy", handler: runComponentsRedeploy },
+  // #5345: list the dependents of changed outputs after an apply, and plan them for the members a stage opts in.
+  { name: "components replan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/replan")).runComponentsReplan(ctx) },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".

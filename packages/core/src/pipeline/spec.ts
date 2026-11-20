@@ -95,6 +95,14 @@ export interface PipelineStage {
   failureTolerance?: PipelineFailureTolerance;
   /** The forge deployment environment the stage's jobs run in, unless a wave names its own. */
   forgeEnvironment?: OpEnvironment;
+  /**
+   * The members whose dependents are planned again when one of their
+   * outputs changes in this stage (#5345): member names, or patterns where
+   * `*` matches within one path segment and `**` across. In place of the
+   * pipeline's `defaults.replanDependents`. Absent: none. A re-plan only
+   * plans; the plan waits at its gate.
+   */
+  replanDependents?: string[];
 }
 
 /**
@@ -139,7 +147,7 @@ const TOLERANCE = /^(100|[1-9]?[0-9])%$/;
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
 export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
@@ -158,6 +166,19 @@ export function failureToleranceProblem(value: unknown, where: string): string |
   if (typeof value === "number" && Number.isInteger(value) && value >= 0) return undefined;
   if (typeof value === "string" && TOLERANCE.test(value)) return undefined;
   return `${where} must be a whole number of runs, or a share of the wave's runs such as "10%"`;
+}
+
+/** What is wrong with a `replanDependents` list, or undefined (#5345). */
+export function replanDependentsProblem(value: unknown, where: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value) && value.every((v) => typeof v === "string" && v.trim() !== "")) return undefined;
+  return `${where} must be a list of member names or patterns`;
+}
+
+/** The members a stage plans the dependents of when their outputs change (#5345): the stage's list, else the pipeline's default, else none. */
+export function stageReplanDependents(spec: Pick<PipelineSpec, "stages" | "defaults">, stage: string): string[] {
+  const own = spec.stages.find((s) => s.name === stage)?.replanDependents;
+  return [...(own ?? spec.defaults?.replanDependents ?? [])];
 }
 
 function unknownKeys(value: Record<string, unknown>, keys: readonly string[], where: string): string[] {
@@ -233,6 +254,8 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   if (stage.forgeEnvironment !== undefined && (!isMap(stage.forgeEnvironment) || typeof stage.forgeEnvironment.name !== "string" || stage.forgeEnvironment.name === "")) out.push(`${at}.forgeEnvironment must be { "name", "url"? }`);
   const tolerance = failureToleranceProblem(stage.failureTolerance, `${at}.failureTolerance`);
   if (tolerance) out.push(tolerance);
+  const replan = replanDependentsProblem(stage.replanDependents, `${at}.replanDependents`);
+  if (replan) out.push(replan);
   return out;
 }
 
@@ -332,6 +355,7 @@ export const PIPELINE_SPEC_SCHEMA = {
           },
           failureTolerance: { $ref: "#/$defs/tolerance" },
           forgeEnvironment: { type: "object", required: ["name"], properties: { name: { type: "string", minLength: 1 }, url: { type: "string" } } },
+          replanDependents: { type: "array", items: { type: "string", minLength: 1 } },
         },
       },
     },

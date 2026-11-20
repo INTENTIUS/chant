@@ -21,6 +21,7 @@ import {
 import { resolveStepInput, type DriverComponent } from "@intentius/chant/components/driver";
 import { findComponentGroups, planComponentGroup, runComponentGroup } from "@intentius/chant/components/groups";
 import { planFanOut } from "@intentius/chant/components/fan-out";
+import { replanAfterApply, upstreamReadsOf, type OutputRecord, type OutputRecordPort } from "@intentius/chant/components/upstream-replan";
 import { composeChangeSet, isEmptyChangeSet, type ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig } from "../config";
 import type { ComposedRunApply, ComposedRunner, ComposedRunPlan } from "../compose/estate";
@@ -438,6 +439,45 @@ describe("through core's group calls (#4447, ws-107)", () => {
         if (before === undefined) delete process.env.CHANT_ENV_TEMPLATE;
         else process.env.CHANT_ENV_TEMPLATE = before;
       }
+    });
+
+    test("a's id changing after its apply lists b, which reads it through terraform_remote_state, and plans b at its gate when a opts in (#5345)", async () => {
+      const dir = project({ "roots/b/main.tf": REMOTE_B });
+      const reg = registry(dir);
+      expect(await upstreamReadsOf(wired, reg, dir, (component) => ({ env: "test", component }), "test")).toEqual([{ reader: "b", upstream: "a", output: "id", via: "group" }]);
+      const lines: OutputRecord[] = [];
+      const records: OutputRecordPort = { read: async () => [...lines], append: async (_env, r) => void lines.push(...r) };
+      const planned: string[][] = [];
+      const decided: string[] = [];
+      const go = (id: string, replanDependents: string[]) =>
+        replanAfterApply({
+          components: wired,
+          registry: reg,
+          root: dir,
+          env: "test",
+          applied: { a: { id } },
+          replanDependents,
+          records,
+          gate: "tf-apply",
+          planner: async ({ plan }) => {
+            planned.push(plan.order);
+            return { doc: { digest: "jcs1-sha256:b" }, members: [], failed: false } as never;
+          },
+          decide: async ({ gate, description }) => {
+            decided.push(`${gate}: ${description}`);
+            return { status: "pending" };
+          },
+        });
+      expect((await go("a-1", ["a"])).changes[0]).toMatchObject({ member: "a", first: true, dependents: [] });
+      const listed = await go("a-2", []);
+      expect(listed.changes[0]).toEqual({ member: "a", changed: ["id"], dependents: [{ member: "b", outputs: ["id"] }], replan: false });
+      expect(listed.planned).toBeUndefined();
+      const replanned = await go("a-3", ["a"]);
+      expect(planned).toEqual([["b"]]);
+      expect(decided).toEqual(["tf-apply-replan: planned again after an upstream output changed: a applied with id changed, read by b"]);
+      expect(replanned.planned).toMatchObject({ gate: "tf-apply-replan", components: ["b"] });
+      expect(lines.map((l) => l.member)).toEqual(["a", "a", "a"]);
+      expect(JSON.stringify(lines)).not.toContain("a-3");
     });
 
     test("report nothing while terraform.compose is unset, so no group forms", async () => {

@@ -102,6 +102,7 @@ export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
     ...(holds ? { holds } : {}),
     ...(point ? { point } : {}),
     ...(first && spec.control ? { control: spec.control } : {}),
+    ...(stage.replanDependents ? { replanDependents: [...stage.replanDependents] } : {}),
     waves,
   };
   assertOpWavesSpec(out);

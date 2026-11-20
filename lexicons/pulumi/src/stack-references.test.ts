@@ -10,7 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { layerWaves } from "@intentius/chant/gated-waves";
-import { pulumiDeclaredReads, pulumiGraphReads } from "./pulumi-up";
+import { createPulumiUpCapability, pulumiDeclaredReads, pulumiGraphReads } from "./pulumi-up";
+import { CapabilityRegistry } from "@intentius/chant/components/capability";
+import { replanAfterApply, upstreamReadsOf, type OutputRecord, type OutputRecordPort } from "@intentius/chant/components/upstream-replan";
 import { PULUMI_STACK_REFERENCE_GRAPH_FLOOR } from "./chant-floors";
 import { pulumiWorkspaceStackReads } from "./workspace-stack-reads";
 import { placeStackReads } from "../../../packages/core/src/workspace/stack-read-edges";
@@ -190,5 +192,60 @@ describe("workspace graph stack reads (#5331)", () => {
     writeFileSync(join(app, "Pulumi.prod.yaml"), "config: {}\n");
     const forProd = await pulumiWorkspaceStackReads({ root: "/", env: "prod", members }, { exportStore: null });
     expect(forProd!.reads).toEqual([{ reader: "app", upstream: "net", output: "vpcId" }]);
+  });
+});
+
+describe("re-planning a stack's dependents when an output it reads changes (#5345)", () => {
+  const memory = (): OutputRecordPort & { lines: OutputRecord[] } => {
+    const lines: OutputRecord[] = [];
+    return { lines, read: async () => [...lines], append: async (_env, records) => void lines.push(...records) };
+  };
+
+  test("a StackReference is a read of the stack's output, and a change to it plans the reader at its gate, never its apply", async () => {
+    const network = project("network", exportOf([]));
+    const app = project("app", exportOf([ref("prod", "acme/network/prod", { vpcId: "vpc-1" })]));
+    const cap = createPulumiUpCapability({ snapshots: null });
+    const registry = new CapabilityRegistry().register({
+      ...cap,
+      run: async () => {
+        throw new Error("a re-plan never applies");
+      },
+    } as never);
+    const components = [
+      { name: "network", deploy: [{ phase: "Apply", steps: [{ kind: "pulumi-up", dir: network, stack: "prod" }] }] },
+      { name: "app", deploy: [{ phase: "Apply", steps: [{ kind: "pulumi-up", dir: app, stack: "prod" }] }] },
+    ];
+    const reads = await upstreamReadsOf(components, registry, "/", (component) => ({ env: "prod", component }), "prod");
+    expect(reads).toEqual([{ reader: "app", upstream: "network", output: "vpcId", via: "declared" }]);
+
+    const records = memory();
+    const planned: string[][] = [];
+    const decided: string[] = [];
+    const go = (vpcId: string) =>
+      replanAfterApply({
+        components,
+        registry,
+        root: "/",
+        env: "prod",
+        applied: { network: { vpcId } },
+        replanDependents: ["network"],
+        records,
+        gate: "pr-apply",
+        gitSha: "0123456789abcdef",
+        planner: async ({ plan }) => {
+          planned.push(plan.order);
+          return { doc: { digest: "jcs1-sha256:app" }, members: [], failed: false } as never;
+        },
+        decide: async ({ gate, description }) => {
+          decided.push(`${gate}: ${description}`);
+          return { status: "pending" };
+        },
+      });
+    expect((await go("vpc-1")).changes).toEqual([{ member: "network", changed: [], first: true, dependents: [], replan: true }]);
+    const moved = await go("vpc-2");
+    expect(moved.changes[0]!.dependents).toEqual([{ member: "app", outputs: ["vpcId"] }]);
+    expect(planned).toEqual([["app"]]);
+    expect(decided).toEqual(["pr-apply-replan: planned again after an upstream output changed: network applied at 0123456789ab with vpcId changed, read by app"]);
+    expect(moved.planned).toMatchObject({ gate: "pr-apply-replan", digest: "jcs1-sha256:app", components: ["app"], approval: { status: "pending" } });
   });
 });

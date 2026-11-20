@@ -635,6 +635,14 @@ export interface OpWavesSpec {
    */
   respond?: CiResponses;
   /**
+   * The members whose dependents are planned again when one of their
+   * outputs changes after an apply (#5345): member names, or patterns where
+   * `*` matches within one path segment and `**` across. Read by `chant
+   * components replan` (`../components/upstream-replan.ts`), which only
+   * plans: the plan waits at its gate. Absent: none.
+   */
+  replanDependents?: string[];
+  /**
    * The control repo (#4617, `@intentius/chant/ci-control`): once the last
    * wave ran, a `control-dispatch` job tells the control repo how the waves
    * ended (`applied`, `partial`, `unchanged`, `waiting` or `failed`, from
@@ -1017,6 +1025,9 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
   }
   if (!spec.op) throw new Error(`${where} names no \`op\`. Name the Op a run runs when it names none.`);
+  if (spec.replanDependents !== undefined && !(Array.isArray(spec.replanDependents) && spec.replanDependents.every((m) => typeof m === "string" && m.trim() !== ""))) {
+    throw new Error(`${where}: \`replanDependents\` must be a list of member names or patterns.`);
+  }
   if (spec.plan !== undefined && spec.planWave !== undefined) {
     throw new Error(`${where} has both \`plan\` and \`planWave\`. A wave is planned one run at a time or all at once; give one.`);
   }
