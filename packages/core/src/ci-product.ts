@@ -13,6 +13,7 @@ import type { CiProductWords, CiProductWordsInput } from "./ci-product-words";
 import type { ProductMcpHook } from "./cli/mcp/product-tools";
 import type { ProductWaveHook } from "./op/op-waves-after-plan";
 import { OTLP_EXPORTER_FLOOR } from "./otlp";
+import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant with the product pipeline (#4550): the words, the
@@ -25,6 +26,13 @@ export const CI_PRODUCT_FLOOR = "0.124.55";
 export {
   activeProductWords,
   approveLine,
+  CI_PRODUCTS,
+  PRODUCT_AUDIT_KINDS,
+  PRODUCT_CONFIG_WORDS,
+  PRODUCT_RELEASE_ALIASES,
+  PRODUCT_RELEASE_WORDS,
+  productConfigProblems,
+  productConfigWord,
   assertProductWords,
   CHANT_APPROVE_TEMPLATE,
   CHANT_NOTIFY_WAVE_TEMPLATE,
@@ -52,6 +60,13 @@ export {
   setActiveProductWords,
   withProductWords,
   type ApproveLineInput,
+  type ProductConfigAlias,
+  type ProductConfigAliasShape,
+  type ProductConfigCase,
+  type ProductConfigOptions,
+  type ProductConfigProblem,
+  type ProductConfigSection,
+  type ProductConfigWord,
   type CiProductAlias,
   type CiProductApplyMode,
   type CiProductApproval,
@@ -66,6 +81,18 @@ export {
   type ProductCommentOptions,
   type ProductActionRequest,
 } from "./ci-product-words";
+
+/**
+ * The first chant with the product config vocabulary (#5343):
+ * `PRODUCT_CONFIG_WORDS`, one key and one set of value words per concept a
+ * product sets, with the chant field each maps to and the aliases each
+ * product accepts; `productConfigProblems`, which checks a product's config
+ * against it; `PRODUCT_RELEASE_WORDS` for promote, rollback and redeploy;
+ * and `PRODUCT_AUDIT_KINDS`. The reference page is
+ * /chant/reference/ci-product-config/.
+ */
+export const PRODUCT_CONFIG_WORDS_FLOOR = NEXT_RELEASE;
+
 export { driftNotifyFields, NOTIFY_MESSAGE_WORDS_FLOOR, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 
 /** The first chant with `chant notify relay` and the notify relay buttons (#4611). */
