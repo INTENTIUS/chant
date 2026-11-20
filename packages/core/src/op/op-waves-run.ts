@@ -138,7 +138,7 @@ import {
 } from "./op-waves-capability";
 import {
   changeInvolvement, quorumGroupLines, quorumProblems, quorumRuleLine, quorumRules, quorumRulesFor, quorumWaiting, recordedReviewApprovals, recordedReviewOf, ruleNeedsProof, samePrincipal, trustQuorumJudge,
-  type GateQuorumJudge, type GateQuorumNode, type GateQuorumRuleProgress, type QuorumJudgement,
+  type GateQuorumJudge, type GateQuorumNode, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
 } from "./gate-quorum";
 import {
   OP_WAVE_DEFAULT_APPLY,
