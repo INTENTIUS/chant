@@ -1489,6 +1489,13 @@ export interface PipelinePromoteInput {
   runner?: import("./ci-jobs").CiRunner;
   /** Each job's timeout in minutes. Default `OP_WAVE_JOB_TIMEOUT_MINUTES` (180). */
   jobTimeoutMinutes?: number;
+  /**
+   * The scheduled re-run of pending promotions (#5326): with it, each stage
+   * gets a `recheck-<stage>` job that runs on the schedule (on GitLab, on a
+   * pipeline schedule) and runs `<bin> components promote --to <stage>
+   * --pending`. Absent: no scheduled job, and the file is as before.
+   */
+  recheck?: { schedule: string };
 }
 
 /**

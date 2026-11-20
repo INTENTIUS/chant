@@ -65,6 +65,8 @@ describe("the gate-decision bundle", () => {
       // The release names a wave writes (#4615), checked with the spec.
       "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",
+      // A wave's soak is checked with the spec (#5326): its rules, which import only node:crypto.
+      "packages/core/src/pipeline/soak.ts",
       "packages/core/src/sorted-json.ts",
       "packages/core/src/wave-blocked.ts",
       "packages/core/src/wave-layout.ts",

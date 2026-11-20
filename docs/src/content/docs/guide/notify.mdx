@@ -116,7 +116,7 @@ The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<t
 |---|---|
 | `x-chant-signature` | `sha256=<hex>` |
 | `x-chant-timestamp` | The seconds the signature covers |
-| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit`, `ci.green`, `ci.quarantine-passed`, `ci.stale` or `urgent` (a promote that passed a [pipeline stage's urgent rule](/chant/reference/pipeline/#the-urgent-rule)) |
+| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit`, `ci.green`, `ci.quarantine-passed`, `ci.stale`, `urgent` (a promote that passed a [pipeline stage's urgent rule](/chant/reference/pipeline/#the-urgent-rule)) or `soak` (a [soak](/chant/guide/soak/) check failed) |
 | `x-chant-delivery` | The event's `id` |
 
 `@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`. The package ships it, and `@intentius/chant/notify`, as compiled JavaScript, so a receiver can import it under plain Node with no TypeScript loader, or bundle it alone:
@@ -147,6 +147,7 @@ The JSON Schema ships in the package as `@intentius/chant/notify.schema.json`, w
 | `status`, `reason`, `exitCode` | The product's word for the outcome, why it was refused or failed, and the exit code |
 | `drift` | On `drift`: `changed`, `missing`, `failed` and a `fingerprint` |
 | `ci` | On the tick's events: `branch`, `commit`, and `phase` and `failedRun` on `ci.red`, `culprit` on `ci.culprit`, `red` and `since` on `ci.green`, and `since`, `lastGreen` and `hours` on `ci.stale`; on `ci.quarantine-passed`, `phase` and `quarantine` (`test`, `file`, `issue`, `until`) |
+| `soak` | On `soak`: the `stage` that soaks (and its `wave` on a wave's soak), what it `holds`, `clockStart` and `due`, and each failed check's `name`, `kind`, `onFail`, `status` and `detail`. See [Soak](/chant/guide/soak/) |
 | `run` | The CI run's `url`, `forge`, `repository`, `commit` and `pr` |
 | `reportUrl`, `detail` | A report page, and the product's own outcome record carried whole |
 

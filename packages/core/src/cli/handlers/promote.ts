@@ -75,11 +75,17 @@ import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 import { actorFromEnv } from "../../actor";
 import { promoteBase, readPipelineAt } from "../../pipeline/read";
-import { pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, pipelineUrgentUpstream, promotedDigest, urgentUpstreamStop, type PipelinePromoteStop } from "../../pipeline/promote";
+import { pipelinePromoteRejected, pipelinePromoteSoak, pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, pipelineUrgentUpstream, promotedDigest, urgentUpstreamStop, type PipelinePromoteStop } from "../../pipeline/promote";
 import { gitStageLedgerPort, pauseLine, releaseMissingIn, stagePaused, stagePausedLine, supersededBy, waitingLine, type StageLedgerPort } from "../../pipeline/stage-ledger";
+import { stageSoakGate } from "../../pipeline/soak-gate";
+import { stageWavesName } from "../../pipeline/stages";
+import { soakCheckReader } from "../../pipeline/soak-checks";
+import { jobSoakSources } from "../../pipeline/soak-sources";
+import { isPendingGateExpired } from "../../lifecycle/gate-ledger-select";
+import { activeProductWords } from "../../ci-product-words";
 
 const PROMOTE_USAGE =
-  "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest> [--plan-only]] [--urgent --reason <text>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
+  "chant components promote --to <env> [--from <env>] [--allow-skip] [--pending] [--release <label|digest> [--plan-only]] [--urgent --reason <text>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> (--component <name> [--digest <sha256:...>] | --release <label|digest>) [--dry-run] [--json]";
 const REDEPLOY_USAGE =
@@ -1048,6 +1054,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     console.error(formatError({ message: "--plan-only plans a release's change set: it needs --release <label|digest>", hint: PROMOTE_USAGE }));
     return 1;
   }
+  if (args.pendingPromotion) return runPendingPromotion(ctx, to);
   const who = actorOrRefuse(ctx);
   if (typeof who === "number") return who;
 
@@ -1187,6 +1194,41 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   const { gitStageLogPort } = await import("../../lifecycle/stage-log");
   const log = gitStageLogPort();
   if (pipeline && !args.dryRun) {
+    const digest = under?.release.releaseDigest ?? promotedDigest(plan.items);
+    const port = gitGateLedgerPort();
+    const head = await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}));
+    const proof = await promoteProof(project.projectPath);
+    // The order at promote: a pause (above), then a rejection, then the soak of each stage promoted from, then the gates and risk.
+    // #5354: a rejected release stops here, before a soak records anything for it.
+    const rejection = await pipelinePromoteRejected({ spec: pipeline, to, skipped, digest, ...(under ? { releaseDigest: under.release.releaseDigest } : {}), port, ...(proof ? { proof } : {}), ...(args.urgent ? { urgent: true } : {}) });
+    if (rejection) {
+      for (const line of rejection.lines ?? []) console.error(formatInfo(line));
+      console.error(formatError({ message: `${rejection.message} [${rejection.code}]`, ...(rejection.hint ? { hint: rejection.hint } : {}) }));
+      return rejection.exitCode;
+    }
+    // #5326: the soak of each stage promoted from holds the promotion next; it adds a wait and never stands in for a gate.
+    // An urgent promote waits on it too, unless a person ends the soak through its gate.
+    for (const source of upstreams ?? [from]) {
+      const items = source === from ? plan.items : soakItemsOf(await readLedger(source), plan.items.map((i) => i.component), under?.release.releaseDigest);
+      const soak = await pipelinePromoteSoak({
+        spec: pipeline,
+        from: source,
+        to,
+        items,
+        digest,
+        ...(under ? { releaseDigest: under.release.releaseDigest } : {}),
+        port,
+        read: soakCheckReader(jobSoakSources({ op: stageWavesName(pipeline, source), cwd: project.projectPath })),
+        now: new Date(),
+        ...head,
+        ...(pipeline.defaults?.notify ? { notify: { config: pipeline.defaults.notify, source: activeProductWords().notify.source, project: pipeline.name } } : {}),
+      });
+      if (!soak.passed) {
+        console.error(formatError({ message: `${soak.message} [${soak.code}]`, hint: soak.hint }));
+        return soak.exitCode;
+      }
+      for (const line of soak.lines) console.error(formatInfo(line));
+    }
     const release = under ? await entryRelease(under) : undefined;
     const first = pipeline.stages[0]!.name;
     const firstStageCommits = upstreams?.includes(first) ? new Set((await readLedger(first)).filter((r) => r.env === first).map((r) => r.gitSha)) : undefined;
@@ -1196,17 +1238,17 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       skipped,
       ...(upstreams ? { upstreams } : {}),
       ...(args.allowSkip ? { allowSkip: true } : {}),
-      digest: under?.release.releaseDigest ?? promotedDigest(plan.items),
+      digest,
       ...(release ? { release } : {}),
       ...(firstStageCommits ? { firstStageCommits } : {}),
-      port: gitGateLedgerPort(),
+      port,
       log,
       ...(args.urgent ? { urgent: true } : {}),
       ...(who.actor ? { actor: who.actor } : {}),
-      ...(await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}))),
+      ...head,
       now: new Date(),
       // #5354: the signers and roles at the commit the pipeline is read at prove who approved or rejected.
-      proof: await promoteProof(project.projectPath),
+      ...(proof ? { proof } : {}),
     });
     if (!gates.passed) {
       for (const line of gates.lines ?? []) console.error(formatInfo(line));
@@ -1233,6 +1275,22 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   // #5356: the stage publishes its artifacts once the deploy applied, after the stage log says so.
   if (code !== 0 || !pipeline || args.dryRun || args.planOnly) return code;
   return publishAfterPromote(project.projectPath, pipeline, to, under);
+}
+
+/**
+ * What an upstream stage other than `--from` applied of the promoted
+ * components (#5326), for its soak's clock: each component's newest record
+ * there, of the release when one is promoted. A component with none is left
+ * out; with none at all the soak cannot count its clock and holds.
+ */
+function soakItemsOf(records: ReleaseRecord[], components: readonly string[], releaseDigest: string | undefined): { component: string; source: { timestamp: string } }[] {
+  const out: { component: string; source: { timestamp: string } }[] = [];
+  for (const component of components) {
+    const own = records.filter((r) => r.component === component && (releaseDigest === undefined || r.releaseDigest === releaseDigest));
+    const newest = own.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)).at(-1);
+    if (newest) out.push({ component, source: { timestamp: newest.timestamp } });
+  }
+  return out;
 }
 
 /** The release a promote deploys, as the stage log names it (#5353): its label, commit and when it was first cut, and the change risk its cut carries (#5387). */
@@ -1358,6 +1416,48 @@ async function recordUrgent(input: {
       detail: { urgent: true, stage: input.to, release: input.release, approvedBy: input.approval.resolvedBy, role: input.role, promotedBy: input.by },
     }, { now }),
   );
+}
+
+/**
+ * `components promote --to <stage> --pending` (#5326): the promotion into
+ * `stage` that a soak holds, run again. The stage before it in the pipeline
+ * read at base names the soak's gate; its newest standing pending fact for
+ * `stage` names the release. Nothing pending, or the stage already running
+ * that release, exits 0 with a line; otherwise the promote runs as `--release
+ * <digest>` would, soak and gates included.
+ */
+async function runPendingPromotion(ctx: CommandContext, to: string): Promise<number> {
+  const { args } = ctx;
+  if (args.release || args.component || args.digest || args.digests?.length || args.migrateFrom) {
+    console.error(formatError({ message: "--pending reads the release from the soak's pending fact, so it takes only --to", hint: PROMOTE_USAGE }));
+    return 1;
+  }
+  const projectPath = resolve(".");
+  const pipeline = readPromotePipeline(projectPath, to);
+  if (typeof pipeline === "number") return pipeline;
+  const at = pipeline ? pipeline.stages.findIndex((s) => s.name === to) : -1;
+  if (!pipeline || at <= 0) {
+    console.error(formatInfo(`no promotion into ${to} is pending: ${pipeline ? `${to} is the pipeline's first stage` : "the member has no pipeline with that stage"}`));
+    return 0;
+  }
+  const from = pipeline.stages[at - 1]!.name;
+  await fetchLifecycle().catch(() => false);
+  const now = new Date().toISOString();
+  const { pending } = await gitGateLedgerPort().read(pipeline.name);
+  const standing = pending
+    .filter((p) => p.gate === stageSoakGate(from) && p.soak?.to === to && p.releaseDigest && !isPendingGateExpired(p, now))
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+    .at(-1);
+  if (!standing?.releaseDigest) {
+    console.error(formatInfo(`no promotion into ${to} is pending`));
+    return 0;
+  }
+  if ((await readLedger(to)).some((r) => r.releaseDigest === standing.releaseDigest)) {
+    console.error(formatInfo(`${to} already runs the release ${standing.releaseDigest}, so nothing is pending`));
+    return 0;
+  }
+  console.error(formatInfo(`promoting the release ${standing.releaseDigest} into ${to}, held since ${standing.timestamp} by the soak of ${from}`));
+  return runComponentsPromote({ ...ctx, args: { ...args, pendingPromotion: false, release: standing.releaseDigest } });
 }
 
 /**

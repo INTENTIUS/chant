@@ -105,6 +105,7 @@ const BOOLEAN_FLAGS = new Set([
   "--allow-code",
   "--allow-skip",
   "--urgent",
+  "--pending",
   "--allow-unsigned",
   "--override-green",
   "--require-provenance",
@@ -1362,6 +1363,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #4030 — `chant components promote` skips a step of the member's
       // declared promotion order only when asked to.
       result.allowSkip = true;
+    } else if (arg === "--pending") {
+      // #5326 — `chant components promote --to <stage> --pending` runs again the promotion a soak holds.
+      result.pendingPromotion = true;
     } else if (arg === "--source") {
       // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
       result.source = args[++i];

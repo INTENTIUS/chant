@@ -1,0 +1,57 @@
+# chant promote for "shop": start a pipeline from the web with CHANT_PROMOTE_STAGE
+# (one of staging, prod) and CHANT_PROMOTE_RELEASE (the release's label or digest).
+# A pipeline schedule with the cron line "0 * * * *" runs the recheck jobs; each promotes the release a soak holds.
+
+promote-staging:
+  image: node:22
+  timeout: '180 minutes'
+  environment:
+    name: staging
+  resource_group: shop-promote-staging
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CHANT_PROMOTE_STAGE == "staging"'
+  script:
+    - npx --no-install plywood components promote --to staging --release "$CHANT_PROMOTE_RELEASE"
+
+recheck-staging:
+  image: node:22
+  timeout: '180 minutes'
+  environment:
+    name: staging
+  resource_group: shop-promote-staging
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - npx --no-install plywood components promote --to staging --pending
+
+promote-prod:
+  image: node:22
+  timeout: '180 minutes'
+  environment:
+    name: prod
+    url: https://shop.example
+  resource_group: shop-promote-prod
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CHANT_PROMOTE_STAGE == "prod"'
+  script:
+    - npx --no-install plywood components promote --to prod --release "$CHANT_PROMOTE_RELEASE"
+
+recheck-prod:
+  image: node:22
+  timeout: '180 minutes'
+  environment:
+    name: prod
+    url: https://shop.example
+  resource_group: shop-promote-prod
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - npx --no-install plywood components promote --to prod --pending

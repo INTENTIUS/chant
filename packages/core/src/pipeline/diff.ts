@@ -5,8 +5,35 @@
  */
 
 import { readPipelineAt, type PipelineShow, gitShowPipeline, type PipelineRead } from "./read";
-import type { PipelineHold, PipelineSpec, PipelineStage } from "./spec";
+import { stageUpstreams, type PipelineHold, type PipelineSpec, type PipelineStage } from "./spec";
 import { isQuorumAll, isQuorumAny, isQuorumGroup, quorumNodes, type GateQuorumNode } from "../op/gate-quorum";
+import { soakSummary } from "./soak";
+
+/**
+ * The plan note's section for the soaks a change passes through once it
+ * merges (#5326): each stage's soak, with the stages it holds, and each
+ * wave's, with the wave it holds. Read from the pipeline at base, which is
+ * where the gates are read. Undefined when nothing soaks.
+ */
+export function pipelineSoakSection(spec: PipelineSpec | undefined): string | undefined {
+  if (!spec) return undefined;
+  const lines: string[] = [];
+  for (const stage of spec.stages) {
+    stage.waves.forEach((w, k) => {
+      const next = stage.waves[k + 1];
+      if (w.soak && next) lines.push(`- In \`${stage.name}\`, wave \`${next.name}\` waits for wave \`${w.name}\` to soak: ${soakSummary(w.soak)}.`);
+    });
+    if (!stage.soak) continue;
+    const holds = spec.stages.filter((s) => stageUpstreams(spec, s.name).includes(stage.name)).map((s) => `\`${s.name}\``);
+    lines.push(
+      holds.length > 0
+        ? `- A promotion from \`${stage.name}\` into ${holds.join(", ")} waits for \`${stage.name}\` to soak: ${soakSummary(stage.soak)}.`
+        : `- \`${stage.name}\` soaks after it applies: ${soakSummary(stage.soak)}.`,
+    );
+  }
+  if (lines.length === 0) return undefined;
+  return ["### Soak", "", "Once this merges, the change passes through these soaks. Each one holds and never approves; a person can end one early through its gate.", "", ...lines].join("\n").split("<!--").join("&lt;!--");
+}
 
 /** The folded spec's lines, as the diff compares them. */
 export function pipelineSpecLines(spec: PipelineSpec | undefined): string[] {

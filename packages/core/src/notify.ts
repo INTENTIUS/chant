@@ -44,8 +44,9 @@ export const NOTIFY_SCHEMA_ID = "https://intentius.io/chant/schemas/notify/v1/no
  * and a branch with no green commit for `staleAfter` hours (#4678);
  * and from `chant ci quarantine report` (#4677): a quarantined test passed in the scheduled run.
  * `urgent` (#5355): a promote passed a stage's gate on its urgent rule.
+ * `soak` (#5326): a soak check failed, so the next stage or wave is held.
  */
-export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent"] as const;
+export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent", "soak"] as const;
 export type NotifyEventKind = (typeof NOTIFY_EVENTS)[number];
 
 /** Where the run is: the CI run's page, the forge, the repository and commit. */
@@ -100,6 +101,8 @@ export interface NotifyEvent {
   drift?: { changed: string[]; missing?: string[]; failed?: string[]; fingerprint?: string };
   /** On the `ci.` events (#4645): the branch and commit, and what failed or what was red. */
   ci?: NotifyCi;
+  /** On `soak` (#5326): what soaks, what it holds, and the checks that failed. */
+  soak?: NotifySoak;
   run?: NotifyRun;
   /** A report page for the run. */
   reportUrl?: string;
@@ -134,6 +137,22 @@ export interface NotifyCi {
   since?: string;
   lastGreen?: string;
   hours?: number;
+}
+
+/**
+ * The soak's part of a `soak` event (#5326): the stage (or the wave's
+ * environment) that soaks, the stage or wave it holds, when the clock
+ * started and is due, and each check that failed with what its failure does.
+ */
+export interface NotifySoak {
+  stage: string;
+  /** On a wave's soak: the wave that soaks. */
+  wave?: number;
+  /** The stage a promotion waits to go into, or the wave that waits, as `wave <k>`. */
+  holds: string;
+  clockStart: string | null;
+  due: string | null;
+  checks: { name: string; kind: string; onFail: "restart" | "hold"; status: "failed" | "unknown"; detail: string; member?: string; targets?: string[] }[];
 }
 
 /** What a product fills in; {@link makeNotifyEvent} adds the rest. */
@@ -200,6 +219,7 @@ const HEADLINE: Record<NotifyEventKind, string> = {
   "ci.quarantine-passed": "passed a quarantined test",
   "ci.stale": "has no green commit",
   urgent: "was promoted on its urgent rule",
+  soak: "failed a soak check",
 };
 
 /** The first line of every chat message: `<source>: <summary>`, or what happened to what when there is no summary. */

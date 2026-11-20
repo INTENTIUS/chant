@@ -47,6 +47,9 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `reads` | the artifacts of upstream stages the stage reads (an ancestor through `after`, else an earlier stage), of the release it takes, keyed by the variable each reaches its deploy in: `{ stage, artifact }`. Absent, it reads none |
 | `after` | the stages a release applies in before this one opens for it. Absent, the stage before it in `stages`. The first stage takes none, and a cycle among stages fails the build with the stages named |
 | `queue` | `"replace"`: the stage takes one release at a time. A newer release waiting replaces an older one, and a release in the stage finishes before the next enters. Absent, each promote goes through on its own |
+| `soak` | `{ duration, checks, overrides }`: checks that must keep passing for `duration` after the stage's last apply before a release is promoted into the stages after it. A promote during the soak exits 3 with the time left. A wave takes a `soak` too, which holds the wave after it. See [Soak](/chant/guide/soak/). Absent, nothing soaks |
+
+The pipeline itself also takes `recheck`: `{ schedule }`, a five-field cron line. With it, `chant pipeline generate` renders a `recheck-<stage>` job per later stage that runs `components promote --to <stage> --pending` on that schedule, which promotes again the release a soak holds. Absent, no scheduled job is rendered.
 
 ## Approval rule groups
 

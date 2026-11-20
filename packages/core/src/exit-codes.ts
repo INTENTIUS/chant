@@ -23,9 +23,10 @@ export const CHANT_EXIT = {
   /** A run asked to fail on drift found some (`--fail-on-drift`, `failOn: "drift"`). */
   drift: 2,
   /**
-   * Stopped for a person: a gate, an open decision point, a review that does
-   * not count yet, unmet requires, an earlier wave waiting, no pull request
-   * found. The only code `--gated-exit` remaps.
+   * Stopped for a person or for the clock: a gate, an open decision point, a
+   * review that does not count yet, unmet requires, an earlier wave waiting,
+   * no pull request found, or a soak that is not over (#5326). The only code
+   * `--gated-exit` remaps.
    */
   waiting: 3,
   /** An approved plan no longer matches the plan that would apply now, so nothing applied. */

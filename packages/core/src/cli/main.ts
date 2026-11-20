@@ -1491,6 +1491,7 @@ Component release ledger + status:
   components promote        Deploy the digests one environment's release
                             ledger records to another, without a build
                             (--to <env> [--from <env>] [--allow-skip]
+                             [--pending]
                              [--release <label|digest> [--plan-only]]
                              [--component <name> [--digest <sha256:...>]];
                              --from defaults to the environment before --to

@@ -1,0 +1,84 @@
+# chant dropped the environment of each of these stages: staging -> staging, prod -> prod.
+# Forgejo Actions has no environments, so nothing on the forge holds these jobs.
+# The promote's own chant checks hold the release; nothing else gates it here.
+
+name: shop promote
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: The stage the release is promoted into
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+      release:
+        description: The release's label or digest
+        required: true
+        type: string
+
+jobs:
+  promote-staging:
+    if: '${{ inputs.stage == ''staging'' }}'
+    runs-on: docker
+    timeout-minutes: 180
+    container: node:22
+    concurrency:
+      group: shop-promote-staging
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Promote the release into staging
+        env:
+          CHANT_PROMOTE_RELEASE: '${{ inputs.release }}'
+        run: npx --no-install plywood components promote --to staging --release "$CHANT_PROMOTE_RELEASE"
+  recheck-staging:
+    if: '${{ github.event_name == ''schedule'' }}'
+    runs-on: docker
+    timeout-minutes: 180
+    container: node:22
+    concurrency:
+      group: shop-promote-staging
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Promote the release a soak holds into staging
+        run: npx --no-install plywood components promote --to staging --pending
+  promote-prod:
+    if: '${{ inputs.stage == ''prod'' }}'
+    runs-on: docker
+    timeout-minutes: 180
+    container: node:22
+    concurrency:
+      group: shop-promote-prod
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Promote the release into prod
+        env:
+          CHANT_PROMOTE_RELEASE: '${{ inputs.release }}'
+        run: npx --no-install plywood components promote --to prod --release "$CHANT_PROMOTE_RELEASE"
+  recheck-prod:
+    if: '${{ github.event_name == ''schedule'' }}'
+    runs-on: docker
+    timeout-minutes: 180
+    container: node:22
+    concurrency:
+      group: shop-promote-prod
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Promote the release a soak holds into prod
+        run: npx --no-install plywood components promote --to prod --pending

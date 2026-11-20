@@ -487,6 +487,33 @@ export interface PendingGateRecord {
    * {@link GATED_REQUEST_FLOOR}.
    */
   request?: GatedRequest;
+  /**
+   * The soak this gate holds a promotion or a wave on (#5326), on gate
+   * `<stage>-soak` or `<gate>-wave-<k>-soak`: where the clock stands and
+   * why it holds. A person ends the soak early by approving this gate.
+   * Absent on every other fact.
+   */
+  soak?: PendingGateSoak;
+}
+
+/** A soak's state on its pending fact (#5326). */
+export interface PendingGateSoak {
+  /** The stage that soaks, or the environment of the wave that soaks. */
+  stage: string;
+  /** On a wave's soak: the wave that soaks, 1-based. */
+  wave?: number;
+  /** On a stage's soak: the stage a promotion waits to go into. */
+  to?: string;
+  /** When the clock started (the last apply, or a restart), and when it is up. Null when no apply time could be read. */
+  clockStart: string | null;
+  due: string | null;
+  /** The time left when this run recorded the fact, in milliseconds. */
+  leftMs?: number;
+  /** Why it holds, one line each. */
+  holds: string[];
+  /** A `restart` check's restart, and the checks that failed on this run, for the next run. */
+  restartedAt?: string;
+  failing?: string[];
 }
 
 export type PendingGateInput = Omit<PendingGateRecord, "version" | "kind">;

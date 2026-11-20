@@ -89,6 +89,7 @@
  * the wave (exit 8). See `./op-waves-run.ts`.
  */
 
+import { soakProblems, type Soak } from "../pipeline/soak";
 import type { OpEnvironment, OpSetupStep, OpWaveJobInputs } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import type { CloudTradeSpec } from "../ci-identity";
@@ -465,6 +466,15 @@ export interface OpWave {
    * the runs that depend on it. Default 0: any failed run fails the wave.
    */
   failureTolerance?: number | `${number}%`;
+  /**
+   * The wave's soak (#5326): checks that must keep passing for a duration
+   * after this wave applied, before the next wave's job plans. That job
+   * exits 3 while the soak holds, with the time left, and records the
+   * pending fact of gate `<gate>-wave-<k>-soak` (`k` this wave), through
+   * which a person ends the soak early. Read at base. The last wave has
+   * none: the stage's soak holds what comes after it.
+   */
+  soak?: Soak;
 }
 
 /**
@@ -1233,6 +1243,13 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
     if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
     if (wave.failureTolerance !== undefined && !opWaveFailureToleranceReads(wave.failureTolerance)) throw new Error(`${where}: wave "${wave.name}" has failureTolerance ${JSON.stringify(wave.failureTolerance)}; use a whole number of runs, or a share such as "10%".`);
+    if (wave.soak !== undefined) {
+      // #5326: a wave's soak holds the wave after it, so the last wave, and a rest wave that walks the rest in one job, take none.
+      const problems = soakProblems(wave.soak, `wave "${wave.name}"`);
+      if (wave === spec.waves[spec.waves.length - 1]) problems.push(`wave "${wave.name}" has soak and is the last wave; a wave's soak holds the wave after it`);
+      if (wave.rest) problems.push(`wave "${wave.name}" has soak and rest; the waves a rest wave walks run in its one job`);
+      if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+    }
     if (wave.together !== undefined && typeof wave.together !== "boolean") throw new Error(`${where}: wave "${wave.name}" has together ${JSON.stringify(wave.together)}; use true or false.`);
     if (wave.together && spec.step === undefined) throw new Error(`${where}: wave "${wave.name}" plans its runs together, which only a \`step\`'s capability does. Give step.`);
     if (wave.together && (wave.parallelism ?? 1) > 1) throw new Error(`${where}: wave "${wave.name}" plans and applies its runs together in one call, so it has no parallelism over 1.`);

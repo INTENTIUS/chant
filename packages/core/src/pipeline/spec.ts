@@ -24,6 +24,7 @@ import { opWaveHoldsProblems, type OpWaveHolds } from "../op/op-waves-capability
 import { quorumProblems, QUORUM_MAX_DEPTH, type GateQuorumNode } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
+import { soakProblems, type Soak } from "./soak";
 
 /** The `kind` a folded pipeline carries. A reader refuses any other. */
 export const PIPELINE_SPEC_KIND = "chant.pipeline/v1";
@@ -97,6 +98,16 @@ export interface PipelineWave extends OpWave {
   failureTolerance?: PipelineFailureTolerance;
 }
 
+/**
+ * The scheduled re-run of pending promotions (#5326): a promote held by a
+ * soak exits 3 and records its pending fact, and a job on this schedule
+ * runs each stage's pending promotion again. Absent: no scheduled job.
+ */
+export interface PipelineRecheck {
+  /** A five-field cron line, such as `"0 * * * *"` (every hour). */
+  schedule: string;
+}
+
 /** One stage: an environment in promotion order. */
 export interface PipelineStage {
   /**
@@ -164,6 +175,12 @@ export interface PipelineStage {
    * one enters. Absent: each promote goes through on its own.
    */
   queue?: PipelineStageQueue;
+  /**
+   * The soak (#5326): checks that must keep passing for `duration` after
+   * the stage's last apply before a promotion into the next stage passes
+   * its gate. A promotion during the soak exits 3 with the time left.
+   */
+  soak?: Soak;
 }
 
 /** The values a stage's `queue` takes (#5353). */
@@ -199,6 +216,8 @@ export interface PipelineDeclaration {
   release?: PipelineRelease;
   /** The control repo told once the first stage applied: the `<product>-applied` dispatch. */
   control?: OpWavesControl;
+  /** The scheduled re-run of promotions a soak holds (#5326). */
+  recheck?: PipelineRecheck;
 }
 
 /** The folded spec: the declaration as data, with its kind. */
@@ -208,11 +227,12 @@ export interface PipelineSpec extends PipelineDeclaration {
 
 const NAME = /^[a-z0-9][a-z0-9_-]*$/;
 const TOLERANCE = /^(100|[1-9]?[0-9])%$/;
+const CRON = /^\S+(\s+\S+){4}$/;
 
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
-export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control"];
+export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control", "recheck"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback", "soak"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds", "urgent"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
@@ -322,6 +342,9 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
       if (isMap(w)) {
         const p = failureToleranceProblem(w.failureTolerance, `${at}.waves[${k}].failureTolerance`);
         if (p) out.push(p);
+        out.push(...soakProblems(w.soak, `${at}.waves[${k}]`));
+        if (w.soak !== undefined && w.rest === true) out.push(`${at}.waves[${k}] has soak and rest; the waves a rest wave walks run in its one job, so none of them can wait for a soak`);
+        if (w.soak !== undefined && k === (stage.waves as unknown[]).length - 1) out.push(`${at}.waves[${k}] has soak and is the stage's last wave; a wave's soak holds the wave after it, so the last wave's goes on the stage (${at}.soak)`);
       }
     });
   }
@@ -344,6 +367,7 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
     }
   }
   if (stage.queue !== undefined && !(PIPELINE_STAGE_QUEUES as readonly unknown[]).includes(stage.queue)) out.push(`${at}.queue is ${PIPELINE_STAGE_QUEUES.join(", ")}`);
+  out.push(...soakProblems(stage.soak, at));
   return out;
 }
 
@@ -460,6 +484,13 @@ export function pipelineSpecProblems(value: unknown): string[] {
     }
   }
   if (value.control !== undefined) out.push(...opWavesControlProblems(value.control).map((p) => `the pipeline's ${p}`));
+  if (value.recheck !== undefined) {
+    if (!isMap(value.recheck)) out.push("the pipeline's recheck must be { \"schedule\" }");
+    else {
+      out.push(...unknownKeys(value.recheck, ["schedule"], "recheck"));
+      if (typeof value.recheck.schedule !== "string" || !CRON.test(value.recheck.schedule.trim())) out.push("recheck.schedule must be a five-field cron line, such as \"*/30 * * * *\"");
+    }
+  }
   return out;
 }
 
@@ -497,6 +528,7 @@ export const PIPELINE_SPEC_SCHEMA = {
       properties: { cut: { type: "boolean" }, label: { type: "string", minLength: 1 }, bin: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } } },
     },
     control: { type: "object" },
+    recheck: { type: "object", required: ["schedule"], additionalProperties: false, properties: { schedule: { type: "string", pattern: CRON.source } } },
     stages: {
       type: "array",
       minItems: 1,
@@ -507,7 +539,7 @@ export const PIPELINE_SPEC_SCHEMA = {
         properties: {
           name: { type: "string", pattern: NAME.source },
           canary: { type: "boolean" },
-          waves: { type: "array", minItems: 1, items: { type: "object", required: ["name"], properties: { name: { type: "string", pattern: NAME.source }, failureTolerance: { $ref: "#/$defs/tolerance" } } } },
+          waves: { type: "array", minItems: 1, items: { type: "object", required: ["name"], properties: { name: { type: "string", pattern: NAME.source }, failureTolerance: { $ref: "#/$defs/tolerance" }, soak: { $ref: "#/$defs/soak" } } } },
           gate: {
             type: "object",
             additionalProperties: false,
@@ -545,6 +577,7 @@ export const PIPELINE_SPEC_SCHEMA = {
           after: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: NAME.source } },
           queue: { enum: [...PIPELINE_STAGE_QUEUES] },
           pauseAfterRollback: { type: "boolean" },
+          soak: { $ref: "#/$defs/soak" },
         },
       },
     },
@@ -557,5 +590,33 @@ export const PIPELINE_SPEC_SCHEMA = {
       description: `a rule { name?, targets?, count, roles?, notAuthor?, proven? }, or a group { name?, all | any }, nested up to ${QUORUM_MAX_DEPTH} groups deep`,
     },
     tolerance: { oneOf: [{ type: "integer", minimum: 0 }, { type: "string", pattern: TOLERANCE.source }] },
+    duration: { type: "string", pattern: "^(0|\\d+[mhd])$" },
+    check: {
+      type: "object",
+      required: ["kind"],
+      properties: {
+        kind: { enum: ["drift", "apply", "policy", "http", "prometheus", "cloudwatch-alarm", "command", "health"] },
+        name: { type: "string", minLength: 1 },
+        onFail: { enum: ["restart", "hold"] },
+      },
+    },
+    soak: {
+      type: "object",
+      required: ["duration"],
+      additionalProperties: false,
+      properties: {
+        duration: { $ref: "#/$defs/duration" },
+        checks: { type: "array", items: { $ref: "#/$defs/check" } },
+        overrides: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["members"],
+            additionalProperties: false,
+            properties: { members: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } }, duration: { $ref: "#/$defs/duration" }, checks: { type: "array", items: { $ref: "#/$defs/check" } } },
+          },
+        },
+      },
+    },
   },
 } as const;

@@ -181,6 +181,8 @@ export interface ParsedArgs {
   allowSkip?: boolean;
   /** `chant components promote --urgent` (#5355): pass the stage's gate on its urgent rule, one proven approval from its role. */
   urgent?: boolean;
+  /** `chant components promote --to <stage> --pending` (#5326): run again the promotion into the stage that a soak holds, as its pending fact names it. */
+  pendingPromotion?: boolean;
   /** `chant release publish --allow-unsigned` (#4049): publish a release with no signature that verifies, with a warning. Never overrides identity.gates.release. */
   allowUnsigned?: boolean;
   /** `chant release publish --require-provenance` (#4049): refuse a run with no OIDC token, where it warns. */
