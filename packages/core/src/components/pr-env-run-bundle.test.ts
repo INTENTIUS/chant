@@ -33,6 +33,8 @@ describe("the pr-env-run bundle", () => {
       "packages/core/src/config-environments.ts",
       // The exit-code table (#4553): no imports.
       "packages/core/src/exit-codes.ts",
+      // The forge token variables' names, which ./ci-handover takes from their own module (#5416): no imports.
+      "packages/core/src/forge-token-vars.ts",
       "packages/core/src/lifecycle/teardown.ts",
       "packages/core/src/live-endpoint.ts",
       "packages/core/src/observation.ts",
