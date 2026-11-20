@@ -131,6 +131,8 @@ export interface StageHeld {
   /** When it lifts by itself, or null when only a change to the pipeline lifts it. */
   until: string | null;
   reason?: string;
+  /** What the person who lifts the hold reads first (#5354). */
+  description?: string;
 }
 
 /** The hold or freeze window on `stage` at `now`, or undefined when promotion is open. A hold wins over a window. */
@@ -138,7 +140,7 @@ export function stageHeldAt(stage: Pick<PipelineStage, "name" | "hold" | "freeze
   const hold = stage.hold;
   if (hold === true) return { stage: stage.name, kind: "hold", until: null };
   if (hold !== undefined && (hold.until === undefined || Date.parse(hold.until) > now.getTime())) {
-    return { stage: stage.name, kind: "hold", until: hold.until ?? null, ...(hold.reason ? { reason: hold.reason } : {}) };
+    return { stage: stage.name, kind: "hold", until: hold.until ?? null, ...(hold.reason ? { reason: hold.reason } : {}), ...(hold.description ? { description: hold.description } : {}) };
   }
   const windows = (stage.freeze ?? []).filter((w: PipelineFreezeWindow) => Date.parse(w.from) <= now.getTime() && now.getTime() < Date.parse(w.until));
   if (windows.length === 0) return undefined;
@@ -151,5 +153,6 @@ export function stageHeldAt(stage: Pick<PipelineStage, "name" | "hold" | "freeze
 export function stageHeldLine(held: StageHeld): string {
   const what = held.kind === "hold" ? `stage "${held.stage}" is held` : `stage "${held.stage}" is in a freeze window`;
   const until = held.until ? ` until ${held.until}` : " until a change to the pipeline lifts the hold";
-  return `${what}${until}${held.reason ? ` (${held.reason})` : ""}, so nothing is promoted into it`;
+  const read = held.description ? `. Before it goes on: ${held.description}` : "";
+  return `${what}${until}${held.reason ? ` (${held.reason})` : ""}, so nothing is promoted into it${read}`;
 }

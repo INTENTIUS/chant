@@ -81,6 +81,24 @@ With a pipeline, `components promote` reads it at the default branch's tip:
 - A held stage, or one inside a freeze window, refuses with exit 3 and names the time it opens.
 - The stage's gate waits for an approval of the release's digest, unless its policy is `never`. The promote exits 3 and prints the `chant approve shop staging --env staging --plan <digest>` line; run the promote again once it is approved.
 - A promote that skips a stage is refused. With `--allow-skip` it passes only through each skipped stage's gate, `<stage>-skip`, and the skip is recorded on `_gates/shop/applied.jsonl`.
+- A release someone rejected at the stage's gate does not enter the stage, and is not skipped past it. The promote exits 8 and names who rejected it and why.
+- Under a gate whose `approval` is `sealed`, only an approval sealed by a signer at the tip counts, as it does for a wave.
+
+## Reject a release
+
+A reviewer who does not want a release in a stage turns it down at the stage's gate:
+
+```bash
+chant reject shop staging --reason "the migration locks the orders table"
+```
+
+`chant reject <pipeline> <stage>` records the rejection on `_gates/shop/rejected.jsonl` on `chant/lifecycle`, bound to the release's digest. It takes the digest, the environment and the release off the gate's pending fact, as `chant approve` does; with no pending fact yet, pass `--plan <digest>`. The promote into staging then exits 8 with `release <digest> was rejected at shop staging ... rejected by github:alice at <time>: the migration locks the orders table`.
+
+A rejection counts by the rules an approval of the same gate counts by. A gate whose `approval` is `sealed`, or that the workspace's `identity.gates` names, counts only a signed rejection: `--sign [<key file>]`, or `--statement` and then `--signature <file> --at <time>` for a signature made with a passkey or elsewhere. A gate whose rules count only proven approvers, or approvers with a role, counts only a rejection from someone they would count. An agent's rejection counts for nothing, as an agent's approval does. A rejection that does not count is printed with the reason, and the gate is decided as if it were not there.
+
+A product whose words map a comment command onto `reject` takes the same from a pull request comment, `/<product> reject <reason>`, recorded under the author's forge identity where the stage's mode takes it. A `sealed` stage, or one whose rules need a proven approver, answers with the `chant reject ... --sign` line instead ([product config](/chant/reference/ci-product-config/#promote-roll-back-and-redeploy)).
+
+Approvals never clear a rejection, and nothing withdraws it. The way on is a new release with the change the reason asks for, which has a new digest and goes through the gate again.
 
 `chant workspace train promote` reads the same holds for each member before any member deploys.
 
@@ -124,4 +142,12 @@ Within the tolerance the failed runs stay failed and block the runs that depend 
 
 ## Hold a stage
 
-Set `hold: true` on a stage, or `hold: { reason, until }`, and merge the change. A promote into the stage then refuses with exit 3 until the hold lifts.
+Set `hold: true` on a stage, or `hold: { reason, until, description }`, and merge the change. A promote into the stage then refuses with exit 3 until the hold lifts.
+
+`description` is what the person who lifts the hold reads first, such as what to check before the stage goes on:
+
+```typescript
+{ name: "prod", waves, hold: { reason: "billing cut-over", description: "confirm the invoice run finished in the billing dashboard" } }
+```
+
+The promote the hold refuses prints it, `chant workspace status` prints it under the member, and the plan note of the pull request that lifts the hold shows it above the pipeline's diff.

@@ -31,12 +31,23 @@
  * gate. A stage with `queue: "replace"` takes one release at a time: a
  * newer release waiting replaces an older one, and a release that waits
  * while another is in the stage exits 3 until that one finishes.
+ *
+ * A release rejected at a stage's gate (#5354, `chant reject <pipeline>
+ * <stage>`) does not enter the stage, and is not skipped past it: the
+ * promote exits 8 and says who rejected it and why, before any approval is
+ * read, so more approvals never clear it. A rejection counts by the proof
+ * rules the gate's approvals count by (`../op/gate-reject.ts`): the gate's
+ * `approval` mode (a `sealed` gate counts sealed approvals and rejections
+ * only), the workspace's `identity.gates` rule, and the gate's rules.
  */
 
 import { createHash } from "node:crypto";
-import { approveCommand, evaluateGate, type GateLedgerPort } from "../op/gate";
+import { approveCommand, evaluateGate, type GateApprovalRule, type GateLedgerPort } from "../op/gate";
 import { pipelineTracksStages, stageUpstreams, type PipelineSpec, type PipelineStage } from "./spec";
 import { replacedIn, stageQueueOf, succeededIn, type StageLine, type StageLogPort } from "../lifecycle/stage-log";
+import { gateRejections, rejectionLine } from "../op/gate-reject";
+import { gateSealRefusal, type GateSigners } from "../lifecycle/gate-seal";
+import type { GateRejectionRecord } from "../lifecycle/gate-rejection";
 import { stageHeldAt, stageHeldLine } from "./stages";
 
 /** A refusal or a wait, with the exit code the promote ends with. */
@@ -53,8 +64,24 @@ export interface PipelinePromoteStop {
     | "pipeline-join-needs-release"
     | "pipeline-upstream-waiting"
     | "pipeline-release-replaced"
-    | "pipeline-stage-busy";
+    | "pipeline-stage-busy"
+    | "pipeline-release-rejected";
+  /** Lines the promote prints before the stop, such as a rejection that does not count and why (#5354). */
+  lines?: string[];
 }
+
+/**
+ * What proves who approved or rejected at a stage's gate (#5354): the
+ * signers and passkeys, and the role grants, at the commit the gate is read
+ * at. Absent, nothing proves anyone: a `sealed` gate passes nothing, and
+ * counts no rejection.
+ */
+export interface PipelineGateProof {
+  signers: GateSigners;
+  roles: Readonly<Record<string, readonly string[]>>;
+}
+
+const NO_PROOF: PipelineGateProof = { signers: { base: null, signersPath: ".chant/allowed_signers", active: false, signers: [], problems: [] }, roles: {} };
 
 /** The digest a stage gate binds when there is no release: the components and digests promoted, in order. */
 export function promotedDigest(items: readonly { component: string; digest: string }[]): string {
@@ -133,13 +160,63 @@ export async function pipelinePromoteGates(input: {
   actor?: string;
   gitSha?: string;
   now: Date;
+  /** What proves an approver or a rejecter (#5354). */
+  proof?: PipelineGateProof;
 }): Promise<PipelineGatesOutcome> {
   const { spec, port, digest } = input;
+  const proof = input.proof ?? NO_PROOF;
   const now = input.now.toISOString();
   const lines: string[] = [];
+  const rules: Record<string, GateApprovalRule | null> = {};
+  // #3163: the workspace's identity.gates rule for a gate, read once.
+  const identityOf = async (gate: string): Promise<GateApprovalRule | null> => (gate in rules ? rules[gate]! : (rules[gate] = (await port.approvalRule?.(gate)) ?? null));
+  // #5354: under `sealed`, only an approval whose seal verifies at base counts, as a wave's sealed gate counts it.
+  const ruleFor = async (stage: PipelineStage, gate: string): Promise<GateApprovalRule | null> => {
+    const own = await identityOf(gate);
+    if (stage.gate?.approval !== "sealed") return own;
+    const sealed: GateApprovalRule = { requirement: { gate, class: null }, refuses: (a) => gateSealRefusal(proof.signers, a) };
+    return own ? { requirement: own.requirement, refuses: (a) => own.refuses(a) ?? sealed.refuses(a) } : sealed;
+  };
+  // #5354: the rejections of the pipeline's gates, read once.
+  let rejectionLedger: GateRejectionRecord[] | undefined;
+  const rejectedAt = async (stage: PipelineStage, gate: string): Promise<GateRejectionRecord[]> => {
+    rejectionLedger ??= (await port.readRejections?.(spec.name)) ?? [];
+    const identity = await identityOf(gate);
+    const found = gateRejections(rejectionLedger, {
+      gate,
+      planDigest: digest,
+      environment: stage.name,
+      ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
+      mode: stage.gate?.approval ?? "ledger",
+      ...(stage.gate?.quorum ? { quorum: stage.gate.quorum } : {}),
+      signers: proof.signers,
+      roles: proof.roles,
+      identity: identity ? (identity.refusesRejection ?? (() => `the workspace's rule for gate ${gate} judges no rejection here`)) : null,
+    });
+    for (const { rejection, why } of found.ignored) lines.push(`${spec.name} ${gate}: the rejection by ${rejection.rejectedBy} does not count: ${why}`);
+    return found.standing;
+  };
+  const rejected = async (stage: PipelineStage, gates: readonly string[]): Promise<PipelineGatesOutcome | undefined> => {
+    for (const gate of gates) {
+      const standing = await rejectedAt(stage, gate);
+      if (standing.length === 0) continue;
+      const what = input.releaseDigest !== undefined ? `release ${input.releaseDigest}` : `the promotion ${digest}`;
+      return {
+        passed: false,
+        exitCode: 8,
+        code: "pipeline-release-rejected",
+        message: `${what} was rejected at ${spec.name} ${gate}, so it does not enter stage ${stage.name}: ${standing.map(rejectionLine).join("; ")}`,
+        hint: "A rejection stands for this release, and more approvals do not clear it. Cut a new release with the change it asks for, and promote that one.",
+        lines: [...lines],
+      };
+    }
+    return undefined;
+  };
   const check = async (stage: PipelineStage, gate: string) => {
     const rules = stage.gate?.quorum;
+    const rule = await ruleFor(stage, gate);
     return evaluateGate(port, {
+      rule,
       op: spec.name,
       gate,
       planDigest: digest,
@@ -150,34 +227,41 @@ export async function pipelinePromoteGates(input: {
       ...(rules && rules.length > 0 ? { approval: { quorum: rules, mode: "enforce" as const } } : {}),
     });
   };
-  const waiting = (gate: string, stage: string): PipelineGatesOutcome => ({
+  const waiting = (gate: string, stage: PipelineStage): PipelineGatesOutcome => ({
     passed: false,
+    lines: [...lines],
     exitCode: 3,
     code: "pipeline-gate-waiting",
     message: `${spec.name} ${gate} waits for an approval of ${digest}`,
-    hint: approveCommand(spec.name, gate, stage, digest),
+    hint: approveCommand(spec.name, gate, stage.name, digest, stage.gate?.approval === "sealed"),
   });
 
   for (const stage of input.skipped) {
     const gate = `${stage.name}-skip`;
+    // #5354: a release rejected at a stage is not skipped past it either.
+    const stop = await rejected(stage, [stage.name, gate]);
+    if (stop) return stop;
     if (stage.gate?.policy === "never") {
       await port.appendApplied?.({ version: 1, kind: "applied", op: spec.name, gate, planDigest: digest, approvedAt: now, approvedBy: "gate-policy-never", timestamp: now, ...(input.gitSha ? { commit: input.gitSha } : {}) });
       lines.push(`skipped ${stage.name}: its gate never waits`);
       continue;
     }
     const got = await check(stage, gate);
-    if (!got.satisfied) return waiting(gate, stage.name);
+    if (!got.satisfied) return waiting(gate, stage);
     await port.appendApplied?.({ version: 1, kind: "applied", op: spec.name, gate, planDigest: digest, approvedAt: got.resolution.timestamp, approvedBy: got.resolution.resolvedBy, timestamp: now, ...(input.gitSha ? { commit: input.gitSha } : {}) });
     lines.push(`skipped ${stage.name} through ${spec.name} ${gate}, approved by ${got.resolution.resolvedBy}`);
   }
 
   const stage = spec.stages.find((s) => s.name === input.to)!;
+  // #5354: a rejection stops the stage whatever its policy, before any approval is read.
+  const stop = await rejected(stage, [stage.name]);
+  if (stop) return stop;
   if (stage.gate?.policy === "never") {
     lines.push(`stage ${stage.name}: its gate never waits`);
     return { passed: true, lines };
   }
   const got = await check(stage, stage.name);
-  if (!got.satisfied) return waiting(stage.name, stage.name);
+  if (!got.satisfied) return waiting(stage.name, stage);
   lines.push(`stage ${stage.name}: ${spec.name} ${stage.name} approved by ${got.resolution.resolvedBy}`);
   return { passed: true, lines };
 }
@@ -233,10 +317,12 @@ export async function pipelineStageEntry(input: {
   gitSha?: string;
   runId?: string;
   now: Date;
+  /** What proves an approver or a rejecter (#5354), handed to {@link pipelinePromoteGates}. */
+  proof?: PipelineGateProof;
 }): Promise<PipelineEntryOutcome> {
   const { spec, to, digest, log } = input;
   const gates = (skipped: readonly PipelineStage[]) =>
-    pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), now: input.now });
+    pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), now: input.now });
   if (!pipelineTracksStages(spec)) return gates(input.skipped);
 
   const timestamp = input.now.toISOString();

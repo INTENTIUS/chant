@@ -50,14 +50,15 @@ import {
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
 import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
+import { gateRejectionPath, parseGateRejections, type GateRejectionRecord } from "../lifecycle/gate-rejection";
 import { isModelAuthored } from "../lifecycle/gate-origin";
 import { appliedGatePath, isApprovalSpent, parseAppliedGateFile, parseAppliedGateLines, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
 import { gatedRequestAttachmentPath } from "../lifecycle/gated-request-digest";
 import { sortedJsonReplacer } from "../utils";
 import { gateContextDigest, gatePermitReadsRisk, type GateApprover, type GateBaseApproval, type ResolvedGateApproval } from "./gate-approval";
 import {
-  quorumNeed, quorumRuleProgress, quorumRules, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
-  type GateQuorumJudge, type GateQuorumRuleProgress, type GateQuorumSpec,
+  quorumNeed, quorumNodes, quorumRules, quorumTreeProgress, ruleNeedsProof, samePrincipal, trustQuorumJudge, UNPROVEN_JUDGE,
+  type GateQuorumGroupProgress, type GateQuorumJudge, type GateQuorumRuleProgress, type GateQuorumSpec,
 } from "./gate-quorum";
 import { LifecyclePushLostError, pushLifecycleRebasing, readBlobBySha, readBlobFromPath, readPathSha, requireLifecycleLedger, writeBlobToPath, RefCASConflictError } from "../lifecycle/git";
 import { parseDuration } from "./duration";
@@ -162,6 +163,10 @@ export interface GateLedgerPort {
    * port that keeps none, and the fact then cites none.
    */
   storeChangeSet?(doc: ChangeSetDocument): Promise<void>;
+  /** The rejections of `op`'s gates (#5354), from `_gates/<op>/rejected.jsonl`, oldest first. Absent on a port that keeps none. */
+  readRejections?(op: string): Promise<GateRejectionRecord[]>;
+  /** Append a rejection (#5354) and push it. */
+  appendRejection?(record: GateRejectionRecord): Promise<{ pushed: boolean; pushWarning?: string }>;
 }
 
 /** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
@@ -175,6 +180,12 @@ export interface GateApprovalRule {
   requirement: { gate: string; class: string | null; quorum?: GateQuorumSpec | null } & GateBaseApproval;
   /** Why `approval` doesn't count, or null when it does. */
   refuses(approval: GateResolutionRecord): string | null;
+  /**
+   * Why a rejection (#5354) doesn't count, or null when it does: the same
+   * rule over the rejection's own seal. Absent on a rule that judges no
+   * rejection; a gate with such a rule then counts no rejection.
+   */
+  refusesRejection?(rejection: GateRejectionRecord): string | null;
 }
 
 /**
@@ -248,6 +259,15 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
     async appendApplied(record) {
       return appendAppliedFileLine(record.op, record as unknown as Record<string, unknown>, `Applied under ${record.gate}`);
     },
+    async readRejections(op) {
+      await requireLifecycleLedger(opts);
+      const { dir, file } = gateRejectionPath(op);
+      const text = await readBlobFromPath(dir, file, opts);
+      return text ? parseGateRejections(text) : [];
+    },
+    async appendRejection(record) {
+      return appendAppliedFileLine(record.op, record as unknown as Record<string, unknown>, `Rejected at ${record.gate}`, gateRejectionPath(record.op));
+    },
     async appendFinished(record) {
       return appendAppliedFileLine(record.op, record as unknown as Record<string, unknown>, `Finished under ${record.gate}`);
     },
@@ -271,8 +291,8 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
   };
 
   /** Append one line to `_gates/<op>/applied.jsonl` on top of the remote's ledger, retrying on a concurrent writer, and push. */
-  async function appendAppliedFileLine(op: string, record: Record<string, unknown>, message: string): Promise<{ pushed: boolean; pushWarning?: string }> {
-    const { dir, file } = appliedGatePath(op);
+  async function appendAppliedFileLine(op: string, record: Record<string, unknown>, message: string, at = appliedGatePath(op)): Promise<{ pushed: boolean; pushWarning?: string }> {
+    const { dir, file } = at;
     const line = JSON.stringify(record, sortedJsonReplacer);
     // #3985: write on top of the remote's ledger, not a local copy another
     // writer has since moved past, so the push that follows can land.
@@ -314,9 +334,11 @@ function gateReportParts(op: string, gate: string, digest: string): { dir: strin
 
 /** A gate ledger held in memory — what a test, or a caller that has already read the ledger, hands {@link evaluateGate}. */
 export function memoryGateLedgerPort(
-  seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[]; applied?: AppliedGateRecord[] } = {},
+  seed: { resolutions?: GateResolutionRecord[]; pending?: PendingGateRecord[]; applied?: AppliedGateRecord[]; rejections?: GateRejectionRecord[] } = {},
 ): GateLedgerPort & {
   appended: PendingGateRecord[];
+  /** The rejections, seeded and appended (#5354). */
+  rejections: GateRejectionRecord[];
   resolved: GateResolutionRecord[];
   applied: AppliedGateRecord[];
   /** The finished lines appended (#4623). */
@@ -337,8 +359,17 @@ export function memoryGateLedgerPort(
   const finished: FinishedGateRecord[] = [];
   const attachments = new Map<string, string>();
   const reports = new Map<string, string>();
+  const rejections: GateRejectionRecord[] = [...(seed.rejections ?? [])];
   return {
     reports,
+    rejections,
+    async readRejections(op) {
+      return rejections.filter((r) => r.op === op);
+    },
+    async appendRejection(record) {
+      rejections.push(record);
+      return { pushed: true };
+    },
     async storeGateReport(op, gate, digest, text) {
       const at = opWaveGateReportPath(op, gate, digest);
       if (!reports.has(at)) reports.set(at, text);
@@ -581,6 +612,8 @@ export interface GateQuorumProgress {
   need: number;
   /** Where each approval rule the gate takes stands (#4290). Absent when it takes none. */
   rules?: GateQuorumRuleProgress[];
+  /** Where each `all`/`any` group stands (#5354). Absent when the rules have no group. */
+  groups?: Array<GateQuorumRuleProgress | GateQuorumGroupProgress>;
 }
 
 /** Either the gate is answered, or it is a standing fact. */
@@ -653,6 +686,8 @@ export interface GateTally {
   met: boolean;
   /** Where each rule stands (#4290). Absent when the gate takes no rule. */
   rules?: GateQuorumRuleProgress[];
+  /** Where each top-level rule and `all`/`any` group stands (#5354). Absent when the gate's rules have no group. */
+  groups?: Array<GateQuorumRuleProgress | GateQuorumGroupProgress>;
   /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version and resolved context. */
   permit?: GateResolutionRecord;
   /** The newest approval of this gate for a different plan, when the gate binds one. */
@@ -696,6 +731,8 @@ export function tallyGateApprovals(
   const since = new Date(sinceIso).getTime();
   const humansSince = Math.min(since, new Date(humansSinceIso).getTime());
   const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
+  // #5354: the rules a gate takes may be grouped with all and any; `rules` is every rule, for what any of them needs.
+  const nodes = quorumNodes(approval.quorum);
   const rules = quorumRules(approval.quorum);
   const context = gateContextDigest(approval.context);
   const readsRisk = gatePermitReadsRisk(approval);
@@ -742,9 +779,10 @@ export function tallyGateApprovals(
   const extra = { ...(permit ? { permit } : {}), ...(mismatched ? { mismatched } : {}) };
   if (rules.length === 0) return { counted: humans, need: 1, met: humans.length >= 1, ...extra };
   const approvers = humans.map((r) => ({ who: r.resolvedBy, at: r.timestamp, judged: judge(r) }));
-  const progress = rules.map((rule) => quorumRuleProgress(rule, approvers));
+  const tree = quorumTreeProgress(nodes, approvers);
+  const progress = tree.rules;
   const counted = humans.filter((r) => progress.some((p) => p.approvers.some((a) => samePrincipal(a, r.resolvedBy))));
-  return { counted, need: quorumNeed(rules), met: progress.every((p) => p.met), rules: progress, ...extra };
+  return { counted, need: quorumNeed(rules), met: tree.met, rules: progress, ...(tree.groups ? { groups: tree.groups } : {}), ...extra };
 }
 
 /**
@@ -1023,7 +1061,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
       };
     }
     mismatched = tally.mismatched;
-    quorum = { approvers: tally.counted.map((r) => r.resolvedBy), need: tally.need, ...(tally.rules ? { rules: tally.rules } : {}) };
+    quorum = { approvers: tally.counted.map((r) => r.resolvedBy), need: tally.need, ...(tally.rules ? { rules: tally.rules } : {}), ...(tally.groups ? { groups: tally.groups } : {}) };
     // #3949: old and new approvals add up toward one quorum, each approver once.
     const counted = new Set(tally.counted.map((r) => r.resolvedBy));
     const extra = fromAliases.filter((r) => !counted.has(r.resolvedBy));
@@ -1035,7 +1073,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
         const approvals = [...combined.counted.filter((r) => !asCarried.has(r)), ...written];
         return { satisfied: true, resolution: written[written.length - 1]!, via: "alias", approvals, carried: written };
       }
-      quorum = { approvers: combined.counted.map((r) => r.resolvedBy), need: combined.need, ...(combined.rules ? { rules: combined.rules } : {}) };
+      quorum = { approvers: combined.counted.map((r) => r.resolvedBy), need: combined.need, ...(combined.rules ? { rules: combined.rules } : {}), ...(combined.groups ? { groups: combined.groups } : {}) };
     }
   } else {
     const found = latestResolutionForPlan(resolutions, input.gate, since, input.planDigest);

@@ -307,12 +307,12 @@ export type GateSignatureCheck = { ok: true; key: string } | { ok: false; unlist
 /**
  * Whether `seal`'s signature over `payload` verifies for `principal` with a
  * key listed for them at base (#4646): an ssh signature in the `chant-gate`
- * namespace against the signers file's keys, or, for a seal of kind
- * `webauthn`, an assertion against the passkeys `.chant/trust.json` lists.
+ * namespace (or `namespace`, such as a rejection's, #5354) against the
+ * signers file's keys, or, for a seal of kind `webauthn`, an assertion against the passkeys `.chant/trust.json` lists.
  * The one check `chant approve`, the `identity.gates` rule, a sealed gate and
  * `checkGateSeal` all make. Never throws.
  */
-export function checkGateSignature(keys: GateSignerKeys, principal: string, seal: { signature: string } & Record<string, unknown>, payload: Buffer): GateSignatureCheck {
+export function checkGateSignature(keys: GateSignerKeys, principal: string, seal: { signature: string } & Record<string, unknown>, payload: Buffer, namespace: string = GATE_SEAL_NAMESPACE): GateSignatureCheck {
   const name = normalise(principal);
   if (seal.kind === WEBAUTHN_SEAL_KIND) {
     const passkeys = (keys.passkeys ?? []).filter((p) => normalise(p.principal) === name);
@@ -327,8 +327,8 @@ export function checkGateSignature(keys: GateSignerKeys, principal: string, seal
   if (seal.kind !== undefined) return { ok: false, unlisted: false, reason: `a seal of kind ${JSON.stringify(seal.kind)} is not one this chant reads` };
   const listed = keys.signers.filter((s) => normalise(s.principal) === name);
   if (listed.length === 0) return { ok: false, unlisted: true, reason: `${principal} has no key in the signers file at base` };
-  const blobs = listed.filter((s) => namespaceAllowed(s.namespaces, GATE_SEAL_NAMESPACE)).map((s) => Buffer.from(s.key.split(" ")[1] ?? "", "base64"));
-  const r = verifySshSignatureWith(seal.signature, payload, GATE_SEAL_NAMESPACE, blobs);
+  const blobs = listed.filter((s) => namespaceAllowed(s.namespaces, namespace)).map((s) => Buffer.from(s.key.split(" ")[1] ?? "", "base64"));
+  const r = verifySshSignatureWith(seal.signature, payload, namespace, blobs);
   return r.ok ? r : { ok: false, unlisted: false, reason: r.reason };
 }
 

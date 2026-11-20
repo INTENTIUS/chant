@@ -24,7 +24,7 @@ import { samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
 import { humanQuorumSince, tallyGateApprovals, type GateApprovalRule } from "../op/gate";
-import type { GateQuorumJudge } from "../op/gate-quorum";
+import { quorumGroupLines, quorumRuleLine, type GateQuorumJudge } from "../op/gate-quorum";
 import type { ReasonCode } from "./reason-codes";
 import type { ReleaseRevocation } from "../lifecycle/release-revocation";
 import { CHANGE_SETS_DIR, changeSetFile } from "../lifecycle/change-set-store";
@@ -109,6 +109,12 @@ export interface StatusGate {
   approvals: StatusGateApproval[];
   /** How many human approvals the gate needs: its quorum's count, 1 without one. */
   needed: number;
+  /**
+   * Where each approval rule of the gate stands, one line each (#5354),
+   * named rules by their name, then each `all`/`any` group's line. Present
+   * when the gate's rules are named or grouped.
+   */
+  rules?: string[];
   /**
    * The declaration's rule for the gate (#3163, ws-080): set when
    * `identity.gates` names it, so only an approval sealed by a signer at
@@ -215,6 +221,7 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
   let approved: boolean;
   let approvals: GateResolutionRecord[];
   let needed = 1;
+  let rules: string[] | undefined;
   let mismatched: GateResolutionRecord | undefined;
   if (standing.approval) {
     // #3206: a human approval from before a fact re-recorded for a mode or context change still counts.
@@ -224,6 +231,8 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
     approvals = tally.permit && !tally.counted.includes(tally.permit) ? [...tally.counted, tally.permit] : tally.counted;
     needed = tally.need;
     mismatched = tally.mismatched;
+    // #5354: a gate whose rules are named or grouped lists where each stands.
+    if (tally.groups || tally.rules?.some((r) => r.name !== undefined)) rules = [...(tally.rules ?? []).map(quorumRuleLine), ...quorumGroupLines(tally.groups)];
   } else {
     const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
     approvals = own
@@ -247,6 +256,7 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
     expiresAt: standing.expiresAt,
     approvals: approvals.map(approvalOf),
     needed,
+    ...(rules ? { rules } : {}),
     signed: rule === null ? null : { class: rule.requirement.class },
     approve: standing.answer ? `chant workspace points answer ${standing.answer.id} --answer <value> --by <name>` : approveCommand(component, gate, env, planDigest, rule !== null),
     ...(standing.answer ? { answer: { point: standing.answer.point, id: standing.answer.id, path: standing.answer.path } } : {}),

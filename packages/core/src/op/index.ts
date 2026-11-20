@@ -198,10 +198,15 @@ export type {
 export {
   quorumRules, quorumRulesFor, quorumNeed, quorumProblems, quorumRuleProgress, quorumRuleLine, quorumWaiting, rolesOf, trustQuorumJudge, UNPROVEN_JUDGE,
   changeInvolvement, involvedWhy, principalNames, recordedReviewApprovals, recordedReviewOf, requestedByTrailers,
+  quorumNodes, quorumTreeProgress, quorumGroupLine, quorumGroupLines, quorumRuleSites, ruleAdmits, isQuorumAll, isQuorumAny, isQuorumGroup, QUORUM_MAX_DEPTH,
 } from "./gate-quorum";
 export type {
   GateQuorumRule, GateQuorumSpec, GateQuorumJudge, GateQuorumRuleProgress, QuorumJudgement, QuorumApprover, TrustQuorumInput, QuorumInvolvement, RecordedReview,
+  GateQuorumAll, GateQuorumAny, GateQuorumNode, GateQuorumGroupProgress, GateQuorumTreeProgress,
 } from "./gate-quorum";
+// #5354: rejecting the digest a gate waits on.
+export { GATE_REJECTION_FLOOR, gateRejections, rejectionRefusal, rejectionLine, rejectsDigest, type GateRejectionInput, type GateRejections } from "./gate-reject";
+export { GATE_REJECTION_NAMESPACE, gateRejectionPath, gateRejectionPayload, parseGateRejections, rejectionReasonProblem, rejectionSealRefusal, type GateRejectionRecord, type SealedGateRejection } from "../lifecycle/gate-rejection";
 export {
   gatePlanSummary, gatePlanSummaryOfResult, changeSetOfResult, GATE_PLAN_CONTEXT_KEY, GATE_PLAN_ADDRESS_LIMIT,
 } from "./gate-plan-context";

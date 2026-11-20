@@ -1028,6 +1028,13 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
           if (e.mixed.rollback) memberNotes.push(`    roll back: ${e.mixed.rollback}`);
         }
       }
+      // #5354: a held stage, until when, and what the person who lifts the hold reads first.
+      for (const step of m.promotionOrder ?? []) {
+        if (!step.held) continue;
+        const until = step.held.until ? ` until ${step.held.until}` : " until a change to the pipeline lifts it";
+        memberNotes.push(`  stage ${step.name} is ${step.held.kind === "hold" ? "held" : "in a freeze window"}${until}${step.held.reason ? ` (${step.held.reason})` : ""}`);
+        if (step.held.description) memberNotes.push(`    before it goes on: ${step.held.description}`);
+      }
       if (memberNotes.length > 0) notes.set(rows.length - 1, memberNotes);
     }
     table(rows).forEach((line, i) => {

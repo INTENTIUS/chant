@@ -51,6 +51,9 @@ export async function runComponentsPrNotes(ctx: CommandContext): Promise<number>
     return fail(err instanceof Error ? err.message : String(err));
   }
   const beforeMerge = more.wavesBeforeMerge && more.waves ? await beforeMergeDeps(forge, more, env) : undefined;
+  // #5354: a reject note is recorded when the product's words map a command onto reject.
+  const { commentRejectFromEnv } = await import("../../ci-comment-reject");
+  const reject = await commentRejectFromEnv(words, env, cwd);
   const polled = await pollNoteCommands({
     reads: forgeReadsFor(target),
     forge,
@@ -66,7 +69,7 @@ export async function runComponentsPrNotes(ctx: CommandContext): Promise<number>
         ...(more.waves ? { waves: more.waves } : {}),
         ...(more.wavesBeforeMerge ? { wavesBeforeMerge: more.wavesBeforeMerge } : {}),
       },
-      beforeMerge ? { beforeMerge } : {},
+      { ...(beforeMerge ? { beforeMerge } : {}), ...(reject ? { reject } : {}) },
     ),
     log: ledgerNoteLog({ cwd }),
     env,

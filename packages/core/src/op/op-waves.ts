@@ -93,7 +93,7 @@ import type { OpEnvironment, OpSetupStep, OpWaveJobInputs } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import type { CloudTradeSpec } from "../ci-identity";
 import { gatePointProblems, type GatePoint } from "./gate-point";
-import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
+import { quorumProblems, type GateQuorumNode } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 // Types only: the small bundles that carry this module stay without ../ci-respond.ts (#4629).
 import type { CiResponses } from "../ci-respond";
@@ -832,9 +832,10 @@ export interface OpWavesApprovals {
    * approver: a seal that verifies against the signers at base, or under
    * `pr-review` the merged pull request's review. `notAuthor` reads the
    * author from that pull request. A rule with `proven` (#5349) counts only
-   * proven approvers toward its `count`. See `./gate-quorum.ts`.
+   * proven approvers toward its `count`. Rules combine in `all` and `any`
+   * groups and take a `name` (#5354). See `./gate-quorum.ts`.
    */
-  quorum?: GateQuorumRule[];
+  quorum?: GateQuorumNode[];
   /**
    * The op whose ledger (`_gates/<op>.jsonl` on `chant/lifecycle`) holds the
    * reviews a product records itself (#4333): lines with `via: "pr-review"`,
@@ -1109,8 +1110,8 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     for (const [key, value] of Object.entries(a as Record<string, unknown>)) {
       if (key === "quorum") {
         // #4290: approval rules, read at base like the policy.
-        if (!Array.isArray(value)) throw new Error(`${where}: approvals.quorum must be a list of rules, each { "targets"?, "count", "roles"?, "notAuthor"?, "proven"? }.`);
-        const problems = quorumProblems(value, "approvals.quorum", { notAuthor: true, proven: true });
+        if (!Array.isArray(value)) throw new Error(`${where}: approvals.quorum must be a list of rules, each { "name"?, "targets"?, "count", "roles"?, "notAuthor"?, "proven"? } or a group { "name"?, "all" | "any": [...] }.`);
+        const problems = quorumProblems(value, "approvals.quorum", { notAuthor: true, proven: true, combine: true });
         if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
         continue;
       }

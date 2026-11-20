@@ -28,6 +28,8 @@
 
 import type { Declaration, SignedGate } from "./declaration";
 import { admitApprover, RELEASE_GATE, type GateAdmissionRule } from "./identity-gate-rule";
+import { admitRejecter } from "./identity-reject-rule";
+import type { GateRejectionRecord } from "../lifecycle/gate-rejection";
 import { classesOf, coreClassRegistry, roleGrants, type ClassRegistry } from "./principal-classes";
 import type { ReasonCode } from "./reason-codes";
 import { normalisePrincipal } from "./records";
@@ -144,6 +146,8 @@ export interface GateAdmission {
   requirement: SignedGate;
   /** Why `approval` doesn't count toward the gate, or null when it does. */
   refuses(approval: GateApprovalLike): string | null;
+  /** Why a rejection (#5354) doesn't count at the gate, or null when it does: the same rule, over the rejection's seal. */
+  refusesRejection(rejection: GateRejectionRecord): string | null;
 }
 
 /** What {@link gateAdmissionFrom} reads: the declaration, policy and classes at base, as `scopeSource` gives them. */
@@ -165,7 +169,7 @@ export function gateAdmissionFrom(source: GateRuleSource, gate: string): GateAdm
   if (!requirement) return null;
   const { policy, classes } = source;
   const rule = { gate, class: requirement.class, signers: policy, roles: roleGrants(policy), classes: classes.all() };
-  return { requirement, refuses: (a) => admitApprover(rule, a) };
+  return { requirement, refuses: (a) => admitApprover(rule, a), refusesRejection: (r) => admitRejecter(rule, r) };
 }
 
 /**

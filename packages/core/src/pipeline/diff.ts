@@ -5,7 +5,8 @@
  */
 
 import { readPipelineAt, type PipelineShow, gitShowPipeline, type PipelineRead } from "./read";
-import type { PipelineSpec } from "./spec";
+import type { PipelineHold, PipelineSpec, PipelineStage } from "./spec";
+import { isQuorumAll, isQuorumAny, isQuorumGroup, quorumNodes, type GateQuorumNode } from "../op/gate-quorum";
 
 /** The folded spec's lines, as the diff compares them. */
 export function pipelineSpecLines(spec: PipelineSpec | undefined): string[] {
@@ -56,6 +57,58 @@ export interface PipelineChange {
   diff: string[];
   /** The head's file is outside the subset: its finding, in place of a diff. */
   refused?: string;
+  /**
+   * What a reader of the change needs before it merges (#5354), one line
+   * each: each stage held at the head, each hold the change lifts, with what
+   * the person who lifts it reads first, and each stage gate whose rules
+   * are named or grouped. Absent when there is none.
+   */
+  notes?: string[];
+}
+
+/** One rule or group, in words (#5354): `fast-path: any of (release-manager: 1 approval from release-manager)`. */
+export function quorumNodeWords(n: GateQuorumNode): string {
+  const named = (text: string) => (n.name !== undefined ? `${n.name}: ${text}` : text);
+  if (isQuorumGroup(n)) {
+    const kids = (isQuorumAll(n) ? n.all : isQuorumAny(n) ? n.any : []).map(quorumNodeWords);
+    return named(`${isQuorumAll(n) ? "all" : "any"} of (${kids.join("; ")})`);
+  }
+  const parts = [`${n.count} approval${n.count === 1 ? "" : "s"}`];
+  if (n.roles?.length) parts.push(`from ${n.roles.join(" or ")}`);
+  if (n.proven) parts.push("proven");
+  if (n.notAuthor) parts.push("one not the author");
+  if (n.targets?.length) parts.push(`on ${n.targets.join(", ")}`);
+  return named(parts.join(" "));
+}
+
+function holdWords(hold: PipelineHold): { until: string; reason: string; read: string } {
+  const h = hold === true ? {} : hold;
+  return {
+    until: h.until ? ` until ${h.until}` : "",
+    reason: h.reason ? ` (${h.reason})` : "",
+    read: h.description ? ` Before it goes on: ${h.description}` : "",
+  };
+}
+
+/** The notes for a change from `before` to `after` (#5354): holds at the head, holds lifted, and named or grouped gate rules. */
+export function pipelineChangeNotes(before: PipelineSpec | undefined, after: PipelineSpec | undefined): string[] {
+  const out: string[] = [];
+  const at = (spec: PipelineSpec | undefined, name: string): PipelineStage | undefined => spec?.stages.find((s) => s.name === name);
+  for (const stage of before?.stages ?? []) {
+    if (stage.hold === undefined || at(after, stage.name)?.hold !== undefined) continue;
+    const w = holdWords(stage.hold);
+    out.push(`This change lifts the hold on stage ${stage.name}${w.reason}.${w.read}`);
+  }
+  for (const stage of after?.stages ?? []) {
+    if (stage.hold !== undefined) {
+      const w = holdWords(stage.hold);
+      out.push(`Stage ${stage.name} is held${w.until}${w.reason}.${w.read}`);
+    }
+    const nodes = quorumNodes(stage.gate?.quorum);
+    const shown = (n: GateQuorumNode): boolean => n.name !== undefined || isQuorumGroup(n);
+    if (nodes.some(shown)) out.push(`Stage ${stage.name}'s gate takes all of: ${nodes.map(quorumNodeWords).join("; ")}.`);
+  }
+  return out;
 }
 
 function specOf(read: PipelineRead): PipelineSpec | undefined {
@@ -73,13 +126,24 @@ export function pipelineChange(base: string, head: string, cwd: string, show: Pi
   if (before.status === "absent" && after.status === "absent") return undefined;
   if (after.status === "refused") return { diff: [], refused: after.line };
   const diff = lineDiff(pipelineSpecLines(specOf(before)), pipelineSpecLines(specOf(after)));
-  return diff.length === 0 ? undefined : { diff };
+  if (diff.length === 0) return undefined;
+  const notes = pipelineChangeNotes(specOf(before), specOf(after));
+  return { diff, ...(notes.length > 0 ? { notes } : {}) };
 }
 
 /** The plan note's section for a pipeline change: a heading and the diff in a fence, every `<!--` written as text. */
 export function pipelineChangeSection(change: PipelineChange): string {
   const body = change.refused
     ? [`The pipeline does not fold at the head, so nothing in it can run: ${change.refused}`]
-    : ["This pull request changes the pipeline. The folded spec's diff:", "", "```diff", ...change.diff.map((l) => l.split("```").join("` ` `")), "```"];
+    : [
+        // #5354: the holds and named rules first, so the person who lifts a hold reads what it asks.
+        ...(change.notes ?? []).flatMap((n) => [`- ${n.split("`").join("'")}`]),
+        ...(change.notes?.length ? [""] : []),
+        "This pull request changes the pipeline. The folded spec's diff:",
+        "",
+        "```diff",
+        ...change.diff.map((l) => l.split("```").join("` ` `")),
+        "```",
+      ];
   return ["### Pipeline", "", ...body].join("\n").split("<!--").join("&lt;!--");
 }

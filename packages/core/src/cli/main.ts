@@ -708,6 +708,16 @@ Ops:
                         plan that moved while you were asked exits 4.
                         --yes, --json, CI and no terminal record as before
                         (#4575)
+  reject <op> <gate>     Reject the digest a gate waits on, with --reason
+                        <text>: at a pipeline stage's gate (reject <pipeline>
+                        <stage>) the release does not enter the stage, and
+                        components promote exits 8 naming who rejected it and
+                        why. The digest, environment and release come off the
+                        gate's pending fact, or --plan, --env and --release.
+                        It takes the proof rules an approval takes: --sign
+                        [<key file>], or --statement then --signature <file|->
+                        --at <time>; a sealed gate counts only a signed one.
+                        More approvals never clear it; a new release does
                         On op policy-override the gate is the subject a
                         policy denied: --rule <id> names each rule that
                         denied it and --reason <text> says why the plan goes
@@ -2101,6 +2111,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "operator log", handler: runOperatorLog },
   { name: "operator", handler: runOperator },
   { name: "approve", handler: runApprove },
+  // #5354 — reject the digest a gate waits on. Imported on first use.
+  { name: "reject", handler: async (ctx) => (await import("./handlers/reject")).runReject(ctx) },
   // #4293 — target locks a pull request holds on chant/lifecycle. Imported on first use.
   // #4611 — approve a waiting gate from a chat click. Imported on first use.
   { name: "audit-log attribute", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/audit-log")).runAuditLogAttribute(ctx) },

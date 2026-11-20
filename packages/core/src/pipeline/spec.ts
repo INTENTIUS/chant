@@ -21,7 +21,7 @@
 
 import { opWavesControlProblems, type GateApprovalSource, type OpWave, type OpWaveGatePolicy, type OpWaveHooks, type OpWavePoint, type OpWavesControl, type OpWavesSpec } from "../op/op-waves";
 import type { OpWaveHolds } from "../op/op-waves-capability-spec";
-import type { GateQuorumRule } from "../op/gate-quorum";
+import { quorumProblems, QUORUM_MAX_DEPTH, type GateQuorumNode } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
 
@@ -42,9 +42,12 @@ export type PipelineFailureTolerance = number | `${number}%`;
 
 /**
  * A manual hold. `true` holds the stage until a change to the pipeline lifts
- * it; `until` lifts it at that time by itself.
+ * it; `until` lifts it at that time by itself. `description` (#5354) is
+ * what the person who lifts the hold reads first, such as what to check
+ * before the stage goes on: the plan note of the change that lifts it, the
+ * promote it refuses and `workspace status` show it.
  */
-export type PipelineHold = true | { reason?: string; until?: string };
+export type PipelineHold = true | { reason?: string; until?: string; description?: string };
 
 /** A freeze window: no promotion into the stage from `from` until `until` (ISO 8601 times). */
 export interface PipelineFreezeWindow {
@@ -59,8 +62,13 @@ export interface PipelineGate {
   policy?: OpWaveGatePolicy;
   /** Which approvals of the stage's digest count. Default `"ledger"`. */
   approval?: GateApprovalSource;
-  /** Approval rules: distinct approvers, from roles, one not the author. */
-  quorum?: GateQuorumRule[];
+  /**
+   * Approval rules: distinct approvers, from roles, one not the author. All
+   * must be met. Rules combine in `{ all: [...] }` and `{ any: [...] }`
+   * groups, nested up to three deep, and each rule and group may take a
+   * `name` (#5354).
+   */
+  quorum?: GateQuorumNode[];
   /** A decision point the gate asks in place of the ledger. */
   point?: string | OpWavePoint;
   /** The policy, cost and risk holds the stage's waves run over their plans. `risk` (#5325) holds a wave over its threshold and adds its `quorum` rules. */
@@ -222,9 +230,10 @@ function unknownKeys(value: Record<string, unknown>, keys: readonly string[], wh
 
 function holdProblems(hold: unknown, where: string): string[] {
   if (hold === undefined || hold === true) return [];
-  if (!isMap(hold)) return [`${where}.hold must be true or { "reason"?, "until"? }`];
-  const out = unknownKeys(hold, ["reason", "until"], `${where}.hold`);
+  if (!isMap(hold)) return [`${where}.hold must be true or { "reason"?, "until"?, "description"? }`];
+  const out = unknownKeys(hold, ["reason", "until", "description"], `${where}.hold`);
   if (hold.reason !== undefined && typeof hold.reason !== "string") out.push(`${where}.hold.reason must be text`);
+  if (hold.description !== undefined && (typeof hold.description !== "string" || hold.description.trim() === "")) out.push(`${where}.hold.description must be text`);
   if (hold.until !== undefined && !isTime(hold.until)) out.push(`${where}.hold.until must be an ISO 8601 time, such as "2026-12-01T00:00:00Z"`);
   return out;
 }
@@ -255,6 +264,7 @@ function gateProblems(gate: unknown, where: string): string[] {
   if (gate.policy !== undefined && !["always", "on-destructive", "never"].includes(gate.policy as string)) out.push(`${where}.gate.policy is always, on-destructive or never`);
   if (gate.approval !== undefined && !["ledger", "pr-review", "sealed", "pull-request"].includes(gate.approval as string)) out.push(`${where}.gate.approval is ledger, pr-review, sealed or pull-request`);
   if (gate.quorum !== undefined && !Array.isArray(gate.quorum)) out.push(`${where}.gate.quorum must be a list of rules`);
+  else if (gate.quorum !== undefined) out.push(...quorumProblems(gate.quorum, `${where}.gate.quorum`, { notAuthor: true, proven: true, combine: true }).map((p) => p.replace(/`/g, "")));
   if (gate.point !== undefined && typeof gate.point !== "string" && !isMap(gate.point)) out.push(`${where}.gate.point must name a decision point`);
   if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"?, "risk"? }`);
   return out;
@@ -451,13 +461,13 @@ export const PIPELINE_SPEC_SCHEMA = {
             properties: {
               policy: { enum: ["always", "on-destructive", "never"] },
               approval: { enum: ["ledger", "pr-review", "sealed", "pull-request"] },
-              quorum: { type: "array" },
+              quorum: { type: "array", minItems: 1, items: { $ref: "#/$defs/quorumNode" } },
               point: { type: ["string", "object"] },
               holds: { type: "object" },
             },
           },
           hooks: { type: "object" },
-          hold: { oneOf: [{ const: true }, { type: "object", additionalProperties: false, properties: { reason: { type: "string" }, until: { type: "string", format: "date-time" } } }] },
+          hold: { oneOf: [{ const: true }, { type: "object", additionalProperties: false, properties: { reason: { type: "string" }, until: { type: "string", format: "date-time" }, description: { type: "string", minLength: 1 } } }] },
           freeze: {
             type: "array",
             items: { type: "object", required: ["from", "until"], additionalProperties: false, properties: { from: { type: "string", format: "date-time" }, until: { type: "string", format: "date-time" }, reason: { type: "string" } } },
@@ -485,6 +495,12 @@ export const PIPELINE_SPEC_SCHEMA = {
     },
   },
   $defs: {
+    // #5354: a rule, or an all/any group of them; the depth (QUORUM_MAX_DEPTH) is checked when the spec is read.
+    quorumNode: {
+      type: "object",
+      properties: { name: { type: "string", pattern: "^[a-z0-9][a-z0-9_-]*$" }, all: { type: "array", minItems: 1, items: { $ref: "#/$defs/quorumNode" } }, any: { type: "array", minItems: 1, items: { $ref: "#/$defs/quorumNode" } } },
+      description: `a rule { name?, targets?, count, roles?, notAuthor?, proven? }, or a group { name?, all | any }, nested up to ${QUORUM_MAX_DEPTH} groups deep`,
+    },
     tolerance: { oneOf: [{ type: "integer", minimum: 0 }, { type: "string", pattern: TOLERANCE.source }] },
   },
 } as const;

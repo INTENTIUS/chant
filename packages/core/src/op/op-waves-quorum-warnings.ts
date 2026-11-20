@@ -5,7 +5,7 @@
  * gate-decision bundle stays small.
  */
 
-import { quorumRules, ruleNeedsProof, targetGlobMatch, type GateQuorumRule } from "./gate-quorum";
+import { quorumRuleSites, ruleNeedsProof, targetGlobMatch, type GateQuorumRule } from "./gate-quorum";
 import type { GateApprovalSource, OpWave, OpWavesSpec } from "./op-waves";
 
 /**
@@ -25,11 +25,11 @@ export interface OpWavesProofSources {
   signersNamed: boolean;
 }
 
-/** The rules a wave takes, by index in `approvals.quorum`. A wave with no runs listed yet takes every rule. */
-function rulesOf(rules: readonly GateQuorumRule[], wave: OpWave): Array<[GateQuorumRule, number]> {
+/** The rules a wave takes, each with where `approvals.quorum` writes it (#5354: inside groups too). A wave with no runs listed yet takes every rule. */
+function rulesOf(rules: ReadonlyArray<{ rule: GateQuorumRule; at: string }>, wave: OpWave): Array<[GateQuorumRule, string]> {
   const targets = (wave.runs ?? []).map((r) => r.target);
   return rules
-    .map((rule, j) => [rule, j] as [GateQuorumRule, number])
+    .map(({ rule, at }) => [rule, at] as [GateQuorumRule, string])
     .filter(([rule]) => rule.targets === undefined || targets.length === 0 || rule.targets.some((g) => targets.some((t) => targetGlobMatch(g, t))));
 }
 
@@ -48,7 +48,7 @@ function proofNeeds(rule: GateQuorumRule): string {
  */
 export function opWavesUnprovableQuorum(spec: Pick<OpWavesSpec, "waves" | "approvals" | "point">, proof: OpWavesProofSources): string[] {
   if (proof.signersNamed) return [];
-  const rules = quorumRules(spec.approvals?.quorum);
+  const rules = quorumRuleSites(spec.approvals?.quorum, "approvals.quorum");
   const out: string[] = [];
   spec.waves.forEach((wave, i) => {
     const mode = wave.approval ?? "ledger";
@@ -56,7 +56,7 @@ export function opWavesUnprovableQuorum(spec: Pick<OpWavesSpec, "waves" | "appro
     for (const [rule, j] of rulesOf(rules, wave)) {
       if (!ruleNeedsProof(rule)) continue;
       out.push(
-        `wave ${i + 1} (${wave.name}): approvals.quorum[${j}] needs a proven approver (${proofNeeds(rule)}), and nothing can prove one: ${proof.signersPath} names no signer, and \`${mode}\` reads no review. Add the approvers' keys to ${proof.signersPath} and approve with \`chant approve --sign\`, or set the wave's approval to \`pr-review\` so the merged pull request's review proves its reviewers`,
+        `wave ${i + 1} (${wave.name}): ${j} needs a proven approver (${proofNeeds(rule)}), and nothing can prove one: ${proof.signersPath} names no signer, and \`${mode}\` reads no review. Add the approvers' keys to ${proof.signersPath} and approve with \`chant approve --sign\`, or set the wave's approval to \`pr-review\` so the merged pull request's review proves its reviewers`,
       );
     }
   });
@@ -90,7 +90,7 @@ export const PLAIN_APPROVAL_MODES: readonly GateApprovalSource[] = ["ledger", "p
  * not refused: the rule is valid and works as it did.
  */
 export function opWavesQuorumWarnings(spec: Pick<OpWavesSpec, "waves" | "approvals" | "point">): string[] {
-  const rules = quorumRules(spec.approvals?.quorum);
+  const rules = quorumRuleSites(spec.approvals?.quorum, "approvals.quorum");
   const out: string[] = [];
   spec.waves.forEach((wave, i) => {
     const mode = wave.approval ?? "ledger";
@@ -98,7 +98,7 @@ export function opWavesQuorumWarnings(spec: Pick<OpWavesSpec, "waves" | "approva
     for (const [rule, j] of rulesOf(rules, wave)) {
       if (rule.count <= 1 || rule.proven === true || (rule.roles?.length ?? 0) > 0) continue;
       out.push(
-        `wave ${i + 1} (${wave.name}): approvals.quorum[${j}] asks for ${rule.count} approvers under \`${mode}\`, which counts plain \`chant approve\` lines, so one person who can push to chant/lifecycle can meet it alone. Set \`proven: true\` on the rule to count only approvers a seal or a review proves, or use \`approval: "sealed"\``,
+        `wave ${i + 1} (${wave.name}): ${j} asks for ${rule.count} approvers under \`${mode}\`, which counts plain \`chant approve\` lines, so one person who can push to chant/lifecycle can meet it alone. Set \`proven: true\` on the rule to count only approvers a seal or a review proves, or use \`approval: "sealed"\``,
       );
     }
   });

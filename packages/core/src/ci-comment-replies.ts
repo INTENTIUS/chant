@@ -12,7 +12,7 @@
  * This module imports nothing at run time.
  */
 
-import type { CiProductCommand, CiProductCommentReplies, CiProductWords } from "./ci-product-words";
+import { rejectLine, type CiProductCommand, type CiProductCommentReplies, type CiProductWords } from "./ci-product-words";
 import type { ForgeKind } from "./pr-forge";
 
 /** How a reply names the forge's things. */
@@ -61,6 +61,12 @@ export function notRunReply(words: CiProductWords, command: NotRunCommand, forge
     case "agent":
       return `the agent command is off in this ${t.place}`;
   }
+}
+
+/** The reply to a reject comment where the pipeline records none from a comment (#5354): the reject line to run. */
+export function rejectNotRecorded(words: CiProductWords, forge: ForgeKind): string {
+  const line = rejectLine(words, { op: words.op ?? "<op>", gate: "<stage>", digest: "<digest>" });
+  return `this ${commentTerms(forge).place} records no rejection from a comment: run \`${line}\``;
 }
 
 /** The reply to a command on a pull request from a fork. */

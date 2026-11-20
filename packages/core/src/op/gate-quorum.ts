@@ -30,6 +30,17 @@
  * `chant/lifecycle` can write two lines in two names and meet `count: 2`.
  * Off by default.
  *
+ * Rules combine with `all` and `any` (#5354): a group `{ all: [...] }` is
+ * met when every rule in it is, and `{ any: [...] }` when one is, so a gate
+ * can take "two approvers, or one with the `release-manager` role". The list
+ * a gate takes is an `all`. Groups nest up to {@link QUORUM_MAX_DEPTH} deep,
+ * and every rule and group may carry a `name`, which the progress lines, the
+ * plan note and the pending fact on the ledger show. A group whose rules a
+ * gate's targets leave out is dropped, never met by nobody: an `any` is met
+ * only by a rule that counts real approvers, so it opens no way past the
+ * gate's approval. Only a caller that passes `combine: true` to
+ * {@link quorumProblems} reads groups and names.
+ *
  * `notAuthor` reads who was involved in the change (#4333): the pull
  * request's author, each login a `Requested-by:` trailer on its commits
  * names, and the accounts an agent acts as. With `excludeInvolved`, an
@@ -45,6 +56,8 @@ import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 
 /** One approval rule. */
 export interface GateQuorumRule {
+  /** The rule's name (#5354), shown in its progress line, the plan note and the pending fact. */
+  name?: string;
   /** Globs over the gate's targets (an Op wave's run targets, an Op gate's environment). Absent, the rule covers every target. */
   targets?: string[];
   /** Distinct human approvers the rule needs. At least 1. */
@@ -61,8 +74,39 @@ export interface GateQuorumRule {
   proven?: boolean;
 }
 
-/** A gate's quorum: one rule (the form before #4290), or a list of them. */
-export type GateQuorumSpec = GateQuorumRule | readonly GateQuorumRule[];
+/** A group met when every rule in it is met (#5354). */
+export interface GateQuorumAll {
+  name?: string;
+  all: GateQuorumNode[];
+}
+
+/** A group met when one rule in it is met (#5354). */
+export interface GateQuorumAny {
+  name?: string;
+  any: GateQuorumNode[];
+}
+
+/** A rule, or a group of rules (#5354). */
+export type GateQuorumNode = GateQuorumRule | GateQuorumAll | GateQuorumAny;
+
+/** A gate's quorum: one rule (the form before #4290), or a list of rules and groups, all of which must be met. */
+export type GateQuorumSpec = GateQuorumRule | readonly GateQuorumNode[];
+
+/** How deep `all` and `any` groups nest (#5354): a group in a group in a group, and no further. */
+export const QUORUM_MAX_DEPTH = 3;
+
+/** Whether `node` is an `all` group. */
+export const isQuorumAll = (node: GateQuorumNode): node is GateQuorumAll => Array.isArray((node as GateQuorumAll).all);
+/** Whether `node` is an `any` group. */
+export const isQuorumAny = (node: GateQuorumNode): node is GateQuorumAny => Array.isArray((node as GateQuorumAny).any);
+/** Whether `node` is a group, `all` or `any`. */
+export const isQuorumGroup = (node: GateQuorumNode): node is GateQuorumAll | GateQuorumAny => isQuorumAll(node) || isQuorumAny(node);
+
+/** The rules and groups a quorum lists, at the top. Absent, none. */
+export function quorumNodes(quorum: GateQuorumSpec | undefined): GateQuorumNode[] {
+  if (quorum === undefined) return [];
+  return Array.isArray(quorum) ? [...(quorum as readonly GateQuorumNode[])] : [quorum as GateQuorumRule];
+}
 
 /** What a judge says about one approval. */
 export interface QuorumJudgement {
@@ -98,12 +142,36 @@ export interface GateQuorumRuleProgress {
   met: boolean;
   /** Why the author could not be told apart, when `notAuthor` is set and nobody knows the author. */
   authorUnknown?: boolean;
+  /** The rule's name (#5354). */
+  name?: string;
 }
 
-/** The rules of a quorum, as a list. Absent, none. */
+/** How far a group of rules is met (#5354). */
+export interface GateQuorumGroupProgress {
+  kind: "all" | "any";
+  name?: string;
+  met: boolean;
+  children: Array<GateQuorumRuleProgress | GateQuorumGroupProgress>;
+}
+
+/** Whether a progress entry is a group's. */
+export const isGroupProgress = (p: GateQuorumRuleProgress | GateQuorumGroupProgress): p is GateQuorumGroupProgress => "children" in p;
+
+/**
+ * The rules of a quorum, as a flat list: every rule, inside groups too
+ * (#5354). For a quorum with no groups, the list it is. Read it to ask what
+ * any rule needs (proof, a count); judge whether the quorum is met with
+ * {@link quorumTreeProgress}, which reads the groups.
+ */
 export function quorumRules(quorum: GateQuorumSpec | undefined): GateQuorumRule[] {
-  if (quorum === undefined) return [];
-  return Array.isArray(quorum) ? [...(quorum as readonly GateQuorumRule[])] : [quorum as GateQuorumRule];
+  const out: GateQuorumRule[] = [];
+  const walk = (n: GateQuorumNode): void => {
+    if (isQuorumAll(n)) n.all.forEach(walk);
+    else if (isQuorumAny(n)) n.any.forEach(walk);
+    else out.push(n);
+  };
+  quorumNodes(quorum).forEach(walk);
+  return out;
 }
 
 /**
@@ -132,9 +200,22 @@ export function targetGlobMatch(glob: string, target: string): boolean {
   return new RegExp(`^${re}$`).test(target.replace(/\\/g, "/").replace(/\/+$/, ""));
 }
 
-/** The rules a gate whose targets are `targets` takes: those with no `targets`, and those a glob of matches one. */
-export function quorumRulesFor(rules: readonly GateQuorumRule[], targets: readonly string[]): GateQuorumRule[] {
-  return rules.filter((r) => r.targets === undefined || r.targets.some((g) => targets.some((t) => targetGlobMatch(g, t))));
+/**
+ * The rules a gate whose targets are `targets` takes: those with no
+ * `targets`, and those a glob of matches one. A group keeps the rules in it
+ * the gate takes, and is dropped when it keeps none (#5354), so an `any`
+ * is never met by a rule left out.
+ */
+export function quorumRulesFor<T extends GateQuorumNode>(rules: readonly T[], targets: readonly string[]): T[] {
+  const prune = (n: GateQuorumNode): GateQuorumNode | undefined => {
+    if (isQuorumGroup(n)) {
+      const kids = (isQuorumAll(n) ? n.all : n.any).map(prune).filter((k): k is GateQuorumNode => k !== undefined);
+      if (kids.length === 0) return undefined;
+      return isQuorumAll(n) ? { ...(n.name !== undefined ? { name: n.name } : {}), all: kids } : { ...(n.name !== undefined ? { name: n.name } : {}), any: kids };
+    }
+    return n.targets === undefined || n.targets.some((g) => targets.some((t) => targetGlobMatch(g, t))) ? n : undefined;
+  };
+  return rules.map(prune).filter((n): n is GateQuorumNode => n !== undefined) as T[];
 }
 
 /** The most approvers any rule needs, 1 with none. */
@@ -142,24 +223,59 @@ export function quorumNeed(rules: readonly GateQuorumRule[]): number {
   return rules.reduce((n, r) => Math.max(n, r.count), 1);
 }
 
+/** Every rule with where it is written (#5354): `approvals.quorum[1].any[0]`, under `where`. */
+export function quorumRuleSites(quorum: GateQuorumSpec | undefined, where: string): Array<{ rule: GateQuorumRule; at: string }> {
+  const out: Array<{ rule: GateQuorumRule; at: string }> = [];
+  const walk = (n: GateQuorumNode, at: string): void => {
+    if (isQuorumAll(n)) n.all.forEach((k, i) => walk(k, `${at}.all[${i}]`));
+    else if (isQuorumAny(n)) n.any.forEach((k, i) => walk(k, `${at}.any[${i}]`));
+    else out.push({ rule: n, at });
+  };
+  quorumNodes(quorum).forEach((n, i) => walk(n, Array.isArray(quorum) ? `${where}[${i}]` : where));
+  return out;
+}
+
+/** A rule or group's name (#5354): lowercase letters, digits, `-` and `_`. */
+export const QUORUM_NAME = /^[a-z0-9][a-z0-9_-]*$/;
+
 /**
  * Everything wrong with a quorum, one line each. `where` names it
  * (`approval.quorum`). With `notAuthor: false`, a rule naming `notAuthor` is
  * refused, since that caller has no author to judge by. Without `proven:
  * true`, a rule naming `proven` is refused (#5349): an Op waves spec's
- * `approvals.quorum` reads it.
+ * `approvals.quorum` reads it. Without `combine: true`, a group (`all`,
+ * `any`) and a `name` are refused (#5354): an Op waves spec's
+ * `approvals.quorum` and a pipeline stage's gate read them.
  */
-export function quorumProblems(value: unknown, where: string, opts: { notAuthor: boolean; proven?: boolean }): string[] {
+export function quorumProblems(value: unknown, where: string, opts: { notAuthor: boolean; proven?: boolean; combine?: boolean }): string[] {
   const list = Array.isArray(value) ? value : [value];
   const problems: string[] = [];
   if (Array.isArray(value) && value.length === 0) problems.push(`\`${where}\` must name at least one rule`);
-  list.forEach((rule, i) => {
-    const at = Array.isArray(value) ? `${where}[${i}]` : where;
+  const names = new Set<string>();
+  const nameProblem = (q: Record<string, unknown>, at: string): void => {
+    if (q.name === undefined) return;
+    if (!opts.combine) return;
+    if (typeof q.name !== "string" || !QUORUM_NAME.test(q.name)) problems.push(`\`${at}.name\` must be lowercase letters, digits, - and _`);
+    else if (names.has(q.name)) problems.push(`\`${at}.name\` is ${JSON.stringify(q.name)}, which another rule of the gate already names`);
+    else names.add(q.name);
+  };
+  const node = (rule: unknown, at: string, depth: number): void => {
     if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {
       problems.push(`\`${at}\` must be an object`);
       return;
     }
     const q = rule as Record<string, unknown>;
+    if (opts.combine && ("all" in q || "any" in q)) {
+      nameProblem(q, at);
+      if ("all" in q && "any" in q) problems.push(`\`${at}\` names both all and any; a group is one of them`);
+      const kind = "all" in q ? "all" : "any";
+      const kids = q[kind];
+      if (depth >= QUORUM_MAX_DEPTH) problems.push(`\`${at}\` nests groups deeper than ${QUORUM_MAX_DEPTH}; all and any nest up to ${QUORUM_MAX_DEPTH} groups deep`);
+      else if (!Array.isArray(kids) || kids.length === 0) problems.push(`\`${at}.${kind}\` must list at least one rule`);
+      else kids.forEach((k, i) => node(k, `${at}.${kind}[${i}]`, depth + 1));
+      for (const key of Object.keys(q)) if (key !== "name" && key !== "all" && key !== "any") problems.push(`\`${at}.${key}\` is not read on a group; a group takes name and one of all or any`);
+      return;
+    }
     if (typeof q.count !== "number" || !Number.isInteger(q.count) || q.count < 1) problems.push(`\`${at}.count\` must be an integer of at least 1`);
     if (q.roles !== undefined && (!Array.isArray(q.roles) || q.roles.length === 0 || q.roles.some((r) => typeof r !== "string" || r === ""))) {
       problems.push(`\`${at}.roles\` must be a non-empty list of role names`);
@@ -175,10 +291,13 @@ export function quorumProblems(value: unknown, where: string, opts: { notAuthor:
     if (q.proven !== undefined && opts.proven !== true) {
       problems.push(`\`${at}.proven\` is not read here. An Op waves spec's \`approvals.quorum\` reads it`);
     }
-    const known = new Set(["targets", "count", "roles", "notAuthor", "proven"]);
-    const names = opts.proven ? "targets, count, roles, notAuthor or proven" : "targets, count, roles or notAuthor";
-    for (const key of Object.keys(q)) if (!known.has(key)) problems.push(`\`${at}.${key}\` is not a quorum field; use ${names}`);
-  });
+    nameProblem(q, at);
+    const known = new Set(["targets", "count", "roles", "notAuthor", ...(opts.proven ? ["proven"] : []), ...(opts.combine ? ["name"] : [])]);
+    const fields = [...known];
+    const words = `${fields.slice(0, -1).join(", ")} or ${fields[fields.length - 1]}`;
+    for (const key of Object.keys(q)) if (!known.has(key) && key !== "proven") problems.push(`\`${at}.${key}\` is not a quorum field; use ${words}${opts.combine ? ", or a group of all or any" : ""}`);
+  };
+  list.forEach((rule, i) => node(rule, Array.isArray(value) ? `${where}[${i}]` : where, 0));
   return problems;
 }
 
@@ -207,15 +326,14 @@ export function quorumRuleProgress(rule: GateQuorumRule, approvers: readonly Quo
   const seen = new Set<string>();
   const counted: QuorumApprover[] = [];
   for (const a of [...approvers].sort((x, y) => Date.parse(x.at) - Date.parse(y.at))) {
-    if (seen.has(norm(a.who)) || a.judged.excluded !== undefined) continue;
-    if (rule.proven && !a.judged.proven) continue;
-    if (rule.roles?.length && !(a.judged.proven && a.judged.roles.some((r) => rule.roles!.includes(r)))) continue;
+    if (seen.has(norm(a.who)) || !ruleAdmits(rule, a.judged)) continue;
     seen.add(norm(a.who));
     counted.push(a);
   }
   const notAuthor = !rule.notAuthor || counted.some((a) => a.judged.proven && a.judged.author === false);
   const authorUnknown = rule.notAuthor === true && !notAuthor && counted.some((a) => a.judged.proven && a.judged.author === undefined);
   return {
+    ...(rule.name !== undefined ? { name: rule.name } : {}),
     ...(rule.targets ? { targets: [...rule.targets] } : {}),
     count: rule.count,
     ...(rule.roles?.length ? { roles: [...rule.roles] } : {}),
@@ -227,12 +345,79 @@ export function quorumRuleProgress(rule: GateQuorumRule, approvers: readonly Quo
   };
 }
 
+/** Whether `approver` counts toward `rule` on their own, before the count (#5354): not left out, proven when the rule needs it, holding a role it names. */
+export function ruleAdmits(rule: GateQuorumRule, judged: QuorumJudgement): boolean {
+  if (judged.excluded !== undefined) return false;
+  if (rule.proven && !judged.proven) return false;
+  if (rule.roles?.length && !(judged.proven && judged.roles.some((r) => rule.roles!.includes(r)))) return false;
+  return true;
+}
+
+/** What {@link quorumTreeProgress} found. */
+export interface GateQuorumTreeProgress {
+  /** Every rule (#5354), groups' included, in the order written. */
+  rules: GateQuorumRuleProgress[];
+  /** The top-level rules and groups, with each group's. Absent when the quorum has no group. */
+  groups?: Array<GateQuorumRuleProgress | GateQuorumGroupProgress>;
+  /** Every top-level rule and group is met. False with none. */
+  met: boolean;
+}
+
+/**
+ * How far a list of rules and groups is met by `approvers` (#5354): each
+ * rule as {@link quorumRuleProgress} counts it, an `all` group when every
+ * rule in it is met, an `any` group when one is, and the list when every
+ * entry is. A list with no entry is not met; a caller with no rules asks for
+ * one human approval itself.
+ */
+export function quorumTreeProgress(nodes: readonly GateQuorumNode[], approvers: readonly QuorumApprover[]): GateQuorumTreeProgress {
+  const rules: GateQuorumRuleProgress[] = [];
+  let grouped = false;
+  const walk = (n: GateQuorumNode): GateQuorumRuleProgress | GateQuorumGroupProgress => {
+    if (isQuorumGroup(n)) {
+      grouped = true;
+      const kind = isQuorumAll(n) ? "all" : "any";
+      const children = (isQuorumAll(n) ? n.all : n.any).map(walk);
+      const met = children.length > 0 && (kind === "all" ? children.every((c) => c.met) : children.some((c) => c.met));
+      return { kind, ...(n.name !== undefined ? { name: n.name } : {}), met, children };
+    }
+    const p = quorumRuleProgress(n, approvers);
+    rules.push(p);
+    return p;
+  };
+  const top = nodes.map(walk);
+  return { rules, ...(grouped ? { groups: top } : {}), met: top.length > 0 && top.every((p) => p.met) };
+}
+
+/** A group's line (#5354): `any fast-path: met by release-manager`, or what it waits on. */
+export function quorumGroupLine(g: GateQuorumGroupProgress): string {
+  const label = (c: GateQuorumRuleProgress | GateQuorumGroupProgress, i: number) => c.name ?? `${isGroupProgress(c) ? c.kind : "rule"} ${i + 1}`;
+  const head = `${g.kind}${g.name !== undefined ? ` ${g.name}` : ""}`;
+  const met = g.children.map((c, i) => [c, i] as const).filter(([c]) => c.met).map(([c, i]) => label(c, i));
+  if (g.met) return `${head}: met by ${met.join(", ")}`;
+  const open = g.children.map((c, i) => [c, i] as const).filter(([c]) => !c.met).map(([c, i]) => label(c, i));
+  return g.kind === "any" ? `${head}: waits for one of ${open.join(", ")}` : `${head}: waits for ${open.join(", ")}`;
+}
+
+/** Every group's line, outermost first (#5354). */
+export function quorumGroupLines(groups: ReadonlyArray<GateQuorumRuleProgress | GateQuorumGroupProgress> | undefined): string[] {
+  const out: string[] = [];
+  const walk = (p: GateQuorumRuleProgress | GateQuorumGroupProgress): void => {
+    if (!isGroupProgress(p)) return;
+    out.push(quorumGroupLine(p));
+    p.children.forEach(walk);
+  };
+  (groups ?? []).forEach(walk);
+  return out;
+}
+
 /**
  * Where a rule stands, in one line: `prod-*: 1 of 2 approvals (github:alice),
- * needs 1 more from platform`.
+ * needs 1 more from platform`. A named rule (#5354) leads with its name.
  */
 export function quorumRuleLine(p: GateQuorumRuleProgress): string {
-  const scope = p.targets ? p.targets.join(", ") : "every target";
+  const where = p.targets ? p.targets.join(", ") : "every target";
+  const scope = p.name !== undefined ? `${p.name} (${where})` : where;
   const have = `${p.approvers.length} of ${p.count} approval${p.count === 1 ? "" : "s"}${p.approvers.length ? ` (${p.approvers.join(", ")})` : ""}`;
   if (p.met) return `${scope}: ${have}, met`;
   const more = p.count - p.approvers.length;

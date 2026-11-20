@@ -137,8 +137,8 @@ import {
   type OpWaveStepPlan,
 } from "./op-waves-capability";
 import {
-  changeInvolvement, quorumProblems, quorumRuleLine, quorumRulesFor, quorumWaiting, recordedReviewApprovals, recordedReviewOf, ruleNeedsProof, samePrincipal, trustQuorumJudge,
-  type GateQuorumJudge, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
+  changeInvolvement, quorumGroupLines, quorumProblems, quorumRuleLine, quorumRules, quorumRulesFor, quorumWaiting, recordedReviewApprovals, recordedReviewOf, ruleNeedsProof, samePrincipal, trustQuorumJudge,
+  type GateQuorumJudge, type GateQuorumNode, type GateQuorumRule, type GateQuorumRuleProgress, type QuorumJudgement,
 } from "./gate-quorum";
 import {
   OP_WAVE_DEFAULT_APPLY,
@@ -355,7 +355,7 @@ export interface OpWaveDecision {
   /** The review that approved the wave, or why the review did not, under `pr-review`. */
   review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
   /** The approval rules at base the wave's targets take (#4290). Absent when it takes none. */
-  quorum?: GateQuorumRule[];
+  quorum?: GateQuorumNode[];
   /** The op whose ledger holds the product's own reviews, read at base (#4333). */
   reviewLedger?: string;
   /** Who else counts as involved in the change, read at base (#4333). */
@@ -702,7 +702,7 @@ export interface OpWaveBaseRules {
   /** Set when the point at base cannot be asked: the wave fails rather than fall back to the ledger (#3836). */
   pointRefused?: string;
   /** The approval rules at base (#4290), `approvals.quorum`. */
-  quorum?: GateQuorumRule[];
+  quorum?: GateQuorumNode[];
   /** Set when the rules at base cannot be read: the wave fails rather than wait on fewer approvers than they ask. */
   quorumRefused?: string;
   /** `approvals.reviewLedger` at base (#4333): the op whose ledger holds a product's own reviews. */
@@ -816,9 +816,9 @@ function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "
   }
   // terragucci issue 1303: the review ledger and the involved count without rules too.
   if (raw === undefined) return extra;
-  const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true, proven: true }) : ["`approvals.quorum` must be a list of rules"];
+  const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true, proven: true, combine: true }) : ["`approvals.quorum` must be a list of rules"];
   if (problems.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${problems.join("; ")})` };
-  return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[], ...extra } : extra;
+  return (raw as GateQuorumNode[]).length > 0 ? { quorum: raw as GateQuorumNode[], ...extra } : extra;
 }
 
 /** The holds at base (#4545), or why they cannot be read. */
@@ -4410,8 +4410,10 @@ const gitCommitsBetween = (cwd: string) => (base: string, head: string): { sha: 
  * the same pull request; with none, no approver can show they are someone
  * else and the rule waits.
  */
-async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, rules: GateQuorumRule[], oneApprover = false): Promise<void> {
+async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, decision: OpWaveDecision, nodes: GateQuorumNode[], oneApprover = false): Promise<void> {
   const { spec, k, wave, cwd, log } = ctx;
+  // #5354: every rule, inside `all` and `any` groups too, for what any of them needs.
+  const rules = quorumRules(nodes);
   const { gate, digest, approval, base, policy, members } = decision;
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
   const now = options.now ?? new Date().toISOString();
@@ -4530,7 +4532,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     ...(spent ? { spent } : {}),
     fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
-    approval: { quorum: rules, mode: "log-only" },
+    approval: { quorum: nodes, mode: "log-only" },
     judge,
   });
   if (check.satisfied) {
@@ -4551,6 +4553,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
   else if (check.quorum?.rules) {
     decision.quorumProgress = check.quorum.rules;
     for (const p of check.quorum.rules) log(`${label}: approval rule ${quorumRuleLine(p)}`);
+    for (const line of quorumGroupLines(check.quorum.groups)) log(`${label}: approval group ${line}`);
     log(`${label}: the approval rules at ${base.slice(0, 12)} are not met (${quorumWaiting(check.quorum.rules)}), so it waits for more approvals of ${digest}`);
   }
   decision.status = "waiting";
