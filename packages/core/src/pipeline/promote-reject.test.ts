@@ -17,7 +17,8 @@ import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import { emptyPolicy, parseAllowedSigners } from "../workspace/trust/policy";
 import { hasSshKeygen } from "../workspace/trust/test-repo";
 import { asPipelineSpec, type PipelineGate, type PipelineSpec } from "./spec";
-import { pipelinePromoteGates, type PipelineGateProof } from "./promote";
+import { pipelinePromoteGates, pipelineStageEntry, type PipelineGateProof } from "./promote";
+import { memoryStageLogPort } from "../lifecycle/stage-log";
 import type { GateApprovalSource } from "../op/op-waves";
 
 const RELEASE = "sha256:" + "1".repeat(64);
@@ -112,6 +113,21 @@ describe("a new release clears a rejection; approvals never do", () => {
     const out = await pipelinePromoteGates({ spec, to: "prod", skipped: [spec.stages[1]!], digest: RELEASE, releaseDigest: RELEASE, port, now, proof: NO_SIGNERS });
     expect(out).toMatchObject({ passed: false, exitCode: 8, code: "pipeline-release-rejected" });
     expect(port.applied).toEqual([]);
+  });
+});
+
+describe("a stage that takes one release at a time (#5353)", () => {
+  test("a rejected release does not enter it, and no entered line is written", async () => {
+    const wave = (target: string) => [{ name: target, runs: [{ target }] }];
+    const spec = asPipelineSpec({ name: "shop", stages: [{ name: "dev", waves: wave("dev") }, { name: "staging", waves: wave("staging"), queue: "replace", gate: { approval: "sealed" } }] });
+    const log = memoryStageLogPort();
+    const out = await pipelineStageEntry({ spec, to: "staging", skipped: [], digest: RELEASE, release: { releaseDigest: RELEASE, commit: "c".repeat(40) }, port: memoryGateLedgerPort({ rejections: [rejection()] }), log, now, proof: NO_SIGNERS });
+    // Under sealed a plain rejection does not count, so the gate waits; the proof reached the gate.
+    expect(out).toMatchObject({ passed: false, exitCode: 3 });
+    expect(out.lines?.[0]).toMatch(/counts only a sealed rejection/);
+    const plain = asPipelineSpec({ ...spec, stages: spec.stages.map((s) => (s.name === "staging" ? { ...s, gate: {} } : s)) });
+    const stopped = await pipelineStageEntry({ spec: plain, to: "staging", skipped: [], digest: RELEASE, release: { releaseDigest: RELEASE, commit: "c".repeat(40) }, port: memoryGateLedgerPort({ rejections: [rejection()] }), log: memoryStageLogPort(), now, proof: NO_SIGNERS });
+    expect(stopped).toMatchObject({ passed: false, exitCode: 8, code: "pipeline-release-rejected" });
   });
 });
 
