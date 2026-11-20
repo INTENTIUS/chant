@@ -56,6 +56,7 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `promotion` | the order of the stages | a list of environment names | `environments` in `chant.config.ts` |
 | `environments.<name>.gate` | when the stage's wave waits for an approval | `always`, `on-destructive`, `never` | the wave's `gate` |
 | `environments.<name>.targets.<member>` | the target a member applies in one environment: a stack, a root, or the step's inputs there | a target name or path, or a map of the step's inputs | the member's step's `environments.<name>` entry |
+| `replan_dependents`, `environments.<name>.replan_dependents` | the members whose dependents are planned again when an output they read changes after an apply | a list of member names or globs | `replanDependents` in `.chant/pipeline.ts`, a stage's or `defaults` |
 | `environments.<name>.approval_rules` | the approval rules of one stage, in place of `approval_rules` | the rules `approval_rules` takes | a stage gate's `quorum` in `.chant/pipeline.ts` |
 | `environments.<name>.hold` | a manual hold: no release is promoted into the stage | `true`, or a map with `reason` and `until`, an ISO 8601 time | a stage's `hold` |
 | `environments.<name>.freeze` | the freeze windows in which no release is promoted into the stage | a list of maps with `from`, `until` (ISO 8601 times) and `reason` | a stage's `freeze` |
@@ -83,6 +84,22 @@ A product writes one component per member and puts each environment's target in 
 ```
 
 A `terraform-apply` step sets `root` and `vars` the same way: `environments: { staging: { root: "envs/staging/network", vars: { region: "us-east-2" } } }`. The mechanism ships as `STEP_ENVIRONMENTS_KEY` and `componentsForEnvironment` from `@intentius/chant/components`, and a product feature-detects it on `STEP_ENVIRONMENTS_FLOOR`.
+
+### Planning dependents again
+
+When a member applies and an output another member reads comes out changed, that reader holds a value from before. Once a wave applied, its job runs the replan step for the runs it applied when `replanDependents` in the spec it read at base names one of them. The step digests each applied member's outputs and compares them with the digests the member's last apply recorded in `<env>/outputs.jsonl` on `chant/lifecycle`. Then it lists the members that read a changed output. Reads come from the places the waves are ordered by. A step's `stackOutput()` is one. A Terraform root's `terraform_remote_state` of another root is another, as is a Pulumi program's `StackReference`.
+
+An output the engine marks sensitive (a Terraform output with `sensitive = true`) or secret (a Pulumi secret) gets no digest. The record names it, and it counts as changed every time its member applies, so its readers are listed on each apply. A digest of a short secret could be guessed back, and a Pulumi secret's value never reaches the job.
+
+For a member that `replan_dependents` names, its dependents are planned as a pull request's members are planned. The plan waits at the gate `pr-apply-replan` under the op `replan-<env>`. The pending fact and the note both name the upstream member and the outputs that changed at that commit. The plan applies through the dependent's own pipeline once someone approves it at its gate, and the step itself applies nothing. When the key is unset, no step runs and the rendered jobs are the same files.
+
+A pipeline whose applies run outside `chant run wave` runs the same step as a command after its apply: `chant components replan --env <env> --component <member>[,<member>]`, with `--gate` (default `pr-apply`) and `--op`. It reads `replanDependents` from `.chant/pipeline.ts` on the default branch.
+
+```ts
+stages: [{ name: "prod", waves: [/* ... */], replanDependents: ["network", "shared/*"] }]
+```
+
+The mechanism ships as `replanAfterApply` from `@intentius/chant/components`, and a product feature-detects it on `UPSTREAM_REPLAN_FLOOR`.
 
 A product that reads the hold, freeze, failure tolerance, stage approval rules and release keys writes them into the member's `.chant/pipeline.ts` with `pipelineFromConfig` and `pipelineSource` from `@intentius/chant/pipeline`, and its `ci --check` runs `checkPipelineFile`. See [Pipeline](/chant/reference/pipeline/).
 

@@ -169,6 +169,7 @@ import {
   asUpstreamCommands,
   terraformApply,
   terraformInit,
+  terraformMarkedOutputs,
   terraformOutputs,
   terraformPlan,
   withTerraformCommandHook,
@@ -730,6 +731,7 @@ export function terraformApplyCapabilityWith(deps: TerraformApplyDeps = {}): Cap
     plan: (ctx, step) => withTerraformCommandHook(hook, scope("plan", step), () => cap.plan(ctx, step)),
     run: (ctx, step) => withTerraformCommandHook(hook, scope("run", step), () => cap.run(ctx, step)),
     outputs: (ctx, step) => withTerraformCommandHook(hook, scope("outputs", step), () => cap.outputs!(ctx, step)),
+    markedOutputs: (ctx, step) => withTerraformCommandHook(hook, scope("outputs", step), () => cap.markedOutputs!(ctx, step)),
     planGroup: (ctx, members) => withTerraformCommandHook(hook, groupScope("plan", members), () => cap.planGroup!(ctx, members)),
     runGroup: (ctx, run, members) => withTerraformCommandHook(hook, groupScope("run", members), () => cap.runGroup!(ctx, run, members)),
   };
@@ -808,6 +810,13 @@ function terraformApplyMethods(deps: TerraformApplyDeps): Capability<TerraformAp
       requireRoot(input);
       await initRoot(input, ctx.processEnv, ctx.serial);
       return terraformOutputs(rootArgs(input, ctx.processEnv));
+    },
+    // #5345: the same read with the outputs `sensitive = true` marks, which a replan keeps no digest of.
+    async markedOutputs(ctx: DeployContext, step: TerraformApplyStepInput) {
+      const input = await filledInput(deps.resolveRoot, ctx, step);
+      requireRoot(input);
+      await initRoot(input, ctx.processEnv, ctx.serial);
+      return terraformMarkedOutputs(rootArgs(input, ctx.processEnv));
     },
     // #4447 (ws-107): a group core forms of components that read each other plans and applies as one composed run
     // when `terraform.compose.enabled` is set (./compose-group.ts). Delegates, so the methods are read when called.

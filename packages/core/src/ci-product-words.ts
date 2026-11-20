@@ -971,6 +971,16 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "`EnvironmentSets.configSets`",
     products: [],
   },
+  // #5345: plan a member's dependents again when an output they read changes after its apply.
+  {
+    key: "replan_dependents",
+    concept: "the members whose dependents are planned again when an output they read changes after an apply; the plan waits at its gate",
+    section: "stage",
+    value: "a list of member names or globs",
+    chant: "`replanDependents` in `.chant/pipeline.ts` (a stage's, else `defaults`), which `chant components replan` reads",
+    also: ["environments.<name>.replan_dependents"],
+    products: [],
+  },
   // Apply
   {
     key: "apply.when",

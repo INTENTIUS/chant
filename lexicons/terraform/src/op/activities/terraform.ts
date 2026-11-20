@@ -1365,6 +1365,25 @@ export async function terraformOutputs(
   return outputsIn(await resolveRoot(args, signal), signal);
 }
 
+/** `<binary> output -json` in a root, as `{ name: value }`, with the names it marks `sensitive` (#5345). */
+export async function terraformMarkedOutputs(
+  args: TerraformRootArgs,
+  signal?: AbortSignal,
+): Promise<{ outputs: Record<string, unknown>; sensitive: string[] }> {
+  const { binary, root, dir } = await resolveRoot(args, signal);
+  const { stdout } = await run(`${binary} output -json`, dir, terraformEnvironment(root), signal);
+  return markedOutputsOf(stdout);
+}
+
+/** `output -json`'s document as values and the names it marks `sensitive`. */
+export function markedOutputsOf(stdout: string): { outputs: Record<string, unknown>; sensitive: string[] } {
+  const parsed = JSON.parse(stdout || "{}") as Record<string, { value?: unknown; sensitive?: unknown }>;
+  return {
+    outputs: Object.fromEntries(Object.entries(parsed).map(([name, entry]) => [name, entry?.value])),
+    sensitive: Object.entries(parsed).filter(([, entry]) => entry?.sensitive === true).map(([name]) => name).sort(),
+  };
+}
+
 /** `<binary> output -json` in a resolved root, as `{ name: value }`. */
 async function outputsIn({ binary, root, dir }: ResolvedRoot, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const { stdout } = await run(`${binary} output -json`, dir, terraformEnvironment(root), signal);

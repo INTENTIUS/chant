@@ -158,6 +158,7 @@ import {
   opWaveGroupRuns,
   opWaveGroupsProblem,
   opWaveShare,
+  opWaveRunMatches,
   type GateApprovalSource,
   type OpWave,
   type OpWaveApplyHooksRunner,
@@ -345,6 +346,8 @@ export interface OpWaveDecision {
   point?: OpWavePoint & { question?: WaitingPoint; answer?: GateAnswerRef };
   /** The wave's failure tolerance at base (#5324), which the applying job reads from the decision. */
   failureTolerance?: number | `${number}%`;
+  /** `replanDependents` at base (#5345): the members whose dependents the job plans again once the wave applied. */
+  replanDependents?: string[];
   /** The review that approved the wave, or why the review did not, under `pr-review`. */
   review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
   /** The approval rules at base the wave's targets take (#4290). Absent when it takes none. */
@@ -714,6 +717,8 @@ export interface OpWaveBaseRules {
   evidenceRefused?: string;
   /** The wave's `failureTolerance` at base (#5324): the failed runs it lets through. Absent at base, none. */
   failureTolerance?: number | `${number}%`;
+  /** `replanDependents` at base (#5345): the members whose dependents the job plans again once the wave applied. */
+  replanDependents?: string[];
 }
 
 /** `evidence` at base (#4870), or why it cannot be read. */
@@ -768,6 +773,8 @@ export function readOpWavePolicy(
   const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, ...spendRules, applyHooksRunBy: "chant", neverOverMcp, ...asks };
   // #5324: a tolerance lets failed runs through, so only the one at base counts.
   if (wave.failureTolerance !== undefined && opWaveFailureToleranceReads(wave.failureTolerance)) rules.failureTolerance = wave.failureTolerance;
+  // #5345: the opt-in that plans dependents again after the apply, as the base has it.
+  if (Array.isArray(spec.replanDependents) && spec.replanDependents.length > 0 && spec.replanDependents.every((m) => typeof m === "string" && m !== "")) rules.replanDependents = [...spec.replanDependents];
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
@@ -929,6 +936,13 @@ export interface RunOpWaveOptions {
    * `runs` defaults; `false` writes none. See `./op-waves-release.ts`.
    */
   releases?: OpWaveReleasePort | false;
+  /**
+   * The replan step (#5345), run once a wave applied when `replanDependents`
+   * at base names a run it applied. Answers the line the job logs. Default
+   * `replanStep` (`../cli/handlers/replan.ts`), which runs `chant components
+   * replan` in the job's process.
+   */
+  replan?: (input: { cwd: string; env: string; components: string[]; replanDependents: string[] }) => Promise<string>;
   /**
    * The capabilities a spec's `step` plans and applies through (#4545).
    * Default: the project's at `cwd`, as `chant run --components` builds it.
@@ -3189,6 +3203,8 @@ async function writeOpWaveRecords(
     for (const line of missed) log(line);
     if (missed.length > 0) lost = true;
   }
+  // #5345: the dependents of what the applying jobs applied, planned again under the gate job's rule at base.
+  await replanAfterWave(options, { cwd, log, env: options.spec.labels?.Env ?? decision?.name ?? options.spec.waves[k - 1]?.name ?? "local", k }, decision?.replanDependents, result.applied);
   // #4992: a hold on another gate an applying job's hook found waiting, recorded under the gate job's rules.
   for (const held of holds) {
     const rule = { approval: decision?.approval ?? "ledger", base: decision?.base ?? options.base ?? "HEAD", neverOverMcp: decision?.neverOverMcp === true || options.spec.neverOverMcp === true };
@@ -3475,6 +3491,7 @@ async function openWaveDecision(
     ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
     ...(rules.point ? { point: { ...rules.point } } : {}),
     ...(rules.failureTolerance !== undefined ? { failureTolerance: rules.failureTolerance } : {}),
+    ...(rules.replanDependents ? { replanDependents: [...rules.replanDependents] } : {}),
   };
   return { go: { rules, holds, decision } };
 }
@@ -4920,6 +4937,8 @@ async function applyLeased(
     }
   }
   if (spec.step) await recordStepReleases(options, ctx, decision, runs);
+  // #5345: a split wave's applying job holds no write token; its record job plans the dependents.
+  if (options.phase !== "apply") await replanAfterWave(options, { cwd: ctx.cwd, log: ctx.log, env: spec.labels?.Env ?? wave.name, k }, decision.replanDependents, ctx.result.applied);
   if (recordPath && byApply) writeRecord(recordPath, decision, result);
   if (nothing) {
     // #3821: no run counts as failed; the wave stops here, or plans again.
@@ -5074,6 +5093,31 @@ async function applyStepRunsAtOnce(options: RunOpWaveOptions, ctx: WaveContext, 
     else if ("moved" in got) result.moved.push(target);
     else if ("failed" in got) result.failed.push(target);
     else result.blocked = { ...result.blocked, [target]: got.blockedBy };
+  }
+}
+
+/**
+ * The replan step (#5345): once a wave applied, when `replanDependents` at
+ * base names one of the runs it applied, `chant components replan` runs in
+ * the job for the applied runs (`../components/upstream-replan.ts`). It only
+ * plans, and the plan waits at its gate. Whatever it finds is a line in the
+ * log: it never changes the wave's exit code, since the wave applied.
+ * Without `replanDependents` at base nothing runs.
+ */
+async function replanAfterWave(
+  options: RunOpWaveOptions,
+  at: { cwd: string; log: (line: string) => void; env: string; k: number },
+  replanDependents: readonly string[] | undefined,
+  applied: readonly string[],
+): Promise<void> {
+  if (!replanDependents || replanDependents.length === 0 || applied.length === 0) return;
+  if (!applied.some((target) => replanDependents.some((p) => opWaveRunMatches(p, target)))) return;
+  const step = options.replan ?? (async (input) => (await import("../cli/handlers/replan")).replanStep(input));
+  try {
+    const line = await step({ cwd: at.cwd, env: at.env, components: [...applied].sort(), replanDependents: [...replanDependents] });
+    at.log(`wave ${at.k}: ${line}`);
+  } catch (err) {
+    at.log(`wave ${at.k}: the dependents of the applied runs were not planned again: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

@@ -326,6 +326,28 @@ async function reportedReads(
   return out.sort((a, b) => a.reader.localeCompare(b.reader) || a.ref.localeCompare(b.ref) || a.upstream.localeCompare(b.upstream));
 }
 
+/**
+ * The reads each capability with `groupReads` reports among every one of
+ * `components` whose step it takes (#5345), as {@link reportedReads} asks
+ * for a change's: reads that sit in a member's files rather than its step.
+ * The steps are read for `env`. A capability that throws reports none.
+ */
+export async function capabilityGroupReads(
+  components: readonly DriverComponent[],
+  registry: CapabilityRegistry,
+  env: string,
+  ctxOf: (component: string) => DeployContext,
+  vars?: Record<string, unknown>,
+): Promise<ReportedGroupRead[]> {
+  const byName = new Map(components.map((c) => [c.name, c]));
+  const kindOf = (name: string): string | undefined => {
+    const component = byName.get(name);
+    return component ? groupStepOf(component, registry)?.kind : undefined;
+  };
+  const plan: FanOutPlan = { order: [], waves: [], skipped: [], seeds: [], indeterminate: [], digest: "" };
+  return reportedReads(components.map((c) => c.name), kindOf, byName, { components: [...components], plan, registry, env, ...(vars ? { vars } : {}) }, ctxOf);
+}
+
 /** `set` with each member after every member of it that it reads or depends on, else in the order of `set`. */
 function upstreamsFirst(set: readonly string[], upstreams: (name: string) => ReadonlySet<string>): string[] {
   const out: string[] = [];
