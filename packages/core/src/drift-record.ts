@@ -75,6 +75,7 @@ import type { LiveDiffResult } from "./lifecycle/live-diff";
 import type { ComponentStatusRow } from "./lifecycle/status";
 import { isUnobservedReason, type UnobservedReason } from "./observation";
 import { isSensitiveKey } from "./sensitive-key";
+import type { EngineFacts } from "./engine-facts";
 
 /** The schema a drift document names in `$schema`. */
 export const DRIFT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json";
@@ -184,6 +185,58 @@ const OWNERSHIP_BY_WITNESS: Record<DriftOwnershipBy, true> = { marker: true, der
 
 /** Every ownership basis. */
 export const DRIFT_OWNERSHIP_BY = Object.keys(OWNERSHIP_BY_WITNESS) as readonly DriftOwnershipBy[];
+
+/**
+ * The graph's ownership words (#4520): `facts.ownership` on a graph node, as
+ * choudoufu's `live-graph` and plunge's `graph --json` print it, and as
+ * `graph.schema.json` lists it.
+ */
+export type EngineOwnership = NonNullable<EngineFacts["ownership"]>;
+
+/**
+ * The one mapping between the two ownership vocabularies (#5333). A drift
+ * record keeps its own words in `ownership.verdict`; a graph node keeps the
+ * engine's in `facts.ownership`. Each verdict reads as one graph word:
+ *
+ * | drift verdict | `facts.ownership` | why |
+ * |---|---|---|
+ * | `owned` | `bound` | the member's marker, record or state holds it |
+ * | `foreign` | `foreign` | someone else holds it |
+ * | `adoptable` | `unowned` | nobody's marker is on it, and this member could adopt it |
+ * | `unknown` | none | the read could not say; the graph leaves the fact out |
+ *
+ * The graph's fourth word, `pending`, is no verdict: a drift record says it
+ * with `status: "pending"` and no `ownership` ({@link engineOwnershipOfDrift}).
+ */
+export const DRIFT_VERDICT_ENGINE_OWNERSHIP: Readonly<Record<DriftOwnershipVerdict, EngineOwnership | null>> = {
+  owned: "bound",
+  foreign: "foreign",
+  adoptable: "unowned",
+  unknown: null,
+};
+
+/**
+ * A drift record's ownership in the graph's words: its verdict through
+ * {@link DRIFT_VERDICT_ENGINE_OWNERSHIP}, or `pending` for a `pending` record
+ * with no verdict. Undefined when the record says nothing the graph has a
+ * word for.
+ */
+export function engineOwnershipOfDrift(record: Pick<DriftRecord, "status" | "ownership">): EngineOwnership | undefined {
+  if (record.ownership) return DRIFT_VERDICT_ENGINE_OWNERSHIP[record.ownership.verdict] ?? undefined;
+  return record.status === "pending" ? "pending" : undefined;
+}
+
+/**
+ * A graph node's `facts.ownership` as a drift verdict, the inverse of
+ * {@link DRIFT_VERDICT_ENGINE_OWNERSHIP}. `pending` has none: the drift
+ * record for it is `status: "pending"` with no `ownership`.
+ */
+export function driftVerdictOfEngineOwnership(ownership: EngineOwnership): DriftOwnershipVerdict | undefined {
+  for (const verdict of DRIFT_OWNERSHIP_VERDICTS) {
+    if (DRIFT_VERDICT_ENGINE_OWNERSHIP[verdict] === ownership) return verdict;
+  }
+  return undefined;
+}
 
 /**
  * One attribute that differs. `before` is what was expected (the record, the

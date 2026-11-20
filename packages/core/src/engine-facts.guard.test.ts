@@ -49,6 +49,12 @@ const CARRIES_FACTS_ONLY: Readonly<Record<string, string>> = {
   // returns is an Op, a change set or a gate.
   "packages/core/src/lifecycle/type-listing.ts":
     "#4521 index typing: copies listed facts into IRNode.facts for the index and decides nothing on them",
+  // #5333: observeResources merges each lexicon's `engineFacts` (facts about
+  // entities the read did not return as present) into its result for the
+  // graph overlay, and qualifies their keys by stack. It assigns maps and
+  // never reads a fact's value; no change set, plan or gate gets them.
+  "packages/core/src/lifecycle/observe.ts":
+    "#5333 observe: merges and re-keys engineFacts for the graph overlay and decides nothing on them",
 };
 
 /** Every source file on a decision path: core's change set, lifecycle and Ops, and each lexicon's Ops and change-set files. */

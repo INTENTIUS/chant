@@ -930,6 +930,8 @@ export interface EngineGraphRead {
   blocks: Map<string, EngineFacts>;
   /** Facts of an instance node, by its block's entity key, then by the instance address. */
   instances: Map<string, Map<string, EngineFacts>>;
+  /** Each instance address's node id, as `observedInstanceNodeId` gives it and the declared graph draws it (#5333). */
+  instanceNodes: Map<string, string>;
   /** Edges with a grain, endpoints as live graph node ids. */
   edges: IREdge[];
 }
@@ -1003,6 +1005,7 @@ export function readEngineGraph(root: string, document: unknown): EngineGraphRea
   }
   const blocks = new Map<string, EngineFacts>();
   const instances = new Map<string, Map<string, EngineFacts>>();
+  const instanceNodes = new Map<string, string>();
   const nodeIds = new Map<string, string>();
 
   for (const entry of doc.nodes) {
@@ -1021,7 +1024,10 @@ export function readEngineGraph(root: string, document: unknown): EngineGraphRea
         ...(key !== undefined ? { key } : {}),
         ...(scope !== undefined ? { scope } : {}),
       });
-      if (liveId) nodeIds.set(id, liveId);
+      if (liveId) {
+        nodeIds.set(id, liveId);
+        instanceNodes.set(id, liveId);
+      }
       if (facts) {
         let byAddress = instances.get(block);
         if (!byAddress) instances.set(block, (byAddress = new Map()));
@@ -1049,7 +1055,7 @@ export function readEngineGraph(root: string, document: unknown): EngineGraphRea
     seen.add(key);
     edges.push({ from, to, kind: "ref", ...(viaAttr ? { viaAttr } : {}), grain: grain as EdgeGrain });
   }
-  return { blocks, instances, edges };
+  return { blocks, instances, instanceNodes, edges };
 }
 
 /**
@@ -1077,6 +1083,40 @@ export function withEngineFacts(
       ...(facts ? { facts } : {}),
       ...(instances ? { instances } : {}),
     };
+  }
+  return out;
+}
+
+/**
+ * The facts of {@link readEngineGraph}'s reads that no node of the live graph
+ * will carry (#5333), by the node id the declared graph gives them: a block
+ * `resources` does not hold (a pending create, or one `owned` filtered out),
+ * and an instance that is not a present instance of a block it holds. These
+ * are the `pending` nodes of a live root, and its `unowned` and `foreign`
+ * ones under `--owned`; `chant graph --live --overlay` puts them on the
+ * declared nodes (`ObservationResult.engineFacts`).
+ */
+export function engineFactsBeside(
+  resources: Record<string, ResourceMetadata>,
+  reads: readonly EngineGraphRead[],
+): Record<string, EngineFacts> {
+  const drawn = new Set(Object.keys(resources));
+  for (const [name, meta] of Object.entries(resources)) {
+    for (const inst of meta.instances ?? []) {
+      if (inst.verdict !== "present") continue;
+      const id = observedInstanceNodeId(name, inst);
+      if (id) drawn.add(id);
+    }
+  }
+  const out: Record<string, EngineFacts> = {};
+  for (const read of reads) {
+    for (const [key, facts] of read.blocks) if (!drawn.has(key)) out[key] = facts;
+    for (const byAddress of read.instances.values()) {
+      for (const [address, facts] of byAddress) {
+        const id = read.instanceNodes.get(address);
+        if (id && !drawn.has(id)) out[id] = facts;
+      }
+    }
   }
   return out;
 }
@@ -1906,12 +1946,14 @@ export async function describeResources(
   const sources: Record<string, string> = {};
   const rootReads: Record<string, RootRead> = {};
   const edges: IREdge[] = [];
+  const engineReads: EngineGraphRead[] = [];
   // A live root's observation with the engine graph's facts and edges on it (#4528).
   const withEngineGraph = async (root: string, handoff: LivePlanHandoff, observed: ReturnType<typeof normalizeObservation>) => {
     const graph = await engineGraphFor(root, options.cwd, deps, handoff);
     if (graph.note) notes.push(graph.note);
     if (!graph.read) return observed;
     edges.push(...graph.read.edges);
+    engineReads.push(graph.read);
     return { ...observed, resources: withEngineFacts(observed.resources, graph.read) };
   };
   const depthOf = byRoot.size > 0 ? await observeDepths(options, notes) : () => "state" as const;
@@ -1991,6 +2033,9 @@ export async function describeResources(
   }
 
   // A planned create's plan attributes (#4372) ride beside the verdict, never
-  // in `resources`: the block stays absent.
-  return observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations, rootReads, edges);
+  // in `resources`: the block stays absent. So do the engine's facts about
+  // what no live node will carry (#5333), after --owned has filtered.
+  const result = observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations, rootReads, edges);
+  const beside = engineFactsBeside(resources, engineReads);
+  return Object.keys(beside).length > 0 ? { ...result, engineFacts: beside } : result;
 }

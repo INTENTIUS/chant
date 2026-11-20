@@ -34,6 +34,7 @@
 
 import type { ResourceMetadata } from "./lexicon";
 import type { IREdge } from "./graph-ir";
+import type { EngineFacts } from "./engine-facts";
 
 /**
  * Why a declared entity was not observed. Total: a lexicon that cannot observe
@@ -209,6 +210,21 @@ export interface ObservationResult {
    * instance node ids built from them.
    */
   edges?: IREdge[];
+  /**
+   * An ownership engine's facts (#4520) about what the read does not return
+   * as present (#5333), keyed by the graph node id the declared graph gives
+   * it: an entity name, or an instance node id (`./instance-nodes.ts`). The
+   * case it exists for is a choudoufu live root, whose `live-graph` describes
+   * a pending create (`ownership: "pending"`) and the objects `--owned`
+   * filters out (`unowned`, `foreign`), none of which is a live node.
+   *
+   * Additive metadata like {@link annotations}: nothing classifies on it, and
+   * an entity here is still absent or not observed. `chant graph --live
+   * --overlay` puts each entry on the declared node of that id
+   * (`carryEngineFacts` in ./graph-ir.ts), the way a present node carries
+   * `ResourceMetadata.facts`.
+   */
+  engineFacts?: Record<string, EngineFacts>;
 }
 
 /**
@@ -249,6 +265,8 @@ export interface NormalizedObservation {
   stackExports?: Record<string, Record<string, unknown>>;
   /** Observed relationships (chant#4528). Absent when the lexicon reported none. */
   edges?: IREdge[];
+  /** Engine facts about what the read does not return as present, by node id (#5333). Absent when the lexicon reported none. */
+  engineFacts?: Record<string, EngineFacts>;
 }
 
 /** True when `value` is the versioned {@link ObservationResult} envelope. */
@@ -308,6 +326,7 @@ export function normalizeObservation(value: DescribeResourcesResult | undefined)
       ...(value.rootReads && Object.keys(value.rootReads).length > 0 ? { rootReads: value.rootReads } : {}),
       ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
       ...(Array.isArray(value.edges) && value.edges.length > 0 ? { edges: value.edges } : {}),
+      ...(value.engineFacts && Object.keys(value.engineFacts).length > 0 ? { engineFacts: value.engineFacts } : {}),
     };
   }
   return { resources: value, unobserved: {}, queried: {}, sources: {}, notes: [] };
@@ -365,6 +384,8 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   // and two parts reporting the same edge is one edge.
   const edges: IREdge[] = [];
   const edgeKeys = new Set<string>();
+  // Engine facts (#5333) merge like annotations: per node, disjoint parts.
+  const engineFacts: Record<string, EngineFacts> = {};
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
@@ -372,6 +393,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     Object.assign(sources, part.sources);
     Object.assign(annotations, part.annotations ?? {});
     Object.assign(rootReads, part.rootReads ?? {});
+    Object.assign(engineFacts, part.engineFacts ?? {});
     for (const n of part.notes) notes.add(n);
     Object.assign(stackExports, part.stackExports ?? {});
     for (const e of part.edges ?? []) {
@@ -383,7 +405,10 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   }
   // Present wins: a stack that could not be read does not un-observe a resource
   // another stack returned.
-  for (const name of Object.keys(resources)) delete unobserved[name];
+  for (const name of Object.keys(resources)) {
+    delete unobserved[name];
+    delete engineFacts[name];
+  }
   return {
     resources,
     unobserved,
@@ -394,6 +419,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}),
     ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
     ...(edges.length > 0 ? { edges } : {}),
+    ...(Object.keys(engineFacts).length > 0 ? { engineFacts } : {}),
   };
 }
 

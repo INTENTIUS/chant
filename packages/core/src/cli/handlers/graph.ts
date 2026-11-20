@@ -2,14 +2,14 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { discover } from "../../discovery/index";
 import { partitionByLexicon, computeStackGraph, build } from "../../build";
-import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, collectUnobserved, overlayGraphs, sourceOverlayGraphs, withInstanceNodes, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
+import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, carryEngineFacts, collectUnobserved, overlayGraphs, sourceOverlayGraphs, withInstanceNodes, GRAPH_IR_VERSION, type GraphIR, type IRPipeline, type LexiconWorkspaceOutputs, type LiveObservation } from "../../graph-ir";
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
 import { buildDeclaredPerStack } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
-import { carryAnnotations, observeResources } from "../../lifecycle/observe";
+import { carryAnnotations, observeResources, type ObserveResult } from "../../lifecycle/observe";
 import type { RootRead } from "../../observation";
 import { withLiveReadSession } from "../../live-read-session";
 import { replaySnapshots, hasSnapshot } from "../../lifecycle/replay";
@@ -294,6 +294,8 @@ async function runGraphLive(
     let observations: LiveObservation[];
     // Facts about absent entities (#4372), carried onto the overlay's nodes.
     let annotations: Record<string, Record<string, unknown>> | undefined;
+    // An engine's facts about what the read did not return as present (#5333).
+    let engineFacts: ObserveResult["engineFacts"];
     // Which read answered each root (#4452), carried onto the IR as written.
     let rootReads: Record<string, RootRead> | undefined;
     // A replay is a graph of what was recorded, so it must not reach the provider
@@ -325,6 +327,7 @@ async function runGraphLive(
       });
       observations = observeResult.observations;
       annotations = observeResult.annotations;
+      engineFacts = observeResult.engineFacts;
       rootReads = observeResult.rootReads;
       const { errors, warnings, notes = [] } = observeResult;
       for (const e of errors) console.error(formatWarning({ message: e }));
@@ -453,6 +456,10 @@ async function runGraphLive(
     // declared node beside the overlay's `_status`. A planned create keeps its
     // pending paint and carries the plan's attributes.
     ir = { ...ir, nodes: carryAnnotations(ir.nodes, annotations) };
+    // What an ownership engine said about a declared entity it found absent,
+    // or that --owned filtered out (#5333): choudoufu's `pending`, `unowned`
+    // and `foreign`, on the declared node beside its paint.
+    ir = { ...ir, nodes: carryEngineFacts(ir.nodes, engineFacts) };
   }
 
   // Behaviour overlay (#2377, epic #2355): carry a prediction on the graph.

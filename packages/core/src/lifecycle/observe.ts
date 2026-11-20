@@ -15,6 +15,7 @@ import { build as buildProject } from "../build";
 import { resolve as resolvePath } from "node:path";
 import type { SerializerResult } from "../serializer";
 import type { LiveObservation, IREdge } from "../graph-ir";
+import type { EngineFacts } from "../engine-facts";
 import type { ResourceMetadata } from "../lexicon";
 import {
   mergeObservations,
@@ -48,6 +49,14 @@ export interface ObserveResult {
    * {@link carryAnnotations} puts it on the declared nodes of an overlay.
    */
   annotations?: Record<string, Record<string, unknown>>;
+  /**
+   * An ownership engine's facts about declared entities the read does not
+   * return as present (#5333), keyed like {@link annotations}: a pending
+   * create, or an object `owned` filtered out. Never part of `observations`;
+   * `carryEngineFacts` in ../graph-ir.ts puts them on the declared nodes of an
+   * overlay. Carried only: nothing here reads a fact's value.
+   */
+  engineFacts?: Record<string, EngineFacts>;
   /**
    * Which read answered each declared entity (#2267), keyed like the
    * observations' resources: `"state"`, `"live"`, `"plan"` or `"live+plan"`
@@ -93,6 +102,8 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     // Which read answered (#2267) is per entity, so it re-keys with them.
     sources: q(obs.sources),
     ...(obs.annotations ? { annotations: q(obs.annotations) } : {}),
+    // Engine facts (#5333) are keyed by node id, so they re-key the same way.
+    ...(obs.engineFacts ? { engineFacts: q(obs.engineFacts) } : {}),
     notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
@@ -170,6 +181,7 @@ export async function observeResources(
   const errors: string[] = [];
   const notes: string[] = [];
   const annotations: Record<string, Record<string, unknown>> = {};
+  const engineFacts: Record<string, EngineFacts> = {};
   const sources: Record<string, string> = {};
   const rootReads: Record<string, RootRead> = {};
 
@@ -272,6 +284,7 @@ export async function observeResources(
         if (!notes.includes(line)) notes.push(line);
       }
       Object.assign(annotations, observed.annotations ?? {});
+      Object.assign(engineFacts, observed.engineFacts ?? {});
       Object.assign(sources, observed.sources);
       Object.assign(rootReads, observed.rootReads ?? {});
       // What the estate depends on but does not declare (#1273). Read after the
@@ -343,7 +356,7 @@ export async function observeResources(
     }
   }
 
-  return { observations, warnings, errors, notes, annotations, ...(Object.keys(sources).length > 0 ? { sources } : {}), ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}) };
+  return { observations, warnings, errors, notes, annotations, ...(Object.keys(engineFacts).length > 0 ? { engineFacts } : {}), ...(Object.keys(sources).length > 0 ? { sources } : {}), ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}) };
 }
 
 /**

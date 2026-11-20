@@ -1,0 +1,31 @@
+{
+  "estate": "app-dev",
+  "choudoufu_version": "",
+  "upstream_version": "1.13.0",
+  "bound": [
+    {
+      "addr": "aws_s3_bucket.assets",
+      "type": "aws_s3_bucket",
+      "identity": "assets-4f1c2e9",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_s3_bucket.media",
+      "type": "aws_s3_bucket",
+      "identity": "media-9a0b",
+      "source": "marker"
+    }
+  ],
+  "omissions": [
+    {
+      "addr": "aws_s3_bucket_policy.assets_policy",
+      "reason": "ABSENT",
+      "detail": "The provider reports no aws_s3_bucket_policy exists with identity \"assets-4f1c2e9\", so this resource has not been created yet. The plan will propose creating it."
+    }
+  ],
+  "unowned": [],
+  "foreign": [],
+  "adoptable": [],
+  "swept": [],
+  "diagnostics": []
+}

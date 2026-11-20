@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "meta": {
+    "engineGraph": {
+      "format": 1,
+      "engine": {
+        "name": "choudoufu"
+      },
+      "scope": {
+        "kind": "estate",
+        "estate": "app-dev"
+      },
+      "markerScheme": {
+        "ownerKey": "tofu-estate",
+        "addressKey": "tofu-address",
+        "continuationKeys": [
+          "tofu-address-2",
+          "tofu-address-3",
+          "tofu-address-4"
+        ],
+        "encoding": {
+          "tags": "escaped",
+          "labels": "escaped"
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "id": "aws_s3_bucket.assets",
+      "kind": "aws_s3_bucket",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_s3_bucket.assets"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 10
+      },
+      "physicalId": "assets-4f1c2e9",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "marker",
+        "markers": {
+          "owner": "app-dev",
+          "address": "aws_s3_bucket.assets",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "assets-4f1c2e9"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_s3_bucket.media",
+      "kind": "aws_s3_bucket",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_s3_bucket.media"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 14
+      },
+      "physicalId": "media-9a0b",
+      "facts": {
+        "ownership": "bound",
+        "ownedBy": "marker",
+        "markers": {
+          "owner": "app-dev",
+          "address": "aws_s3_bucket.media",
+          "encoding": "escaped",
+          "source": "live"
+        },
+        "cloudIds": [
+          {
+            "kind": "import-id",
+            "value": "media-9a0b"
+          }
+        ]
+      }
+    },
+    {
+      "id": "aws_s3_bucket_policy.assets_policy",
+      "kind": "aws_s3_bucket_policy",
+      "lexicon": "terraform",
+      "attrs": {
+        "address": "aws_s3_bucket_policy.assets_policy"
+      },
+      "sourceLoc": {
+        "file": "main.tf",
+        "line": 18
+      },
+      "facts": {
+        "ownership": "pending"
+      }
+    }
+  ],
+  "edges": [],
+  "groups": {}
+}

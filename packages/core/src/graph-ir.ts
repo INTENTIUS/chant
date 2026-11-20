@@ -1579,6 +1579,25 @@ export function overlayGraphs(live: GraphIR, declared: GraphIR, opts?: OverlayOp
 }
 
 /**
+ * Put an ownership engine's facts about what a live read did not return as
+ * present (#5333, `ObservationResult.engineFacts`) on the overlay's nodes, by
+ * id. A node that already carries `facts` keeps them: those came with a live
+ * node. Nothing else changes, so a pending node stays `accent` and a filtered
+ * one `neutral`; the facts say what the engine saw, for people and for
+ * readers that show the graph, and nothing in chant decides from them.
+ */
+export function carryEngineFacts<N extends { id: string; facts?: EngineFacts }>(
+  nodes: N[],
+  facts: Record<string, EngineFacts> | undefined,
+): N[] {
+  if (!facts || Object.keys(facts).length === 0) return nodes;
+  return nodes.map((n) => {
+    const f = n.facts ? undefined : facts[n.id];
+    return f ? { ...n, facts: f } : n;
+  });
+}
+
+/**
  * Source-anchored overlay (#821) — the inverse of {@link overlayGraphs}. The
  * **declared** graph is the canvas, so its edges are kept: cross-substrate edges
  * (an ECS service wired to a k8s workload) are a source-graph property, since live
