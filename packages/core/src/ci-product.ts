@@ -126,6 +126,15 @@ export const COST_ESTIMATE_FLOOR = NEXT_RELEASE;
  * redact and to drop; they hold names, never values.
  */
 export const COST_REDACTED_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant whose cost estimate reads `redactEnv`, `dropEnv` and the forge tokens in a run's own
+ * environment as well as the job's (#5433): `CostRun.env` on `priceRuns`, and an op wave's `holds.cost`
+ * passes each run the `env` its product's `runHooks.beforePlan` gave it, so a value a product sets per
+ * run is replaced in the plan copy and left out of the command's environment. A product whose run hooks
+ * give no `env` gets the hold it had.
+ */
+export const COST_RUN_ENV_FLOOR = NEXT_RELEASE;
 export {
   COST_ESTIMATE_FORMATS,
   COST_REDACTED,
