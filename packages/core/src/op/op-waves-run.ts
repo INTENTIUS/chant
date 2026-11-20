@@ -143,6 +143,8 @@ import {
   GATE_APPROVAL_SOURCES,
   assertOpWaveHooks,
   assertOpWavesSpec,
+  opWaveFailureToleranceReads,
+  opWaveToleratedFailures,
   opWaveApplyHooksRunBy,
   opWaveAt,
   opWaveGateName,
@@ -341,6 +343,8 @@ export interface OpWaveDecision {
    * answered (the one that passed, or the one that refused the wave).
    */
   point?: OpWavePoint & { question?: WaitingPoint; answer?: GateAnswerRef };
+  /** The wave's failure tolerance at base (#5324), which the applying job reads from the decision. */
+  failureTolerance?: number | `${number}%`;
   /** The review that approved the wave, or why the review did not, under `pr-review`. */
   review?: { pr?: number; head?: string; approvers?: string[]; url?: string; reason?: string };
   /** The approval rules at base the wave's targets take (#4290). Absent when it takes none. */
@@ -708,6 +712,8 @@ export interface OpWaveBaseRules {
   evidenceRequires?: string[];
   /** Set when `evidence` at base cannot be read: the wave fails rather than apply without the checks it asks for. */
   evidenceRefused?: string;
+  /** The wave's `failureTolerance` at base (#5324): the failed runs it lets through. Absent at base, none. */
+  failureTolerance?: number | `${number}%`;
 }
 
 /** `evidence` at base (#4870), or why it cannot be read. */
@@ -760,6 +766,8 @@ export function readOpWavePolicy(
   // An approval mode this chant does not know reads as sealed: the strictest, so an unknown rule never loosens a gate.
   const approval = wave.approval === undefined ? "ledger" : GATE_APPROVAL_SOURCES.includes(wave.approval) ? wave.approval : "sealed";
   const rules: OpWaveBaseRules = { policy: OP_WAVE_GATE_POLICIES.includes(policy) ? policy : "always", approval, source: "base", base: sha, hooks: noHooks(), spend, ...spendRules, applyHooksRunBy: "chant", neverOverMcp, ...asks };
+  // #5324: a tolerance lets failed runs through, so only the one at base counts.
+  if (wave.failureTolerance !== undefined && opWaveFailureToleranceReads(wave.failureTolerance)) rules.failureTolerance = wave.failureTolerance;
   try {
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}`, spec.hooks);
     assertOpWaveHooks(`${specFile} at ${sha.slice(0, 12)}, wave "${name}"`, wave.hooks);
@@ -3466,6 +3474,7 @@ async function openWaveDecision(
     ...(spec.digest?.over === "changing" ? { digestOver: "changing" as const } : {}),
     ...(neverOverMcp ? { neverOverMcp: true as const } : {}),
     ...(rules.point ? { point: { ...rules.point } } : {}),
+    ...(rules.failureTolerance !== undefined ? { failureTolerance: rules.failureTolerance } : {}),
   };
   return { go: { rules, holds, decision } };
 }
@@ -4928,8 +4937,13 @@ async function applyLeased(
     return;
   }
   if (result.failed.length > 0) {
-    result.exitCode = 1;
-    return;
+    // #5324: within the tolerance read at base, the failed runs stay failed and the wave counts as applied.
+    const tolerated = opWaveToleratedFailures(decision.failureTolerance, runs.length);
+    if (result.failed.length > tolerated) {
+      result.exitCode = 1;
+      return;
+    }
+    log(`wave ${k} (${wave.name}): ${result.failed.length} run${result.failed.length === 1 ? "" : "s"} failed (${result.failed.join(", ")}), within its failure tolerance of ${tolerated}, so the wave goes on`);
   }
   // #4545: a run its step refused as moved applied nothing, so the wave exits moved and its after-apply hooks do not run.
   if (spec.step && result.moved.length > 0) {

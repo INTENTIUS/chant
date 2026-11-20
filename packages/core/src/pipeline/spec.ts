@@ -1,0 +1,342 @@
+/**
+ * The delivery pipeline's declaration and the spec it folds to (#5324).
+ *
+ * A pipeline is the whole path from merge to the last environment: its
+ * stages in promotion order, the waves inside each stage, a gate per stage,
+ * the stage's hooks, and its holds. "Stage" means an environment in
+ * promotion order, not a CI step.
+ *
+ * The declaration is written in `.chant/pipeline.ts` inside the
+ * TypeScript-as-data subset (`./fold.ts`), and `chant build` folds it to
+ * this spec without running it. The spec is plain data, so a reviewer, the
+ * gates and the plan note read it before anything runs. Each stage becomes
+ * an op-waves spec (`./stages.ts`) that `chant run wave` runs, and the stage
+ * order is the promotion order `chant components promote` follows.
+ *
+ * The shape stays open: a key a later pass adds to a stage, its gate or the
+ * pipeline is one line in {@link STAGE_KEYS}, {@link GATE_KEYS} or
+ * {@link PIPELINE_KEYS} and its own check. An unknown key is refused, so a
+ * folded spec never carries a setting no chant reads.
+ */
+
+import { opWavesControlProblems, type GateApprovalSource, type OpWave, type OpWaveGatePolicy, type OpWaveHooks, type OpWavePoint, type OpWavesControl, type OpWavesSpec } from "../op/op-waves";
+import type { OpWaveHolds } from "../op/op-waves-capability-spec";
+import type { GateQuorumRule } from "../op/gate-quorum";
+import type { OpEnvironment } from "../lexicon";
+
+/** The `kind` a folded pipeline carries. A reader refuses any other. */
+export const PIPELINE_SPEC_KIND = "chant.pipeline/v1";
+
+/** Where a member keeps its pipeline declaration, from the member's directory (beside `chant.config.ts`). */
+export const PIPELINE_FILE = ".chant/pipeline.ts";
+
+/** Where `chant build` writes the folded spec, from the member's directory. */
+export const PIPELINE_SPEC_FILE = ".chant/pipeline.json";
+
+/**
+ * A run count a wave of many targets may fail and still let the stage go on:
+ * a whole number of runs, or a share of the wave's runs as `"<n>%"`.
+ */
+export type PipelineFailureTolerance = number | `${number}%`;
+
+/**
+ * A manual hold. `true` holds the stage until a change to the pipeline lifts
+ * it; `until` lifts it at that time by itself.
+ */
+export type PipelineHold = true | { reason?: string; until?: string };
+
+/** A freeze window: no promotion into the stage from `from` until `until` (ISO 8601 times). */
+export interface PipelineFreezeWindow {
+  from: string;
+  until: string;
+  reason?: string;
+}
+
+/** The gate a stage's waves and its promotion pass through. Read at the base commit. */
+export interface PipelineGate {
+  /** When the stage waits for an approval. Default `"always"`. */
+  policy?: OpWaveGatePolicy;
+  /** Which approvals of the stage's digest count. Default `"ledger"`. */
+  approval?: GateApprovalSource;
+  /** Approval rules: distinct approvers, from roles, one not the author. */
+  quorum?: GateQuorumRule[];
+  /** A decision point the gate asks in place of the ledger. */
+  point?: string | OpWavePoint;
+  /** The policy and cost holds the stage's waves run over their plans. */
+  holds?: OpWaveHolds;
+}
+
+/** A wave inside a stage: an op wave, with the stage's failure tolerance on it unless it names its own. */
+export interface PipelineWave extends OpWave {
+  failureTolerance?: PipelineFailureTolerance;
+}
+
+/** One stage: an environment in promotion order. */
+export interface PipelineStage {
+  /**
+   * The environment's name. It is the name `chant components promote --to`
+   * takes, the release ledger the stage records on, and the key a step's
+   * per-environment inputs are read by. Lowercase letters, digits, `-` and `_`.
+   */
+  name: string;
+  /** The canary stage: the first to take a release. Declared and shown. */
+  canary?: boolean;
+  /** The waves the stage applies, in order. */
+  waves: PipelineWave[];
+  /** The stage's gate. Absent: every wave waits for an approval, as an op wave does. */
+  gate?: PipelineGate;
+  /** Hooks around the stage's waves, after the pipeline's own. */
+  hooks?: OpWaveHooks;
+  /** A manual hold. A held stage refuses promotion with exit 3. */
+  hold?: PipelineHold;
+  /** Freeze windows. A stage in one refuses promotion with exit 3 until it ends. */
+  freeze?: PipelineFreezeWindow[];
+  /** Failed runs a wave of many targets tolerates before the stage stops. Default 0. A wave's own wins. */
+  failureTolerance?: PipelineFailureTolerance;
+  /** The forge deployment environment the stage's jobs run in, unless a wave names its own. */
+  forgeEnvironment?: OpEnvironment;
+}
+
+/**
+ * The op-waves settings every stage shares: the Op, the plan and apply
+ * commands or the capability step, the runner, the notify and responses.
+ * A stage's gate, hooks and waves are its own.
+ */
+export type PipelineDefaults = Partial<Omit<OpWavesSpec, "name" | "waves" | "control">>;
+
+/** What a merge does once the first stage applied. */
+export interface PipelineRelease {
+  /** Cut a release from the applied commit. Default true. */
+  cut?: boolean;
+  /** The cut's label. Default `auto`, the next version `release next` computes. */
+  label?: string;
+  /** The command the cut runs as, in place of `chant`: a product's bin, such as `["npx", "--no-install", "plywood"]`. */
+  bin?: string[];
+}
+
+/** The declaration a member's `.chant/pipeline.ts` writes. */
+export interface PipelineDeclaration {
+  /** The pipeline's name, and the op its stage gates and skips are recorded under. */
+  name: string;
+  /** Stages in promotion order, first to last. The merge applies the first. */
+  stages: PipelineStage[];
+  /** Op-waves settings every stage shares. */
+  defaults?: PipelineDefaults;
+  /** What the merge does after the first stage applies. */
+  release?: PipelineRelease;
+  /** The control repo told once the first stage applied: the `<product>-applied` dispatch. */
+  control?: OpWavesControl;
+}
+
+/** The folded spec: the declaration as data, with its kind. */
+export interface PipelineSpec extends PipelineDeclaration {
+  kind: typeof PIPELINE_SPEC_KIND;
+}
+
+const NAME = /^[a-z0-9][a-z0-9_-]*$/;
+const TOLERANCE = /^(100|[1-9]?[0-9])%$/;
+
+/** The keys a pipeline takes. A later pass adds its key here with its check. */
+export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control"];
+/** The keys a stage takes. */
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment"];
+/** The keys a stage's gate takes. */
+export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds"];
+const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
+const DEFAULTS_REFUSED: readonly string[] = ["name", "waves", "control"];
+
+const isMap = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** Whether `value` is an ISO 8601 time `Date` reads. */
+function isTime(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value));
+}
+
+/** What is wrong with a failure tolerance, or undefined. */
+export function failureToleranceProblem(value: unknown, where: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) return undefined;
+  if (typeof value === "string" && TOLERANCE.test(value)) return undefined;
+  return `${where} must be a whole number of runs, or a share of the wave's runs such as "10%"`;
+}
+
+function unknownKeys(value: Record<string, unknown>, keys: readonly string[], where: string): string[] {
+  return Object.keys(value).filter((k) => !keys.includes(k)).map((k) => `${where} has an unknown key "${k}"; it takes ${keys.join(", ")}`);
+}
+
+function holdProblems(hold: unknown, where: string): string[] {
+  if (hold === undefined || hold === true) return [];
+  if (!isMap(hold)) return [`${where}.hold must be true or { "reason"?, "until"? }`];
+  const out = unknownKeys(hold, ["reason", "until"], `${where}.hold`);
+  if (hold.reason !== undefined && typeof hold.reason !== "string") out.push(`${where}.hold.reason must be text`);
+  if (hold.until !== undefined && !isTime(hold.until)) out.push(`${where}.hold.until must be an ISO 8601 time, such as "2026-12-01T00:00:00Z"`);
+  return out;
+}
+
+function freezeProblems(freeze: unknown, where: string): string[] {
+  if (freeze === undefined) return [];
+  if (!Array.isArray(freeze)) return [`${where}.freeze must be a list of { "from", "until", "reason"? }`];
+  const out: string[] = [];
+  freeze.forEach((w, i) => {
+    const at = `${where}.freeze[${i}]`;
+    if (!isMap(w)) {
+      out.push(`${at} must be { "from", "until", "reason"? }`);
+      return;
+    }
+    out.push(...unknownKeys(w, ["from", "until", "reason"], at));
+    if (!isTime(w.from)) out.push(`${at}.from must be an ISO 8601 time`);
+    if (!isTime(w.until)) out.push(`${at}.until must be an ISO 8601 time`);
+    if (isTime(w.from) && isTime(w.until) && Date.parse(w.until) <= Date.parse(w.from)) out.push(`${at} ends before it starts`);
+    if (w.reason !== undefined && typeof w.reason !== "string") out.push(`${at}.reason must be text`);
+  });
+  return out;
+}
+
+function gateProblems(gate: unknown, where: string): string[] {
+  if (gate === undefined) return [];
+  if (!isMap(gate)) return [`${where}.gate must be { "policy"?, "approval"?, "quorum"?, "point"?, "holds"? }`];
+  const out = unknownKeys(gate, GATE_KEYS, `${where}.gate`);
+  if (gate.policy !== undefined && !["always", "on-destructive", "never"].includes(gate.policy as string)) out.push(`${where}.gate.policy is always, on-destructive or never`);
+  if (gate.approval !== undefined && !["ledger", "pr-review", "sealed", "pull-request"].includes(gate.approval as string)) out.push(`${where}.gate.approval is ledger, pr-review, sealed or pull-request`);
+  if (gate.quorum !== undefined && !Array.isArray(gate.quorum)) out.push(`${where}.gate.quorum must be a list of rules`);
+  if (gate.point !== undefined && typeof gate.point !== "string" && !isMap(gate.point)) out.push(`${where}.gate.point must name a decision point`);
+  if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"? }`);
+  return out;
+}
+
+function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
+  const where = `stages[${i}]`;
+  if (!isMap(stage)) return [`${where} must be a stage: { "name", "waves", ... }`];
+  const name = typeof stage.name === "string" ? stage.name : undefined;
+  const at = name ? `stage "${name}"` : where;
+  const out = unknownKeys(stage, STAGE_KEYS, at);
+  if (name === undefined || !NAME.test(name)) out.push(`${where}.name must be an environment's name: lowercase letters, digits, "-" and "_"`);
+  else if (seen.has(name)) out.push(`${at} is named twice; each environment is one stage`);
+  else seen.add(name);
+  if (stage.canary !== undefined && typeof stage.canary !== "boolean") out.push(`${at}.canary must be true or false`);
+  if (!Array.isArray(stage.waves) || stage.waves.length === 0) out.push(`${at}.waves must list at least one wave`);
+  else {
+    const waveNames = new Set<string>();
+    stage.waves.forEach((w, k) => {
+      if (!isMap(w) || typeof w.name !== "string" || !NAME.test(w.name)) out.push(`${at}.waves[${k}] must be a wave with a name of lowercase letters, digits, "-" and "_"`);
+      else if (waveNames.has(w.name)) out.push(`${at} has two waves named "${w.name}"`);
+      else waveNames.add(w.name);
+      if (isMap(w)) {
+        const p = failureToleranceProblem(w.failureTolerance, `${at}.waves[${k}].failureTolerance`);
+        if (p) out.push(p);
+      }
+    });
+  }
+  out.push(...gateProblems(stage.gate, at));
+  if (stage.hooks !== undefined && !isMap(stage.hooks)) out.push(`${at}.hooks must be { "before"?, "after"?, "apply"? }`);
+  out.push(...holdProblems(stage.hold, at), ...freezeProblems(stage.freeze, at));
+  if (stage.forgeEnvironment !== undefined && (!isMap(stage.forgeEnvironment) || typeof stage.forgeEnvironment.name !== "string" || stage.forgeEnvironment.name === "")) out.push(`${at}.forgeEnvironment must be { "name", "url"? }`);
+  const tolerance = failureToleranceProblem(stage.failureTolerance, `${at}.failureTolerance`);
+  if (tolerance) out.push(tolerance);
+  return out;
+}
+
+/**
+ * Everything wrong with a folded pipeline, one line each; empty when it
+ * reads. The stage-level checks are here; each stage's op-waves spec is
+ * checked again by `assertOpWavesSpec` when it is derived (`./stages.ts`).
+ */
+export function pipelineSpecProblems(value: unknown): string[] {
+  if (!isMap(value)) return ["a pipeline is { \"name\", \"stages\": [...] }"];
+  const out = unknownKeys(value, PIPELINE_KEYS, "the pipeline");
+  if (value.kind !== undefined && value.kind !== PIPELINE_SPEC_KIND) out.push(`the pipeline's kind is ${JSON.stringify(value.kind)}; this chant reads ${PIPELINE_SPEC_KIND}`);
+  if (typeof value.name !== "string" || !NAME.test(value.name)) out.push("the pipeline's name must be lowercase letters, digits, \"-\" and \"_\"");
+  if (!Array.isArray(value.stages) || value.stages.length === 0) out.push("the pipeline must list at least one stage");
+  else {
+    const seen = new Set<string>();
+    value.stages.forEach((s, i) => out.push(...stageProblems(s, i, seen)));
+  }
+  if (value.defaults !== undefined) {
+    if (!isMap(value.defaults)) out.push("the pipeline's defaults must be op-waves settings: { \"op\", \"step\", ... }");
+    else for (const k of DEFAULTS_REFUSED) if (k in value.defaults) out.push(`defaults.${k} is set by the pipeline, not its defaults`);
+  }
+  if (value.release !== undefined) {
+    if (!isMap(value.release)) out.push("the pipeline's release must be { \"cut\"?, \"label\"?, \"bin\"? }");
+    else {
+      out.push(...unknownKeys(value.release, RELEASE_KEYS, "release"));
+      if (value.release.cut !== undefined && typeof value.release.cut !== "boolean") out.push("release.cut must be true or false");
+      if (value.release.label !== undefined && (typeof value.release.label !== "string" || value.release.label.trim() === "")) out.push("release.label must name the release, or be auto");
+      if (value.release.bin !== undefined && (!Array.isArray(value.release.bin) || value.release.bin.length === 0 || value.release.bin.some((w) => typeof w !== "string" || w === ""))) out.push("release.bin must be a list of words, such as [\"npx\", \"--no-install\", \"plywood\"]");
+    }
+  }
+  if (value.control !== undefined) out.push(...opWavesControlProblems(value.control).map((p) => `the pipeline's ${p}`));
+  return out;
+}
+
+/** The spec, checked, with its kind. Throws naming every problem. */
+export function asPipelineSpec(value: unknown, where = "the pipeline"): PipelineSpec {
+  const problems = pipelineSpecProblems(value);
+  if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}`);
+  return { ...(value as PipelineDeclaration), kind: PIPELINE_SPEC_KIND };
+}
+
+/** Whether a parsed JSON document is a folded pipeline, by its kind. */
+export function isPipelineSpecDocument(value: unknown): value is PipelineSpec {
+  return isMap(value) && value.kind === PIPELINE_SPEC_KIND;
+}
+
+/**
+ * The folded spec's JSON Schema, for an editor or a reader in another
+ * language. The stage's waves are op waves, checked in full when each
+ * stage's op-waves spec is derived.
+ */
+export const PIPELINE_SPEC_SCHEMA = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://intentius.io/chant/schemas/pipeline-v1.json",
+  title: "chant pipeline",
+  type: "object",
+  required: ["kind", "name", "stages"],
+  additionalProperties: false,
+  properties: {
+    kind: { const: PIPELINE_SPEC_KIND },
+    name: { type: "string", pattern: NAME.source },
+    defaults: { type: "object", not: { anyOf: DEFAULTS_REFUSED.map((k) => ({ required: [k] })) } },
+    release: {
+      type: "object",
+      additionalProperties: false,
+      properties: { cut: { type: "boolean" }, label: { type: "string", minLength: 1 }, bin: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } } },
+    },
+    control: { type: "object" },
+    stages: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        required: ["name", "waves"],
+        additionalProperties: false,
+        properties: {
+          name: { type: "string", pattern: NAME.source },
+          canary: { type: "boolean" },
+          waves: { type: "array", minItems: 1, items: { type: "object", required: ["name"], properties: { name: { type: "string", pattern: NAME.source }, failureTolerance: { $ref: "#/$defs/tolerance" } } } },
+          gate: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              policy: { enum: ["always", "on-destructive", "never"] },
+              approval: { enum: ["ledger", "pr-review", "sealed", "pull-request"] },
+              quorum: { type: "array" },
+              point: { type: ["string", "object"] },
+              holds: { type: "object" },
+            },
+          },
+          hooks: { type: "object" },
+          hold: { oneOf: [{ const: true }, { type: "object", additionalProperties: false, properties: { reason: { type: "string" }, until: { type: "string", format: "date-time" } } }] },
+          freeze: {
+            type: "array",
+            items: { type: "object", required: ["from", "until"], additionalProperties: false, properties: { from: { type: "string", format: "date-time" }, until: { type: "string", format: "date-time" }, reason: { type: "string" } } },
+          },
+          failureTolerance: { $ref: "#/$defs/tolerance" },
+          forgeEnvironment: { type: "object", required: ["name"], properties: { name: { type: "string", minLength: 1 }, url: { type: "string" } } },
+        },
+      },
+    },
+  },
+  $defs: {
+    tolerance: { oneOf: [{ type: "integer", minimum: 0 }, { type: "string", pattern: TOLERANCE.source }] },
+  },
+} as const;

@@ -1444,6 +1444,20 @@ export interface OpWavesRecordPlansInputs {
 }
 
 /** An Op waves pipeline: one file, and its jobs in order. */
+/** What a lexicon renders a pipeline's promote jobs from (#5324, {@link LexiconPlugin.generatePipelinePromote}). */
+export interface PipelinePromoteInput {
+  /** The pipeline's name: the workflow is `<name>-promote`. */
+  pipeline: string;
+  /** The stages a promote reaches, in order: every stage after the first. */
+  stages: Array<{ name: string; environment?: OpEnvironment }>;
+  /** The command each job runs in place of `chant`, such as `npx --no-install plywood`. Absent: `chant`. */
+  bin?: string;
+  /** Where the jobs run. Default the forge's default runner. */
+  runner?: import("./ci-jobs").CiRunner;
+  /** Each job's timeout in minutes. Default `OP_WAVE_JOB_TIMEOUT_MINUTES` (180). */
+  jobTimeoutMinutes?: number;
+}
+
 export interface OpWavesPipelineResult {
   files: OpPipelineFile[];
   jobs: OpWaveJob[];
@@ -1928,6 +1942,16 @@ export interface LexiconPlugin {
    * lexicons implement this.
    */
   generateOpWavesPipeline?(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult;
+
+  /**
+   * Render a pipeline's promote jobs (#5324, `./pipeline.ts`): one manual
+   * job per stage after the first, each running `components promote --to
+   * <stage> --release <release>` behind that stage's gate, started by a
+   * person with the stage and the release as inputs. The first stage's
+   * waves render through {@link generateOpWavesPipeline}. Only CI-provider
+   * lexicons implement this.
+   */
+  generatePipelinePromote?(input: PipelinePromoteInput): OpPipelineFile[];
 
   /**
    * The shell lines that install this lexicon's engine into the default CI

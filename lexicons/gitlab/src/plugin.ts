@@ -27,6 +27,7 @@ import { GitLabGenerator } from "./import/generator";
 import { generateGitlabPipeline } from "./components/generate-pipeline";
 import { generateGitlabOpPipeline } from "./components/generate-op-pipeline";
 import { generateGitlabOpWavesPipeline } from "./components/generate-op-waves-pipeline";
+import { generateGitlabPipelinePromote } from "./components/generate-pipeline-promote";
 
 export const gitlabPlugin: LexiconPlugin = {
   name: "gitlab",
@@ -38,6 +39,8 @@ export const gitlabPlugin: LexiconPlugin = {
   generateOpPipeline: (ops, options) => generateGitlabOpPipeline(ops, options),
   // Ordered waves of Op runs, each behind one gate (#3679).
   generateOpWavesPipeline: (spec, options) => generateGitlabOpWavesPipeline(spec, options),
+  // A delivery pipeline's manual promote jobs (#5324).
+  generatePipelinePromote: (input) => generateGitlabPipelinePromote(input),
   // Self-upgrade: where the pinned GitLab schema version lives + its upstream (#685).
   upstreamPin: {
     file: "src/codegen/fetch.ts",

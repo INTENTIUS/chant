@@ -446,6 +446,14 @@ export interface OpWave {
    * with the wave's own `shares` (a group has its own) or `rest`.
    */
   jobs?: OpWaveJobGroup[];
+  /**
+   * Failed runs the wave tolerates (#5324): a whole number of runs, or a
+   * share of its runs as `"<n>%"`. Read at the base commit with the gate.
+   * A wave whose failed runs are within it exits as applied, so the waves
+   * after it go on; each failed run is still recorded as failed, and blocks
+   * the runs that depend on it. Default 0: any failed run fails the wave.
+   */
+  failureTolerance?: number | `${number}%`;
 }
 
 /**
@@ -988,6 +996,17 @@ export function opWaveOutcomePath(spec: Pick<OpWavesSpec, "name">, wave: number,
 
 const NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
+/** Whether a wave's `failureTolerance` reads (#5324): a whole number, or `"<n>%"` from 0 to 100. */
+export function opWaveFailureToleranceReads(value: unknown): boolean {
+  return (typeof value === "number" && Number.isInteger(value) && value >= 0) || (typeof value === "string" && /^(100|[1-9]?[0-9])%$/.test(value));
+}
+
+/** How many failed runs of a wave of `runs` its `failureTolerance` lets through (#5324). */
+export function opWaveToleratedFailures(tolerance: number | string | undefined, runs: number): number {
+  if (tolerance === undefined || !opWaveFailureToleranceReads(tolerance)) return 0;
+  return typeof tolerance === "number" ? tolerance : Math.floor((runs * Number(tolerance.slice(0, -1))) / 100);
+}
+
 /** Refuse a spec no job could run, naming what is wrong. */
 export function assertOpWavesSpec(spec: OpWavesSpec): void {
   const where = `Op waves "${spec.name}"`;
@@ -1178,6 +1197,7 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     if (wave.jobs !== undefined) assertOpWaveJobGroups(where, wave);
     if (wave.discover !== undefined && typeof wave.discover !== "boolean") throw new Error(`${where}: wave "${wave.name}" has discover ${JSON.stringify(wave.discover)}; use true or false.`);
     if (wave.rest !== undefined && typeof wave.rest !== "boolean") throw new Error(`${where}: wave "${wave.name}" has rest ${JSON.stringify(wave.rest)}; use true or false.`);
+    if (wave.failureTolerance !== undefined && !opWaveFailureToleranceReads(wave.failureTolerance)) throw new Error(`${where}: wave "${wave.name}" has failureTolerance ${JSON.stringify(wave.failureTolerance)}; use a whole number of runs, or a share such as "10%".`);
     if (wave.together !== undefined && typeof wave.together !== "boolean") throw new Error(`${where}: wave "${wave.name}" has together ${JSON.stringify(wave.together)}; use true or false.`);
     if (wave.together && spec.step === undefined) throw new Error(`${where}: wave "${wave.name}" plans its runs together, which only a \`step\`'s capability does. Give step.`);
     if (wave.together && (wave.parallelism ?? 1) > 1) throw new Error(`${where}: wave "${wave.name}" plans and applies its runs together in one call, so it has no parallelism over 1.`);

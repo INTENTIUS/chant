@@ -25,6 +25,7 @@ export { evl007InvalidSiblingsRule } from "./evl007-invalid-siblings";
 export { evl009CompositeNoConstantRule } from "./evl009-composite-no-constant";
 export { evl010CompositeNoTransformRule } from "./evl010-composite-no-transform";
 export { evl011SymbolicInTemplateRule } from "./evl011-symbolic-in-template";
+export { evl012PipelineFoldRule, isPipelineFile } from "./evl012-pipeline-fold";
 export { cor017CompositeNameMatchRule } from "./cor017-composite-name-match";
 export { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-lexicon-type";
 export { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
@@ -59,6 +60,7 @@ import { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
 import { cor022ReceiptLeafRule } from "./cor022-receipt-leaf";
 import { cor024ReceiptSecretPointerRule } from "./cor024-receipt-secret-pointer";
 import { noLiteralKeyRule } from "./sys001-no-literal-key";
+import { evl012PipelineFoldRule } from "./evl012-pipeline-fold";
 
 /**
  * Load all core lint rules (COR + EVL + SYS001).
@@ -85,6 +87,7 @@ export function loadCoreRules(): LintRule[] {
     evl009CompositeNoConstantRule,
     evl010CompositeNoTransformRule,
     evl011SymbolicInTemplateRule,
+    evl012PipelineFoldRule,
     cor017CompositeNameMatchRule,
     cor018CompositePreferLexiconTypeRule,
     cor021EnvLiteralNameRule,

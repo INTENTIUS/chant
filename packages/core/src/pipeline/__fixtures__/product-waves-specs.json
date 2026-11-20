@@ -1,0 +1,754 @@
+{
+  "terragucci": {
+    "init-default": {
+      "name": "tf-apply",
+      "op": "tf-apply",
+      "gateName": "wave-{k}",
+      "digest": {
+        "over": "changing"
+      },
+      "neverOverMcp": true,
+      "approvals": {
+        "spend": true
+      },
+      "waves": [
+        {
+          "name": "wave-1",
+          "runs": [
+            {
+              "target": "envs/dev"
+            }
+          ],
+          "gate": "on-destructive",
+          "approval": "ledger"
+        },
+        {
+          "name": "wave-2",
+          "runs": [
+            {
+              "target": "envs/staging"
+            },
+            {
+              "target": "envs/prod"
+            }
+          ],
+          "gate": "on-destructive",
+          "approval": "ledger"
+        }
+      ],
+      "step": {
+        "kind": "terraform-apply",
+        "root": "{target}"
+      },
+      "hooks": {
+        "after": {
+          "gate": [
+            {
+              "name": "report",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "gate",
+                "{runs}"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "init-sealed-migrations-point": {
+      "name": "tf-apply",
+      "op": "tf-apply",
+      "gateName": "wave-{k}",
+      "digest": {
+        "over": "changing"
+      },
+      "neverOverMcp": true,
+      "approvals": {
+        "spend": true
+      },
+      "point": {
+        "name": "prod-apply",
+        "store": "ledger",
+        "timeout": "48h"
+      },
+      "waves": [
+        {
+          "name": "wave-1",
+          "runs": [
+            {
+              "target": "canary"
+            }
+          ],
+          "gate": "always",
+          "approval": "sealed",
+          "hooks": {
+            "before": {
+              "plan": [
+                {
+                  "name": "migrations",
+                  "command": [
+                    "node",
+                    ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                    "migrate-check",
+                    "{runs}"
+                  ]
+                },
+                {
+                  "name": "migration gate",
+                  "command": [
+                    "node",
+                    ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                    "migrate",
+                    "{runs}"
+                  ],
+                  "onFailure": "approve"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "wave-2",
+          "runs": [
+            {
+              "target": "a"
+            },
+            {
+              "target": "b"
+            }
+          ],
+          "gate": "always",
+          "approval": "sealed"
+        }
+      ],
+      "step": {
+        "kind": "terraform-apply",
+        "root": "{target}"
+      },
+      "hooks": {
+        "after": {
+          "gate": [
+            {
+              "name": "report",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "gate",
+                "{runs}"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "apply-step": {
+      "name": "tf-apply",
+      "op": "tf-apply",
+      "gateName": "wave-{k}",
+      "digest": {
+        "over": "changing"
+      },
+      "neverOverMcp": true,
+      "approvals": {
+        "spend": true
+      },
+      "waves": [
+        {
+          "name": "wave-1",
+          "runs": [
+            {
+              "target": "a"
+            }
+          ],
+          "gate": "never",
+          "approval": "ledger"
+        },
+        {
+          "name": "wave-2",
+          "runs": [
+            {
+              "target": "b"
+            },
+            {
+              "target": "c",
+              "input": {
+                "reads": [
+                  {
+                    "var": "vpc",
+                    "root": "b",
+                    "output": [
+                      "id"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "gate": "always",
+          "approval": "ledger",
+          "shares": 2
+        }
+      ],
+      "step": {
+        "kind": "terraform-apply",
+        "root": "{target}",
+        "lockTimeout": "10m"
+      },
+      "holds": {
+        "policy": true,
+        "cost": {
+          "command": [
+            "infracost",
+            "breakdown",
+            "--path",
+            "{planJson}",
+            "--format",
+            "json"
+          ],
+          "approveAbove": 100,
+          "format": "infracost"
+        }
+      },
+      "hooks": {
+        "after": {
+          "gate": [
+            {
+              "name": "report",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "gate",
+                "{runs}"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "render-terragrunt": {
+      "name": "tf-apply",
+      "op": "tf-apply",
+      "gateName": "wave-{k}",
+      "digest": {
+        "over": "changing"
+      },
+      "neverOverMcp": true,
+      "approvals": {
+        "spend": true
+      },
+      "planWave": [
+        "node",
+        ".chant/op-waves/tf-apply/terragucci-call.cjs",
+        "plan",
+        "{runs}",
+        "{plans}"
+      ],
+      "applyWave": [
+        "node",
+        ".chant/op-waves/tf-apply/terragucci-call.cjs",
+        "apply",
+        "{runs}"
+      ],
+      "hooks": {
+        "after": {
+          "plan": [
+            {
+              "name": "held",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "hold",
+                "{runs}"
+              ],
+              "onFailure": "approve"
+            }
+          ],
+          "gate": [
+            {
+              "name": "report",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "gate",
+                "{runs}"
+              ]
+            }
+          ]
+        }
+      },
+      "waves": [
+        {
+          "name": "wave-1",
+          "runs": [],
+          "discover": true,
+          "gate": "always",
+          "approval": "ledger"
+        },
+        {
+          "name": "wave-2",
+          "runs": [],
+          "discover": true,
+          "gate": "always",
+          "approval": "ledger"
+        },
+        {
+          "name": "wave-3",
+          "runs": [],
+          "discover": true,
+          "gate": "always",
+          "approval": "ledger"
+        }
+      ]
+    },
+    "apply-terragrunt-rest": {
+      "name": "tf-apply",
+      "op": "tf-apply",
+      "gateName": "wave-{k}",
+      "digest": {
+        "over": "changing"
+      },
+      "neverOverMcp": true,
+      "approvals": {
+        "spend": true
+      },
+      "planWave": [
+        "node",
+        ".chant/op-waves/tf-apply/terragucci-call.cjs",
+        "plan",
+        "{runs}",
+        "{plans}"
+      ],
+      "applyWave": [
+        "node",
+        ".chant/op-waves/tf-apply/terragucci-call.cjs",
+        "apply",
+        "{runs}"
+      ],
+      "hooks": {
+        "after": {
+          "plan": [
+            {
+              "name": "held",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "hold",
+                "{runs}"
+              ],
+              "onFailure": "approve"
+            }
+          ],
+          "gate": [
+            {
+              "name": "report",
+              "command": [
+                "node",
+                ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                "gate",
+                "{runs}"
+              ]
+            }
+          ]
+        }
+      },
+      "waves": [
+        {
+          "name": "wave-1",
+          "runs": [],
+          "discover": true,
+          "gate": "on-destructive",
+          "approval": "sealed",
+          "hooks": {
+            "before": {
+              "plan": [
+                {
+                  "name": "migrations",
+                  "command": [
+                    "node",
+                    ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                    "migrate-check",
+                    "{runs}"
+                  ]
+                },
+                {
+                  "name": "migration gate",
+                  "command": [
+                    "node",
+                    ".chant/op-waves/tf-apply/terragucci-call.cjs",
+                    "migrate",
+                    "{runs}"
+                  ],
+                  "onFailure": "approve"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "wave-2",
+          "runs": [],
+          "discover": true,
+          "rest": true,
+          "gate": "on-destructive",
+          "approval": "sealed"
+        }
+      ]
+    }
+  },
+  "plywood": {
+    "init-github": {
+      "name": "pulumi-up",
+      "op": "pulumi-up",
+      "gate": "up",
+      "branches": [
+        "main"
+      ],
+      "step": {
+        "kind": "pulumi-up"
+      },
+      "waves": [
+        {
+          "name": "dev",
+          "gate": "on-destructive",
+          "runs": [
+            {
+              "target": "shop/dev",
+              "input": {
+                "dir": "infra",
+                "stack": "dev",
+                "member": "shop"
+              }
+            }
+          ],
+          "approval": "pull-request",
+          "variables": {
+            "GITHUB_TOKEN": "${{ github.token }}"
+          }
+        },
+        {
+          "name": "staging",
+          "gate": "on-destructive",
+          "runs": [
+            {
+              "target": "shop/staging",
+              "input": {
+                "dir": "infra",
+                "stack": "staging",
+                "member": "shop"
+              }
+            }
+          ],
+          "approval": "pull-request",
+          "variables": {
+            "GITHUB_TOKEN": "${{ github.token }}"
+          }
+        },
+        {
+          "name": "prod",
+          "gate": "on-destructive",
+          "runs": [
+            {
+              "target": "shop/prod",
+              "input": {
+                "dir": "infra",
+                "stack": "prod",
+                "member": "shop"
+              }
+            }
+          ],
+          "approval": "pull-request",
+          "variables": {
+            "GITHUB_TOKEN": "${{ github.token }}"
+          }
+        }
+      ],
+      "gateName": "wave-{k}",
+      "approvals": {
+        "pullRequest": {
+          "gate": "up"
+        },
+        "preview": true
+      }
+    },
+    "init-gitlab": {
+      "name": "pulumi-up",
+      "op": "pulumi-up",
+      "gate": "up",
+      "branches": [
+        "main"
+      ],
+      "step": {
+        "kind": "pulumi-up"
+      },
+      "waves": [
+        {
+          "name": "dev",
+          "gate": "on-destructive",
+          "runs": [
+            {
+              "target": "shop/dev",
+              "input": {
+                "dir": "infra",
+                "stack": "dev",
+                "member": "shop"
+              }
+            }
+          ],
+          "approval": "pull-request"
+        },
+        {
+          "name": "staging",
+          "gate": "on-destructive",
+          "runs": [
+            {
+              "target": "shop/staging",
+              "input": {
+                "dir": "infra",
+                "stack": "staging",
+                "member": "shop"
+              }
+            }
+          ],
+          "approval": "pull-request"
+        },
+        {
+          "name": "prod",
+          "gate": "on-destructive",
+          "runs": [
+            {
+              "target": "shop/prod",
+              "input": {
+                "dir": "infra",
+                "stack": "prod",
+                "member": "shop"
+              }
+            }
+          ],
+          "approval": "pull-request"
+        }
+      ],
+      "gateName": "wave-{k}",
+      "approvals": {
+        "pullRequest": {
+          "gate": "up"
+        },
+        "preview": true
+      }
+    },
+    "init-quorum-notify-runner": {
+      "name": "pulumi-up",
+      "op": "pulumi-up",
+      "gate": "up",
+      "branches": [
+        "trunk"
+      ],
+      "runner": [
+        "self-hosted",
+        "linux"
+      ],
+      "step": {
+        "kind": "pulumi-up"
+      },
+      "approvals": {
+        "quorum": [
+          {
+            "count": 2,
+            "roles": [
+              "ops"
+            ],
+            "notAuthor": true
+          }
+        ],
+        "pullRequest": {
+          "gate": "up"
+        },
+        "preview": true
+      },
+      "notify": {
+        "slack": "SLACK_WEBHOOK",
+        "events": [
+          "waiting",
+          "failed"
+        ]
+      },
+      "waves": [
+        {
+          "name": "dev",
+          "gate": "never",
+          "runs": [
+            {
+              "target": "app/dev",
+              "input": {
+                "dir": "infra",
+                "stack": "dev",
+                "member": "app"
+              }
+            },
+            {
+              "target": "network/dev",
+              "input": {
+                "dir": "infra",
+                "stack": "dev",
+                "member": "network",
+                "engine": "plunge",
+                "lockGrain": "target"
+              }
+            }
+          ],
+          "approval": "pull-request",
+          "variables": {
+            "GITHUB_TOKEN": "${{ github.token }}"
+          }
+        },
+        {
+          "name": "prod",
+          "gate": "always",
+          "runs": [
+            {
+              "target": "app/prod",
+              "input": {
+                "dir": "infra",
+                "stack": "prod",
+                "member": "app"
+              }
+            },
+            {
+              "target": "network/prod",
+              "input": {
+                "dir": "infra",
+                "stack": "prod",
+                "member": "network"
+              }
+            }
+          ],
+          "approval": "pull-request",
+          "variables": {
+            "GITHUB_TOKEN": "${{ github.token }}"
+          }
+        }
+      ],
+      "gateName": "wave-{k}"
+    },
+    "init-file": {
+      "waves": {
+        "name": "pulumi-up",
+        "op": "pulumi-up",
+        "gate": "up",
+        "branches": [
+          "main"
+        ],
+        "step": {
+          "kind": "pulumi-up"
+        },
+        "waves": [
+          {
+            "name": "dev",
+            "gate": "on-destructive",
+            "runs": [
+              {
+                "target": "shop/dev",
+                "input": {
+                  "dir": "infra",
+                  "stack": "dev",
+                  "member": "shop"
+                }
+              }
+            ],
+            "approval": "pull-request",
+            "variables": {
+              "GITHUB_TOKEN": "${{ github.token }}"
+            }
+          },
+          {
+            "name": "staging",
+            "gate": "on-destructive",
+            "runs": [
+              {
+                "target": "shop/staging",
+                "input": {
+                  "dir": "infra",
+                  "stack": "staging",
+                  "member": "shop"
+                }
+              }
+            ],
+            "approval": "pull-request",
+            "variables": {
+              "GITHUB_TOKEN": "${{ github.token }}"
+            }
+          },
+          {
+            "name": "prod",
+            "gate": "on-destructive",
+            "runs": [
+              {
+                "target": "shop/prod",
+                "input": {
+                  "dir": "infra",
+                  "stack": "prod",
+                  "member": "shop"
+                }
+              }
+            ],
+            "approval": "pull-request",
+            "variables": {
+              "GITHUB_TOKEN": "${{ github.token }}"
+            }
+          }
+        ],
+        "gateName": "wave-{k}",
+        "approvals": {
+          "pullRequest": {
+            "gate": "up"
+          },
+          "preview": true
+        }
+      },
+      "options": {
+        "image": "ghcr.io/intentius/plywood-pulumi:0.0.0",
+        "beforeScript": [
+          "npm ci"
+        ]
+      }
+    }
+  },
+  "sql-yodeler": {
+    "templates/yodel-waves.json": {
+      "name": "yodel-apply",
+      "op": "migrate-dev",
+      "step": {
+        "kind": "sql-migrate",
+        "environment": "{target}",
+        "spec": "yodel-waves.json"
+      },
+      "standDown": true,
+      "branches": [
+        "main"
+      ],
+      "waves": [
+        {
+          "name": "dev",
+          "runs": [
+            {
+              "target": "dev",
+              "op": "migrate-dev"
+            }
+          ],
+          "gate": "always"
+        },
+        {
+          "name": "prod",
+          "runs": [
+            {
+              "target": "prod",
+              "op": "migrate-prod"
+            }
+          ],
+          "gate": "always"
+        }
+      ],
+      "gateName": "yodel-apply-wave-{k}"
+    }
+  }
+}

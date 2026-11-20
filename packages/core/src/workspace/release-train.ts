@@ -38,6 +38,8 @@ import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { CHANT_EXIT } from "../exit-codes";
+import { promoteBase, readPipelineAt } from "../pipeline/read";
+import { stageHeldAt, stageHeldLine } from "../pipeline/stages";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { readAllReleases, readCuts } from "../lifecycle/release-store";
 import { WORKSPACE_GATE_ENV, WORKSPACE_RUN_ENV } from "../op/workspace-run-env";
@@ -315,6 +317,24 @@ export interface TrainPromoteQuery {
   readAnswers?: (cwd: string) => Promise<ControlAppliedRecord[]>;
   /** The member links a train across repositories orders by (#5119), from the declaration unless a test passes its own. */
   readLinks?: (cwd: string) => Promise<WorkspaceGraph["links"]>;
+  /** The hold on `env` in a member's pipeline (#5324), read at its default branch; {@link memberStageHeld} unless a test passes its own. */
+  readHeld?: (dir: string, env: string) => string | undefined;
+}
+
+/**
+ * The line saying why a member's pipeline refuses promotion into `env` now
+ * (#5324): its stage is held or in a freeze window. Read at the member's
+ * default branch, as `components promote` reads it. Undefined when the
+ * member has no pipeline, no such stage, or the stage is open.
+ */
+export function memberStageHeld(dir: string, env: string, now: Date = new Date()): string | undefined {
+  const base = promoteBase(dir);
+  if (!base) return undefined;
+  const read = readPipelineAt(base, dir);
+  if (read.status !== "folded") return undefined;
+  const stage = read.spec.stages.find((s) => s.name === env);
+  const held = stage ? stageHeldAt(stage, now) : undefined;
+  return held ? stageHeldLine(held) : undefined;
 }
 
 /** Sends one dispatch into a member repository: the member, its repository's URL, and what the dispatch carries. Throws when it was not taken. */
@@ -322,6 +342,8 @@ export type TrainDispatcher = (member: { name: string; repo: string }, d: TrainD
 
 export type TrainPromoteOutcome =
   | { kind: "refused"; message: string }
+  /** #5324: a member's pipeline holds or freezes the stage, so nothing was promoted. */
+  | { kind: "held"; message: string }
   | { kind: "planned"; train: ReadTrain; order: string[] }
   | { kind: "ran"; train: ReadTrain; record: WorkspaceRunRecord; pending: WorkspaceGatePending | null; approved: string | null; ledgerError: string | null }
   /** #5119: the promote in flight waits on `member`'s answer, and nothing was written. */
@@ -396,6 +418,12 @@ export async function promoteTrain(query: TrainPromoteQuery): Promise<TrainPromo
   if (missing.length > 0) return { kind: "refused", message: `release train ${train.id} pins ${missing.map((m) => m.member).join(", ")}, which the workspace graph does not compose` };
 
   const order = orderTargets(train.members.map((m) => ({ member: m.member, op: TRAIN_STEP_OP })), graph.links).map((t) => train.members.find((m) => m.member === t.member)!);
+  // #5324: a member whose pipeline holds the stage stops the train before any member deploys.
+  const readHeld = query.readHeld ?? ((dir: string, e: string) => memberStageHeld(resolve(query.cwd, dir), e));
+  for (const m of order) {
+    const held = readHeld(graph.members.find((g) => g.name === m.member)!.dir, query.env);
+    if (held) return { kind: "held", message: `release train ${train.id}: ${m.member}'s ${held}` };
+  }
   if (query.dryRun) return { kind: "planned", train, order: order.map((m) => m.member) };
 
   const id = `ws-${randomUUID()}`;
@@ -749,6 +777,11 @@ async function runTrainPromote(ctx: CommandContext, words: string[]): Promise<nu
     if (args.json) console.log(JSON.stringify({ status: "refused", message: outcome.message }, null, 2));
     console.error(formatError({ message: outcome.message, hint: USAGE }));
     return 1;
+  }
+  if (outcome.kind === "held") {
+    if (args.json) console.log(JSON.stringify({ status: "held", message: outcome.message }, null, 2));
+    console.error(formatError({ message: outcome.message }));
+    return CHANT_EXIT.waiting;
   }
   if (outcome.kind === "idle") {
     if (args.json) console.log(JSON.stringify({ status: "idle", train: outcome.train.id, message: outcome.message }, null, 2));

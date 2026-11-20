@@ -56,6 +56,12 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `promotion` | the order of the stages | a list of environment names | `environments` in `chant.config.ts` |
 | `environments.<name>.gate` | when the stage's wave waits for an approval | `always`, `on-destructive`, `never` | the wave's `gate` |
 | `environments.<name>.targets.<member>` | the target a member applies in one environment: a stack, a root, or the step's inputs there | a target name or path, or a map of the step's inputs | the member's step's `environments.<name>` entry |
+| `environments.<name>.approval_rules` | the approval rules of one stage, in place of `approval_rules` | the rules `approval_rules` takes | a stage gate's `quorum` in `.chant/pipeline.ts` |
+| `environments.<name>.hold` | a manual hold: no release is promoted into the stage | `true`, or a map with `reason` and `until`, an ISO 8601 time | a stage's `hold` |
+| `environments.<name>.freeze` | the freeze windows in which no release is promoted into the stage | a list of maps with `from`, `until` (ISO 8601 times) and `reason` | a stage's `freeze` |
+| `environments.<name>.failure_tolerance` | the failed runs a wave of many targets lets through before the stage stops | a whole number of runs, or a share of the wave's runs such as `10%` | a stage's `failureTolerance`, a wave's `failureTolerance` |
+| `release.cut` | a merge cuts a release once the first stage applied | `true` or `false`; `true` when the product writes a pipeline | `release.cut` |
+| `release.label` | the label the merge's release is cut with | a label, or `auto` for the next version | `release.label`, `chant release cut <label>` |
 
 A product writes one component per member and puts each environment's target in its step's `environments` map, keyed by environment name. Before the step's capability sees its input, chant merges the entry for the run's environment over the step's own input, so `promote --to staging` applies the staging target and records it under staging, and `rollback` and `redeploy` pick the target of the environment they act on. An environment the map does not name is refused before anything runs, and the refusal lists the environments it names. A pull request's environment `pr-<n>` takes its template environment's entry.
 
@@ -72,6 +78,8 @@ A product writes one component per member and puts each environment's target in 
 ```
 
 A `terraform-apply` step sets `root` and `vars` the same way: `environments: { staging: { root: "envs/staging/network", vars: { region: "us-east-2" } } }`. The mechanism ships as `STEP_ENVIRONMENTS_KEY` and `componentsForEnvironment` from `@intentius/chant/components`, and a product feature-detects it on `STEP_ENVIRONMENTS_FLOOR`.
+
+A product that reads the hold, freeze, failure tolerance, stage approval rules and release keys writes them into the member's `.chant/pipeline.ts` with `pipelineFromConfig` and `pipelineSource` from `@intentius/chant/pipeline`, and its `ci --check` runs `checkPipelineFile`. See [Pipeline](/chant/reference/pipeline/).
 
 ## Apply
 

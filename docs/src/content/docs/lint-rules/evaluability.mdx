@@ -155,3 +155,23 @@ resource(_.ServiceType, (props, siblings) => ({
 }));
 ```
 
+---
+
+## EVL012: Pipeline Declaration Does Not Fold
+
+A member's `.chant/pipeline.ts` is folded to its spec and never run, so it holds imports from `@intentius/chant/pipeline`, `const`s of literals and one `export default pipeline({ ... })`. EVL012 runs the same fold `chant build` runs and reports its finding at the same line. An expression outside the subset keeps the id the classifier gives it (EVL001, EVL003); a statement of another kind, an import from another module, or a declaration the spec check refuses is EVL012. Unlike a resource file, a pipeline file that does not fold stops the build. See [Pipeline](/chant/reference/pipeline/).
+
+```typescript
+// ❌ Triggers EVL012
+import { pipeline } from "@intentius/chant/pipeline";
+let runner = "ubuntu-latest";
+export default pipeline({ name: "shop", defaults: { op: "shop", runner }, stages: [] });
+```
+
+```typescript
+// ✅ Fixed
+import { pipeline } from "@intentius/chant/pipeline";
+const runner = "ubuntu-latest";
+const dev = { name: "dev", waves: [{ name: "dev", runs: [{ target: "dev" }] }] };
+export default pipeline({ name: "shop", defaults: { op: "shop", runner }, stages: [dev] });
+```

@@ -592,9 +592,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant lock --list` (#4293): print the target locks instead of taking any.
       result.list = true;
     } else if (arg === "--stage") {
-      // `chant lock --stage plan|apply|lock` (#4293): how the lock was taken.
+      // `chant lock --stage plan|apply|lock` (#4293): how the lock was taken. `chant pipeline spec --stage <stage>` (#5324): the stage.
       result.lockStage = args[++i];
-      if (!result.lockStage || result.lockStage.startsWith("-")) throw new Error("--stage needs plan, apply or lock: --stage <stage>");
+      if (!result.lockStage || result.lockStage.startsWith("-")) throw new Error("--stage needs a value: --stage <stage> (plan, apply or lock for chant lock; a stage's name for chant pipeline spec)");
     } else if (arg === "--alive") {
       // `chant lock --alive <run>` (#4552): print whether a run holding rows or the repo lock tag still runs.
       result.aliveRun = args[++i];
