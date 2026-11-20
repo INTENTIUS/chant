@@ -31,6 +31,21 @@ const DATA_KEYS = new Set(["data", "stringData", "binaryData"]);
 
 const sensitiveKey = (key: string): boolean => SENSITIVE_KEY.test(key) && !REFERENCE_KEY.test(key);
 
+/**
+ * Whether a property named `key` may be copied to a node (#5332): not a
+ * Pulumi `__` key, not credential-like, and, at the top level of a Kubernetes
+ * Secret or ConfigMap, not its payload. The preview observation
+ * (`./preview-observation.ts`) asks this of every path it puts on a node.
+ */
+export function mayCarryKey(key: string, opts: { type?: unknown; topLevel?: boolean } = {}): boolean {
+  if (key.startsWith("__") || sensitiveKey(key)) return false;
+  const dataKind = typeof opts.type === "string" && DATA_KINDS.has(opts.type);
+  return !(dataKind && opts.topLevel && DATA_KEYS.has(key));
+}
+
+/** Whether a string is short enough to be a name rather than a document. */
+export const isNameSized = (value: string): boolean => value.length <= MAX_VALUE;
+
 function clean(value: unknown, depth: number): unknown {
   if (depth > 8 || isSecret(value) || isUnknown(value) || value === null || value === undefined) return undefined;
   if (typeof value === "string") return value.length <= MAX_VALUE ? value : undefined;

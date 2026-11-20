@@ -93,6 +93,58 @@ under `ambiguous`.
 With no export, or one that is not JSON, the member has no nodes and the
 graph's `meta.pulumiMember` is `{ exported: false, reason }`.
 
+### The preview depth
+
+`CHANT_PULUMI_OBSERVE=preview` reads the member one step further, with its
+engine's preview: `pulumi preview --json --show-sames`, or `plunge preview`
+for a member on plunge. It changes nothing and is off unless set. The
+variable takes `state` (the default) or `preview`; `describeResources` also
+takes `depth`, which wins over the variable.
+
+Each node the graph holds gets the attributes the terraform plan depth uses
+(`CHANT_TERRAFORM_OBSERVE=plan`), so one reader serves both:
+
+| attribute | holds |
+|---|---|
+| `planAction` | `create`, `update`, `replace`, `delete`, `no-op`, `read` or `forget`; a replace is one action whichever order its steps run in |
+| `planActions` | the ops the preview printed, by URN |
+| `planActionReason` | `delete-before-replace` or `import`, when either applies |
+| `planReplacePaths` | the inputs that force a replacement |
+| `planAfterUnknown` | the inputs known only after apply |
+| `planChanges` | `{ path, before, after }` for each leaf that differs on an update or a replace; an unknown after value reads `(known after apply)` |
+
+A resource the graph does not hold becomes a node of its own with status
+`planned`, carrying the inputs an export's node carries beside the plan
+attributes. A stack with no export is drawn this way. A declared node the
+preview lists no step for is not observed (`not-reached`); a preview narrowed
+with `--target` lists only its targets.
+
+The filter that keeps secrets off a node read from an export applies here
+too. A secret, a value under a key that reads as a credential, the `data` of a
+Kubernetes Secret or ConfigMap and a string longer than 1024 characters are
+left out of the inputs, `planChanges` and `planReplacePaths`; a change under
+such a key is not listed.
+
+The IR's `rootReads` names the read for each member, `pulumi.members.<member>`,
+with `depth: "preview"`. When the preview does not answer, `fellBackTo` is
+`state` if plunge's records answered and `declared` if nothing did, and
+`reason` is one of:
+
+| reason | meaning |
+|---|---|
+| `no-credentials` | the cloud provider or the backend refused the engine's credentials, or none were found |
+| `needs-install` | the program's dependencies or a provider plugin are not installed; chant never runs `pulumi install` on a read |
+| `no-stack` | the member names no stack and the engine has none selected, or the stack does not exist |
+| `no-binary` | the engine binary is not on PATH |
+| `preview-failed` | the preview failed for another reason; the engine's first error line is in the run's notes |
+
+```json
+"rootReads": {
+  "pulumi.members.shop": { "depth": "preview" },
+  "pulumi.members.edge": { "depth": "preview", "fellBackTo": "declared", "reason": "no-credentials" }
+}
+```
+
 ## The change set
 
 The member's part of the change set is `pulumi preview --json`, planner

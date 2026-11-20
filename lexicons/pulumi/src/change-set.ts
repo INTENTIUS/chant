@@ -303,6 +303,11 @@ function statesOf(steps: PulumiStep[]): { before?: PulumiStepState; after?: Pulu
   return { ...(before ? { before } : {}), ...(after ? { after } : {}) };
 }
 
+/** {@link statesOf} for the preview observation (`./preview-observation.ts`, #5332): one parse of the steps, not a second. */
+export function pulumiStepStates(steps: PulumiStep[]): { before?: PulumiStepState; after?: PulumiStepState } {
+  return statesOf(steps);
+}
+
 function attributesOf(steps: PulumiStep[], action: ChangeSetAction, states: { before?: PulumiStepState; after?: PulumiStepState }): ChangeSetAttribute[] {
   if (action !== "create" && action !== "update" && action !== "replace") return [];
   const before = isObject(states.before?.inputs) ? states.before!.inputs! : {};
