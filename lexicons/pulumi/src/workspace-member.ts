@@ -197,12 +197,15 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig; stored?: Pu
       add(node(e.to), e.viaAttr, "property");
       if (references.size > before) propertyEdges++;
     }
+    // The component that registered it (#5403): the export's `parent`, when that is a node.
+    const component = node(r.parent);
     const entity = {
       lexicon: "pulumi",
       entityType: r.type as string,
       kind: "resource",
       props: referenceProps(r),
       references: [...references.values()],
+      ...(component && component !== key ? { component } : {}),
       [DECLARABLE_MARKER]: true,
     } as unknown as Declarable;
     const facts = engine?.facts.get(urn);

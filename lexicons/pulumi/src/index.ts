@@ -145,4 +145,4 @@ export { pulumiPlannedOutputChanges, type PulumiOutputChange, type PulumiPlanned
 // Disruption from a preview's steps and health through the provider lexicons (#5338).
 export { classifyPulumiDisruption, pulumiDisruptionQueries, pulumiStepsVerdict } from "./disruption";
 export { PULUMI_HEALTH_TYPES, pulumiHealthTargets, exportIds as pulumiExportIds } from "./health-targets";
-export { PULUMI_HEALTH_DISRUPTION_FLOOR, PULUMI_PREVIEW_DISRUPTION_FLOOR, PULUMI_OWNERSHIP_ROWS_FLOOR } from "./chant-floors";
+export { PULUMI_HEALTH_DISRUPTION_FLOOR, PULUMI_PREVIEW_DISRUPTION_FLOOR, PULUMI_OWNERSHIP_ROWS_FLOOR, PULUMI_COMPONENT_GROUPS_FLOOR } from "./chant-floors";

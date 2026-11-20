@@ -16,6 +16,7 @@
  * | `replaceReasons` | `planReplacePaths` |
  * | inputs that hold the unknown sentinel | `planAfterUnknown` |
  * | inputs that differ on an update or replace | `planChanges`, one entry per leaf |
+ * | the step state's `parent`, when the graph holds that node | `ResourceMetadata.component`, the node's `IRNode.component` (#5403) |
  *
  * A resource the member's graph already has (declared by the export) gets
  * these on its node. A resource it does not have, which is every resource
@@ -236,6 +237,7 @@ export function observePreview(opts: { label: string; preview: unknown; declared
   const resources: Record<string, ResourceMetadata> = {};
   const queried: Record<string, string> = {};
   const sources: Record<string, string> = {};
+  const parents = new Map<string, string>();
   let unmapped = 0;
   for (const [urn, list] of byUrn) {
     const key = pulumiNodeKey(urn);
@@ -246,6 +248,9 @@ export function observePreview(opts: { label: string; preview: unknown; declared
     if (!pulumiStepsAction(list)) unmapped++;
     const declared = opts.declared.has(name);
     const states = pulumiStepStates(list);
+    const parent = states.after?.parent ?? states.before?.parent;
+    const parentKey = typeof parent === "string" ? pulumiNodeKey(parent) : null;
+    if (parentKey !== null && parentKey !== key) parents.set(name, `${opts.label}/${parentKey}`);
     const inputs = declared ? {} : referenceProps({ type, id, inputs: states.after?.inputs ?? states.before?.inputs, outputs: states.before?.outputs });
     resources[name] = {
       type,
@@ -257,6 +262,11 @@ export function observePreview(opts: { label: string; preview: unknown; declared
     };
     queried[name] = `${urn} (preview)`;
     sources[name] = PREVIEW_SOURCE;
+  }
+
+  // The component that registered each node (#5403), when the graph will hold it.
+  for (const [name, parent] of parents) {
+    if (resources[parent] || opts.declared.has(parent)) resources[name].component = parent;
   }
 
   const unobserved: Record<string, UnobservedEntity> = {};
