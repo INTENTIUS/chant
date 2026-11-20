@@ -167,6 +167,22 @@ export function idTokenAudienceEnv(idTokens: Readonly<Record<string, string>> | 
   return Object.fromEntries(Object.entries(idTokens ?? {}).map(([name, aud]) => [`${name}_AUDIENCE`, aud]));
 }
 
+/**
+ * What is wrong with `idTokens` (#5427), or undefined: it must be `{
+ * "<variable>": "<audience>" }` with at least one token, each a variable
+ * name and a non-empty audience.
+ */
+export function idTokensProblem(field: string, idTokens: unknown): string | undefined {
+  if (idTokens === null || typeof idTokens !== "object" || Array.isArray(idTokens) || Object.keys(idTokens).length === 0) {
+    return `${field} must be { "<variable>": "<audience>" }, with at least one token.`;
+  }
+  for (const [name, aud] of Object.entries(idTokens as Record<string, unknown>)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return `${field} names "${name}", which is not a variable name (letters, digits and "_", not starting with a digit).`;
+    if (typeof aud !== "string" || aud.trim() === "") return `${field}.${name} must be an audience, a non-empty string.`;
+  }
+  return undefined;
+}
+
 /** A job's GitLab `id_tokens:` for `{ <variable>: <audience> }` (#3914), or undefined when there are none. */
 export function gitlabIdTokensDoc(idTokens: Readonly<Record<string, string>> | undefined): Record<string, { aud: string }> | undefined {
   const entries = Object.entries(idTokens ?? {});

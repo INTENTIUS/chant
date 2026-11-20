@@ -12,7 +12,9 @@
  * after-apply hook on that wave, read at base with the others). The control
  * repo dispatch (`<product>-applied`) goes after the first stage. Each later
  * stage takes that release through `chant components promote --to <stage>
- * --release <label>` behind its gate.
+ * --release <label>` behind its gate. A member with no components takes it
+ * by the stage's op waves, which the promote runs once that gate passed
+ * (#5427, `./stage-waves.ts`).
  *
  * The stage order is the promotion order: `promotionOrderOf` gives it in the
  * shape `environments` in `chant.config.ts` gives it, so `components
@@ -76,11 +78,32 @@ function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | undefined
 }
 
 /**
+ * The release names a stage's step records under (#5427), when the pipeline
+ * fixes them: a stage with a `step` whose every run target is missing from
+ * some other stage names an environment, not a component (a yodel project's
+ * `dev` and `staging`), so its records take `release.component` of the
+ * defaults, else the pipeline's name, and each stage's records name the same
+ * component. Undefined when the defaults name a component or turn the
+ * records off, when the stage has no step, or when a target is run by every
+ * stage (a root or a stack, which names its own records).
+ */
+function stageReleaseNames(spec: PipelineSpec, stage: PipelineStage): OpWavesSpec["release"] | undefined {
+  const own = spec.defaults?.release;
+  if (!spec.defaults?.step || own === false || own?.component !== undefined) return undefined;
+  const targets = stage.waves.flatMap((w) => (w.runs ?? []).map((r) => r.target));
+  if (targets.length === 0 || spec.stages.length < 2) return undefined;
+  const everywhere = (target: string) => spec.stages.every((s) => s.waves.some((w) => (w.runs ?? []).some((r) => r.target === target)));
+  if (targets.some(everywhere)) return undefined;
+  return { ...(own ?? {}), component: spec.name };
+}
+
+/**
  * The op-waves spec stage `name` runs: its waves under its gate. The first
  * stage also carries the release cut and the control dispatch, since it is
  * the stage a merge applies. A canary wave with no soak of its own takes
- * the stage's (#5327). Throws on a stage the pipeline lacks, or a spec no
- * job could run.
+ * the stage's (#5327). A stage whose step's targets name environments
+ * records its releases under the pipeline's component (#5427). Throws on a
+ * stage the pipeline lacks, or a spec no job could run.
  */
 export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
   const index = spec.stages.findIndex((s) => s.name === name);
@@ -107,6 +130,7 @@ export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
     return wave;
   });
   const approvals = gate.quorum !== undefined ? { ...defaults.approvals, quorum: gate.quorum } : defaults.approvals;
+  const release = stageReleaseNames(spec, stage);
   const hooks = joinHooks(defaults.hooks, stage.hooks);
   const holds = gate.holds ?? defaults.holds;
   const point = gate.point ?? defaults.point;
@@ -116,6 +140,7 @@ export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
     op: defaults.op ?? spec.name,
     labels: { ...defaults.labels, Env: stage.name },
     ...(approvals ? { approvals } : {}),
+    ...(release ? { release } : {}),
     ...(hooks ? { hooks } : {}),
     ...(holds ? { holds } : {}),
     ...(point ? { point } : {}),

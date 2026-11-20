@@ -80,6 +80,7 @@ import { pipelinePromoteRejected, pipelinePromoteSoaks, pipelinePromoteSource, p
 import { gitStageLedgerPort, pauseLine, releaseMissingIn, stagePaused, stagePausedLine, supersededBy, waitingLine, type StageLedgerPort } from "../../pipeline/stage-ledger";
 import { stageSoakGate } from "../../pipeline/soak-gate";
 import { stageWavesName } from "../../pipeline/stages";
+import { stageReleaseItems, stageRunsWaves } from "../../pipeline/stage-waves";
 import { canaryStagesBefore } from "../../pipeline/spec";
 import { soakCheckReader } from "../../pipeline/soak-checks";
 import { jobSoakSources } from "../../pipeline/soak-sources";
@@ -958,8 +959,13 @@ async function revokedOrRefuse(what: string): Promise<Map<string, import("../../
  * code returned, when the release can't be found, has no target for `env`,
  * is of a project with no components (#4046), or was cut from a revoked
  * commit (#4033), so a gate pending for it can't pass.
+ *
+ * With `waves` (#5427), the release is promoted by a stage's op waves, which
+ * apply from the checkout and read no template the release recorded: a
+ * release with no target for `env`, or of a project with no components, is
+ * taken, with an empty target.
  */
-async function resolveUnderRelease(ref: string, env: string, verb: "promote" | "rollback", fix: (release: { releaseDigest: string }) => Promise<string> | string): Promise<UnderRelease | number> {
+async function resolveUnderRelease(ref: string, env: string, verb: "promote" | "rollback", fix: (release: { releaseDigest: string }) => Promise<string> | string, opts: { waves?: boolean } = {}): Promise<UnderRelease | number> {
   const { resolveRelease } = await import("../../lifecycle/release-store");
   const { targetFor, isImplicitRelease } = await import("../../components/release-promote");
   const found = await resolveRelease(ref);
@@ -967,14 +973,15 @@ async function resolveUnderRelease(ref: string, env: string, verb: "promote" | "
     console.error(formatError({ message: `no release is labelled or digested "${ref}" in this member`, hint: "List them with: chant release list" }));
     return 1;
   }
-  const target = targetFor(found.release, env);
+  const targetOf = targetFor(found.release, env);
+  const target = "error" in targetOf && opts.waves ? { target: { env, templates: [], params: [] } } : targetOf;
   if ("error" in target) {
     console.error(formatError({ message: target.error }));
     return 1;
   }
   // #4046: a release of a project with no components records build output
   // and no component, so there is no deploy step here to point at it.
-  if (isImplicitRelease(found.release)) {
+  if (isImplicitRelease(found.release) && !opts.waves) {
     const name = found.label ?? found.release.releaseDigest;
     console.error(formatError({
       message: `release ${name} is of a project with no components, so ${verb} has no component to deploy`,
@@ -1132,6 +1139,21 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     console.error(formatError({ message: "--from <env> is required: this member declares no environments, so there is no promotion order to default it from", hint: PROMOTE_USAGE }));
     return 1;
   }
+  // #5427: a member with no components promotes into a stage that applies through a step by running the stage's op waves.
+  const waves = pipeline !== undefined && project.targets.length === 0 && !args.component && stageRunsWaves(pipeline, to);
+  if (waves) {
+    const refusal = !args.release
+      ? "needs --release <label|digest>: the stage's op waves apply one release, and the stage's gate binds that release"
+      : args.digest || args.digests?.length
+        ? "takes no --digest: the stage's op waves plan what the release applies, and their gates bind those plans"
+        : args.planOnly || args.waveGate !== undefined || args.resume !== undefined
+          ? `takes no ${args.planOnly ? "--plan-only" : args.waveGate !== undefined ? "--wave-gate" : "--resume"}: each of the stage's op waves plans and decides its own gate, and the same promote carries on from the wave that waits`
+          : undefined;
+    if (refusal) {
+      console.error(formatError({ message: `stage "${to}" applies through its op waves and this member declares no components, so the promote ${refusal}`, hint: PROMOTE_USAGE }));
+      return 1;
+    }
+  }
 
   // Without --component, each --digest is <component>=<digest> (#2602): a
   // generated promote job pins every component to the release its own
@@ -1155,8 +1177,12 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   // #4026: --release names the release this promote deploys, by label or digest.
   let under: UnderRelease | undefined;
   if (args.release) {
-    const found = await resolveUnderRelease(args.release, to, "promote", () =>
-      "Promote a release cut from a green commit: `chant ci last-green` names the newest, and `chant release list` marks the revoked releases. Fetch the tags first: git fetch origin --tags",
+    const found = await resolveUnderRelease(
+      args.release,
+      to,
+      "promote",
+      () => "Promote a release cut from a green commit: `chant ci last-green` names the newest, and `chant release list` marks the revoked releases. Fetch the tags first: git fetch origin --tags",
+      waves ? { waves } : {},
     );
     if (typeof found === "number") return found;
     under = found;
@@ -1176,15 +1202,19 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     for (const r of reads.reads) console.error(formatInfo(`${r.variable}: artifact "${r.artifact}" of stage "${r.stage}"${r.kind === "secret" ? ", a secret's reference" : ""}`));
   }
 
-  const plan = planPromotion({
-    from,
-    to,
-    sourceRecords: await readLedger(from),
-    declared: project.targets.map((c) => c.name),
-    ...(args.component ? { component: args.component } : {}),
-    ...(args.component && args.digest ? { digest: args.digest } : {}),
-    ...(pins ? { pins } : {}),
-  });
+  // #5427: under op waves, what the stage promoted from applied of the release, which its soak's clock reads.
+  const wavesRelease = waves && under ? { releaseDigest: under.release.releaseDigest, commit: under.release.commit } : undefined;
+  const plan: PromotionPlan | { error: string } = wavesRelease
+    ? stageWavesPlan(from, to, under!, stageReleaseItems(await readLedger(from), from, wavesRelease))
+    : planPromotion({
+        from,
+        to,
+        sourceRecords: await readLedger(from),
+        declared: project.targets.map((c) => c.name),
+        ...(args.component ? { component: args.component } : {}),
+        ...(args.component && args.digest ? { digest: args.digest } : {}),
+        ...(pins ? { pins } : {}),
+      });
   if ("error" in plan) {
     console.error(formatError({ message: plan.error, hint: PROMOTE_USAGE }));
     return 1;
@@ -1241,7 +1271,8 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       from,
       to,
       ...(upstreams ? { upstreams } : {}),
-      items: async (source) => (source === from ? plan.items : soakItemsOf(await readLedger(source), plan.items, under?.release.releaseDigest)),
+      items: async (source) =>
+        source === from ? plan.items : wavesRelease ? stageReleaseItems(await readLedger(source), source, wavesRelease) : soakItemsOf(await readLedger(source), plan.items, under?.release.releaseDigest),
       digest,
       ...(under ? { releaseDigest: under.release.releaseDigest } : {}),
       port,
@@ -1324,7 +1355,10 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   }
   const { withStageReadVariables } = await import("../../pipeline/artifacts");
   let ran: DriverRunResult | undefined;
-  const code = await withStageReadVariables(readVariables, () => deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under, (run) => (ran = run)));
+  // #5427: after the stage's gate passed, its op waves run in place of the component driver.
+  const code = await withStageReadVariables(readVariables, () =>
+    waves && pipeline && under ? promoteByStageWaves(ctx, project.projectPath, pipeline, to, under) : deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under, (run) => (ran = run)),
+  );
   // #5353: a deploy still waiting at a component's gate stays in the stage; any other end is written.
   if (entered && code !== GATED_EXIT_CODE) {
     try {
@@ -1386,6 +1420,112 @@ async function entryRelease(under: UnderRelease): Promise<import("../../pipeline
     ...(cut ? { cutAt: cut.timestamp } : {}),
     ...(risk ? { risk } : {}),
   };
+}
+
+/**
+ * The plan of a promote by a stage's op waves (#5427): what `from` applied
+ * of the release, each component's newest record, which the soak of `from`
+ * reads. Refused when `from` applied none of it.
+ */
+function stageWavesPlan(from: string, to: string, under: UnderRelease, items: PromotionItem[]): PromotionPlan | { error: string } {
+  if (items.length > 0) return { from, to, items, notPromoted: [] };
+  const name = under.label ?? under.release.releaseDigest;
+  return { error: `release ${name} has not applied in "${from}": its ledger has no record of the release or of the commit it was cut from (${under.release.commit.slice(0, 12)}), so nothing of it is promoted into "${to}". Promote it into ${from} first` };
+}
+
+/**
+ * Run stage `to`'s op waves for release `under` (#5427), once the stage's
+ * gate passed: `runStageWaves` with the product's in-process hooks and
+ * capabilities, as `chant run wave` runs a wave job, the spec's notify told
+ * after each wave. The waves plan and apply this checkout, which must hold
+ * the commit the release was cut from. Returns the exit code of the first
+ * wave that did not end with 0 (3 while one waits for an approval), else 0.
+ * A dry run prints the waves and runs none.
+ */
+async function promoteByStageWaves(ctx: CommandContext, projectPath: string, pipeline: import("../../pipeline/spec").PipelineSpec, to: string, under: UnderRelease): Promise<number> {
+  const { args } = ctx;
+  const name = under.label ?? under.release.releaseDigest;
+  const { runStageWaves, stageRunSpec } = await import("../../pipeline/stage-waves");
+  const { pipelineStageSpecFile } = await import("../../pipeline/generate");
+  const shape = stageRunSpec(pipeline, to);
+  if (args.dryRun) {
+    const out = { to, releaseDigest: under.release.releaseDigest, label: under.label, specFile: pipelineStageSpecFile(pipeline, to), waves: shape.waves.map((w, i) => ({ wave: i + 1, name: w.name, runs: (w.runs ?? []).map((r) => r.target), gate: w.gate ?? "always" })) };
+    if (args.json) console.log(JSON.stringify(out, null, 2));
+    else {
+      console.error(formatBold(`promote release ${name} into ${to} through its op waves`));
+      for (const w of out.waves) console.error(`  wave ${w.wave} (${w.name}): ${w.runs.join(", ") || "runs found at plan"}, gate ${w.gate}`);
+    }
+    return 0;
+  }
+  const base = promoteBase(projectPath);
+  if (!base) {
+    console.error(formatError({ message: `the default branch's commit cannot be read, so the gates of stage "${to}"'s waves cannot be read and nothing was applied` }));
+    return 1;
+  }
+  // The waves plan and apply this checkout: it must hold the release's commit, and a later commit is said.
+  const head = await getHeadCommit().catch(() => undefined);
+  const { execFileSync } = await import("node:child_process");
+  let holds = false;
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", under.release.commit, "HEAD"], { cwd: projectPath, stdio: "ignore" });
+    holds = true;
+  } catch {
+    holds = false;
+  }
+  if (!holds) {
+    console.error(formatError({
+      message: `release ${name} was cut from ${under.release.commit.slice(0, 12)}, which this checkout does not hold, so stage "${to}"'s waves would not apply it; nothing was applied`,
+      hint: "Run the promote in a checkout of the default branch with its full history (fetch-depth: 0 on GitHub and Forgejo, GIT_DEPTH: \"0\" on GitLab).",
+    }));
+    return 1;
+  }
+  if (head && head !== under.release.commit) {
+    console.error(formatWarning({ message: `release ${name} was cut from ${under.release.commit.slice(0, 12)}, and stage "${to}"'s waves plan this checkout at ${head.slice(0, 12)}; each wave's gate binds the plan made here` }));
+  }
+  const { activeProductWaveHook } = await import("../../op/op-waves-after-plan");
+  const { notifyOpWave } = await import("../../op/op-waves-notify");
+  const product = activeProductWaveHook();
+  const ran = await runStageWaves({
+    spec: pipeline,
+    stage: to,
+    base,
+    cwd: projectPath,
+    release: { releaseDigest: under.release.releaseDigest },
+    options: {
+      ...(product?.afterPlan ? { afterPlan: product.afterPlan } : {}),
+      ...(product?.capabilities ? { capabilities: product.capabilities } : {}),
+      ...(product?.hookExec ? { hookExec: product.hookExec } : {}),
+      ...(product?.runHooks ? { runHooks: product.runHooks } : {}),
+      ...(product?.hooks ? { inProcessHooks: product.hooks } : {}),
+    },
+    // Delivery never changes the exit code.
+    afterWave: async (wave, spec) => {
+      try {
+        await notifyOpWave(spec, wave.wave, { result: wave.result });
+      } catch (err) {
+        console.error(formatWarning({ message: `wave ${wave.wave}'s notify was not sent: ${err instanceof Error ? err.message : String(err)}` }));
+      }
+    },
+  });
+  if (args.json) console.log(JSON.stringify({ to, releaseDigest: under.release.releaseDigest, label: under.label, specFile: ran.specFile, exitCode: ran.exitCode, waves: ran.waves.map((w) => ({ wave: w.wave, name: w.name, ...w.result })) }, null, 2));
+  for (const w of ran.waves) {
+    const r = w.result;
+    console.error(formatInfo(`wave ${w.wave} (${w.name}) of ${ran.spec.name}: ${r.exitCode === 0 ? `applied ${r.applied.join(", ") || "nothing"}` : `exit ${r.exitCode}${r.failed.length > 0 ? `, failed ${r.failed.join(", ")}` : ""}`}`));
+  }
+  const last = ran.waves.at(-1)?.result;
+  if (ran.exitCode === GATED_EXIT_CODE) {
+    const approve = last?.decision?.approve;
+    console.error(formatWarning({ message: `release ${name} entered stage "${to}", and wave ${ran.waves.at(-1)?.wave} of ${ran.spec.name} waits for an approval of its plan${last?.decision?.digest ? ` ${last.decision.digest}` : ""}` }));
+    if (approve) console.error(formatInfo(`approve : ${approve}`));
+    console.error(formatInfo("then run the same promote again"));
+    return ran.exitCode;
+  }
+  if (ran.exitCode !== 0) {
+    console.error(formatError({ message: `promote of release ${name} into "${to}" stopped at wave ${ran.waves.at(-1)?.wave} of ${ran.spec.name} (exit ${ran.exitCode})` }));
+    return ran.exitCode;
+  }
+  console.error(formatSuccess(`Promoted release ${formatBold(name)} into ${to} through ${ran.waves.length} wave(s) of ${ran.spec.name}`));
+  return 0;
 }
 
 /**

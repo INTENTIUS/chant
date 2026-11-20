@@ -84,6 +84,12 @@ With a pipeline, `components promote` reads it at the default branch's tip:
 - A release someone rejected at the stage's gate does not enter the stage, and is not skipped past it. The promote exits 8 and names who rejected it and why.
 - Under a gate whose `approval` is `sealed`, only an approval sealed by a signer at the tip counts, as it does for a wave.
 
+### Stages that apply through a step
+
+A member whose `defaults.step` applies each stage, such as a SQL project's `sql-migrate`, and whose work is its op waves rather than `*.component.ts` files, promotes by the stage's own op waves. Once the stage's gate passes for the release, the promote writes the stage's spec to `.chant/op-waves/shop-staging.spec.json`, with a step input named `spec` pointing at that file, and runs each wave in order as `chant run wave` runs it. Each wave plans, decides its gate on its plan digest under the op `shop-staging`, and applies the plan it decided. A wave that waits exits 3 with its `chant approve` line, and the same promote carries on from there once it is approved. The gates of the waves are read from the pipeline at the tip, through `pipelineStageShow`, which an engine that checks chant's decision again passes to `readOpWavePolicy`.
+
+Such a promote takes `--release`, and the checkout must hold the commit the release was cut from. The release records it writes name the release. When a stage's run targets name its environments (`dev`, `staging`), every stage records under the pipeline's name as the component, or under `defaults.release.component`.
+
 ## Reject a release
 
 A reviewer who does not want a release in a stage turns it down at the stage's gate:

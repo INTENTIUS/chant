@@ -11,7 +11,11 @@
  * `chant/lifecycle`. A stage with a cloud identity (#5348) trades the
  * job's OIDC token for it before the checkout, and the stage's config and
  * secret set reaches the promote's step as variables, with the lines that
- * read the stage's store secrets before the command. The forgejo generator reuses {@link buildGithubPromoteDoc}.
+ * read the stage's store secrets before the command. A stage with
+ * `idTokens` (#5427) gets `id-token: write` with or without a trade, and its
+ * promote's step holds each token's audience as `<variable>_AUDIENCE` and
+ * keeps the token request variables, so its command requests the token
+ * itself. The forgejo generator reuses {@link buildGithubPromoteDoc}.
  *
  * With `recheck` (#5326) the workflow also runs on that schedule, and each
  * stage gets a `recheck-<stage>` job, with the same identity, set and
@@ -36,7 +40,7 @@
 
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
-import { assertEnvironment, CI_IMAGE, environmentDoc, GITHUB_JOB_TOKEN, githubRunsOn, githubSecret } from "@intentius/chant/ci-jobs";
+import { assertEnvironment, CI_IMAGE, environmentDoc, GITHUB_JOB_TOKEN, githubRunsOn, githubSecret, idTokenAudienceEnv, idTokensProblem } from "@intentius/chant/ci-jobs";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { checkoutStep, concurrency } from "./ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
@@ -68,6 +72,8 @@ export function assertPipelinePromote(input: PipelinePromoteInput): void {
     }
     if (seen.has(stage.name)) throw new Error(`${subject}: stage "${stage.name}" is listed twice.`);
     seen.add(stage.name);
+    const tokens = stage.idTokens !== undefined ? idTokensProblem(`stage "${stage.name}" idTokens`, stage.idTokens) : undefined;
+    if (tokens) throw new Error(`${subject}: ${tokens}`);
   }
 }
 
@@ -84,6 +90,9 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
     if (stage.environment) assertEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
     // #5348: the stage's own identity, traded for before the checkout, and its config and secret set.
     const cloud = stage.cloud;
+    // #5427: the tokens the promote's command requests itself, with no trade; its step keeps the request variables.
+    const idTokens = stage.idTokens;
+    const oidc = cloud !== undefined || idTokens !== undefined;
     // #5358: the agent steps' answers are recorded, a failed step with its reason, before the promote reads them.
     const agent = stage.agentSteps;
     const agentJob = `agent-${stage.name}`;
@@ -93,7 +102,7 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
       if: condition,
       "runs-on": githubRunsOn(input.runner),
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
-      ...(cloud ? { permissions: { contents: "write", "id-token": "write" } } : {}),
+      ...(oidc ? { permissions: { contents: "write", "id-token": "write" } } : {}),
       "timeout-minutes": timeout.minutes,
       container: CI_IMAGE,
       concurrency: concurrency(`${input.pipeline}-promote-${stage.name}`, false),
@@ -101,7 +110,7 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
         ...(cloud ? [{ name: "Trade the job's OIDC token for the stage's cloud identity", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : []),
         checkoutStep(true),
         ...(answers ? [{ name: `Take the answers of ${stage.name}'s agent steps`, run: takeOverScript(agentJob, dir, forge) }] : []),
-        { name: step, ...(Object.keys({ ...stage.variables, ...own, ...facts }).length > 0 ? { env: { ...(stage.variables ?? {}), ...own, ...facts } } : {}), run: [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
+        { name: step, ...(Object.keys({ ...stage.variables, ...own, ...facts, ...idTokenAudienceEnv(idTokens) }).length > 0 ? { env: { ...(stage.variables ?? {}), ...idTokenAudienceEnv(idTokens), ...own, ...facts } } : {}), run: [...(cloud && !idTokens ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
       ],
     });
     if (agent) {

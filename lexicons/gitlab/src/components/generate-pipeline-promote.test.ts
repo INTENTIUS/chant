@@ -71,3 +71,27 @@ describe("gitlab pipeline promote: the verify-failed facts", () => {
     expect(yaml(input)).not.toContain("CHANT_AGENT_FACTS");
   });
 });
+
+// #5427: a stage whose command requests the forge's OIDC token itself, with no cloud trade.
+describe("gitlab pipeline promote: idTokens", () => {
+  type Doc = Record<string, { id_tokens?: Record<string, { aud: string }>; script?: string[] }>;
+  const doc = (i: PipelinePromoteInput) => parseYAML(yaml(i)) as unknown as Doc;
+
+  test("the job declares them in id_tokens, with no trade", () => {
+    const out = doc({ ...input, stages: [{ name: "staging", idTokens: { AWS_ID_TOKEN: "sts.amazonaws.com" } }, { name: "prod" }] });
+    expect(out["promote-staging"]!.id_tokens).toEqual({ AWS_ID_TOKEN: { aud: "sts.amazonaws.com" } });
+    expect(out["promote-staging"]!.script!.join("\n")).not.toContain("unset");
+    expect(out["promote-prod"]!.id_tokens).toBeUndefined();
+  });
+
+  test("beside a trade, both are declared, and a name the trade declares is refused", () => {
+    const cloud = { aws: { role: "arn:aws:iam::1:role/apply", region: "us-east-1", audience: "sts.amazonaws.com" } };
+    const out = doc({ ...input, stages: [{ name: "staging", cloud, idTokens: { DB_TOKEN: "rds" } }] });
+    expect(out["promote-staging"]!.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" }, DB_TOKEN: { aud: "rds" } });
+    expect(() => yaml({ ...input, stages: [{ name: "staging", cloud, idTokens: { CHANT_ID_TOKEN_AWS: "x" } }] })).toThrow(/declares for the stage's cloud trade/);
+  });
+
+  test("idTokens that are not { variable: audience } are refused", () => {
+    expect(() => yaml({ ...input, stages: [{ name: "staging", idTokens: { "1BAD": "aud" } }] })).toThrow(/not a variable name/);
+  });
+});

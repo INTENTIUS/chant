@@ -18,6 +18,10 @@
  * verify step or a soak check that starts failing records a fact for the
  * verify-failed agent. The agent steps' job below holds neither.
  *
+ * A stage with `idTokens` (#5427) declares them in the promote job's
+ * `id_tokens:`, beside the trade's when the stage has a `cloud`, so the
+ * command requests a token with no trade.
+ *
  * A stage with agent steps (#5358) gets a job `agent-<stage>` before its
  * promote. It fetches `chant/lifecycle` while the remote holds the job
  * token, sets the remote back to a plain URL, drops every forge token, and
@@ -28,7 +32,7 @@
  * promote holds on it.
  */
 
-import { assertGitlabEnvironment, assertRunnerLabels, CI_IMAGE, environmentDoc, GITLAB_FULL_HISTORY, gitlabTags } from "@intentius/chant/ci-jobs";
+import { assertGitlabEnvironment, assertRunnerLabels, CI_IMAGE, environmentDoc, GITLAB_FULL_HISTORY, gitlabIdTokensDoc, gitlabTags, idTokensProblem } from "@intentius/chant/ci-jobs";
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
 import { emitGitlabFile } from "./ci-jobs";
@@ -59,6 +63,10 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
     if (seen.has(stage.name)) throw new Error(`${subject}: stage "${stage.name}" is listed twice.`);
     seen.add(stage.name);
     if (stage.environment) assertGitlabEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
+    const tokens = stage.idTokens !== undefined ? idTokensProblem(`stage "${stage.name}" idTokens`, stage.idTokens) : undefined;
+    if (tokens) throw new Error(`${subject}: ${tokens}`);
+    const clash = stage.cloud && stage.idTokens ? Object.keys(stage.idTokens).find((name) => name in gitlabTradeIdTokens(stage.cloud!)) : undefined;
+    if (clash) throw new Error(`${subject}: stage "${stage.name}" idTokens names ${clash}, which chant declares for the stage's cloud trade already.`);
   }
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
@@ -72,8 +80,8 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
     timeout: `${timeout.minutes} minutes`,
     ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
     resource_group: `${input.pipeline}-promote-${stage.name}`,
-    // #5348: the stage's own identity and its config and secret set.
-    ...(stage.cloud ? { id_tokens: gitlabTradeIdTokens(stage.cloud) } : {}),
+    // #5348: the stage's own identity and its config and secret set; #5427: the tokens its command requests itself, with or without a trade.
+    ...(stage.cloud || stage.idTokens ? { id_tokens: { ...(stage.cloud ? gitlabTradeIdTokens(stage.cloud) : {}), ...(gitlabIdTokensDoc(stage.idTokens) ?? {}) } } : {}),
     variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}), ...facts },
     // With agent steps, the promote runs when a step failed too, so it records why and holds.
     rules: [{ if: rule, ...(after ? { when: "always" } : {}) }],
