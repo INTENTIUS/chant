@@ -331,6 +331,10 @@ Not an EVL lint error. EVL has no intrinsic registry at lint time, so it treats 
 
 For the full EVL rule reference with configuration options, see [Evaluability Rules](/chant/lint-rules/evaluability/).
 
+## Declarations that only fold
+
+A member's delivery pipeline, `.chant/pipeline.ts`, folds to data and is never run, whatever the build's `fold` setting. The file holds `const`s of literals and one `export default pipeline({ ... })`, and `chant build` folds it to the spec the gates read at the base commit. A pipeline file outside the subset does not fall back to running: the build stops with the evaluability rule it breaks (EVL001, EVL003, or [EVL012](/chant/lint-rules/evaluability/#evl012-pipeline-declaration-does-not-fold)), and `chant lint` and the editor show the same finding. See [Pipeline](/chant/reference/pipeline/).
+
 ## Folded vs Run
 
 Folding is the **default build path** since #1134: instead of importing and running a file, chant reduces its AST directly to the resource spec, with zero module execution. A file that steps outside the fold subset falls back to being imported and run, on its own, and the evaluability rules (EVL, above) are what keep that fallback deterministic — they reject anything a running file could do besides read literals, constants, and cross-resource references, so running the supported subset has no side effects and no dependency on the environment.

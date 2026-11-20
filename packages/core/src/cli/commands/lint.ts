@@ -1,6 +1,6 @@
 import { resolve, join, relative, dirname } from "path";
 import type { BuildParamProvenance } from "../../provenance";
-import { readFileSync, writeFileSync, readdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "fs";
 import { runLint, parseDisableComments } from "../../lint/engine";
 import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
 import type { IntrinsicDef, LexiconPlugin } from "../../lexicon";
@@ -921,6 +921,9 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
   // Get all TypeScript files, through the one discovery walk (#2527)
   const files = await getTypeScriptFiles(infraPath);
+  // #5324: the member's pipeline sits under .chant, which the walk leaves out; EVL012 reads it.
+  const pipelineFile = join(projectRoot, ".chant", "pipeline.ts");
+  if (existsSync(pipelineFile) && !files.includes(pipelineFile)) files.push(pipelineFile);
 
   // Run lint — use per-file rules when overrides are present
   let diagnostics: LintDiagnostic[];

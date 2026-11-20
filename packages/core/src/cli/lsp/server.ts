@@ -365,6 +365,10 @@ export class LspServer {
         intrinsics.push(...(plugin.intrinsics?.() ?? []));
       }
 
+      // #5324: a pipeline declaration folds as `chant build` folds it, whatever lexicons load.
+      const { evl012PipelineFoldRule, isPipelineFile } = await import("../../lint/rules/evl012-pipeline-fold");
+      if (isPipelineFile(filePath) && !rules.some((r) => r.id === evl012PipelineFoldRule.id)) rules.push(evl012PipelineFoldRule);
+
       if (rules.length === 0) return [];
 
       const { diagnostics } = await runLint([filePath], rules, undefined, intrinsics);

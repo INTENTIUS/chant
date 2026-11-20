@@ -1,0 +1,99 @@
+---
+title: Deliver Through Stages
+description: Declare a member's stages, the waves in each and a gate per stage in one TypeScript file that folds before anything runs; a merge applies the first stage and cuts a release, and each later stage promotes that release behind its gate.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/pipeline/.
+  In the member's directory, run `npx chant pipeline spec` and show me the folded spec, then `npx chant pipeline spec --stage <stage>` for the stage I name.
+  If the file does not fold, show me the finding and the line it names.
+  Never deploy to a real cloud account or shared environment, approve (`chant approve`), merge, or cut a release (`chant release cut --yes`).
+---
+
+A stage is an environment in promotion order: `dev`, then `staging`, then `prod`. A member's pipeline declares every stage in one file, `.chant/pipeline.ts`, with the waves each stage applies, the gate each stage passes, its hooks, and its holds. The file is written inside the [TypeScript-as-data](/chant/concepts/typescript-as-data/) subset, so chant folds it to a JSON spec without running it, and a reviewer and the gates read the same spec before anything executes. The fields are in the [pipeline reference](/chant/reference/pipeline/).
+
+## How a change moves
+
+1. A pull request plans as before. When it changes the pipeline, its plan note shows the folded spec's diff.
+2. The merge applies the first stage's waves, each behind the stage's gate, read from the pipeline at the base commit.
+3. Once the first stage's last wave applied, the merge cuts a release from the applied commit with `chant release cut auto --yes`, which follows the member's `release.green` setting.
+4. Each later stage takes that release through `chant components promote --to <stage> --release <label>`, behind that stage's gate. A person runs it, or starts the generated promote job.
+
+The control repo's `<product>-applied` dispatch goes out after the first stage, the one a merge applies.
+
+## Write the declaration
+
+A product built on chant writes `.chant/pipeline.ts` from its own config, as it writes its workflows. A member with no product writes it by hand:
+
+```typescript
+import { pipeline } from "@intentius/chant/pipeline";
+
+const step = { kind: "pulumi-up", stack: "{target}" };
+
+export default pipeline({
+  name: "shop",
+  defaults: { op: "shop", step },
+  stages: [
+    { name: "dev", waves: [{ name: "dev", runs: [{ target: "dev" }] }], gate: { policy: "never" } },
+    { name: "staging", waves: [{ name: "staging", runs: [{ target: "staging" }] }], gate: { policy: "on-destructive" } },
+    {
+      name: "prod",
+      waves: [{ name: "prod", runs: [{ target: "prod-eu" }, { target: "prod-us" }] }],
+      gate: { approval: "sealed", quorum: [{ count: 2, roles: ["sre"], notAuthor: true }] },
+      freeze: [{ from: "2026-12-20T00:00:00Z", until: "2027-01-04T00:00:00Z", reason: "year end" }],
+    },
+  ],
+});
+```
+
+The file holds imports from `@intentius/chant/pipeline`, `const`s of literals, and one `export default pipeline({ ... })`. Fold it:
+
+```bash
+chant build
+chant pipeline spec
+chant pipeline spec --stage prod
+```
+
+`chant build` writes the spec to `.chant/pipeline.json`. `chant pipeline spec --stage prod` prints the op-waves spec the stage runs, under the name `shop-prod`, so each stage's wave gates are its own.
+
+A file outside the subset stops the build with the evaluability rule it breaks, and `chant lint` and the editor show the same finding at the same line:
+
+```
+.chant/pipeline.ts:3:14 [EVL001] ambient "process" read is not foldable
+```
+
+## Generate the jobs
+
+```bash
+chant pipeline generate github
+```
+
+This writes two workflows. The first runs the first stage's waves on a push to the default branch. Each wave job runs `chant run wave --render-spec`, and its spec comes from `chant pipeline spec --stage dev` at the commit the job hands it, so the gate is the one the pipeline declared at the base commit. The second, `shop-promote.yml`, is started by hand with a stage and a release, and runs `chant components promote` for that stage. `gitlab` and `forgejo` write the same two files for their forge.
+
+## Promote a later stage
+
+```bash
+chant components promote --to staging --release v1.4.0
+```
+
+With a pipeline, `components promote` reads it at the default branch's tip:
+
+- `--from` defaults to the stage before `--to`.
+- A held stage, or one inside a freeze window, refuses with exit 3 and names the time it opens.
+- The stage's gate waits for an approval of the release's digest, unless its policy is `never`. The promote exits 3 and prints the `chant approve shop staging --env staging --plan <digest>` line; run the promote again once it is approved.
+- A promote that skips a stage is refused. With `--allow-skip` it passes only through each skipped stage's gate, `<stage>-skip`, and the skip is recorded on `_gates/shop/applied.jsonl`.
+
+`chant workspace train promote` reads the same holds for each member before any member deploys.
+
+## Let a wave of many targets go on past a few failures
+
+A wave that applies to many tenant databases can tolerate a few failed runs. Set `failureTolerance` on the stage, or on one wave:
+
+```typescript
+{ name: "prod", waves: [{ name: "tenants", runs: tenants }], failureTolerance: "5%" }
+```
+
+Within the tolerance the failed runs stay failed and block the runs that depend on them, and the wave counts as applied. The tolerance is read at the base commit with the gate.
+
+## Hold a stage
+
+Set `hold: true` on a stage, or `hold: { reason, until }`, and merge the change. A promote into the stage then refuses with exit 3 until the hold lifts.

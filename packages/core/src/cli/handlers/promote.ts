@@ -74,6 +74,8 @@ import type { CommandContext } from "../registry";
 import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 import { actorFromEnv } from "../../actor";
+import { promoteBase, readPipelineAt } from "../../pipeline/read";
+import { pipelinePromoteGates, pipelinePromoteSource, promotedDigest } from "../../pipeline/promote";
 
 const PROMOTE_USAGE =
   "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest> [--plan-only]] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
@@ -1051,20 +1053,36 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   const project = await loadProject(ctx, args.component ?? "all", to);
   if (typeof project === "number") return project;
 
-  // The member's `environments` array is its promotion order (#4030). It
-  // defaults --from and refuses a skipped step; a member that declares none
-  // has no order, so --from is required and nothing is refused.
-  const resolved = resolvePromotionSource({
-    order: promotionOrder(project.config.environments),
-    to,
-    ...(args.migrateFrom ? { from: args.migrateFrom } : {}),
-    ...(args.allowSkip ? { allowSkip: true } : {}),
-  });
-  if ("error" in resolved) {
-    console.error(formatError({ message: `${resolved.error.message} [${resolved.error.code}]`, hint: resolved.error.fix }));
-    return 1;
+  // #5324: a member's pipeline, read at the default branch's tip, orders the
+  // stages, holds and freezes them, and gates each promotion and each skip.
+  const pipeline = readPromotePipeline(project.projectPath, to);
+  if (typeof pipeline === "number") return pipeline;
+  let skipped: import("../../pipeline/spec").PipelineStage[] = [];
+  let from: string | undefined;
+  if (pipeline) {
+    const source = pipelinePromoteSource({ spec: pipeline, to, ...(args.migrateFrom ? { from: args.migrateFrom } : {}), ...(args.allowSkip ? { allowSkip: true } : {}), now: new Date() });
+    if (source && "exitCode" in source) {
+      console.error(formatError({ message: `${source.message}${source.code ? ` [${source.code}]` : ""}`, ...(source.hint ? { hint: source.hint } : {}) }));
+      return source.exitCode;
+    }
+    from = source!.from;
+    skipped = source!.skipped;
+  } else {
+    // The member's `environments` array is its promotion order (#4030). It
+    // defaults --from and refuses a skipped step; a member that declares none
+    // has no order, so --from is required and nothing is refused.
+    const resolved = resolvePromotionSource({
+      order: promotionOrder(project.config.environments),
+      to,
+      ...(args.migrateFrom ? { from: args.migrateFrom } : {}),
+      ...(args.allowSkip ? { allowSkip: true } : {}),
+    });
+    if ("error" in resolved) {
+      console.error(formatError({ message: `${resolved.error.message} [${resolved.error.code}]`, hint: resolved.error.fix }));
+      return 1;
+    }
+    from = resolved.from;
   }
-  const from = resolved.from;
   if (!from) {
     console.error(formatError({ message: "--from <env> is required: this member declares no environments, so there is no promotion order to default it from", hint: PROMOTE_USAGE }));
     return 1;
@@ -1112,7 +1130,43 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     console.error(formatError({ message: plan.error, hint: PROMOTE_USAGE }));
     return 1;
   }
+  // #5324: the skipped stages' gates, then the stage's own, bound to the release (or the digests promoted).
+  if (pipeline && !args.dryRun) {
+    const gates = await pipelinePromoteGates({
+      spec: pipeline,
+      to,
+      skipped,
+      digest: under?.release.releaseDigest ?? promotedDigest(plan.items),
+      ...(under ? { releaseDigest: under.release.releaseDigest } : {}),
+      port: gitGateLedgerPort(),
+      ...(who.actor ? { actor: who.actor } : {}),
+      ...(await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}))),
+      now: new Date(),
+    });
+    if (!gates.passed) {
+      console.error(formatError({ message: `${gates.message}${gates.code ? ` [${gates.code}]` : ""}`, ...(gates.hint ? { hint: `Approve it with: ${gates.hint}` } : {}) }));
+      return gates.exitCode;
+    }
+    for (const line of gates.lines) console.error(formatInfo(line));
+  }
   return deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under);
+}
+
+/**
+ * The member's folded pipeline as the default branch has it (#5324), when it
+ * has a stage `to`; undefined otherwise, and the member's `environments`
+ * order applies as before. A pipeline at base that does not fold refuses
+ * the promote (exit 1): its gates cannot be read, and none is skipped.
+ */
+function readPromotePipeline(projectPath: string, to: string): import("../../pipeline/spec").PipelineSpec | number | undefined {
+  const base = promoteBase(projectPath);
+  if (!base) return undefined;
+  const read = readPipelineAt(base, projectPath);
+  if (read.status === "refused") {
+    console.error(formatError({ message: `the pipeline at ${base.slice(0, 12)} does not fold, so its gates cannot be read and nothing is promoted: ${read.line}` }));
+    return 1;
+  }
+  return read.status === "folded" && read.spec.stages.some((s) => s.name === to) ? read.spec : undefined;
 }
 
 export async function runComponentsRollback(ctx: CommandContext): Promise<number> {

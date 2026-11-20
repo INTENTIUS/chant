@@ -134,14 +134,16 @@ async function runOpWaveJobCommand(ctx: CommandContext): Promise<number> {
       const command = at.opWavesSpecCommandFromEnv();
       // #5046: with CHANT_WAVES_SPEC_RUNS=head the runs come from the applied commit; the gate and record jobs take them from the saved plan.
       const runsAtHead = at.opWavesSpecRunsAtHead() && phase !== "gate" && phase !== "record";
+      // #5324: every render is checked against the pipeline's schema, and a folded pipeline document becomes its stage's spec.
+      const { checkedRender } = await import("../../pipeline/rendered");
       const rendered = at.renderOpWavesJobSpec({
         specFile: file,
         base: args.base ?? "HEAD^1",
         cwd: process.cwd(),
-        render: at.commandSpecRender(command, file, process.cwd()),
+        render: checkedRender(at.commandSpecRender(command, file, process.cwd()), parseOpWavesSpec),
         fallback: gitShowAtBase,
         parse: parseOpWavesSpec,
-        ...(runsAtHead ? { runsAtHead, headRender: (baseSha: string) => at.commandSpecRender(command, file, process.cwd(), { [at.OP_WAVES_SPEC_BASE_ENV]: baseSha }) } : {}),
+        ...(runsAtHead ? { runsAtHead, headRender: (baseSha: string) => checkedRender(at.commandSpecRender(command, file, process.cwd(), { [at.OP_WAVES_SPEC_BASE_ENV]: baseSha }), parseOpWavesSpec) } : {}),
       });
       show = rendered.show;
       spec = rendered.spec;

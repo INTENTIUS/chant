@@ -76,13 +76,20 @@ export function staticPromotionOrder(source: string): PromotionStep[] | undefine
 }
 
 /**
- * One member's promotion order from its directory's config: `[]` when it has
- * none or declares no environments, and null when the config can't be read.
+ * One member's promotion order: the stages of its `.chant/pipeline.ts` when
+ * it has one (#5324), else its config's `environments`. `[]` when it has
+ * none or declares no environments, and null when the config can't be read
+ * or the pipeline does not fold.
  * A TypeScript config is read as text when it is plain ({@link staticPromotionOrder}),
  * and loaded otherwise.
  */
 export async function readMemberPromotionOrder(dir: string): Promise<PromotionStep[] | null> {
   try {
+    // #5324: a member with a pipeline takes its order from the folded stages; one that does not fold has none to read.
+    const { readMemberPipeline } = await import("../pipeline/read");
+    const pipeline = readMemberPipeline(dir);
+    if (pipeline.status === "folded") return pipeline.spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
+    if (pipeline.status === "refused") return null;
     const ts = join(dir, "chant.config.ts");
     if (existsSync(ts)) {
       const plain = staticPromotionOrder(readFileSync(ts, "utf-8"));

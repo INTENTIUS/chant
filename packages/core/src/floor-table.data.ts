@@ -6,6 +6,7 @@ import { NEXT_RELEASE } from "./release-floors";
 import type { FloorRow } from "./floor-table";
 
 export const FLOOR_ROWS: readonly FloorRow[] = [
+  { name: "PIPELINE_FLOOR", version: NEXT_RELEASE, gates: "The first chant with the pipeline declaration (#5324): `.chant/pipeline.ts` folded by `chant build`, `chant pipeline spec` and `chant pipeline generate`, stage gates, holds and freeze windows on `components promote`, a wave's `failureTolerance`, and the product helpers here.", issue: "#5324", file: "pipeline.ts", modules: ["@intentius/chant/pipeline"] },
   { name: "CACHE4_PIN_FLOOR", version: "0.124.78", gates: "The first chant whose table has the `cache4` row (#4816).", issue: "#4816", file: "action-pins.ts", modules: ["@intentius/chant/action-pins"] },
   { name: "AGENT_GUARD_FLOOR", version: "0.124.77", gates: "The first chant with the shared agent guard (#4770).", issue: "#4770", file: "agent-guard.ts", modules: ["@intentius/chant/agent-guard","@intentius/chant/ci-product"] },
   { name: "CAPABILITY_TEMPLATES_FLOOR", version: "0.124.54", gates: "The first chant whose capabilities document carries `templates` (#4531).", issue: "#4531", file: "capabilities/templates.ts", modules: ["@intentius/chant/capabilities/templates"] },

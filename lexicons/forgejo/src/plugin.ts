@@ -20,6 +20,7 @@ import { forgejoContextTools } from "./mcp/context-tools";
 import { generateForgejoPipeline } from "./components/generate-pipeline";
 import { generateForgejoOpPipeline } from "./components/generate-op-pipeline";
 import { generateForgejoOpWavesPipeline } from "./components/generate-op-waves-pipeline";
+import { generateForgejoPipelinePromote } from "./components/generate-pipeline-promote";
 import { forgejoLintRules } from "./lint/rules/delegate-to-github";
 import { forgejoCompletions } from "./lsp/completions";
 import { forgejoHover } from "./lsp/hover";
@@ -47,6 +48,8 @@ export const forgejoPlugin: LexiconPlugin = {
   generateOpPipeline: (ops, options) => generateForgejoOpPipeline(ops, options),
   // Ordered waves of Op runs, each behind one gate (#3679).
   generateOpWavesPipeline: (spec, options) => generateForgejoOpWavesPipeline(spec, options),
+  // A delivery pipeline's manual promote jobs (#5324).
+  generatePipelinePromote: (input) => generateForgejoPipelinePromote(input),
 
   initTemplates(template?: string): InitTemplateSet {
     if (template === "docker-build") {

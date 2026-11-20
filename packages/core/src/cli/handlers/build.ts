@@ -516,6 +516,31 @@ export async function buildPathOf(args: Pick<CommandContext["args"], "path" | "p
   return join(args.path, relative(here, resolveSourceDir(here, loaded.config)));
 }
 
+/**
+ * Fold the member's `.chant/pipeline.ts` (#5324) and write the spec to
+ * `.chant/pipeline.json`. The member is the project the build path belongs
+ * to. A file outside the subset fails the build with its finding; it is
+ * never run. Returns the exit code of a refusal already printed, or
+ * undefined when the build goes on.
+ */
+export async function foldMemberPipeline(path: string): Promise<number | undefined> {
+  const loaded = await loadChantConfigUpward(resolve(path)).catch(() => undefined);
+  const dir = loaded?.configPath ? dirname(loaded.configPath) : resolve(path);
+  const { readMemberPipeline } = await import("../../pipeline/read");
+  const read = readMemberPipeline(dir);
+  if (read.status === "absent") return undefined;
+  if (read.status === "refused") {
+    console.error(formatError({ message: `the pipeline does not fold: ${read.line}`, hint: "A pipeline file stays inside the TypeScript-as-data subset: it is folded, never run." }));
+    return 1;
+  }
+  const { PIPELINE_SPEC_FILE } = await import("../../pipeline/spec");
+  const out = join(dir, PIPELINE_SPEC_FILE);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, `${JSON.stringify(read.spec, null, 2)}\n`);
+  console.error(formatInfo(`[fold:fold] ${read.file}: pipeline "${read.spec.name}", ${read.spec.stages.length} stage(s), written to ${relative(process.cwd(), out) || PIPELINE_SPEC_FILE}`));
+  return undefined;
+}
+
 export async function runBuild(ctx: CommandContext): Promise<number> {
   const { plugins } = ctx;
   let { serializers } = ctx;
@@ -528,6 +553,9 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
   }
   // #4794: the lexicon build reads the config's sourceDir when no path is given.
   const args = { ...ctx.args, path: await buildPathOf(ctx.args) };
+  // #5324: the member's pipeline folds first; one outside the subset stops the build.
+  const pipelineRefused = await foldMemberPipeline(args.path);
+  if (pipelineRefused !== undefined) return pipelineRefused;
 
   // Filter to a single lexicon when --lexicon is specified
   if (args.lexicon) {

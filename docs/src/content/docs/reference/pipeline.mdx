@@ -1,0 +1,97 @@
+---
+title: Pipeline
+description: The fields of a member's .chant/pipeline.ts, the spec it folds to, what each stage becomes, and the helpers a product writes the file with.
+diataxis: reference
+---
+
+A member's pipeline is the file `.chant/pipeline.ts` beside its `chant.config.ts`. It folds to a spec of kind `chant.pipeline/v1`, which `chant build` writes to `.chant/pipeline.json` and `chant pipeline spec` prints. A stage is an environment in promotion order. The [guide](/chant/guide/pipeline/) shows the path from merge to the last stage.
+
+`@intentius/chant/pipeline` exports `PIPELINE_FLOOR`, the first chant that reads the file.
+
+## The file
+
+| Holds | Rule |
+|---|---|
+| `import { pipeline } from "@intentius/chant/pipeline"` | the one module it imports a value from; type imports are free |
+| `const` declarations | literals, objects, arrays, spreads of other `const`s, templates |
+| `export default pipeline({ ... })` | the declaration; a plain object literal folds too |
+
+Anything else is refused with a finding: EVL001 or EVL003 for an expression outside the [subset](/chant/concepts/typescript-as-data/), EVL012 for a statement that is not one of the above or a declaration the spec check refuses. The build, `chant lint` and the LSP report the same finding. The file is folded, never run.
+
+## Pipeline
+
+| Field | Value |
+|---|---|
+| `name` | the pipeline's name: lowercase letters, digits, `-`, `_`. Stage gates and skips are recorded under it |
+| `stages` | the stages in promotion order, first to last; at least one |
+| `defaults` | op-waves settings every stage shares: `op`, `step` or `plan` and `apply`, `runner`, `notify`, `respond`, `evidence`, `approvals` without `quorum`, `hooks`, `holds`, `point` |
+| `release` | `{ cut, label, bin }`: the merge cuts a release once the first stage applied. `cut` defaults to `true`, `label` to `auto`, `bin` to `["chant"]` |
+| `control` | the control repo told once the first stage applied, as an op-waves spec's `control` |
+
+## Stage
+
+| Field | Value |
+|---|---|
+| `name` | the environment's name. `components promote --to` takes it, the release ledger records under it, and a step's per-environment inputs are read by it |
+| `waves` | the op waves the stage applies, in order; each wave as in the [op-waves spec](/chant/guide/op-waves/) |
+| `gate` | `{ policy, approval, quorum, point, holds }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules; `holds` is `{ policy, cost }` |
+| `hooks` | stage hooks, run after the pipeline's own |
+| `hold` | `true`, or `{ reason, until }` with an ISO 8601 time |
+| `freeze` | a list of `{ from, until, reason }` windows, ISO 8601 times |
+| `failureTolerance` | failed runs a wave lets through: a whole number, or a share such as `"10%"`. A wave's own wins. Default `0` |
+| `canary` | `true` marks the canary stage |
+| `forgeEnvironment` | the forge deployment environment of the stage's jobs, unless a wave names its own |
+
+## What each stage becomes
+
+`chant pipeline spec --stage <name>` prints the stage's op-waves spec:
+
+| Op-waves field | From |
+|---|---|
+| `name` | `<pipeline>-<stage>` |
+| `op` | `defaults.op`, else the pipeline's name |
+| `labels.Env` | the stage's name |
+| each wave's `gate`, `approval`, `environment`, `failureTolerance` | the wave's own, else the stage's |
+| `approvals.quorum`, `holds`, `point` | the stage's gate, else `defaults` |
+| `hooks` | `defaults.hooks`, then the stage's |
+| the last wave's `hooks.after.apply` | on the first stage, `<bin> release cut <label> --yes`, unless `release.cut` is `false` |
+| `control` | on the first stage, the pipeline's `control` |
+
+A wave job reads its spec, and its gate at the base commit, through `chant pipeline spec --stage <name>`, which folds `.chant/pipeline.ts` at the commit in `CHANT_WAVES_SPEC_AT`. A commit with no pipeline prints nothing, which a wave reads as a spec absent at base: it waits for an approval.
+
+A product's `renderSpec` command keeps working. Its output is checked against the same schema: an op-waves spec must check as a stage's spec does, and a `chant.pipeline/v1` document runs the stage `CHANT_PIPELINE_STAGE` names, or its first.
+
+## Promote
+
+With a pipeline at the default branch's tip, `chant components promote --to <stage>` reads it:
+
+| Case | Result |
+|---|---|
+| the pipeline at the tip does not fold | exit 1, with the finding: its gates cannot be read |
+| the stage is held, or inside a freeze window | exit 3, naming the time it opens (`pipeline-stage-held`) |
+| `--to` is the first stage and `--from` is absent | exit 1 (`promote-no-previous-environment`) |
+| `--from` skips a stage, without `--allow-skip` | exit 1 (`promote-skips-environment`) |
+| `--allow-skip` | each skipped stage's gate `<stage>-skip` passes first, or the promote exits 3; each skip is recorded on `_gates/<pipeline>/applied.jsonl` |
+| the stage's gate | gate `<stage>` under the pipeline's name, bound to the release's digest (or the promoted digests'); `never` passes, `always` and `on-destructive` wait (exit 3, `pipeline-gate-waiting`) |
+
+`chant workspace train promote <env>` refuses with exit 3 when a member's pipeline holds the stage.
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `chant build` | folds the file and writes `.chant/pipeline.json`; a finding fails the build |
+| `chant pipeline spec [--stage <stage>] [--at <commit>]` | prints the folded spec, or one stage's op-waves spec |
+| `chant pipeline generate <github\|gitlab\|forgejo> [--output <dir>]` | writes the first stage's waves workflow and the `<pipeline>-promote` workflow |
+
+## Product helpers
+
+| Export | Does |
+|---|---|
+| `pipelineFromConfig({ name, promotion, environments, approvalRules, gate, approval, waves, defaults, release, control })` | a declaration from the [stage keys](/chant/reference/ci-product-config/#stage-keys) of a product's config |
+| `pipelineSource(declaration, { product, config, command })` | the file's text, with a header naming the command that writes it |
+| `checkPipelineFile(dir, expected, { command })` | `current`, `missing` or `stale` with a line diff: what `<product> ci --check` runs |
+| `writePipelineFile(dir, text)` | writes the file, and says whether it changed |
+| `foldPipelineSource(text)` | the spec, or the finding |
+| `stageWavesSpec(spec, stage)` | a stage's op-waves spec |
+| `pipelineChange(base, head, cwd)` | the folded spec's diff between two commits, which the plan note shows |

@@ -32,6 +32,8 @@
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { pipelineChange, pipelineChangeSection } from "./pipeline/diff";
 import { prNoteMarker, prStatusContext, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
 import { prStatusDescription, prStatusState } from "./pr-status";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
@@ -43,6 +45,49 @@ import { PLAN_RUN_RECORD_FILE, readPlanRunRecord } from "./pr-plan-record";
 import type { OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import { isPlanNote, PLAN_BODY_LIMIT, PLAN_SUBJECT_LIMIT, planNoteMarker, planSubjectProblem, PR_PLAN_NOTE_CONTRACT, PR_PLAN_NOTE_FILE, PRODUCT_MARKER_BODY, PRODUCT_MARKER_LIMIT, PRODUCT_MARKER_NAME, productMarkerLine, renderPlanNote, sinceLastLine, type PrPlanBodyHandoff, type PrPlanNoteHandoff, type PrPlanNoteWords, type PrPlanSubject } from "./pr-plan-note";
+
+/**
+ * The section for a change to the pipeline between `base` and `head` in
+ * `cwd` (#5324), or undefined when it did not change or either commit is not
+ * in the checkout (a shallow job), since a missing commit would read as a
+ * removed pipeline.
+ */
+export function pipelineNoteSection(base: string, head: string, cwd: string = process.cwd()): string | undefined {
+  const known = (sha: string) => spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd, stdio: "ignore" }).status === 0;
+  if (!SHA.test(base) || !SHA.test(head) || !known(base) || !known(head)) return undefined;
+  const change = pipelineChange(base, head, cwd);
+  if (!change) return undefined;
+  // A long diff is cut, so the section never takes over the note.
+  const lines = change.diff.length > PIPELINE_NOTE_LINES ? [...change.diff.slice(0, PIPELINE_NOTE_LINES), ` ... ${change.diff.length - PIPELINE_NOTE_LINES} more lines; \`chant pipeline spec\` prints the whole spec`] : change.diff;
+  return pipelineChangeSection({ ...change, diff: lines });
+}
+
+/** The most diff lines the note's pipeline section shows (#5324). */
+const PIPELINE_NOTE_LINES = 120;
+
+function mergeBaseOf(a: string, b: string): string | undefined {
+  const out = spawnSync("git", ["merge-base", a, b], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+  const sha = out.status === 0 ? out.stdout.trim() : "";
+  return SHA.test(sha) ? sha : undefined;
+}
+
+/** `note` with the pipeline section added before its hidden lines, when there is one and the note stays within the forge's limit. */
+function withPipelineSection(note: string, input: Pick<PlanPostInput, "pipelineSection" | "forge">, base: string, head: string): string {
+  let section: string | undefined;
+  try {
+    section = (input.pipelineSection ?? ((b, h) => pipelineNoteSection(b, h)))(base, head);
+  } catch {
+    section = undefined;
+  }
+  if (!section) return note;
+  const limit = input.forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT;
+  // The hidden lines a note ends with stay last: they are read back by line.
+  const lines = note.replace(/\n*$/, "").split("\n");
+  let at = lines.length;
+  while (at > 1 && /^<!-- chant-pr-(tip|subject):/.test(lines[at - 1]!)) at--;
+  const out = [...lines.slice(0, at), "", section, ...lines.slice(at)].join("\n") + "\n";
+  return out.length <= limit ? out : note;
+}
 
 /** The plan report's file under the report directory. */
 export const PR_PLAN_REPORT_FILE = "pr-plan.json";
@@ -124,6 +169,14 @@ export interface PlanPostInput {
    * empty or not one plain word.
    */
   notAffected?: string;
+  /**
+   * The note's section for a change to the member's pipeline (#5324): the
+   * folded spec's diff between `base` and `head`, or undefined when the
+   * pipeline did not change. Default: {@link pipelineNoteSection} in the
+   * job's checkout, which folds both commits' `.chant/pipeline.ts` and runs
+   * nothing.
+   */
+  pipelineSection?: (base: string, head: string) => string | undefined;
 }
 
 /** How the note job keeps the plan job's run record (#4899). */
@@ -346,6 +399,8 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       // #4963: the report's own `marker`, under the pipeline's productMarker, as a hand-off's.
       const own = productLineOf((input.noteWords ?? noteWordsFromEnv())?.productMarker, (read.report as { marker?: unknown }).marker);
       if (!(input.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member), input.baseTip, own);
+      // #5324: a change to the pipeline shows its folded spec's diff.
+      if (note !== undefined) note = withPipelineSection(note, input, report.base, input.head);
     } catch (err) {
       refused = `the plan report does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";
@@ -580,6 +635,9 @@ async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult
       note = "note" in h
         ? planNoteHandoffNote(added.length > 0 ? { ...h, note: { ...h.note, notices: [...given, ...added] } } : h, input.forge, prNoteMarker(input.env, input.member), noteWords, input.baseTip)
         : planBodyHandoffNote(h, input.forge, prNoteMarker(input.env, input.member), noteWords, input.baseTip, added);
+      // #5324: a change to the pipeline shows its folded spec's diff, measured from where the pull request left the target branch.
+      const base = input.baseTip && SHA.test(input.baseTip) ? mergeBaseOf(input.baseTip, input.head) : undefined;
+      if (note !== undefined && base) note = withPipelineSection(note, input, base, input.head);
     } catch (err) {
       refused = `the plan note does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";

@@ -489,6 +489,14 @@ CI:
                         hand, one run at a time, and every gives each commit
                         a run of its own.
 
+Pipeline:
+  pipeline spec [--stage <stage>] [--at <commit>]
+                        Print the folded .chant/pipeline.ts, or one stage's
+                        op-waves spec; --at folds it as it stood at a commit
+  pipeline generate <github|gitlab|forgejo> [--output <dir>] [--format json]
+                        Write the merge's waves workflow and the promote
+                        workflow for each stage after the first
+
 Releases:
 ${releaseHelp()}
 
@@ -2224,6 +2232,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "serve", handler: runServeUnknown },
   { name: "components", handler: runComponentsUnknown },
   { name: "release", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseUnknown(ctx) },
+  // #5324: the member's folded pipeline.
+  { name: "pipeline spec", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline")).runPipelineSpec(ctx) },
+  { name: "pipeline generate", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline")).runPipelineGenerate(ctx) },
+  { name: "pipeline", runsNoConfig: true, handler: async () => (await import("./handlers/pipeline")).runPipelineUnknown() },
   { name: "workspace", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceUnknown(ctx) },
 ];
 

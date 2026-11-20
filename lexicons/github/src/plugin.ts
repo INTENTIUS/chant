@@ -36,6 +36,7 @@ import { githubContextTools } from "./mcp/context-tools";
 import { generateGithubPipeline } from "./components/generate-pipeline";
 import { generateGithubOpPipeline } from "./components/generate-op-pipeline";
 import { generateGithubOpWavesPipeline } from "./components/generate-op-waves-pipeline";
+import { generateGithubPipelinePromote } from "./components/generate-pipeline-promote";
 
 export const githubPlugin: LexiconPlugin = {
   name: "github",
@@ -46,6 +47,8 @@ export const githubPlugin: LexiconPlugin = {
   generateOpPipeline: (ops, options) => generateGithubOpPipeline(ops, options),
   // Ordered waves of Op runs, each behind one gate (#3679).
   generateOpWavesPipeline: (spec, options) => generateGithubOpWavesPipeline(spec, options),
+  // A delivery pipeline's manual promote jobs (#5324).
+  generatePipelinePromote: (input) => generateGithubPipelinePromote(input),
   serializer: githubSerializer,
   // `needs`, reusable-workflow `uses:` and `workflow_run` as graph edges (#3910).
   graphEdges: (entities) => githubGraphEdges(entities),
