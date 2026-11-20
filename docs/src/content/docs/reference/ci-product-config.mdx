@@ -57,6 +57,10 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `environments.<name>.gate` | when the stage's wave waits for an approval | `always`, `on-destructive`, `never` | the wave's `gate` |
 | `environments.<name>.targets.<member>` | the target a member applies in one environment: a stack, a root, or the step's inputs there | a target name or path, or a map of the step's inputs | the member's step's `environments.<name>` entry |
 | `replan_dependents`, `environments.<name>.replan_dependents` | the members whose dependents are planned again when an output they read changes after an apply | a list of member names or globs | `replanDependents` in `.chant/pipeline.ts`, a stage's or `defaults` |
+| `cost.command` | the estimator run over each member's plan document, which prints its monthly cost | a command naming `{planJson}`, as argv or a command line | `ci.cost.command` and `holds.cost.command` |
+| `cost.format` | what the estimator prints | `infracost`, `chant` | `ci.cost.format` and `holds.cost.format` |
+| `cost.currency` | the currency the amounts are in | a three-letter currency code such as `USD` | `ci.cost.currency` and `holds.cost.currency` |
+| `cost.approve_above` | the monthly change above which a plan needs an approval of its own | a monthly amount of 0 or more | `ci.cost.approveAbove` and `holds.cost.approveAbove` |
 | `environments.<name>.approval_rules` | the approval rules of one stage, in place of `approval_rules` | the rules `approval_rules` takes | a stage gate's `quorum` in `.chant/pipeline.ts` |
 | `environments.<name>.hold` | a manual hold: no release is promoted into the stage | `true`, or a map with `reason` and `until`, an ISO 8601 time | a stage's `hold` |
 | `environments.<name>.freeze` | the freeze windows in which no release is promoted into the stage | a list of maps with `from`, `until` (ISO 8601 times) and `reason` | a stage's `freeze` |
@@ -100,6 +104,10 @@ stages: [{ name: "prod", waves: [/* ... */], replanDependents: ["network", "shar
 ```
 
 The mechanism ships as `replanAfterApply` from `@intentius/chant/components`, and a product feature-detects it on `UPSTREAM_REPLAN_FLOOR`.
+
+### Cost estimate
+
+The `cost` keys set one estimate for the plan note, the policy and the wave. A product writes them into the workspace declaration's `ci.cost`, which `pr-plan` and `pr-apply` read at base, and into the op-waves spec's `holds.cost`. The estimator runs once per member whose plan changes something, over the plan document its step wrote: `terraform show -json` for a `terraform-apply` member, the preview JSON for a `pulumi-up` member. `{planJson}` is that file and `{target}` the member. The note shows each member's monthly change and the sum, and the policy reads the same record as `input.cost`, with a wave's run's own figures as `input.cost.member`. `cost.approve_above` only adds approvals: a plan over it, or with a member the estimator could not price, needs an approval of its own digest, and a wave over it waits whatever its gate says. Nothing about the estimate lets a plan apply without an approval. With no `cost` keys, no estimate runs. The record and its note lines ship as `estimateCosts`, `costEstimateLines` and `policyCost` from `@intentius/chant/ci-product`, for a product that plans by itself and hands chant its own plan note (`PrPlanNote.cost`), and a product feature-detects them on `COST_ESTIMATE_FLOOR`.
 
 A product that reads the hold, freeze, failure tolerance, stage approval rules and release keys writes them into the member's `.chant/pipeline.ts` with `pipelineFromConfig` and `pipelineSource` from `@intentius/chant/pipeline`, and its `ci --check` runs `checkPipelineFile`. See [Pipeline](/chant/reference/pipeline/).
 

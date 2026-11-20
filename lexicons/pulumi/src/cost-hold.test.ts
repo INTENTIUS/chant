@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { opWaveCostVerdict, opWaveCosts, opWaveHoldsProblems } from "@intentius/chant/op/op-waves-capability";
+import { costEstimateLines, costEstimateProblems, estimateCosts, policyCost } from "@intentius/chant/ci-product";
 import { pulumiCostHold } from "./cost-hold";
 import { createPulumiUpCapability, type PulumiUpArtifact } from "./pulumi-up";
 import { pulumiStreamPreview } from "./engine-events";
@@ -30,8 +31,9 @@ describe("pulumiCostHold", () => {
     expect(() => pulumiCostHold({ approveAbove: 1 } as never)).toThrow(/command/);
   });
 
-  test("is a hold core accepts", () => {
+  test("is a hold core accepts, and a ci.cost too", () => {
     expect(opWaveHoldsProblems({ cost: pulumiCostHold({ approveAbove: 0, command: ["price", "{planJson}"] }) })).toEqual([]);
+    expect(costEstimateProblems("ci.cost", pulumiCostHold({ approveAbove: 0, command: ["price", "{planJson}"] }))).toEqual([]);
   });
 });
 
@@ -59,6 +61,15 @@ describe("a pulumi-up plan feeds the cost hold", () => {
       expect(verdict.monthlyDelta).toBe(250);
       expect(verdict.hold).toMatch(/over holds.cost.approveAbove/);
       expect(opWaveCostVerdict(hold, [{ target: "floci", monthlyDelta: 10 }]).hold).toBeUndefined();
+
+      // #5334: the plan note's estimate and input.cost come from the same command over the same document.
+      const estimate = estimateCosts(hold, [{ member: "floci", artifact, empty: false }], dir, (argv) => {
+        expect(argv).toEqual(["price", artifact.planJson]);
+        return { status: 0, stdout: JSON.stringify({ monthlyDelta: 250, monthlyTotal: 250, pastMonthlyTotal: 0 }), stderr: "" };
+      });
+      expect(estimate).toMatchObject({ estimator: "price", format: "chant", monthlyDelta: 250, approveAbove: 100, over: true, unestimated: [] });
+      expect(policyCost(estimate, "floci").member).toEqual({ member: "floci", monthlyDelta: 250, monthlyTotal: 250, pastMonthlyTotal: 0 });
+      expect(costEstimateLines(estimate, "stack")).toContain("| `floci` | +250.00 USD | 250.00 USD |");
     });
   }
 });

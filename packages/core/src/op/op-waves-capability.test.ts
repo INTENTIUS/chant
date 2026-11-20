@@ -5,7 +5,8 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { OpWavesSpec } from "./op-waves";
@@ -157,6 +158,40 @@ describe("op waves through a capability step (#4545)", () => {
   });
 });
 
+describe("the policy reads the wave's cost as input.cost (#5334)", () => {
+  test("with holds.policy and holds.cost, each run's policy gets the wave's estimate and its own, and a hold on it waits", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "op-waves-cost-policy-"));
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf-8" }).trim();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.com");
+    git("config", "user.name", "t");
+    mkdirSync(join(cwd, "policy"));
+    writeFileSync(join(cwd, "policy", "main.rego"), "package main\n");
+    writeFileSync(join(cwd, "chant.workspace.json"), JSON.stringify({ name: "acme", schema: 1, members: [{ name: "infra", dir: ".", kind: "other", because: "test" }], ci: { policy: { engine: "opa" } } }));
+    git("add", ".");
+    git("commit", "-q", "-m", "base");
+    const sha = git("rev-parse", "HEAD");
+    for (const root of ["network", "app"]) writeFileSync(join(cwd, `${root}.tfplan.json`), "{}");
+    const spec: OpWavesSpec = { ...base, holds: { policy: true, cost: { command: ["estimate", "{planJson}"], approveAbove: 1000, format: "chant" } } };
+    const { registry, calls } = fakeCapability({ network: digest("1"), app: digest("2") });
+    const fed: Array<{ cost: { monthlyDelta: number; member?: { member: string; monthlyDelta: number } } }> = [];
+    const holdExec = (argv: string[]) => {
+      if (argv[0] === "estimate") return { status: 0, stdout: JSON.stringify({ monthlyDelta: argv[1]!.includes("network") ? 300 : 5 }), stderr: "" };
+      const input = JSON.parse(readFileSync(argv[argv.indexOf("--input") + 1]!, "utf-8"));
+      fed.push(input);
+      return { status: 0, stdout: JSON.stringify({ result: [{ expressions: [{ value: input.cost.member.monthlyDelta > 100 ? { hold: ["costly root"] } : {} }] }] }), stderr: "" };
+    };
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd, show: () => ({ sha, text: JSON.stringify(spec) }), gates: memoryGateLedgerPort(), capabilities: registry, holdExec });
+    expect(fed.map((f) => [f.cost.member?.member, f.cost.member?.monthlyDelta, f.cost.monthlyDelta])).toEqual([
+      ["network", 300, 305],
+      ["app", 5, 305],
+    ]);
+    expect(result.exitCode).toBe(3);
+    expect(calls.ran).toHaveLength(0);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
 describe("a policy hold over command plans (#4545)", () => {
   test("a plan file that gives no change set fails the wave, since the policy has nothing to read", async () => {
     const spec: OpWavesSpec = {
@@ -204,7 +239,7 @@ describe("the step and holds settings (#4545)", () => {
 
   test("estimates read in both formats, and the cost verdict sums them", () => {
     expect(readCostEstimate("infracost", JSON.stringify({ currency: "EUR", diffTotalMonthlyCost: "12.5" }))).toEqual({ monthlyDelta: 12.5, currency: "EUR" });
-    expect(readCostEstimate("infracost", JSON.stringify({ totalMonthlyCost: "30", pastTotalMonthlyCost: "10" }))).toEqual({ monthlyDelta: 20 });
+    expect(readCostEstimate("infracost", JSON.stringify({ totalMonthlyCost: "30", pastTotalMonthlyCost: "10" }))).toEqual({ monthlyDelta: 20, monthlyTotal: 30, pastMonthlyTotal: 10 });
     expect(() => readCostEstimate("chant", "{}")).toThrow(/monthlyDelta/);
     const v = opWaveCostVerdict({ command: ["x"], approveAbove: 100 }, [{ target: "a", monthlyDelta: 40 }, { target: "b", monthlyDelta: 70 }]);
     expect(v).toMatchObject({ monthlyDelta: 110, currency: "USD", unestimated: [], hold: "cost: its monthly change of +110.00 USD is over holds.cost.approveAbove (100 USD)" });

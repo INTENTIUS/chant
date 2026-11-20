@@ -93,6 +93,40 @@ export {
  */
 export const PRODUCT_CONFIG_WORDS_FLOOR = NEXT_RELEASE;
 
+/**
+ * The first chant with the plan's cost estimate (#5334): `ci.cost` in the
+ * workspace declaration, read at base, which `pr-plan` and `pr-apply` run
+ * over each member's plan document (`artifact.planJson` of `terraform-apply`
+ * and `pulumi-up`), with the estimate as the report's and the note's `cost`
+ * and the policy's `input.cost`; `PrPlanNote.cost` for a product's own plan
+ * note; a wave's `holds.policy` reading `input.cost` beside `holds.cost`;
+ * and `estimateCosts`, `costEstimateLines` and `policyCost`, which build the
+ * same record for a product that plans by itself. The estimate only adds
+ * approvals, and it is off until `ci.cost` or `holds.cost` is set.
+ */
+export const COST_ESTIMATE_FLOOR = NEXT_RELEASE;
+export {
+  COST_ESTIMATE_FORMATS,
+  costEstimateLines,
+  costEstimateOf,
+  costEstimateProblems,
+  estimateCosts,
+  planJsonOf,
+  policyCost,
+  priceRuns,
+  readCostEstimate,
+  signedAmount,
+  type CostEstimate,
+  type CostEstimateExec,
+  type CostEstimateFormat,
+  type CostEstimateSettings,
+  type CostFigures,
+  type CostRun,
+  type MemberCost,
+  type PolicyCost,
+} from "./cost-estimate";
+export { estimatePrSet, prCostRuns, prLoopCostAt, type PrLoopCost } from "./components/pr-cost";
+
 export { driftNotifyFields, NOTIFY_MESSAGE_WORDS_FLOOR, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 
 /** The first chant with `chant notify relay` and the notify relay buttons (#4611). */

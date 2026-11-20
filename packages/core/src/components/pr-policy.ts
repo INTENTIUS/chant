@@ -22,7 +22,9 @@
  *   applies nothing.
  *
  * A policy also reads `input.review` (#4326): the risk the pull request's
- * review note names, when the review agent posted one ({@link policyReviewOf}).
+ * review note names, when the review agent posted one ({@link policyReviewOf}),
+ * and `input.cost` (#5334): the plan's cost estimate with `ci.cost` at base
+ * (`./pr-cost.ts`).
  *
  * `ci.policy.source` (#4613) names a shared repository and ref instead of
  * the workspace's own directory. The source is named at base, fetched once
@@ -50,6 +52,7 @@ import {
 } from "../gate-policy";
 import { policyEngineBinary, type PolicyEngineBinaryOptions } from "../policy-engine";
 import type { ChangeSetDocument } from "../change-set";
+import type { PolicyCost } from "../cost-estimate";
 import type { GateLedgerPort } from "../op/gate";
 import type { PrPolicyReport } from "../pr-loop";
 import type { PrForge } from "../pr-forge";
@@ -142,6 +145,14 @@ export interface PrPolicyInput {
   changeSet: ChangeSetDocument;
   /** What the pull request's review note says (#4326). Absent only when the caller did not look. */
   review?: PolicyReview;
+  /**
+   * The plan's cost estimate (#5334), with `ci.cost` at base on the
+   * pull-request path, or a wave's `holds.cost`: each member's monthly
+   * change, the sum, `approveAbove` and whether the sum is over it. A wave's
+   * policy runs once per run and gets that run's figures as `member`.
+   * Absent when no estimate is set.
+   */
+  cost?: PolicyCost;
 }
 
 /**

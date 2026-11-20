@@ -397,6 +397,39 @@
         }
       }
     },
+    "cost": {
+      "type": "object",
+      "description": "Added within contract version 1 by #5334, written by the chant that carries COST_ESTIMATE_FLOOR. The plan's cost estimate under ci.cost at base: the command run over each member's plan document, the sum, and with approveAbove whether the plan needs an approval of its own digest. The policy reads the same record as input.cost. Absent when the base sets no ci.cost, or the stage reached no plan to price.",
+      "required": ["estimator", "format", "currency", "monthlyDelta", "members", "unestimated", "approveAbove", "over"],
+      "additionalProperties": false,
+      "properties": {
+        "estimator": { "type": "string", "description": "The command's first word." },
+        "format": { "enum": ["infracost", "chant"] },
+        "currency": { "type": "string" },
+        "monthlyDelta": { "type": "number", "description": "The monthly change summed over the members priced." },
+        "monthlyTotal": { "type": "number", "description": "The monthly cost once the plan applies, when every member priced gave one." },
+        "pastMonthlyTotal": { "type": "number", "description": "The monthly cost before it, when every member priced gave one." },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["member"],
+            "additionalProperties": false,
+            "properties": {
+              "member": { "type": "string" },
+              "monthlyDelta": { "type": "number" },
+              "monthlyTotal": { "type": "number" },
+              "pastMonthlyTotal": { "type": "number" },
+              "currency": { "type": "string" },
+              "error": { "type": "string", "description": "Why the member has no estimate." }
+            }
+          }
+        },
+        "unestimated": { "type": "array", "items": { "type": "string" }, "description": "The members with no estimate, sorted." },
+        "approveAbove": { "type": ["number", "null"], "description": "ci.cost.approveAbove at base, or null." },
+        "over": { "type": "boolean", "description": "With approveAbove: the change is over it, or a member has no estimate." }
+      }
+    },
     "policy": {
       "type": "object",
       "description": "Added within contract version 1 by #4294, written by chant 0.124.41 and newer. What ci.policy in the workspace declaration at base said about the change set. Absent when the base sets no policy, or the stage reached no plan to judge.",

@@ -142,6 +142,8 @@ import { prPlanTargets } from "../../components/pr-targets";
 import { PREVIEW_COMMENT_ENV } from "../../components/pr-pipeline";
 import type { ComponentEnvironmentDeclaration } from "../../components/component";
 import { prLoopHooksAt, runPrHooks, type PrHoldSettled, type PrHookPlace, type PrLoopHooks } from "../../components/pr-hooks";
+import { estimatePrSet, prLoopCostAt, type PrLoopCost } from "../../components/pr-cost";
+import { policyCost, signedAmount, type CostEstimate } from "../../cost-estimate";
 import { decidePrPolicyOverride, policyReviewOf, prLoopPolicyAt, preparePrPolicyEngine, prPolicyReport, runPrPolicy, spendPrPolicyOverride, type PrLoopPolicy } from "../../components/pr-policy";
 import type { OpWaveHookMoment } from "../../op/op-waves";
 import type { PrHookOutcome } from "../../pr-loop";
@@ -198,6 +200,10 @@ export interface Prepared {
   policy: PrLoopPolicy;
   /** What the policy said about the plan, for the report's `policy`. */
   policyReport?: PrPolicyReport;
+  /** `ci.cost` from the declaration at base (#5334). */
+  cost: PrLoopCost;
+  /** The plan's estimate under it, for the report's `cost` and the policy's `input.cost`. */
+  costEstimate?: CostEstimate;
   /** `pr-apply --before-merge` (#4301): the requires checks, for the report's `beforeMerge`. */
   beforeMerge?: PrBeforeMerge;
 }
@@ -315,6 +321,14 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     return fail(err instanceof Error ? err.message : String(err));
   }
   if (policy.note) console.error(formatInfo(policy.note));
+  // #5334: the cost estimate, read from the declaration at base like the policy.
+  let cost: PrLoopCost;
+  try {
+    cost = prLoopCostAt(projectPath, base);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
+  if (cost.note) console.error(formatInfo(cost.note));
 
   const env = args.env ?? "local";
   const routedAway = member ? await routing(ctx, stage, projectPath, member, base, forge) : undefined;
@@ -346,6 +360,7 @@ export async function prepare(ctx: CommandContext, stage: "plan" | "apply" | "re
     hookOutcomes: [],
     ...(routedAway ? { routedAway } : {}),
     policy,
+    cost,
   };
 }
 
@@ -742,6 +757,7 @@ async function finish(ctx: CommandContext, p: Prepared, report: PrReport, upload
   if (p.hookFailed) report = { ...report, message: p.hookFailed };
   if (p.routedAway && report.status === "nothing" && !report.message) report = { ...report, message: p.routedAway };
   if (p.policyReport) report = { ...report, policy: p.policyReport };
+  if (p.costEstimate) report = { ...report, cost: p.costEstimate };
   if (p.beforeMerge) report = { ...report, beforeMerge: p.beforeMerge };
   // #4617: with a checkout of the control repo named, its entries and apply records mark the cross-stack edges.
   if (report.crossStackEdges?.length && process.env.CHANT_CONTROL_DIR) {
@@ -809,6 +825,8 @@ function openUpload(events: StageEvents, stage: "plan" | "apply" | "record", pr:
 interface PolicyJudged {
   stop?: { refusal: "policy-denied" | "policy-error"; message: string; code: number };
   held: boolean;
+  /** Why the plan needs an approval of its own digest: the policy's holds, the cost over `ci.cost.approveAbove` (#5334). */
+  heldBy?: string[];
   override?: NonNullable<PrPolicyReport["override"]>;
 }
 
@@ -818,11 +836,33 @@ interface PolicyJudged {
  * read only at the plan stage, and recorded for an override at the apply.
  */
 async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
+  // #5334: the cost estimate first, so the policy reads it as input.cost. It only ever adds a hold.
+  const costHeld = priceSet(p, at.set);
+  const judged = await judgePolicyOnly(p, at);
+  if (!costHeld) return judged;
+  return { ...judged, held: true, heldBy: [...(judged.heldBy ?? []), costHeld] };
+}
+
+/** Price the planned set under `ci.cost` at base (#5334), keeping the estimate on `p`. The hold's reason when the plan is over `approveAbove`. */
+function priceSet(p: Prepared, set: PrPlanSet): string | undefined {
+  const estimate = estimatePrSet(p.cost, set, resolve("."));
+  if (!estimate) return undefined;
+  p.costEstimate = estimate;
+  const unpriced = estimate.unestimated.length > 0 ? `; not estimated: ${estimate.unestimated.join(", ")}` : "";
+  console.error(formatInfo(`cost (${estimate.estimator}): ${signedAmount(estimate.monthlyDelta, estimate.currency)} a month${unpriced}`));
+  if (!estimate.over) return undefined;
+  const why = `the cost estimate (${signedAmount(estimate.monthlyDelta, estimate.currency)} a month${unpriced}) is over ci.cost.approveAbove (${estimate.approveAbove} ${estimate.currency}), so the plan needs an approval of its own digest`;
+  console.error(formatInfo(why));
+  return why;
+}
+
+async function judgePolicyOnly(p: Prepared, at: { stage: "plan" | "apply"; op: string; pr: number | null; set: PrPlanSet }): Promise<PolicyJudged> {
   // The review is read only when a policy will run: a workspace with no policy makes no forge call for it.
   const review = p.policy.settings ? await policyReviewOf(p.forge, at.pr) : undefined;
   // #4774: with ci.policy.install, the engine is fetched here, once, and only for a stage that runs the policy.
   p.policy = await preparePrPolicyEngine(p.policy);
-  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc, ...(review ? { review } : {}) });
+  const cost = p.costEstimate ? policyCost(p.costEstimate) : undefined;
+  const verdict = runPrPolicy(p.policy, { version: 1, stage: at.stage, op: at.op, gate: p.gate, env: p.env, pr: at.pr, base: p.base, head: p.head, changeSet: at.set.doc, ...(review ? { review } : {}), ...(cost ? { cost } : {}) });
   if (!verdict) return { held: false };
   const report = prPolicyReport(verdict, p.policy.base);
   p.policyReport = report;
@@ -832,7 +872,7 @@ async function judgePolicy(p: Prepared, at: { stage: "plan" | "apply"; op: strin
   }
   const held = verdict.holds.length > 0;
   for (const h of verdict.holds) console.error(formatInfo(`policy holds the plan for a person's approval (${h.rule}): ${h.message}`));
-  if (verdict.result !== "denied") return { held };
+  if (verdict.result !== "denied") return held ? { held, heldBy: ["the policy holds this plan for an approval of its own digest"] } : { held };
   const denied = verdict.denials.map((d) => `${d.rule}: ${d.message}`).join("; ");
   let decided: Awaited<ReturnType<typeof decidePrPolicyOverride>>;
   try {
@@ -1204,7 +1244,7 @@ async function prApply(ctx: CommandContext, stage: StageEvents, beforeMerge?: Pr
   } else {
     judged = await judgePolicy(p, { stage: "apply", op, pr, set });
     if (judged.stop) return stop(prReport({ ...base, approval: { status: "pending" }, status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);
-    const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(green ? { green } : {}) });
+    const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(judged.heldBy ? { heldBy: judged.heldBy } : {}), ...(green ? { green } : {}) });
     approval = decided.approval;
     // #4323: the after-gate hooks hear the decision, a refusal too; only a failure that would have applied changes the outcome.
     const afterGate = await runGateHook(p, { op, digest: set.doc.digest, satisfied: decided.satisfied }, p.plan.order);
@@ -1761,14 +1801,16 @@ async function greenTargetOf(ctx: CommandContext): Promise<GreenTarget | number>
  */
 async function decideApplyGate(
   p: Prepared,
-  at: { op: string; pr: number | null; set: PrPlanSet; events?: RunEventStream; green?: GreenTarget; held?: boolean },
+  at: { op: string; pr: number | null; set: PrPlanSet; events?: RunEventStream; green?: GreenTarget; held?: boolean; heldBy?: readonly string[] },
 ): Promise<{ approval: PrApproval; satisfied: true; via: "merges" | "gate" } | { approval: PrApproval; satisfied: false; refusal: "plan-changed" | "not-approved"; message: string }> {
   const { op, pr, set, events, green } = at;
   let uncovered: string[] = [];
   // #4294: a plan the policy holds needs an approval of its own digest, so the merges' approvals do not cover it.
   if (green && at.held) {
-    console.error(formatInfo(`the policy holds the plan at ${green.commit.slice(0, 12)}, so it needs an approval of its own digest and does not apply under the merges' approvals`));
-    uncovered = ["the policy holds this plan for an approval of its own digest"];
+    // #5334: the cost over ci.cost.approveAbove holds it the same way.
+    const why = at.heldBy?.length ? [...at.heldBy] : ["the policy holds this plan for an approval of its own digest"];
+    console.error(formatInfo(`${why.join("; ")}: the plan at ${green.commit.slice(0, 12)} needs an approval of its own digest and does not apply under the merges' approvals`));
+    uncovered = why;
   } else if (green) {
     const cover = coverByMerges(set.doc, green.approved);
     if (cover.covered) {
@@ -2303,7 +2345,7 @@ async function prApplyWaves(
     // #4294: the policy at base judges the whole change set, before the pull request's gate.
     judged = await judgePolicy(p, { stage: "apply", op, pr, set });
     if (judged.stop) return stop(report({ status: "refused", refusal: judged.stop.refusal, message: judged.stop.message }), judged.stop.code);
-    const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(green ? { green } : {}) });
+    const decided = await decideApplyGate(p, { op, pr, set, events, held: judged.held, ...(judged.heldBy ? { heldBy: judged.heldBy } : {}), ...(green ? { green } : {}) });
     approval = decided.approval;
     // #4323: the after-gate hooks hear the decision, a refusal too.
     const afterGate = await runGateHook(p, { op, digest: set.doc.digest, satisfied: decided.satisfied }, p.plan.order);

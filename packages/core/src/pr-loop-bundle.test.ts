@@ -35,6 +35,8 @@ describe("the pull-request loop bundle", () => {
       // The product's words (#4550): no imports.
       "packages/core/src/ci-product-words.ts",
       "packages/core/src/content-digest.ts",
+      // The cost estimate's record and note lines (#5334): node built-ins only.
+      "packages/core/src/cost-estimate.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",
       "packages/core/src/intrinsic.ts",
