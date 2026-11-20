@@ -221,3 +221,30 @@ describe("the failed-apply and scheduled agents", () => {
     }
   });
 });
+
+// #5339: the failed-verify agent, on workflow_dispatch and its schedule, with the relay key in the decision and land steps alone.
+describe("the failed-verify agent", () => {
+  const VERIFY: ScheduledOpSpec = { name: "chant-verify-failed-agent", agent: { on: "verify-failed", maxRuns: 2 } };
+
+  test("is a workflow of its own on workflow_dispatch and its schedule", () => {
+    expect(gen(VERIFY).doc.on).toEqual({ schedule: [{ cron: "*/15 * * * *" }], workflow_dispatch: {} });
+    expect(() => gen({ ...VERIFY, trigger: { kind: "push" } })).toThrow(/failed-verify agent/);
+  });
+
+  test("its decision step holds the relay key, the model's step does not, and every line carries the digest", () => {
+    const d = gen(VERIFY).doc;
+    const steps = d.jobs["chant-verify-failed-agent"]!.steps;
+    expect(steps.find((s) => s.run?.includes("chant agent prepare"))!.env?.CHANT_RELAY_KEY).toBe("${{ secrets.CHANT_RELAY_KEY }}");
+    expect(steps.at(-1)!.env).toEqual({ ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" });
+    expect(d.jobs["chant-verify-failed-agent"]!.env).toMatchObject({ CHANT_AGENT_ON: "verify-failed" });
+    const lines = Object.values(d.jobs).flatMap((j) => j.steps.map((s) => s.run ?? "")).filter((r) => r.includes("chant agent "));
+    for (const l of lines) expect(l).toMatch(/--digest sha256:[0-9a-f]{64}/);
+  });
+
+  test("never applies, approves, merges or rolls back", () => {
+    const d = gen(VERIFY).doc;
+    const all = Object.values(d.jobs).flatMap((j) => j.steps.map((s) => s.run ?? "")).join("\n");
+    expect(all).not.toMatch(/chant (run|approve)\b|components (promote|rollback)|gh pr merge|--admin|\bterraform apply\b|\bpulumi up\b/);
+    expect(d.jobs["chant-verify-failed-agent-push"]!.permissions).toEqual({ contents: "write", "pull-requests": "write", issues: "write" });
+  });
+});

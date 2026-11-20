@@ -5,7 +5,7 @@
  * moved here, so terragucci and plywood generate the same jobs in their own
  * words.
  *
- * Five triggers. `comment`: `/<product> agent <ask>` on a pull request
+ * Six triggers. `comment`: `/<product> agent <ask>` on a pull request
  * (`parseProductComment`), answered with a commit pushed to the pull
  * request's branch. `drift`: a scheduled Op whose run exits with chant's
  * `drift` code, answered with a pull request from the agent's own branch,
@@ -14,7 +14,10 @@
  * `./ci-agent-alert.ts`), answered the way drift is, from a branch per
  * member. `apply-failed` and `schedule` (#5357): a failed apply's fact and
  * the agent's own cron, on the same intake as alerts
- * (`./ci-agent-triggers.ts`), answered the same way.
+ * (`./ci-agent-triggers.ts`), answered the same way. `verify-failed`
+ * (#5339): a failed verify step or a failing soak check, which chant
+ * records itself as a signed fact (`./ci-agent-verify-failed.ts`),
+ * answered the same way.
  *
  * Every trigger reads the agent's settings and caps from the default
  * branch (#5357): the generated command lines carry a digest of the
@@ -56,6 +59,7 @@ import { quoted } from "./op/activities/review-agent";
 import { AGENT_JOIN_WINDOW_MINUTES, pendingAgentFacts, verifyAgentFact, type AgentFact } from "./agent-facts";
 import { agentAlertPrompt, alertOfData, type AlertRecord } from "./ci-agent-alert";
 import { AGENT_TASK_MAX, agentApplyFailedPrompt, agentSchedulePrompt, applyFailedOfData, isScheduleFactOf, scheduleFact, type ApplyFailedRecord } from "./ci-agent-triggers";
+import { agentVerifyFailedPrompt, verifyFailedOfData, type VerifyFailedRecord } from "./ci-agent-verify-failed";
 import { sortedJsonReplacer } from "./sorted-json";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
@@ -65,21 +69,21 @@ import type { PrForge } from "./pr-forge";
 export const CI_AGENT_FLOOR = "0.124.55";
 
 /** What starts an agent run. */
-export type AgentTrigger = "comment" | "drift" | "alert" | "apply-failed" | "schedule";
-export const AGENT_TRIGGERS: readonly AgentTrigger[] = ["comment", "drift", "alert", "apply-failed", "schedule"];
+export type AgentTrigger = "comment" | "drift" | "alert" | "apply-failed" | "schedule" | "verify-failed";
+export const AGENT_TRIGGERS: readonly AgentTrigger[] = ["comment", "drift", "alert", "apply-failed", "schedule", "verify-failed"];
 
 /** The triggers answered from a branch of the agent's own, with a pull request it opens and updates. */
-export const AGENT_BRANCH_TRIGGERS: readonly AgentTrigger[] = ["drift", "alert", "apply-failed", "schedule"];
+export const AGENT_BRANCH_TRIGGERS: readonly AgentTrigger[] = ["drift", "alert", "apply-failed", "schedule", "verify-failed"];
 
 /**
- * The triggers on the facts intake (#5329, #5357): the agent is a workflow
+ * The triggers on the facts intake (#5329, #5357, #5339): the agent is a workflow
  * of its own, started by hand or by its schedule, and reads its facts
  * itself; facts for one member close together join one run.
  */
-export const AGENT_FACT_TRIGGERS: readonly AgentTrigger[] = ["alert", "apply-failed", "schedule"];
+export const AGENT_FACT_TRIGGERS: readonly AgentTrigger[] = ["alert", "apply-failed", "schedule", "verify-failed"];
 
 /** The fact triggers whose facts are read from the ledger and checked with the relay key. A schedule's fact is the run itself. */
-export const AGENT_SIGNED_TRIGGERS: readonly AgentTrigger[] = ["alert", "apply-failed"];
+export const AGENT_SIGNED_TRIGGERS: readonly AgentTrigger[] = ["alert", "apply-failed", "verify-failed"];
 
 /** Whether `on` reads facts: {@link AGENT_FACT_TRIGGERS}. */
 export const isFactTrigger = (on: AgentTrigger): boolean => AGENT_FACT_TRIGGERS.includes(on);
@@ -108,7 +112,9 @@ export type AgentRunTrigger = AgentTrigger | (string & {});
  * by its own schedule, and the jobs read the alert facts themselves. With
  * `on: "apply-failed"` and `on: "schedule"` (#5357) the spec is the agent's
  * own workflow too: started by hand and by its schedule, reading the
- * failed applies' facts, or taking the scheduled run as its fact.
+ * failed applies' facts, or taking the scheduled run as its fact. With
+ * `on: "verify-failed"` (#5339) the same, reading the facts a failed verify
+ * step or a failing soak check recorded.
  */
 export interface OpAgentSpec {
   on: AgentTrigger;
@@ -813,8 +819,8 @@ export interface PrepareInput {
   now: Date;
 }
 
-/** What a trigger's facts say, read from their data: the alerts, the failed applies, or the scheduled run. */
-type FactContent = { alerts: AlertRecord[] } | { failures: ApplyFailedRecord[] } | { schedule: true };
+/** What a trigger's facts say, read from their data: the alerts, the failed applies, the failed verifies, or the scheduled run. */
+type FactContent = { alerts: AlertRecord[] } | { failures: ApplyFailedRecord[] } | { verifies: VerifyFailedRecord[] } | { schedule: true };
 
 /** The facts' content for the prompt and the pull request; empty when none of the facts holds what the trigger reads. */
 function factContent(on: AgentTrigger, facts: readonly AgentFact[]): FactContent | undefined {
@@ -823,12 +829,16 @@ function factContent(on: AgentTrigger, facts: readonly AgentFact[]): FactContent
     const alerts = facts.map((f) => alertOfData(f.data)).filter((a): a is AlertRecord => a !== undefined);
     return alerts.length > 0 ? { alerts } : undefined;
   }
+  if (on === "verify-failed") {
+    const verifies = facts.map((f) => verifyFailedOfData(f.data)).filter((v): v is VerifyFailedRecord => v !== undefined);
+    return verifies.length > 0 ? { verifies } : undefined;
+  }
   const failures = facts.map((f) => applyFailedOfData(f.data)).filter((a): a is ApplyFailedRecord => a !== undefined);
   return failures.length > 0 ? { failures } : undefined;
 }
 
 /** How a trigger names one of its facts in a reason. */
-const factNoun = (on: AgentTrigger): string => (on === "alert" ? "alert" : on === "apply-failed" ? "failed apply" : "scheduled run");
+const factNoun = (on: AgentTrigger): string => (on === "alert" ? "alert" : on === "apply-failed" ? "failed apply" : on === "verify-failed" ? "failed verify" : "scheduled run");
 
 /** Whether a fact is one the run may take: signed with the relay key, or for a schedule, the fact this run makes. */
 function factCheck(s: Pick<AgentSettings, "on" | "name">, env: Record<string, string | undefined>): (f: AgentFact) => boolean {
@@ -922,7 +932,9 @@ export async function prepareAgentRun(i: PrepareInput): Promise<AgentDecision> {
         ? agentAlertPrompt({ ...common, member: alert.group.member, alerts: c.alerts })
         : "failures" in c
           ? agentApplyFailedPrompt({ ...common, member: alert.group.member, failures: c.failures })
-          : agentSchedulePrompt({ ...common, task: i.settings.task ?? "" });
+          : "verifies" in c
+            ? agentVerifyFailedPrompt({ ...common, member: alert.group.member, failures: c.verifies })
+            : agentSchedulePrompt({ ...common, task: i.settings.task ?? "" });
     writeFileSync(join(i.dir, AGENT_PROMPT_FILE), prompt);
     return d;
   }
@@ -1072,6 +1084,8 @@ export function agentRunRecordInput(o: {
   alerts?: Array<{ source: string; sourceId: string }>;
   /** For `on: "apply-failed"` (#5357): the op and member of each failed apply the run answers. */
   failures?: Array<{ op: string; member: string }>;
+  /** For `on: "verify-failed"` (#5339): the stage, kind, check and member of each failed verify or soak the run answers. */
+  verifies?: Array<{ stage: string; kind: "verify" | "soak"; check: string; member: string }>;
 }): OpRunRecordInput {
   const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated" || o.result === "summarized";
   const durationMs = Math.max(0, Date.parse(o.ended) - Date.parse(o.started)) || 0;
@@ -1090,6 +1104,7 @@ export function agentRunRecordInput(o: {
     ...(o.window ? { window: o.window } : {}),
     ...(o.alerts ? { alerts: o.alerts } : {}),
     ...(o.failures ? { failures: o.failures } : {}),
+    ...(o.verifies ? { verifies: o.verifies } : {}),
   };
   return {
     op: o.settings.name,
@@ -1129,9 +1144,12 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
   let ask: string | undefined;
   let commitSha: string | undefined;
   // #5329, #5357: the facts this run answers, once this job has checked them against the ledger.
-  let took: { facts: string[]; member: string; window?: { from: string; until: string }; alerts?: Array<{ source: string; sourceId: string }>; failures?: Array<{ op: string; member: string }> } | undefined;
+  let took:
+    | { facts: string[]; member: string; window?: { from: string; until: string }; alerts?: Array<{ source: string; sourceId: string }>; failures?: Array<{ op: string; member: string }>; verifies?: Array<{ stage: string; kind: "verify" | "soak"; check: string; member: string }> }
+    | undefined;
   let alerts: AlertRecord[] = [];
   let failures: ApplyFailedRecord[] = [];
+  let verifies: VerifyFailedRecord[] = [];
   const factual = isFactTrigger(s.on);
   const noun = factNoun(s.on);
 
@@ -1163,7 +1181,7 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
           usage,
           ...(commitSha ? { gitSha: commitSha } : {}),
           ...(i.runOrigin ? { runOrigin: i.runOrigin } : {}),
-          ...(took ? { facts: took.facts, member: took.member, ...(took.window ? { window: took.window } : {}), ...(took.alerts ? { alerts: took.alerts } : {}), ...(took.failures ? { failures: took.failures } : {}) } : {}),
+          ...(took ? { facts: took.facts, member: took.member, ...(took.window ? { window: took.window } : {}), ...(took.alerts ? { alerts: took.alerts } : {}), ...(took.failures ? { failures: took.failures } : {}), ...(took.verifies ? { verifies: took.verifies } : {}) } : {}),
         }),
       );
     } catch (e) {
@@ -1206,12 +1224,15 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
     const c = factContent(s.on, facts);
     alerts = c && "alerts" in c ? c.alerts : [];
     failures = c && "failures" in c ? c.failures : [];
+    verifies = c && "verifies" in c ? c.verifies : [];
     took = {
       facts: decision.facts,
       member: decision.member ?? "",
       ...(decision.window ? { window: decision.window } : {}),
       ...(s.on === "alert" ? { alerts: alerts.map((a) => ({ source: a.source, sourceId: a.sourceId })) } : {}),
       ...(s.on === "apply-failed" ? { failures: failures.map((f) => ({ op: f.op, member: f.member })) } : {}),
+      // #5339: the stage that failed, and what failed there.
+      ...(s.on === "verify-failed" ? { verifies: verifies.map((v) => ({ stage: v.stage, kind: v.kind, check: v.check, member: v.member })) } : {}),
     };
   } else if (factual) {
     // A run that took no fact answers nothing; it fails the job, so the reason shows, and is not recorded, so it spends no run of the limit.
@@ -1275,6 +1296,11 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
     return `Answer ${alerts.length > 1 ? `${alerts.length} alerts` : "the alert"}${took?.member ? ` for ${took.member}` : ""}: ${first}`;
   };
   const failedTitle = (): string => `Fix the failed apply${took?.member ? ` of ${took.member}` : ""}: ${(failures[0]?.label ?? "an apply").replace(/[\r\n]+/g, " ").slice(0, 120)}`;
+  const verifyTitle = (): string => {
+    const stages = [...new Set(verifies.map((v) => v.stage))].join(", ") || "a stage";
+    const what = verifies.every((v) => v.kind === "soak") ? "soak" : verifies.every((v) => v.kind === "verify") ? "verify" : "verify and soak";
+    return `Fix the failed ${what} in ${stages}${took?.member ? ` for ${took.member}` : ""}: ${(verifies[0]?.check ?? "a check").replace(/[\r\n]+/g, " ").slice(0, 120)}`.slice(0, 250);
+  };
   const firstLineOfTask = (s.task ?? "").split("\n")[0]!.slice(0, 100);
   const title =
     s.on === "comment"
@@ -1283,9 +1309,11 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
         ? alertTitle()
         : s.on === "apply-failed"
           ? failedTitle()
-          : s.on === "schedule"
-            ? `Scheduled task of ${s.name}: ${firstLineOfTask}`
-            : `Bring the code in line with the drift ${s.name} found`;
+          : s.on === "verify-failed"
+            ? verifyTitle()
+            : s.on === "schedule"
+              ? `Scheduled task of ${s.name}: ${firstLineOfTask}`
+              : `Bring the code in line with the drift ${s.name} found`;
   const trailers = [...(user ? [`Requested-by: ${user}`] : []), `Agent-run: ${s.name}`];
   const fromWhat =
     s.on === "drift"
@@ -1294,9 +1322,11 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
         ? [`Written by the agent from ${alerts.map((a) => `${a.source} alert ${a.sourceId}`).join(", ")}.`, ""]
         : s.on === "apply-failed"
           ? [`Written by the agent from the failed apply of ${failures.map((f) => f.member || f.op).join(", ")}.`, ""]
-          : s.on === "schedule"
-            ? [`Written by the agent on its schedule.`, ""]
-            : [];
+          : s.on === "verify-failed"
+            ? [`Written by the agent from the failed ${verifies.map((v) => `${v.kind} ${v.check} in ${v.stage}`).join(", ")}.`.replace(/[\r\n]+/g, " "), ""]
+            : s.on === "schedule"
+              ? [`Written by the agent on its schedule.`, ""]
+              : [];
   const message = [title, "", ...(ask ? [ask, ""] : fromWhat), ...trailers, ""].join("\n");
   try {
     i.git(["-c", `user.name=${AGENT_GIT_NAME}`, "-c", `user.email=${AGENT_GIT_EMAIL}`, "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], { cwd: i.workDir, input: message });
@@ -1344,7 +1374,17 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
           failures.map((f) => `- ${f.label}${f.member ? `, ${code(f.member)}` : ""}${f.runUrl && /^https:\/\/\S+$/.test(f.runUrl) ? `, ${f.runUrl}` : ""}`),
           "leave the code as it is",
         )
-      : s.on === "schedule"
+      : s.on === "verify-failed"
+        ? [
+            `The agent ${code(s.name)} changed the code at ${code(sha.slice(0, 12))} in answer to ${verifies.length === 1 ? "this failure" : "these failures"} after an apply:`,
+            "",
+            ...verifies.map((v) => `- ${v.label.replace(/[\r\n]+/g, " ")}: ${v.kind} ${code(v.check)}${v.member ? `, ${code(v.member)}` : ""}${v.runUrl && /^https:\/\/\S+$/.test(v.runUrl) ? `, ${v.runUrl}` : ""}`),
+            "",
+            `It changes ${paths.map(code).join(", ")}. A person reviews it, and the merge's apply goes through the gate like any other, as a new release. A rollback the stage requested stands and is decided at the stage's gate; this pull request does not replace it. Close it to leave the code as it is.`,
+            "",
+            "Nothing was applied, approved, merged or rolled back.",
+          ].join("\n")
+        : s.on === "schedule"
         ? fromFacts(`The agent ${code(s.name)} changed the code at ${code(sha.slice(0, 12))} on its schedule, for its task:`, (s.task ?? "").split("\n").map((l) => `> ${l}`), "leave the code as it is")
         : s.on === "alert"
       ? [

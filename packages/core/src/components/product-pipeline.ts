@@ -473,6 +473,25 @@ export function productApplyFailedAgent(wordsIn: CiProductWordsInput | CiProduct
 }
 
 /**
+ * The failed-verify agent's Op spec (#5339): a workflow of its own that
+ * runs on its schedule (`AGENT_ALERT_SCHEDULE` unless `schedule` names
+ * another cron) and when started by hand, and answers the failed verify
+ * steps and failing soak checks the promote and wave jobs recorded
+ * (`agentFacts` with `verify-failed` among its triggers, which puts
+ * `CHANT_AGENT_FACTS=verify-failed` and the relay key on those jobs) with a
+ * pull request from `<product>/agent/<name>-<member>`. A rollback the stage
+ * requested stands. Off until a product asks for it.
+ */
+export function productVerifyFailedAgent(wordsIn: CiProductWordsInput | CiProductWords, options: ProductAgentOptions & { schedule?: string } = {}): ScheduledOpSpec {
+  const words = assertProductWords(wordsIn);
+  const { name: given, runner, schedule, task: _task, ...settings } = options;
+  const name = given ?? `${words.product}-verify-failed-agent`;
+  const agent: OpAgentSpec = { on: "verify-failed", ...settings };
+  resolveAgentSpec(name, agent, words.product);
+  return { name, trigger: { kind: "cron", schedule: schedule ?? AGENT_ALERT_SCHEDULE }, agent, ...(runner !== undefined ? { runner } : {}) };
+}
+
+/**
  * A scheduled agent's Op spec (#5357): a workflow of its own on `schedule`,
  * a cron, which does `task` on each run and answers with a pull request
  * from `<product>/agent/<name>`. Off until a product asks for it.

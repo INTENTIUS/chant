@@ -127,6 +127,8 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
           ...(options.jobTimeoutMinutes ? { jobTimeoutMinutes: options.jobTimeoutMinutes } : {}),
           // #5326: the scheduled re-run of the promotions a soak holds.
           ...(spec.recheck ? { recheck: { schedule: spec.recheck.schedule } } : {}),
+          // #5339: with verify-failed among agentFacts' triggers, the promote jobs record failed verifies and soaks for the agent.
+          ...(options.agentFacts?.triggers?.includes("verify-failed") ? { agentFacts: { ...(options.agentFacts.relayKeyEnv ? { relayKeyEnv: options.agentFacts.relayKeyEnv } : {}) } } : {}),
         });
     return { success: true, files: [...waves.files, ...promote], jobs: waves.jobs };
   } catch (err) {

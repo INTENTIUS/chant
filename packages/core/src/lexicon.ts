@@ -1226,9 +1226,11 @@ export interface OpWavesPipelineOptions
    * variable (GitLab), default `CHANT_RELAY_KEY`, so a failed wave records
    * its facts for the agent beside its triage
    * (`opWavesAgentFactsEnv`, ./ci-agent-triggers.ts). Absent: no fact is
-   * recorded.
+   * recorded. `triggers` (#5339) names the facts, `["apply-failed"]` by
+   * default; `verify-failed` adds the wave jobs' failing soak checks, and a
+   * pipeline's promote jobs record their failed verifies and soaks with it.
    */
-  agentFacts?: { relayKeyEnv?: string };
+  agentFacts?: import("./ci-agent-triggers").AgentFactsOption;
   /**
    * The pipeline's runner identity (#4870): the secret (GitHub, Forgejo) or
    * CI/CD variable (GitLab) holding the runner key `.chant/trust.json`
@@ -1496,6 +1498,15 @@ export interface PipelinePromoteInput {
    * --pending`. Absent: no scheduled job, and the file is as before.
    */
   recheck?: { schedule: string };
+  /**
+   * The verify-failed agent's facts (#5339): each promote and recheck job's
+   * command step gets `CHANT_AGENT_FACTS=verify-failed` and the relay key
+   * from `relayKeyEnv`'s secret (GitHub, Forgejo) or variable (GitLab),
+   * default `CHANT_RELAY_KEY`, so a failed verify step or a soak check that
+   * starts failing records a fact for the agent. Absent: the file is as
+   * before.
+   */
+  agentFacts?: { relayKeyEnv?: string };
 }
 
 /**

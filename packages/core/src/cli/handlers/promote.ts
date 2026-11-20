@@ -891,6 +891,13 @@ async function deployPlanIn(
   }
 
   if (run.status !== "ok") {
+    // #5339: a failed verify step is a fact for the verify-failed agent, with CHANT_AGENT_FACTS=verify-failed; the exit stands either way.
+    if (verb !== "rollback" && !ctx.args.dryRun) {
+      const { recordVerifyFailed, verifyFailedRecords } = await import("../../ci-agent-verify-failed");
+      const records = verifyFailedRecords({ stage: plan.to, verb, ...(under ? { releaseDigest: under.release.releaseDigest } : {}), steps: run.results.flatMap((r) => r.records) });
+      const line = await recordVerifyFailed(records, {});
+      if (line) console.error(formatInfo(line));
+    }
     console.error(formatError({ message: `${verb} failed at "${run.failedComponent ?? "unknown"}"` }));
     // A step that refused a plan that moved since it was approved exits 3 (#3997).
     return failedRunExitCode(run.results);

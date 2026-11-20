@@ -17,6 +17,12 @@
  * Ending a soak early, or a soak passing, opens nothing by itself: the next
  * stage's gate, or the next wave's, still waits for its approval. A soak
  * only ever adds a wait.
+ *
+ * A check that starts failing also records a `verify-failed` fact for the
+ * agent (#5339, `../ci-agent-verify-failed.ts`), when the job's
+ * `CHANT_AGENT_FACTS` names `verify-failed` and it holds the relay key. The
+ * fact is read from the same change the notice is sent for, and the soak's
+ * outcome is the same with or without it.
  */
 
 import { createHash } from "node:crypto";
@@ -65,6 +71,13 @@ export interface SoakGateInput {
   gitSha?: string;
   /** Where a failed check's notice goes. Absent: none is sent. */
   notify?: { config: NotifyConfig | undefined; source: string; project?: string; send?: (config: NotifyConfig | undefined, event: NotifyEvent) => Promise<unknown> };
+  /**
+   * Where a failing check's `verify-failed` fact is recorded (#5339): the
+   * job's variables (default the process's), the checkout, and where the
+   * line it logs goes (default stderr). Without `CHANT_AGENT_FACTS` naming
+   * `verify-failed`, nothing is recorded.
+   */
+  agentFacts?: { env?: Record<string, string | undefined>; cwd?: string; say?: (line: string) => void };
 }
 
 /** What {@link soakAtGate} decided: passed, with what it says, or held with exit 3. */
@@ -158,6 +171,20 @@ export async function soakAtGate(input: SoakGateInput): Promise<SoakGateOutcome>
   // A check newly failed: tell people, once per change.
   const checks = decision.holds.filter((h) => h.reason === "check");
   const fresh = (decision.state.failing ?? []).filter((f) => !(prior.failing ?? []).includes(f));
+  // #5339: a check that newly failed (not one that reads unknown) is a fact for the verify-failed agent. Recording never changes the soak.
+  const newlyFailed = checks.filter((h) => h.reason === "check" && h.status === "failed" && fresh.includes(h.member ? `${h.check}@${h.member}` : h.check));
+  if (newlyFailed.length > 0) {
+    const { recordVerifyFailed, soakFailedRecords } = await import("../ci-agent-verify-failed");
+    const records = soakFailedRecords({
+      stage,
+      holds: input.holds,
+      ...(input.wave !== undefined ? { wave: input.wave } : {}),
+      ...(input.releaseDigest ? { releaseDigest: input.releaseDigest } : {}),
+      checks: newlyFailed.flatMap((h) => (h.reason === "check" ? [{ check: h.check, kind: h.kind, detail: h.detail, ...(h.member ? { member: h.member } : {}), ...(h.targets ? { targets: h.targets } : {}) }] : [])),
+    });
+    const line = await recordVerifyFailed(records, { ...(input.agentFacts?.env ? { env: input.agentFacts.env } : {}), ...(input.agentFacts?.cwd ? { cwd: input.agentFacts.cwd } : {}), now: input.now });
+    if (line) (input.agentFacts?.say ?? ((l: string) => console.error(l)))(line);
+  }
   if (input.notify && checks.length > 0 && fresh.length > 0) {
     const event = makeNotifyEvent({
       source: input.notify.source,

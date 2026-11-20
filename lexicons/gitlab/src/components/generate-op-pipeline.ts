@@ -361,7 +361,7 @@ export function generateGitlabOpPipeline(
       const given = spec.trigger ?? (spec.schedule ? { kind: "cron" as const, schedule: spec.schedule } : undefined);
       if (spec.agent.on === "schedule" && !given) throw new Error(`${subject} sets a scheduled agent; give it a cron trigger, the schedule it runs on.`);
       const trigger = given ?? { kind: "cron" as const, schedule: AGENT_ALERT_SCHEDULE };
-      const what = spec.agent.on === "alert" ? "an alert agent, which runs when the relay starts it and on a schedule" : spec.agent.on === "apply-failed" ? "a failed-apply agent, which runs on a schedule" : "a scheduled agent, which runs on its cron";
+      const what = spec.agent.on === "alert" ? "an alert agent, which runs when the relay starts it and on a schedule" : spec.agent.on === "apply-failed" ? "a failed-apply agent, which runs on a schedule" : spec.agent.on === "verify-failed" ? "a failed-verify agent, which runs on a schedule" : "a scheduled agent, which runs on its cron";
       if (trigger.kind !== "cron") throw new Error(`${subject} sets ${what}; give it a cron trigger${spec.agent.on === "schedule" ? "" : " or none"}.`);
       anyCron = true;
       jobs.push({ jobName, op: spec.name, trigger, findingMode: "report" });
