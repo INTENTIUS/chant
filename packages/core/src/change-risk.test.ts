@@ -229,15 +229,20 @@ describe("a Cedar permit that reads the score still needs a person from trust.js
     expect(check.satisfied).toBe(false);
   });
 
+  test("agentPassesAlone at base does not lift the refusal (#5388)", () => {
+    const optedIn: ResolvedGateApproval = { ...block, agentPassesAlone: true };
+    expect(tallyGateApprovals([permitOf("release-bot", "agent", true)], "ship", PENDING.timestamp, PLAN, optedIn, undefined, trustJudge).permit).toBeUndefined();
+  });
+
   test("a human the trust does not prove passes no permit; a proven human from trust.json does", () => {
     expect(tallyGateApprovals([permitOf("mallory", "human")], "ship", PENDING.timestamp, PLAN, block, undefined, trustJudge).permit).toBeUndefined();
     expect(tallyGateApprovals([permitOf("alice", "human", true)], "ship", PENDING.timestamp, PLAN, block, undefined, trustJudge).permit?.resolvedBy).toBe("alice");
   });
 
-  test("with no score in the gate, an agent's enforce permit behaves as it did before", () => {
+  test("with no score in the gate, an agent's enforce permit passes under agentPassesAlone at base (#5388)", () => {
     const TEXT = 'permit (principal is Chant::Agent, action, resource) when { context.risk == "low" };\n';
     const policy: GatePolicyRef = { kind: "gate-policy", lexicon: "cedar", name: "ship", version: gatePolicyVersion(TEXT), text: TEXT };
-    const old: ResolvedGateApproval = { policy, mode: "enforce", context: { risk: "low" } };
+    const old: ResolvedGateApproval = { policy, mode: "enforce", context: { risk: "low" }, agentPassesAlone: true };
     const agent: GateResolutionRecord = { ...permitOf("release-bot", "agent"), policyDecision: { policy: "ship", version: policy.version, mode: "enforce", contextDigest: gateContextDigest({ risk: "low" }), decision: "allow", determining: ["ship-0"], errors: [] } };
     expect(tallyGateApprovals([agent], "ship", PENDING.timestamp, PLAN, old).permit?.resolvedBy).toBe("release-bot");
   });

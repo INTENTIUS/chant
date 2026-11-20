@@ -12,6 +12,14 @@ import type { GateApprovalMode, GatePolicyRef } from "./gate-approval";
 
 export const GATE_APPROVAL_MODES: readonly GateApprovalMode[] = ["log-only", "enforce"];
 
+/**
+ * The `identity.gates.<gate>` key (#5388) that lets an agent's Cedar permit
+ * pass the gate in `enforce` with no person approving. Without it, an agent's
+ * permit passes a gate only beside a person's approval. A pipeline stage gate
+ * refuses it at build.
+ */
+export const AGENT_PASSES_ALONE_KEY = "agentPassesAlone";
+
 // The brand `stepOutput()` stamps (`step-output-ref.ts`), as a global symbol so
 // this module need not import that file and its zod schemas; the same copy
 // `activity-contract.ts` keeps for the same reason.
@@ -43,8 +51,9 @@ export function isGatePolicyRef(value: unknown): value is GatePolicyRef {
  * field stands alone: base `mode: "enforce"` with no base `policy` is fine, as
  * the Op's own policy then applies. `chant workspace check` (WSP153) says so.
  */
-export function gateBaseApprovalProblems(entry: { policy?: unknown; mode?: unknown; context?: unknown }, at: string): string[] {
+export function gateBaseApprovalProblems(entry: { policy?: unknown; mode?: unknown; context?: unknown; agentPassesAlone?: unknown }, at: string): string[] {
   const problems: string[] = [];
+  if (entry.agentPassesAlone !== undefined && typeof entry.agentPassesAlone !== "boolean") problems.push(`\`${at}.${AGENT_PASSES_ALONE_KEY}\` must be true or false`);
   if (entry.policy !== undefined) {
     if (!isGatePolicyRef(entry.policy)) problems.push(`\`${at}.policy\` does not resolve to a gate policy set: it needs kind "gate-policy", lexicon, name, version and text`);
     else if (entry.policy.version !== gatePolicyVersion(entry.policy.text)) problems.push(`\`${at}.policy\` "${entry.policy.name}" has a version that is not the digest of its text`);

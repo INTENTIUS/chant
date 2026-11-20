@@ -192,8 +192,8 @@ describe("gate approval — policy decisions (#2508)", () => {
     expect(check.resolution.policyDecision?.decision).toBe("deny");
   });
 
-  test("enforce: an agent's permit passes the gate on its own", async () => {
-    const block: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "enforce", context: { risk: "low" } };
+  test("enforce with agentPassesAlone at base: an agent's permit passes the gate on its own (#5388)", async () => {
+    const block: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "enforce", context: { risk: "low" }, agentPassesAlone: true };
     const { check } = await decide(
       [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow() })],
       block,
@@ -202,6 +202,37 @@ describe("gate approval — policy decisions (#2508)", () => {
     if (!check.satisfied) return;
     expect(check.via).toBe("policy");
     expect(check.resolution.resolvedBy).toBe("release-bot");
+  });
+
+  test("enforce without agentPassesAlone: an agent's permit alone leaves the gate waiting (#5388)", async () => {
+    const block: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "enforce", context: { risk: "low" } };
+    const { check } = await decide(
+      [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow() })],
+      block,
+    );
+    expect(check.satisfied).toBe(false);
+    if (check.satisfied) return;
+    expect(check.quorum).toMatchObject({ approvers: [], need: 2 });
+  });
+
+  test("enforce without agentPassesAlone: a person's approval beside an agent's permit passes the gate (#5388)", async () => {
+    const block: ResolvedGateApproval = { quorum: { count: 2 }, policy: POLICY, mode: "enforce", context: { risk: "low" } };
+    const { check } = await decide(
+      [
+        approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow() }),
+        approval({ resolvedBy: "alex", timestamp: "2026-09-01T02:00:00.000Z" }),
+      ],
+      block,
+    );
+    expect(check.satisfied).toBe(true);
+    if (!check.satisfied) return;
+    expect(check.via).toBe("policy");
+    expect(check.resolution.resolvedBy).toBe("release-bot");
+    expect(check.approvals?.map((r) => r.resolvedBy)).toEqual(["alex"]);
+  });
+
+  test("an Op's own approval block cannot set agentPassesAlone (#5388)", () => {
+    expect(gateApprovalProblems({ policy: POLICY, mode: "enforce", agentPassesAlone: true }).join("\n")).toMatch(/identity\.gates\.<gate>\.agentPassesAlone/);
   });
 
   test("enforce: a permit recorded under an older policy version does not count", async () => {
@@ -249,9 +280,10 @@ describe("gate approval — policy decisions (#2508)", () => {
   });
 
   test("log-only then enforce: the gated run re-records the pending fact under enforce, and only a fresh permit passes (#2512)", async () => {
-    const logOnly: ResolvedGateApproval = { policy: POLICY, mode: "log-only", context: { risk: "low" } };
+    // #5388: the gate's entry at base lets the agent's permit pass it alone.
+    const logOnly: ResolvedGateApproval = { policy: POLICY, mode: "log-only", context: { risk: "low" }, agentPassesAlone: true };
     const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
-    const stale = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") });
+    const stale =approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") });
     const port = memoryGateLedgerPort({ resolutions: [stale], pending: [{ ...PENDING, approval: logOnly }] });
 
     const first = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
@@ -447,7 +479,8 @@ describe("gate approval — a re-recorded pending fact keeps a partly filled quo
 });
 
 describe("gate approval — a permit counts only under the context it was given for (#3774)", () => {
-  const low: ResolvedGateApproval = { policy: POLICY, mode: "enforce", context: { risk: "low" } };
+  // #5388: the gate's entry at base lets the agent's permit pass it alone.
+  const low: ResolvedGateApproval = { policy: POLICY, mode: "enforce", context: { risk: "low" }, agentPassesAlone: true };
   const high: ResolvedGateApproval = { ...low, context: { risk: "high" } };
   const bot = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("enforce", low.context) });
 

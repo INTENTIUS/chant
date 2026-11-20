@@ -688,7 +688,7 @@ export interface GateTally {
   rules?: GateQuorumRuleProgress[];
   /** Where each top-level rule and `all`/`any` group stands (#5354). Absent when the gate's rules have no group. */
   groups?: Array<GateQuorumRuleProgress | GateQuorumGroupProgress>;
-  /** The newest approval whose recorded permit passes the gate on its own. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version and resolved context. */
+  /** The newest approval whose recorded permit passes the gate. Only in `enforce` mode, only for a permit recorded under `enforce`, and only under the gate's current policy version and resolved context. An agent's counts alone only under `agentPassesAlone` (#5388), else beside a person's approval. */
   permit?: GateResolutionRecord;
   /** The newest approval of this gate for a different plan, when the gate binds one. */
   mismatched?: GateResolutionRecord;
@@ -718,6 +718,9 @@ export interface GateTally {
  * after the gate switches to `enforce`, and a `deny` never removes a human's approval: a policy can add
  * a way through the gate but cannot take one away. A permit that reads the change risk (#5325,
  * {@link gatePermitReadsRisk}) counts only from a human `judge` proves: an agent's is refused.
+ * An agent's permit passes the gate alone only when `approval.agentPassesAlone`
+ * is set, which only `identity.gates.<gate>` at base sets (#5388); without it,
+ * it passes the gate only beside a person's approval of the same plan.
  */
 export function tallyGateApprovals(
   records: GateResolutionRecord[],
@@ -739,7 +742,9 @@ export function tallyGateApprovals(
 
   // Each human once: their newest approval, or their newest proven one when they have one.
   const byActor = new Map<string, { record: GateResolutionRecord; proven: boolean }>();
+  // #5388: a person's permit and an agent's, kept apart until the humans are known.
   let permit: GateResolutionRecord | undefined;
+  let agentPermit: GateResolutionRecord | undefined;
   let mismatched: GateResolutionRecord | undefined;
   for (const r of records) {
     if (r.gate !== gate || at(r) < humansSince) continue;
@@ -761,11 +766,13 @@ export function tallyGateApprovals(
     if (
       sinceStanding && approval.mode === "enforce" && approval.policy && decision?.decision === "allow" &&
       decision.mode === "enforce" && decision.version === approval.policy.version &&
-      decision.contextDigest === context && (!permit || at(r) >= at(permit)) &&
+      decision.contextDigest === context &&
       // #5325: a permit that reads the change risk counts only from a human the trust at base proves; an agent's is refused.
       (!readsRisk || (approverOf(r).kind === "human" && judge(r).proven))
     ) {
-      permit = r;
+      if (approverOf(r).kind === "human") {
+        if (!permit || at(r) >= at(permit)) permit = r;
+      } else if (!agentPermit || at(r) >= at(agentPermit)) agentPermit = r;
     }
 
     if (approverOf(r).kind !== "human") continue;
@@ -776,7 +783,10 @@ export function tallyGateApprovals(
   }
 
   const humans = [...byActor.values()].map((v) => v.record).sort((a, b) => at(a) - at(b));
-  const extra = { ...(permit ? { permit } : {}), ...(mismatched ? { mismatched } : {}) };
+  // #5388: an agent's permit passes the gate alone only when the entry at base
+  // sets agentPassesAlone. Without it, it counts beside a person's approval of this plan.
+  if (agentPermit && (approval.agentPassesAlone === true || humans.length > 0) && (!permit || at(agentPermit) >= at(permit))) permit = agentPermit;
+  const extra ={ ...(permit ? { permit } : {}), ...(mismatched ? { mismatched } : {}) };
   if (rules.length === 0) return { counted: humans, need: 1, met: humans.length >= 1, ...extra };
   const approvers = humans.map((r) => ({ who: r.resolvedBy, at: r.timestamp, judged: judge(r) }));
   const tree = quorumTreeProgress(nodes, approvers);

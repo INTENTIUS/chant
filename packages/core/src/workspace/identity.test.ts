@@ -72,8 +72,8 @@ describe("identity.attribution", () => {
     expect(decl({ attribution: "identified", gates: { ship: { class: "operator" }, rollback: {} } }).identity).toEqual({
       attribution: "identified",
       gates: {
-        ship: { gate: "ship", class: "operator", quorum: null, policy: null, mode: null, context: null, pointer: "/identity/gates/ship" },
-        rollback: { gate: "rollback", class: null, quorum: null, policy: null, mode: null, context: null, pointer: "/identity/gates/rollback" },
+        ship: { gate: "ship", class: "operator", quorum: null, policy: null, mode: null, context: null, agentPassesAlone: null, pointer: "/identity/gates/ship" },
+        rollback: { gate: "rollback", class: null, quorum: null, policy: null, mode: null, context: null, agentPassesAlone: null, pointer: "/identity/gates/rollback" },
       },
     });
     expect(() => decl({ attribution: "verified" })).toThrow();
@@ -83,7 +83,7 @@ describe("identity.attribution", () => {
   test("a gate entry takes a quorum beside its class (#4324)", () => {
     const rules = [{ targets: ["prod-*"], count: 2, roles: ["platform"] }, { count: 1 }];
     const gates = decl({ gates: { ship: { class: "operator", quorum: { count: 2 } }, deploy: { quorum: rules } } }).identity!.gates;
-    expect(gates.ship).toEqual({ gate: "ship", class: "operator", quorum: { count: 2 }, policy: null, mode: null, context: null, pointer: "/identity/gates/ship" });
+    expect(gates.ship).toEqual({ gate: "ship", class: "operator", quorum: { count: 2 }, policy: null, mode: null, context: null, agentPassesAlone: null, pointer: "/identity/gates/ship" });
     expect(gates.deploy!.quorum).toEqual(rules);
     // The schema refuses a malformed rule, and the reader refuses notAuthor, which an Op gate can't judge.
     expect(() => decl({ gates: { ship: { quorum: { count: 0 } } } })).toThrow();

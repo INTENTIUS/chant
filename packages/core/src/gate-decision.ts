@@ -254,6 +254,8 @@ export interface IdentityGate {
   policy?: GatePolicyRef;
   mode?: GateApprovalMode;
   context?: Record<string, string | number | boolean | string[]>;
+  /** `identity.gates.<gate>.agentPassesAlone` (#5388): an agent's permit passes the gate in `enforce` with no person approving. Absent when the entry sets none. */
+  agentPassesAlone?: boolean;
 }
 
 /** The declaration at `base`, parsed, or null when there is none. Throws when it cannot be parsed. */
@@ -269,7 +271,7 @@ function declarationAt(repo: string, base: string): { file: string; value: unkno
 }
 
 function identityGatesOf(declaration: unknown): IdentityGate[] {
-  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown; quorum?: unknown; policy?: unknown; mode?: unknown; context?: unknown } | null> } } | null)?.identity?.gates ?? {};
+  const gates = (declaration as { identity?: { gates?: Record<string, { class?: unknown; quorum?: unknown; policy?: unknown; mode?: unknown; context?: unknown; agentPassesAlone?: unknown } | null> } } | null)?.identity?.gates ?? {};
   return Object.entries(gates).map(([gate, entry]) => {
     const out: IdentityGate = { gate, class: typeof entry?.class === "string" ? entry.class : null };
     if (!entry) return out;
@@ -285,6 +287,7 @@ function identityGatesOf(declaration: unknown): IdentityGate[] {
     if (entry.policy !== undefined) out.policy = structuredClone(entry.policy) as GatePolicyRef;
     if (entry.mode !== undefined) out.mode = entry.mode as GateApprovalMode;
     if (entry.context !== undefined) out.context = structuredClone(entry.context) as NonNullable<IdentityGate["context"]>;
+    if (typeof entry.agentPassesAlone === "boolean") out.agentPassesAlone = entry.agentPassesAlone;
     return out;
   });
 }

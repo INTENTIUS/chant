@@ -180,6 +180,8 @@ export interface SignedGate {
   mode: GateApprovalMode | null;
   /** The context an Op gate of this name hands its policy, in place of its own `approval.context` (#4404). Null when the entry sets none. */
   context: Record<string, string | number | boolean | string[]> | null;
+  /** `agentPassesAlone` (#5388): an agent's permit passes an Op gate of this name in `enforce` with no person approving. Null when the entry sets none. */
+  agentPassesAlone: boolean | null;
   pointer: string;
 }
 
@@ -1408,7 +1410,7 @@ function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key
  */
 function identityOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): IdentityPolicy | null {
   if (raw === undefined) return null;
-  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string; quorum?: GateQuorumSpec; policy?: GatePolicyRef; mode?: GateApprovalMode; context?: Record<string, string | number | boolean | string[]> }> };
+  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string; quorum?: GateQuorumSpec; policy?: GatePolicyRef; mode?: GateApprovalMode; context?: Record<string, string | number | boolean | string[]>; agentPassesAlone?: boolean }> };
   const gates: Record<string, SignedGate> = {};
   for (const [gate, entry] of Object.entries(block.gates ?? {})) {
     const pointer = `/identity/gates/${gate.replace(/~/g, "~0").replace(/\//g, "~1")}`;
@@ -1425,6 +1427,7 @@ function identityOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorL
       policy: entry.policy !== undefined ? structuredClone(entry.policy) : null,
       mode: entry.mode ?? null,
       context: entry.context !== undefined ? structuredClone(entry.context) : null,
+      agentPassesAlone: entry.agentPassesAlone ?? null,
       pointer,
     };
   }

@@ -961,7 +961,9 @@ export function describeApprovalProgress(
     const binds =
       approval.mode === "enforce"
         ? decision.decision === "allow"
-          ? "In enforce mode this permit passes the gate on its own."
+          ? approverOf(record).kind === "agent" && approval.agentPassesAlone !== true
+            ? `In enforce mode an agent's permit passes the gate beside a person's approval of this plan; identity.gates.${record.gate}.agentPassesAlone at base lets it pass alone.`
+            : "In enforce mode this permit passes the gate on its own."
           : "In enforce mode only a permit passes the gate on its own, so this approval counts only toward the quorum."
         : "The gate is in log-only mode, so the decision is recorded and does not change the outcome.";
     lines.push(`Policy "${decision.policy}" ${decision.version}: ${decision.decision}${rules}. ${binds}`);

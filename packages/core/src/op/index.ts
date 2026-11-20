@@ -190,8 +190,10 @@ export { tallyGateApprovals, humanQuorumSince, approverOf } from "./gate";
 export { planGateResumes, standingGateFacts } from "./gate-resume-plan";
 export type { GateResumeCandidate, GateResumeReason, GateAnswering, PlanGateResumesInput } from "./gate-resume-plan";
 export {
-  gateApprovalProblems, gateContextDigest, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES,
+  gateApprovalProblems, gateContextDigest, gatePolicyRequest, gatePolicyVersion, isGatePolicyRef, loadGatePolicyEvaluator, GATE_APPROVAL_MODES, AGENT_PASSES_ALONE_KEY,
 } from "./gate-approval";
+export { AGENT_PASSES_ALONE_FLOOR, agentPermitBuildFindings, opGatesWithApproval, stageGateNames } from "./agent-permit";
+export type { AgentPermitFindings, AgentPermitGateEntry, AgentPermitOpGate } from "./agent-permit";
 export type {
   GateApproval, GateApprovalMode, GateApprover, GateContextValue, GatePolicyAnswer, GatePolicyDecision,
   GatePolicyEvaluator, GatePolicyRef, GatePolicyRequest, GateQuorum, ResolvedGateApproval,

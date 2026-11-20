@@ -84,17 +84,21 @@ describe("the Op run context (#2522)", () => {
       policyDecision: { policy: "ship", version: POLICY.version, mode, contextDigest: gateContextDigest(undefined), decision: "allow", determining: ["ship-0"], errors: [] },
     });
 
-    async function run(mode: "log-only" | "enforce") {
+    // #5388: `alone` is the gate's identity.gates entry at base setting agentPassesAlone.
+    async function run(mode: "log-only" | "enforce", alone = true) {
       const seen: OpRunContext[] = [];
       const activities = new Map<string, ActivityFn>([["apply", async () => { seen.push(currentOpRun()!); }]]);
-      const port = memoryGateLedgerPort({
-        pending: [{
-          version: 1, kind: "pending", op: "release", gate: "ship",
-          timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
-          approval: { ...enforce, mode },
-        }],
-        resolutions: [permit(mode)],
-      });
+      const port = Object.assign(
+        memoryGateLedgerPort({
+          pending: [{
+            version: 1, kind: "pending", op: "release", gate: "ship",
+            timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2026-09-07T10:00:00.000Z",
+            approval: { ...enforce, mode, ...(alone ? { agentPassesAlone: true as const } : {}) },
+          }],
+          resolutions: [permit(mode)],
+        }),
+        { approvalRule: async () => ({ requirement: { gate: "ship", class: null, agentPassesAlone: alone }, refuses: () => null }) },
+      );
       const result = await runOpLocally(
         op([
           { kind: "gate", gate: "ship", approval: { policy: POLICY, mode: "enforce" } },
@@ -112,6 +116,12 @@ describe("the Op run context (#2522)", () => {
       const { result, seen } = await run("enforce");
       expect(result.status).toBe("ok");
       expect(seen[0]!.passedGates.map((g) => [g.gate, g.approval.via])).toEqual([["ship", "policy"]]);
+    });
+
+    test("without agentPassesAlone at base, an agent's enforce-mode permit alone leaves the run gated (#5388)", async () => {
+      const { result, seen } = await run("enforce", false);
+      expect(result.status).toBe("gated");
+      expect(seen).toEqual([]);
     });
 
     test("a permit recorded under log-only does not pass the enforced gate, so no step sees it as passed", async () => {

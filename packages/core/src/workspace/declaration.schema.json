@@ -184,6 +184,10 @@
                 "enum": ["log-only", "enforce"],
                 "description": "Whether the policy's decision binds the gate (#4404), in place of the Op's own approval.mode: log-only records it next to the approval, enforce passes the gate only on a permit. Read at base, so a change can't switch its own gate to a mode that passes it. Added in schema 1 by chant 0.124.49, so a declaration that uses it sets minReader to 0.124.49 or newer."
               },
+              "agentPassesAlone": {
+                "type": "boolean",
+                "description": "true lets an agent's policy permit pass an Op gate of this name in enforce mode with no person approving (#5388). Unset or false, an agent's permit passes the gate only beside a person's approval of the same plan. Read at base only. chant build warns while it is set, and refuses it on a gate a pipeline stage passes through: a stage's promote, skip, urgent, rollback or soak gate. A permit that reads the change risk still counts only from a proven person."
+              },
               "context": {
                 "type": "object",
                 "description": "Plan attributes handed to the policy (#4404), over the Op's own approval.context, key by key: a change can't edit a key declared here, and a key only the Op declares still reaches the policy. A value is a plain one, since a step output reference is resolved at run time and a declaration can't hold one. plan is reserved. Added in schema 1 by chant 0.124.49, so a declaration that uses it sets minReader to 0.124.49 or newer.",
