@@ -115,6 +115,10 @@
       "import": "./dist/template-request/index.js",
       "default": "./dist/template-request/index.js"
     },
+    "./report-store/*.schema.json": {
+      "@intentius/chant-source": "./src/report-store/*.schema.json",
+      "default": "./dist/report-store/*.schema.json"
+    },
     "./template-request/*.schema.json": {
       "@intentius/chant-source": "./src/template-request/*.schema.json",
       "default": "./dist/template-request/*.schema.json"

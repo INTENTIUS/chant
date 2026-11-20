@@ -1426,12 +1426,34 @@ export const PRODUCT_RELEASE_ALIASES: readonly { product: string; command: strin
   { product: "plywood", command: "rollback", alias: "--env <env>", word: "<env> (the positional, with --release)" },
 ]);
 
-/** The kinds of an audit line, in the words a person reads: the event that happened. */
+/**
+ * The kinds of an audit line, in the words a person reads: the event that
+ * happened, each with the spellings a product wrote for it. The gate ledger's
+ * entries (`GATE_AUDIT_KINDS`) are the first eight; `refused` and `recorded`
+ * hold a product's own records. The report store's audit line
+ * (`@intentius/chant/report-store`, #5336) takes its `kind` from here.
+ */
 export const PRODUCT_AUDIT_KINDS: Readonly<Record<string, readonly string[]>> = /* @__PURE__ */ Object.freeze({
+  /** A plan reached its gate and waits for an approval. */
+  "approval-requested": [],
   /** An approval of a plan's digest; terragucci writes `approval`. */
   approved: ["approval"],
-  /** A wave's apply; terragucci writes `apply`. */
+  /** An approval or an override a commit removed from the ledger; terragucci writes `approval-revoked` and `override-revoked`. */
+  revoked: ["approval-revoked", "override-revoked"],
+  /** A policy denial that waits for an override. */
+  "override-requested": [],
+  /** An override of a denial; terragucci and sql-yodeler write `override`. */
+  "override-recorded": ["override"],
+  /** An override an apply cited. */
+  "override-spent": [],
+  /** A wave's apply, whichever way it ended (`result` says); terragucci writes `apply`. */
   applied: ["apply"],
+  /** An apply the gate or a check refused. */
+  refused: [],
+  /** A hook's outcome at a wave. */
+  hook: [],
+  /** Any other event a product records from its own records, named in the line's `product_kind`. */
+  recorded: [],
 });
 
 /** One finding of {@link productConfigProblems}. */

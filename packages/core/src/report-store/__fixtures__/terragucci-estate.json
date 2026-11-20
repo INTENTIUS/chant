@@ -1,0 +1,246 @@
+{
+  "schema": "terragucci.estate/v1",
+  "generated": "2026-10-08T10:00:00.000Z",
+  "totals": {
+    "projects": 1,
+    "waiting": 1,
+    "drifted_projects": 1,
+    "drifted_roots": 1,
+    "failed_roots": 1,
+    "unreadable": 0
+  },
+  "projects": [
+    {
+      "project": "github.com/acme/shop",
+      "status": "ok",
+      "index": "github.com/acme/shop/index.html",
+      "plan": {
+        "project": "github.com/acme/shop",
+        "commit": "c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1",
+        "stage": "tf-plan",
+        "finished": "2026-10-08T09:00:20.000Z",
+        "roots": 1,
+        "changed": 1,
+        "failed": 0,
+        "refused": 0,
+        "totals": {
+          "create": 0,
+          "update": 1,
+          "replace": 0,
+          "delete": 0
+        },
+        "destroys": 0,
+        "report": "github.com/acme/shop/2026/10/c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1/tf-plan/report.html",
+        "pull_request": "12",
+        "pull_request_url": "https://github.com/acme/shop/pull/12",
+        "job_url": "https://github.com/acme/shop/actions/runs/9120"
+      },
+      "drift": {
+        "project": "github.com/acme/shop",
+        "commit": "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f",
+        "stage": "tf-drift",
+        "finished": "2026-10-08T06:04:12.000Z",
+        "roots": 15,
+        "changed": 1,
+        "failed": 1,
+        "refused": 1,
+        "totals": {
+          "create": 0,
+          "update": 0,
+          "replace": 0,
+          "delete": 1
+        },
+        "destroys": 1,
+        "report": "github.com/acme/shop/2026/10/5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f/tf-drift/report.html",
+        "job_url": "https://github.com/acme/shop/actions/runs/9102"
+      },
+      "apply": {
+        "commit": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+        "waves": [
+          {
+            "project": "github.com/acme/shop",
+            "commit": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+            "stage": "tf-apply",
+            "wave": 1,
+            "finished": "2026-10-08T09:30:00.000Z",
+            "roots": 5,
+            "changed": 0,
+            "failed": 0,
+            "refused": 0,
+            "totals": {
+              "create": 0,
+              "update": 0,
+              "replace": 0,
+              "delete": 0
+            },
+            "destroys": 0,
+            "approval": "not-required",
+            "applied": "2026-10-08T09:30:00.000Z",
+            "report": "github.com/acme/shop/2026/10/d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2/tf-apply-wave-1/report.html",
+            "job_url": "https://github.com/acme/shop/actions/runs/9130"
+          },
+          {
+            "project": "github.com/acme/shop",
+            "commit": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+            "stage": "tf-apply",
+            "wave": 2,
+            "finished": "2026-10-08T09:31:00.000Z",
+            "roots": 5,
+            "changed": 1,
+            "failed": 0,
+            "refused": 0,
+            "totals": {
+              "create": 0,
+              "update": 0,
+              "replace": 0,
+              "delete": 1
+            },
+            "destroys": 1,
+            "approval": "waiting",
+            "waiting_since": "2026-10-08T09:31:00.000Z",
+            "report": "github.com/acme/shop/2026/10/d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2/tf-apply-wave-2/report.html",
+            "job_url": "https://github.com/acme/shop/actions/runs/9131"
+          }
+        ]
+      },
+      "waiting": [
+        {
+          "project": "github.com/acme/shop",
+          "wave": 2,
+          "commit": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+          "since": "2026-10-08T09:31:00.000Z",
+          "age_seconds": 1740,
+          "report": "github.com/acme/shop/2026/10/d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2/tf-apply-wave-2/report.html"
+        }
+      ],
+      "drifted": 1,
+      "failed": 1
+    }
+  ],
+  "recent": [
+    {
+      "project": "github.com/acme/shop",
+      "commit": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+      "stage": "tf-apply",
+      "wave": 2,
+      "finished": "2026-10-08T09:31:00.000Z",
+      "roots": 5,
+      "changed": 1,
+      "failed": 0,
+      "refused": 0,
+      "totals": {
+        "create": 0,
+        "update": 0,
+        "replace": 0,
+        "delete": 1
+      },
+      "destroys": 1,
+      "approval": "waiting",
+      "waiting_since": "2026-10-08T09:31:00.000Z",
+      "report": "github.com/acme/shop/2026/10/d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2/tf-apply-wave-2/report.html",
+      "job_url": "https://github.com/acme/shop/actions/runs/9131"
+    },
+    {
+      "project": "github.com/acme/shop",
+      "commit": "d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2",
+      "stage": "tf-apply",
+      "wave": 1,
+      "finished": "2026-10-08T09:30:00.000Z",
+      "roots": 5,
+      "changed": 0,
+      "failed": 0,
+      "refused": 0,
+      "totals": {
+        "create": 0,
+        "update": 0,
+        "replace": 0,
+        "delete": 0
+      },
+      "destroys": 0,
+      "approval": "not-required",
+      "applied": "2026-10-08T09:30:00.000Z",
+      "report": "github.com/acme/shop/2026/10/d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2/tf-apply-wave-1/report.html",
+      "job_url": "https://github.com/acme/shop/actions/runs/9130"
+    },
+    {
+      "project": "github.com/acme/shop",
+      "commit": "c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1",
+      "stage": "tf-plan",
+      "finished": "2026-10-08T09:00:20.000Z",
+      "roots": 1,
+      "changed": 1,
+      "failed": 0,
+      "refused": 0,
+      "totals": {
+        "create": 0,
+        "update": 1,
+        "replace": 0,
+        "delete": 0
+      },
+      "destroys": 0,
+      "report": "github.com/acme/shop/2026/10/c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1/tf-plan/report.html",
+      "pull_request": "12",
+      "pull_request_url": "https://github.com/acme/shop/pull/12",
+      "job_url": "https://github.com/acme/shop/actions/runs/9120"
+    },
+    {
+      "project": "github.com/acme/shop",
+      "commit": "b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0",
+      "stage": "tf-plan",
+      "finished": "2026-10-08T08:00:30.000Z",
+      "roots": 1,
+      "changed": 1,
+      "failed": 0,
+      "refused": 0,
+      "totals": {
+        "create": 0,
+        "update": 0,
+        "replace": 1,
+        "delete": 0
+      },
+      "destroys": 1,
+      "report": "github.com/acme/shop/2026/10/b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0/tf-plan/report.html",
+      "pull_request": "11",
+      "pull_request_url": "https://github.com/acme/shop/pull/11",
+      "job_url": "https://github.com/acme/shop/actions/runs/9110"
+    },
+    {
+      "project": "github.com/acme/shop",
+      "commit": "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f",
+      "stage": "tf-drift",
+      "finished": "2026-10-08T06:04:12.000Z",
+      "roots": 15,
+      "changed": 1,
+      "failed": 1,
+      "refused": 1,
+      "totals": {
+        "create": 0,
+        "update": 0,
+        "replace": 0,
+        "delete": 1
+      },
+      "destroys": 1,
+      "report": "github.com/acme/shop/2026/10/5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f/tf-drift/report.html",
+      "job_url": "https://github.com/acme/shop/actions/runs/9102"
+    },
+    {
+      "project": "github.com/acme/shop",
+      "commit": "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d",
+      "stage": "tf-drift",
+      "finished": "2026-10-07T06:04:00.000Z",
+      "roots": 15,
+      "changed": 0,
+      "failed": 0,
+      "refused": 0,
+      "totals": {
+        "create": 0,
+        "update": 0,
+        "replace": 0,
+        "delete": 0
+      },
+      "destroys": 0,
+      "report": "github.com/acme/shop/2026/10/0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d/tf-drift/report.html",
+      "job_url": "https://github.com/acme/shop/actions/runs/9001"
+    }
+  ]
+}

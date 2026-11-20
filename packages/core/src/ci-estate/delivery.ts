@@ -32,12 +32,19 @@
  * Time to restore        a failed apply to the next apply of those targets;
  *                        drift found to the next check that found none
  *
+ * Promotes and rollbacks  deploy records of the release ledger
+ *                        (`deploys`) that `chant components promote` and
+ *                        `rollback` wrote, counted beside the four (#5336),
+ *                        with redeploys and other deploys. Absent when the
+ *                        ledger holds no deploy record.
+ *
  * Every number covers the newest DORA_WEEKS weeks, Monday to Sunday in UTC,
  * with a row per week. Nothing is compared to DORA's performance tiers.
  */
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import { CHANT_WORDS, type CiProductWords } from "../ci-product-words";
-import type { DriftRun, EstateRows, WaveJob } from "./rows";
+import { REPORT_SCHEMAS, type ReportSchemaIds } from "../report-store";
+import type { DriftRun, EstateRows, ReleaseDeploy, WaveJob } from "./rows";
 
 /** How many weeks the metrics cover, the current one included. */
 export const DORA_WEEKS = 8;
@@ -51,8 +58,17 @@ export const DORA_MIN_SPAN_SECONDS = 86400;
 /** The file beside the estate page. */
 export const DORA_FILE = "dora.json";
 
-/** `<product>.dora/v1`: terragucci's schema name under terragucci's words. */
-export const doraSchema = (words: Pick<CiProductWords, "product"> = CHANT_WORDS): string => `${words.product}.dora/v1`;
+/** `<product>.dora/v1`: terragucci's schema name under terragucci's words; `chant.dora/v1`, the neutral id, under `schemas: "neutral"` (#5336). */
+export const doraSchema = (words: Pick<CiProductWords, "product"> = CHANT_WORDS, schemas: ReportSchemaIds = "product"): string => (schemas === "neutral" ? REPORT_SCHEMAS.dora : `${words.product}.dora/v1`);
+
+/** The release ledger's deploy records in the window, by the verb that wrote them (#5336). */
+export interface DoraReleases {
+  /** Deploys no promote, rollback or redeploy wrote. */
+  deploys: number;
+  promotes: number;
+  rollbacks: number;
+  redeploys: number;
+}
 
 export interface DoraLeadTime {
   /** Applied waves whose first plan was found. */
@@ -76,6 +92,9 @@ export interface DoraWeek {
   failures: number;
   lead_time_seconds: number | null;
   restore_seconds: number | null;
+  /** Present when the metrics count releases: the week's promotes and rollbacks. */
+  promotes?: number;
+  rollbacks?: number;
 }
 
 export interface DoraMetrics {
@@ -90,6 +109,8 @@ export interface DoraMetrics {
   restore: { restored: number; open: number; median_seconds: number | null; apply_restored: number; drift_restored: number };
   /** Oldest week first. */
   trend: DoraWeek[];
+  /** The release ledger's promotes and rollbacks; absent when the ledger holds no deploy record. */
+  releases?: DoraReleases;
 }
 
 export interface DoraProject extends DoraMetrics {
@@ -100,6 +121,8 @@ export interface DoraProject extends DoraMetrics {
 export interface Dora {
   /** {@link doraSchema}. */
   schema: string;
+  /** The product, under the neutral id `chant.dora/v1`. */
+  product?: string;
   generated: string;
   weeks: number;
   /** The first Monday the window holds, and when it ends. */
@@ -115,6 +138,8 @@ export interface Dora {
 
 export interface DeliveryOptions {
   words?: Pick<CiProductWords, "product">;
+  /** `neutral` writes `chant.dora/v1` with `product`. Default `product`, `<product>.dora/v1`. */
+  schemas?: ReportSchemaIds;
   now?: Date;
   /** The members to report, in order. Default every member the rows name. */
   members?: readonly string[];
@@ -319,7 +344,7 @@ export function spanLabel(seconds: number): string {
   return unit(Math.round((seconds / WEEK_SECONDS) * 10) / 10, "week");
 }
 
-function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
+function metricsOf(ev: Events, from: number, now: number, releases?: readonly ReleaseDeploy[]): DoraMetrics {
   const inside = <T extends { at: number }>(xs: T[]): T[] => xs.filter((x) => x.at >= from && x.at <= now);
   const applies = inside(ev.applies);
   const deployments = applies.filter((a) => a.applied).length;
@@ -328,6 +353,7 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
   const leads = inside(ev.leads);
   const restores = inside(ev.restores);
   const span = spanOf(ev.applies, from, now);
+  const deploysIn = inside((releases ?? []).map((d) => ({ verb: d.verb, at: at(d.timestamp) })));
   const trend: DoraWeek[] = [];
   for (let w = 0; w < DORA_WEEKS; w++) {
     const start = from + w * WEEK_MS;
@@ -340,6 +366,7 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
       failures: of(inside(ev.failures)).length,
       lead_time_seconds: median(of(leads).map((l) => l.total)),
       restore_seconds: median(of(restores).map((r) => r.seconds)),
+      ...(releases ? { promotes: of(deploysIn).filter((d) => d.verb === "promote").length, rollbacks: of(deploysIn).filter((d) => d.verb === "rollback").length } : {}),
     });
   }
   return {
@@ -362,7 +389,14 @@ function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
       drift_restored: restores.filter((r) => r.kind === "drift").length,
     },
     trend,
+    ...(releases ? { releases: { deploys: deploysIn.filter((d) => d.verb === "deploy").length, promotes: deploysIn.filter((d) => d.verb === "promote").length, rollbacks: deploysIn.filter((d) => d.verb === "rollback").length, redeploys: deploysIn.filter((d) => d.verb === "redeploy").length } } : {}),
   };
+}
+
+/** `schema`, and `product` under the neutral id. CHANT_WORDS' id is the neutral one, so it names its product too. */
+function head(words: Pick<CiProductWords, "product"> | undefined, schemas: ReportSchemaIds | undefined): { schema: string; product?: string } {
+  const schema = doraSchema(words, schemas);
+  return schema === REPORT_SCHEMAS.dora ? { schema, product: (words ?? CHANT_WORDS).product } : { schema };
 }
 
 /** The metrics of every member and of the estate, from the ledger rows. */
@@ -373,16 +407,20 @@ export function buildDelivery(rows: EstateRows, options: DeliveryOptions = {}): 
   const members = options.members ?? rows.members;
   const applies = appliesOf(rows.waves);
   const events = members.map((m) => eventsOf(m, rows, applies, options.commitTime));
+  // Promotes and rollbacks count when the ledger holds a deploy record; a member's are its own, and the estate's every record of the members asked for.
+  const releases = rows.releases?.length ? rows.releases : undefined;
+  const asked = options.members ? new Set(members) : undefined;
+  const mine = (m: string): ReleaseDeploy[] | undefined => releases?.filter((d) => d.member === m);
   return {
-    schema: doraSchema(options.words),
+    ...head(options.words, options.schemas),
     generated: now.toISOString(),
     weeks: DORA_WEEKS,
     window: { from: new Date(from).toISOString(), to: now.toISOString() },
     drift_window_seconds: DRIFT_WINDOW_SECONDS,
     audit: applies.length > 0,
     source: "ledger",
-    estate: metricsOf(merge(events), from, end),
-    projects: members.map((m, i) => ({ project: m, ...metricsOf(events[i]!, from, end) })),
+    estate: metricsOf(merge(events), from, end, asked ? releases?.filter((d) => asked.has(d.member)) : releases),
+    projects: members.map((m, i) => ({ project: m, ...metricsOf(events[i]!, from, end, mine(m)) })),
   };
 }
 
@@ -436,7 +474,9 @@ export function deliveryGauges(dora: Dora, words: Pick<CiProductWords, "product"
 
 /**
  * One line of a product's audit trail, as terragucci's reports bucket keeps
- * it (`audit.jsonl`). Three kinds are read: `apply` (an applied or failed
+ * it (`audit.jsonl`), or a `chant.audit/v1` line of the report store
+ * (#5336), whose `applied` and `approved` are read as `apply` and
+ * `approval`. Three kinds are read: `apply` (an applied or failed
  * wave: `detail.commit`, `detail.roots`, `detail.failed`, and the
  * `detail.approval` entry it applied under), `approval-requested` (a wave
  * reaching its gate) and `approval`. `what` is the gate. Other kinds and
@@ -482,6 +522,8 @@ export interface DeliveryRecordSource {
 
 export interface RecordDeliveryOptions {
   words?: Pick<CiProductWords, "product">;
+  /** `neutral` writes `chant.dora/v1` with `product`. Default `product`, `<product>.dora/v1`. */
+  schemas?: ReportSchemaIds;
   now?: Date;
   /** The index's stage names: `tf-plan` and `tf-drift` for terragucci. */
   stages: { plan: string; drift: string };
@@ -496,7 +538,7 @@ function recordApplies(entries: readonly DeliveryAuditEntry[]): RecordApply[] {
   const seen = new Set<string>();
   const out: RecordApply[] = [];
   for (const e of entries) {
-    if (e.kind !== "apply" || (e.result !== "applied" && e.result !== "failed") || seen.has(e.id)) continue;
+    if ((e.kind !== "apply" && e.kind !== "applied") || (e.result !== "applied" && e.result !== "failed") || seen.has(e.id)) continue;
     seen.add(e.id);
     const d = e.detail ?? {};
     out.push({
@@ -581,7 +623,7 @@ function recordEventsOf(source: DeliveryRecordSource, entries: readonly Delivery
   const plans = rows.filter((r) => r.stage === stages.plan);
   const incidents = recordDriftIncidents(rows.filter((r) => r.stage === stages.drift));
   const requests = mine.filter((e) => e.kind === "approval-requested");
-  const approvals = new Map(mine.filter((e) => e.kind === "approval").map((e) => [e.id, e]));
+  const approvals = new Map(mine.filter((e) => e.kind === "approval" || e.kind === "approved").map((e) => [e.id, e]));
   const leads = applies.filter((a) => a.applied).flatMap((a) => recordLead(a, plans, requests, approvals) ?? []);
   const drifted = driftedApplies(applies, incidents);
   const failures = applies.filter((a) => !a.applied || drifted.has(a)).map((a) => ({ project: a.project, at: a.at }));
@@ -605,7 +647,7 @@ export function buildRecordDelivery(sources: readonly DeliveryRecordSource[], en
   const from = weekStart(end) - (DORA_WEEKS - 1) * WEEK_MS;
   const events = sources.map((s) => recordEventsOf(s, entries ?? [], options.stages));
   return {
-    schema: doraSchema(options.words),
+    ...head(options.words, options.schemas),
     generated: now.toISOString(),
     weeks: DORA_WEEKS,
     window: { from: new Date(from).toISOString(), to: now.toISOString() },
