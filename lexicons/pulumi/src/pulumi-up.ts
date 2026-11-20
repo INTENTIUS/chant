@@ -1138,6 +1138,13 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
         ...runnerOptions(r, opts),
       });
     },
+    // #5345: a secret prints as `[secret]` under --show-secrets=false: the engine's mark, which a replan keeps no digest of.
+    async markedOutputs(ctx, original) {
+      const { step: input } = pulumiReviewStep(original, ctx.env, templateOf(opts));
+      const r = resolveStep(input, opts);
+      const outputs = await pulumiMemberStackOutputs({ dir: r.dir, stack: input.stack, engine: r.engine, ...runnerOptions(r, opts) });
+      return { outputs, sensitive: pulumiSecretOutputNames(outputs) };
+    },
     releaseInputs: (input, ctx) => pulumiReleaseInputs(input, ctx),
     // #4552: resource on plunge, the stack (target) on stock Pulumi.
     defaultLockGrain(input) {
@@ -1173,6 +1180,11 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     declaredReads: (ctx, members) => pulumiDeclaredReads(ctx, members, opts.snapshots !== undefined ? { exportStore: opts.snapshots } : {}),
     graphReads: (ctx, members) => pulumiGraphReads(ctx, members, opts.snapshots !== undefined ? { exportStore: opts.snapshots } : {}),
   };
+}
+
+/** The outputs `pulumi stack output --show-secrets=false` printed as `[secret]` (#5345), sorted. */
+export function pulumiSecretOutputNames(outputs: Record<string, unknown>): string[] {
+  return Object.keys(outputs).filter((name) => outputs[name] === "[secret]").sort();
 }
 
 export const pulumiUpCapability = createPulumiUpCapability();

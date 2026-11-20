@@ -25,6 +25,8 @@ import {
 } from "./upstream-replan";
 import { asPipelineSpec, stageReplanDependents } from "../pipeline/spec";
 import { stageWavesSpec } from "../pipeline/stages";
+import { computePlanDigest } from "../lifecycle/plan-digest";
+import { readMarkedOutputs } from "./upstream-replan";
 
 const out = (stack: string, name: string) => ({ stackOutput: { stack, name } });
 
@@ -168,5 +170,44 @@ describe("replanDependents in the pipeline (#5345)", () => {
 
   test("a list of anything but names is refused", () => {
     expect(() => pipeline({ replanDependents: "network" })).toThrow(/replanDependents must be a list of member names or patterns/);
+  });
+});
+
+describe("sensitive outputs (#5345)", () => {
+  test("no digest of a sensitive output reaches the ledger, and it counts as changed whenever its member applied", async () => {
+    const records = memory();
+    const decided: string[] = [];
+    const go = (password: string) =>
+      replanAfterApply({
+        components: [
+          { name: "db", deploy: [{ phase: "Apply", steps: [{ kind: "fake-stack", name: "db" }] }] },
+          { name: "api", dependsOn: ["db"], deploy: [{ phase: "Apply", steps: [{ kind: "fake-stack", name: "api", pw: out("db", "password") }] }] },
+        ],
+        registry: registry([]),
+        root: "/",
+        env: "prod",
+        applied: { db: { host: "db.internal", password } },
+        sensitive: { db: ["password"] },
+        replanDependents: [],
+        records,
+        gate: "pr-apply",
+        decide: async ({ description }) => (decided.push(description), { status: "pending" as const }),
+      });
+    expect((await go("hunter2")).changes[0]).toMatchObject({ first: true, changed: [] });
+    const again = await go("hunter2");
+    expect(again.changes[0]).toEqual({ member: "db", changed: ["password"], dependents: [{ member: "api", outputs: ["password"] }], replan: false });
+    const lines = records.lines.map((l) => JSON.stringify(l)).join("\n");
+    expect(records.lines[0]!.digests).toEqual({ host: computePlanDigest("output", "db.internal") });
+    expect(records.lines[0]!.sensitive).toEqual(["password"]);
+    expect(lines).not.toContain(computePlanDigest("output", "hunter2"));
+    expect(lines).not.toContain("hunter2");
+  });
+
+  test("markedOutputs is read where a capability has it, else outputs with none marked", async () => {
+    const r = new CapabilityRegistry()
+      .register({ kind: "marked", run: async () => ({}), markedOutputs: async () => ({ outputs: { a: 1, s: "x" }, sensitive: ["s"] }) } as never)
+      .register({ kind: "plain", run: async () => ({}), outputs: async () => ({ b: 2 }) } as never);
+    const c: DriverComponent = { name: "c", deploy: [{ phase: "Apply", steps: [{ kind: "marked" }, { kind: "plain" }] }] };
+    expect(await readMarkedOutputs(c, r, { env: "prod", component: "c" })).toEqual({ outputs: { a: 1, s: "x", b: 2 }, sensitive: ["s"] });
   });
 });

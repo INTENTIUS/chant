@@ -572,3 +572,10 @@ describe("the composed run's commands go through the step's command hook (chant#
     expect(seen).toEqual([{ name: "init", root: "a", members: ["a", "b", "c"], method: "plan", code: 1 }]);
   });
 });
+
+describe("output -json's sensitive mark (chant#5345)", () => {
+  test("values by name, and the names marked sensitive", async () => {
+    const { markedOutputsOf } = await import("../op/activities/terraform");
+    expect(markedOutputsOf(JSON.stringify({ id: { value: "x", sensitive: false }, password: { value: "p", sensitive: true } }))).toEqual({ outputs: { id: "x", password: "p" }, sensitive: ["password"] });
+  });
+});

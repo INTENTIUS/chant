@@ -41,7 +41,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `failureTolerance` | failed runs a wave lets through: a whole number, or a share such as `"10%"`. A wave's own wins. Default `0` |
 | `canary` | `true` marks the canary stage |
 | `forgeEnvironment` | the forge deployment environment of the stage's jobs, unless a wave names its own |
-| `replanDependents` | the members whose dependents `chant components replan` plans again when an output they read changes; a stage's list, else `defaults.replanDependents`. Absent, dependents are listed and nothing is planned |
+| `replanDependents` | the members whose dependents are planned again when an output they read changes: once a wave of the stage applied, its job runs `chant components replan` for the runs it applied. A stage's list, else `defaults.replanDependents`. Absent, no step runs |
 
 ## What each stage becomes
 

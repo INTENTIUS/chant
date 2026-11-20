@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { layerWaves } from "@intentius/chant/gated-waves";
-import { createPulumiUpCapability, pulumiDeclaredReads, pulumiGraphReads } from "./pulumi-up";
+import { createPulumiUpCapability, pulumiDeclaredReads, pulumiGraphReads, pulumiSecretOutputNames } from "./pulumi-up";
 import { CapabilityRegistry } from "@intentius/chant/components/capability";
 import { replanAfterApply, upstreamReadsOf, type OutputRecord, type OutputRecordPort } from "@intentius/chant/components/upstream-replan";
 import { PULUMI_STACK_REFERENCE_GRAPH_FLOOR } from "./chant-floors";
@@ -247,5 +247,11 @@ describe("re-planning a stack's dependents when an output it reads changes (#534
     expect(planned).toEqual([["app"]]);
     expect(decided).toEqual(["pr-apply-replan: planned again after an upstream output changed: network applied at 0123456789ab with vpcId changed, read by app"]);
     expect(moved.planned).toMatchObject({ gate: "pr-apply-replan", digest: "jcs1-sha256:app", components: ["app"], approval: { status: "pending" } });
+  });
+});
+
+describe("a stack's secret outputs (chant#5345)", () => {
+  test("the outputs stack output printed as [secret] are the marked ones", () => {
+    expect(pulumiSecretOutputNames({ vpcId: "v", dbPassword: "[secret]", token: "[secret]" })).toEqual(["dbPassword", "token"]);
   });
 });

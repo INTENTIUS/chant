@@ -334,6 +334,14 @@ export interface Capability<In = unknown, Out = unknown> {
    */
   outputs?(ctx: DeployContext, input: In): Promise<Record<string, unknown>>;
   /**
+   * Optional (#5345): {@link outputs} with the names of the outputs the
+   * engine marks sensitive or secret, read in one call. A Terraform output
+   * with `sensitive = true`, a Pulumi secret. `chant components replan`
+   * keeps no digest of those and counts each as changed whenever its member
+   * applied. Absent, `outputs` is read and none is marked.
+   */
+  markedOutputs?(ctx: DeployContext, input: In): Promise<MarkedOutputs>;
+  /**
    * How this verb relates to rollback, for the COMP003 composition check.
    * Usually derivable and left unset: a capability with a `rollback` method is
    * treated as `"native"`, everything else as `"none-by-design"` (build/publish/
@@ -584,6 +592,12 @@ export interface GraphRead {
   external?: string;
   /** The output read, where the program shows it. Absent when it names none. */
   output?: string;
+}
+
+/** What `markedOutputs` answers (#5345): the outputs, and the names the engine marks sensitive or secret. */
+export interface MarkedOutputs {
+  outputs: Record<string, unknown>;
+  sensitive: string[];
 }
 
 /** One component of a group, as core hands it to the capability (ws-107). */

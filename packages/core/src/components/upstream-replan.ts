@@ -13,6 +13,10 @@
  *   (`<env>/outputs.jsonl` on `chant/lifecycle`, {@link OUTPUT_RECORDS_FILE}).
  *   Only digests are kept, never a value. A member with no record yet has
  *   nothing to compare with, and its first record is written.
+ * - An output the engine marks sensitive or secret (`markedOutputs`: a
+ *   Terraform output with `sensitive = true`, a Pulumi secret) gets no
+ *   digest at all, since a digest of a short secret can be guessed back. Its
+ *   name is recorded, and it counts as changed whenever its member applied.
  * - The reads between members come from every source chant orders waves by
  *   ({@link upstreamReadsOf}): `stackOutput()` references in a step's input,
  *   a capability's `groupReads` (a Terraform root's `terraform_remote_state`)
@@ -50,8 +54,9 @@ import type { PrPlanSet } from "./pr-run";
 /**
  * The first chant that compares a member's outputs after an apply with the
  * ones its last apply recorded, lists the dependents that read a changed
- * output, and plans them for the members `replanDependents` names, with
- * `chant components replan` and `replanAfterApply` (#5345).
+ * output, and plans them for the members `replanDependents` names: in a wave
+ * job once the wave applied, with `chant components replan`, and with
+ * `replanAfterApply`. A sensitive or secret output gets no digest (#5345).
  */
 export const UPSTREAM_REPLAN_FLOOR = NEXT_RELEASE;
 
@@ -69,8 +74,10 @@ export interface OutputRecord {
   kind: "outputs";
   member: string;
   env: string;
-  /** Output name to its digest. Never a value. */
+  /** Output name to its digest. Never a value, and never a sensitive output. */
   digests: Record<string, string>;
+  /** The outputs the engine marked sensitive or secret: named, never digested. */
+  sensitive?: string[];
   at: string;
   /** The commit the apply ran at, when known. */
   gitSha?: string;
@@ -111,10 +118,12 @@ export function parseOutputRecords(text: string): OutputRecord[] {
   return out;
 }
 
-/** Each output's digest, by name. Values are digested, never kept. */
-export function outputDigests(outputs: Record<string, unknown>): Record<string, string> {
+/** Each output's digest, by name, the `sensitive` ones left out. Values are digested, never kept. */
+export function outputDigests(outputs: Record<string, unknown>, sensitive: readonly string[] = []): Record<string, string> {
+  const secret = new Set(sensitive);
   return Object.fromEntries(
     Object.keys(outputs)
+      .filter((name) => !secret.has(name))
       .sort()
       .map((name) => [name, computePlanDigest("output", outputs[name] ?? null)]),
   );
@@ -169,6 +178,31 @@ export async function upstreamReadsOf(
   return [...found.values()].sort(
     (a, b) => a.reader.localeCompare(b.reader) || a.upstream.localeCompare(b.upstream) || (a.output ?? "").localeCompare(b.output ?? "") || a.via.localeCompare(b.via),
   );
+}
+
+/**
+ * A component's outputs as its steps' capabilities read them now, with the
+ * names they mark sensitive (#5345): `markedOutputs` where a capability has
+ * it, else `outputs` with none marked. Undefined when no step can say.
+ */
+export async function readMarkedOutputs(
+  component: DriverComponent,
+  registry: CapabilityRegistry,
+  ctx: DeployContext,
+): Promise<{ outputs: Record<string, unknown>; sensitive: string[] } | undefined> {
+  let found: { outputs: Record<string, unknown>; sensitive: string[] } | undefined;
+  for (const step of capabilitySteps(componentForEnvironment(component, ctx.env).component.deploy)) {
+    if (!registry.has(step.kind)) continue;
+    const capability = registry.resolve(step.kind);
+    const { kind: _kind, ...input } = step;
+    if (typeof capability.markedOutputs === "function") {
+      const got = await capability.markedOutputs(ctx, input as never);
+      found = { outputs: { ...found?.outputs, ...got.outputs }, sensitive: [...new Set([...(found?.sensitive ?? []), ...got.sensitive])].sort() };
+    } else if (typeof capability.outputs === "function") {
+      found = { outputs: { ...found?.outputs, ...(await capability.outputs(ctx, input as never)) }, sensitive: found?.sensitive ?? [] };
+    }
+  }
+  return found;
 }
 
 /** A dependent of a changed upstream: the changed outputs it reads. */
@@ -247,6 +281,8 @@ export interface ReplanOptions {
   vars?: Record<string, unknown>;
   /** The members that applied, each with the outputs standing after the apply. */
   applied: Record<string, Record<string, unknown>>;
+  /** Per applied member, the outputs the engine marks sensitive or secret: no digest, and changed on every apply. */
+  sensitive?: Record<string, readonly string[]>;
   /** The members whose dependents are planned (`replanDependents`). Empty: list only. */
   replanDependents: readonly string[];
   records: OutputRecordPort;
@@ -286,10 +322,15 @@ export async function replanAfterApply(options: ReplanOptions): Promise<ReplanRe
   const changes: UpstreamChange[] = [];
   const toRecord: OutputRecord[] = [];
   for (const member of [...appliedNames].sort()) {
-    const digests = outputDigests(options.applied[member]!);
+    const secret = [...(options.sensitive?.[member] ?? [])].filter((n) => n in options.applied[member]!).sort();
+    const digests = outputDigests(options.applied[member]!, secret);
     const before = prior.get(member);
-    const changed = before ? changedOutputs(before.digests, digests) : [];
-    if (!before || changed.length > 0) toRecord.push({ version: 1, kind: "outputs", member, env: options.env, digests, at: now(), ...(options.gitSha ? { gitSha: options.gitSha } : {}) });
+    const moved = before ? changedOutputs(before.digests, digests) : [];
+    const changed = before ? [...new Set([...moved, ...secret])].sort() : [];
+    const sameSecrets = JSON.stringify(before?.sensitive ?? []) === JSON.stringify(secret);
+    if (!before || moved.length > 0 || !sameSecrets) {
+      toRecord.push({ version: 1, kind: "outputs", member, env: options.env, digests, ...(secret.length > 0 ? { sensitive: secret } : {}), at: now(), ...(options.gitSha ? { gitSha: options.gitSha } : {}) });
+    }
     const dependents = dependentsOfChange(member, changed, reads).filter((d) => !appliedNames.has(d.member));
     changes.push({ member, changed, ...(before ? {} : { first: true as const }), dependents, replan: replanNames(options.replanDependents, member) });
   }
