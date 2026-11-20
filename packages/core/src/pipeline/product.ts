@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { GateQuorumRule } from "../op/gate-quorum";
+import type { GateQuorumNode, GateQuorumRule } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { foldPipelineSource, pipelineFindingLine, PIPELINE_MODULE } from "./fold";
 import { lineDiff } from "./diff";
@@ -29,7 +29,7 @@ export interface PipelineEnvironmentConfig {
   approval?: PipelineGate["approval"] | { mode?: PipelineGate["approval"] };
   approval_rules?: ApprovalRulesConfig;
   approvalRules?: ApprovalRulesConfig;
-  hold?: boolean | { reason?: string; until?: string };
+  hold?: boolean | { reason?: string; until?: string; description?: string };
   freeze?: PipelineFreezeWindow[];
   failure_tolerance?: PipelineFailureTolerance;
   failureTolerance?: PipelineFailureTolerance;
@@ -48,17 +48,23 @@ export interface PipelineEnvironmentConfig {
   [key: string]: unknown;
 }
 
-/** One approval rule as a config spells it: `count`, `roles`, `not_author`, `targets`. */
+/** One approval rule as a config spells it: `count`, `roles`, `not_author`, `targets`, `proven`, `name`. */
 export interface ApprovalRuleConfig {
   count: number;
   roles?: string[];
   not_author?: boolean;
   notAuthor?: boolean;
   targets?: string[];
+  proven?: boolean;
+  /** The rule's name (#5354). */
+  name?: string;
 }
 
-/** `approval_rules`: a list (terragucci) or a map of named rules (plywood). */
-export type ApprovalRulesConfig = ApprovalRuleConfig[] | Record<string, ApprovalRuleConfig>;
+/** A group of rules (#5354): met when all of them are, or when any one is. Each holds a list or a map of rules and groups. */
+export type ApprovalGroupConfig = { name?: string; all: ApprovalRulesConfig } | { name?: string; any: ApprovalRulesConfig };
+
+/** `approval_rules`: a list (terragucci) or a map of named rules (plywood), of rules and `all`/`any` groups (#5354). */
+export type ApprovalRulesConfig = Array<ApprovalRuleConfig | ApprovalGroupConfig> | Record<string, ApprovalRuleConfig | ApprovalGroupConfig>;
 
 /** What {@link pipelineFromConfig} reads. */
 export interface PipelineConfigInput {
@@ -84,15 +90,24 @@ export interface PipelineConfigInput {
   control?: PipelineDeclaration["control"];
 }
 
-function rulesOf(config: ApprovalRulesConfig | undefined): GateQuorumRule[] | undefined {
+function rulesOf(config: ApprovalRulesConfig | undefined): GateQuorumNode[] | undefined {
   if (config === undefined) return undefined;
   const list = Array.isArray(config) ? config : Object.keys(config).sort().map((k) => config[k]!);
-  return list.map((r) => ({
-    count: r.count,
-    ...(r.roles ? { roles: [...r.roles] } : {}),
-    ...(r.not_author ?? r.notAuthor ? { notAuthor: true } : {}),
-    ...(r.targets ? { targets: [...r.targets] } : {}),
-  }));
+  return list.map((r): GateQuorumNode => {
+    // #5354: a rule or group is named by its own `name`. A map's key stays the config's own label, so a spec written before names stays the same.
+    const named = r.name !== undefined ? { name: r.name } : {};
+    if ("all" in r) return { ...named, all: rulesOf(r.all) ?? [] };
+    if ("any" in r) return { ...named, any: rulesOf(r.any) ?? [] };
+    const rule: GateQuorumRule = {
+      ...named,
+      count: r.count,
+      ...(r.roles ? { roles: [...r.roles] } : {}),
+      ...(r.not_author ?? r.notAuthor ? { notAuthor: true } : {}),
+      ...(r.targets ? { targets: [...r.targets] } : {}),
+      ...(r.proven ? { proven: true } : {}),
+    };
+    return rule;
+  });
 }
 
 const SECRET_WORDS: Record<string, string> = { forge_secret: "forgeSecret", aws_secrets_manager: "awsSecretsManager", gcp_secret_manager: "gcpSecretManager", azure_key_vault: "azureKeyVault", json_key: "jsonKey" };
@@ -114,7 +129,7 @@ function publishOf(publish: PipelineEnvironmentConfig["publish"]): PipelineStage
 function holdOf(hold: PipelineEnvironmentConfig["hold"]): PipelineHold | undefined {
   if (hold === undefined || hold === false) return undefined;
   if (hold === true) return true;
-  return { ...(hold.reason ? { reason: hold.reason } : {}), ...(hold.until ? { until: hold.until } : {}) };
+  return { ...(hold.reason ? { reason: hold.reason } : {}), ...(hold.until ? { until: hold.until } : {}), ...(hold.description ? { description: hold.description } : {}) };
 }
 
 /**

@@ -1169,8 +1169,11 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       ...(who.actor ? { actor: who.actor } : {}),
       ...(await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}))),
       now: new Date(),
+      // #5354: the signers and roles at the commit the pipeline is read at prove who approved or rejected.
+      proof: await promoteProof(project.projectPath),
     });
     if (!gates.passed) {
+      for (const line of gates.lines ?? []) console.error(formatInfo(line));
       const hint = gates.hint ? (gates.code === "pipeline-gate-waiting" ? `Approve it with: ${gates.hint}` : gates.hint) : undefined;
       console.error(formatError({ message: `${gates.message}${gates.code ? ` [${gates.code}]` : ""}`, ...(hint ? { hint } : {}) }));
       return gates.exitCode;
@@ -1228,6 +1231,21 @@ async function publishAfterPromote(projectPath: string, pipeline: import("../../
   }
   if (result.status === "published") console.error(formatInfo(`stage "${to}" published ${Object.keys(result.record.artifacts).sort().join(", ")} for release ${under.label ?? under.release.releaseDigest}`));
   return 0;
+}
+
+/**
+ * The signers, passkeys and role grants at the commit a promote reads its
+ * pipeline at (#5354), which prove who approved or rejected at a stage's
+ * gate. A trust config that can't be read proves nobody.
+ */
+async function promoteProof(projectPath: string): Promise<import("../../pipeline/promote").PipelineGateProof | undefined> {
+  try {
+    const { scopeSource } = await import("../../workspace/write-scope");
+    const { policy } = scopeSource(projectPath, promoteBase(projectPath));
+    return { signers: policy, roles: policy.roles };
+  } catch {
+    return undefined;
+  }
 }
 
 /**

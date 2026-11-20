@@ -91,7 +91,7 @@ export interface CommandGroup {
 export const RESERVED_COMMAND_NAMES: ReadonlySet<string> = new Set([
   "build", "lint", "list", "describe", "import", "audit", "migrate", "carve",
   "init", "update", "doctor", "dev", "run", "graph", "vendor", "lifecycle",
-  "lc", "components", "emulator", "serve", "operator", "approve",
+  "lc", "components", "emulator", "serve", "operator", "approve", "reject",
   "workspace",
 ]);
 

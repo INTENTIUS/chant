@@ -6,6 +6,7 @@ import { NEXT_RELEASE } from "./release-floors";
 import type { FloorRow } from "./floor-table";
 
 export const FLOOR_ROWS: readonly FloorRow[] = [
+  { name: "GATE_REJECTION_FLOOR", version: NEXT_RELEASE, gates: "The first chant with `chant reject` (#5354): a rejection of the digest a gate waits on, which stops a release at a pipeline stage's gate by the proof rules the gate's approvals count by, and with approval rules that combine in `all` and `any` groups, nested up to three deep, each rule and group with a `name` the progress lines, the plan note and the ledger show, and a stage hold's `description`.", issue: "#5354", file: "op/gate-reject.ts", modules: ["@intentius/chant/op","@intentius/chant/op/gate-reject","@intentius/chant/op/index"] },
   { name: "CACHE4_PIN_FLOOR", version: "0.124.78", gates: "The first chant whose table has the `cache4` row (#4816).", issue: "#4816", file: "action-pins.ts", modules: ["@intentius/chant/action-pins"] },
   { name: "AGENT_GUARD_FLOOR", version: "0.124.77", gates: "The first chant with the shared agent guard (#4770).", issue: "#4770", file: "agent-guard.ts", modules: ["@intentius/chant/agent-guard","@intentius/chant/ci-product"] },
   { name: "CAPABILITY_TEMPLATES_FLOOR", version: "0.124.54", gates: "The first chant whose capabilities document carries `templates` (#4531).", issue: "#4531", file: "capabilities/templates.ts", modules: ["@intentius/chant/capabilities/templates"] },

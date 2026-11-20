@@ -136,6 +136,14 @@ export interface CiProductWordsInput {
   approve?: string;
   /** The override line, the same kind of template, with `{rule}` and `{reason}` too. */
   override?: string;
+  /**
+   * The reject line (#5354), the same kind of template over `{op}`,
+   * `{gate}`, `{digest}`, `{reason}`, `{sign}` and `{target}`: what a
+   * reviewer runs to turn a release down at a stage's gate. A comment that
+   * types the product's `reject` is answered with it, since a comment
+   * never records a rejection, as it never records an approval.
+   */
+  reject?: string;
   /** The op the waves record under. Default: the spec's own. */
   op?: string;
   /** The wave gate pattern, over `{gate}` and `{k}`. Default `{gate}-wave-{k}`. */
@@ -208,6 +216,8 @@ export interface CiProductWords {
   aliases: CiProductAlias[];
   approve: string;
   override: string;
+  /** The reject line (#5354). Filled by {@link resolveProductWords}; words built before it read chant's grammar under the product's name. */
+  reject?: string;
   op?: string;
   gateName: string;
   prGate: string;
@@ -226,6 +236,9 @@ export const CHANT_APPROVE_TEMPLATE = "chant approve {op} {gate} --plan {digest}
 /** chant's own override line. */
 export const CHANT_OVERRIDE_TEMPLATE = 'chant approve {op} {target} --rule {rule} --reason "<why>" {sign}';
 
+/** chant's own reject line (#5354). */
+export const CHANT_REJECT_TEMPLATE = "chant reject {op} {gate} --plan {digest} --reason {reason} {sign}";
+
 /** chant's words: what every slot defaults to. */
 export const CHANT_WORDS: CiProductWords = Object.freeze<CiProductWords>({
   product: "chant",
@@ -236,6 +249,7 @@ export const CHANT_WORDS: CiProductWords = Object.freeze<CiProductWords>({
   aliases: [],
   approve: CHANT_APPROVE_TEMPLATE,
   override: CHANT_OVERRIDE_TEMPLATE,
+  reject: CHANT_REJECT_TEMPLATE,
   gateName: "{gate}-wave-{k}",
   prGate: "pr-apply",
   approval: "pull-request",
@@ -258,6 +272,7 @@ export function resolveProductWords(input: CiProductWordsInput | CiProductWords 
     // A product's own lines default to chant's grammar under its own name.
     approve: input.approve ?? (own ? `${product} approve {op} {gate} --plan {digest} {sign}` : CHANT_APPROVE_TEMPLATE),
     override: input.override ?? (own ? `${product} override {target} --rule {rule} --reason {reason} {sign}` : CHANT_OVERRIDE_TEMPLATE),
+    reject: input.reject ?? (own ? `${product} reject {op} {gate} --plan {digest} --reason {reason} {sign}` : CHANT_REJECT_TEMPLATE),
     ...(input.op !== undefined ? { op: input.op } : {}),
     gateName: input.gateName ?? CHANT_WORDS.gateName,
     prGate: input.prGate ?? CHANT_WORDS.prGate,
@@ -335,7 +350,7 @@ export function productWordsProblems(words: CiProductWords, options: { jobs?: re
     else if (typeof text !== "string" || text.trim() === "" || /[\r\n]/.test(text)) problems.push(`replies.${slot} is one line of text`);
     else for (const m of text.matchAll(/\{([^}]*)\}/g)) if (slot !== "member" || (m[1] !== "member" && m[1] !== "members")) problems.push(`replies.${slot} names {${m[1]}}, which chant does not fill`);
   }
-  for (const [where, template] of [["approve", words.approve], ["override", words.override]] as const) {
+  for (const [where, template] of [["approve", words.approve], ["override", words.override], ["reject", words.reject ?? CHANT_REJECT_TEMPLATE]] as const) {
     for (const m of template.matchAll(/\{([^}]*)\}/g)) if (!PLACEHOLDERS.has(m[1]!)) problems.push(`${where} names {${m[1]}}, which chant does not fill`);
     if (/[`$;&|<>\\\n]/.test(template.replace(/\{[^}]*\}/g, "").replace(/<[a-z-]+>/g, ""))) problems.push(`${where} carries shell syntax`);
   }
@@ -491,6 +506,31 @@ export function overrideLine(words: CiProductWords, input: OverrideLineInput): s
   });
 }
 
+/** What {@link rejectLine} fills (#5354). */
+export interface RejectLineInput {
+  op: string;
+  gate: string;
+  digest: string;
+  /** Default `<why>`, for the person to write. */
+  reason?: string;
+  /** Seal it: `--sign` fills `{sign}`. Default true. */
+  sign?: boolean;
+  target?: string;
+}
+
+/** The command a reviewer runs to reject a release at a gate (#5354): the product's reject template filled. */
+export function rejectLine(words: CiProductWords, input: RejectLineInput): string {
+  return fill(words.reject ?? CHANT_REJECT_TEMPLATE, {
+    op: input.op,
+    gate: input.gate,
+    digest: input.digest,
+    reason: input.reason ?? "<why>",
+    approver: "<you>",
+    sign: input.sign === false ? "" : "--sign",
+    target: input.target ?? "",
+  });
+}
+
 /** The typed word for one of chant's commands: the first `commands` entry that maps onto it. */
 export function commandWord(words: CiProductWords, command: CiProductCommand): string | undefined {
   return Object.entries(words.commands).find(([, c]) => c === command)?.[0];
@@ -640,7 +680,13 @@ export function parseProductComment(
   if (command === undefined) {
     return {
       kind: "refused",
-      reason: NEVER.has(typed) ? `a comment never runs \`${typed}\`: ${words.product} re-plans, and runs what an approval covers, on request and nothing more` : `the commands are ${known}`,
+      reason:
+        typed === "reject"
+          ? // #5354: a rejection takes the proof rules an approval takes, so it is recorded with the reject line, as an approval is with the approve line.
+            `a comment never records a rejection, as it never records an approval: run \`${rejectLine(words, { op: words.op ?? "<op>", gate: "<gate>", digest: "<digest>" })}\``
+          : NEVER.has(typed)
+            ? `a comment never runs \`${typed}\`: ${words.product} re-plans, and runs what an approval covers, on request and nothing more`
+            : `the commands are ${known}`,
     };
   }
   const line = `\`${prefix} ${typed}\``;
@@ -1138,6 +1184,42 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     section: "stage",
     value: "the rules `approval_rules` takes",
     chant: "a stage gate's `holds.risk.quorum` in `.chant/pipeline.ts`",
+    products: [],
+  },
+  {
+    key: "approval_rules.<rule>.name",
+    concept: "a rule's or a group's name, shown in its progress line, the plan note and the pending fact on the ledger",
+    section: "stage",
+    pattern: "^[a-z0-9][a-z0-9_-]*$",
+    value: "lowercase letters, digits, `-` and `_`",
+    chant: "`name` of a quorum rule or group (`GateQuorumNode`, #5354)",
+    also: ["approval_rules[].name"],
+    products: [],
+  },
+  {
+    key: "approval_rules.<rule>.all",
+    concept: "a group of rules met when every rule in it is met; groups nest up to three deep",
+    section: "stage",
+    value: "a list or a map of rules and groups",
+    chant: "`{ all: [...] }` in a quorum (`GateQuorumAll`, #5354)",
+    also: ["approval_rules[].all"],
+    products: [],
+  },
+  {
+    key: "approval_rules.<rule>.any",
+    concept: "a group of rules met when one rule in it is met; groups nest up to three deep",
+    section: "stage",
+    value: "a list or a map of rules and groups",
+    chant: "`{ any: [...] }` in a quorum (`GateQuorumAny`, #5354)",
+    also: ["approval_rules[].any"],
+    products: [],
+  },
+  {
+    key: "environments.<name>.hold.description",
+    concept: "what the person who lifts a stage's hold reads first, shown in the plan note, the promote it refuses and `workspace status`",
+    section: "stage",
+    value: "one line of text",
+    chant: "`description` of a stage's `hold` (#5354)",
     products: [],
   },
   // Apply
@@ -1735,6 +1817,10 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
 export const PRODUCT_RELEASE_WORDS = /* @__PURE__ */ Object.freeze({
   /** `<product> promote --to <env> [--release <label>]`: `chant components promote`. */
   promote: "promote",
+  /** `<product> reject <op> <gate> --plan <digest> --reason <text>`: `chant reject` (#5354), the release turned down at a stage's gate. */
+  reject: "reject",
+  /** Why a release is rejected, on one line (#5354). */
+  reason: "--reason",
   /** `<product> rollback <env> --release <label>`: `chant components rollback`, the environment positional. */
   rollback: "rollback",
   /** `<product> redeploy <env>`: `chant components redeploy`. */

@@ -30,6 +30,7 @@ import type { SealCode } from "../records";
 import { type TrustPolicy } from "./policy";
 import type { Signer } from "./trust-files";
 import { sshKeygen, verifySshSignature } from "./ssh-commit";
+import { GATE_REJECTION_NAMESPACE, gateRejectionPayload, type SealedGateRejection } from "../../lifecycle/gate-rejection";
 import { checkGateSignature, GATE_SEAL_NAMESPACE, gateSealPayload, sshSignatureKey, verifySshSignatureWith, WEBAUTHN_SEAL_KIND, type SealedGateApproval } from "../../lifecycle/gate-seal";
 import { RELEASE_SEAL_NAMESPACE, releaseGateSealPayload, releaseStatusSealPayload, type SignedReleaseCut } from "../identity-gate-rule";
 
@@ -352,6 +353,15 @@ export function sealRecord(keyFile: string, r: { record: string; digest: string;
  */
 export function sealGateApproval(keyFile: string, a: SealedGateApproval): VerdictSeal {
   return sign(keyFile, gateSealPayload(a), GATE_SEAL_NAMESPACE, a.resolvedBy);
+}
+
+/**
+ * Seal a rejection (#5354) with the key in `keyFile`, over
+ * `gateRejectionPayload` in the `chant-gate-reject` namespace, so it can
+ * never stand in for an approval's seal. Throws a {@link SealError}.
+ */
+export function sealGateRejection(keyFile: string, r: SealedGateRejection): VerdictSeal {
+  return sign(keyFile, gateRejectionPayload(r), GATE_REJECTION_NAMESPACE, r.rejectedBy);
 }
 
 /**

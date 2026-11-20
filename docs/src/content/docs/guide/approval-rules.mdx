@@ -93,6 +93,30 @@ Plain lines still sit on the ledger, and the rule leaves them out. A wave that w
 
 `proven` is read on an Op waves spec's `approvals.quorum`. An Op gate's `approval.quorum` and `identity.gates.<gate>.quorum` refuse it. An `identity.gates` entry already counts sealed approvals alone.
 
+## Combine rules with all and any
+
+The rules in `approvals.quorum` must all be met. To say "two proven approvers, or one with the `release-manager` role", put them in an `any` group:
+
+```json
+"approvals": {
+  "quorum": [
+    { "name": "release", "any": [
+      { "name": "two-approvers", "count": 2, "proven": true },
+      { "name": "release-manager", "count": 1, "roles": ["release-manager"] }
+    ] }
+  ]
+}
+```
+
+`{ "all": [...] }` is met when every entry in it is, and `{ "any": [...] }` when one is. Groups nest up to three deep, and a fourth is refused when the spec is read. Each rule and group may take a `name`, lowercase letters, digits, `-` and `_`, once per spec. A wave that waits logs each rule by its name and one line per group:
+
+```text
+wave 2 (prod): approval rule two-approvers (every target): 1 of 2 approvals (github:alice), needs 1 more proven
+wave 2 (prod): approval group any release: waits for one of two-approvers, release-manager
+```
+
+A group is dropped for a wave whose targets none of its rules cover, and a wave left with no rule needs one approval, so an `any` is met only by a rule that counts real approvers. The warnings below read every rule, grouped or not, and name it by where it is written, such as `approvals.quorum[0].any[0]`. A chant older than the release `GATE_REJECTION_FLOOR` in `@intentius/chant/op` names refuses a group or a `name`. A pipeline stage's gate takes the same groups ([Pipeline](/chant/reference/pipeline/#approval-rule-groups)).
+
 ## Warnings when the pipeline is generated
 
 `chant run --generate` checks the rules when it writes the pipeline, and `generateOpWavesPipeline` returns the same lines as `warnings` (`opWavesQuorumFindings` in `@intentius/chant/op`). The pipeline is still written, and each rule works as before.

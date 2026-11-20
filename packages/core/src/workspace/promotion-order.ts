@@ -22,6 +22,12 @@ export interface PromotionStep {
   name: string;
   /** True when the entry sets `canary: true`. */
   canary: boolean;
+  /**
+   * A pipeline stage's hold or freeze window now (#5354): until when (null
+   * when only a change to the pipeline lifts it), why, and what the person
+   * who lifts it reads first. Absent when the stage is open.
+   */
+  held?: { kind: "hold" | "freeze"; until: string | null; reason?: string; description?: string };
 }
 
 /** The member's promotion order from its config's `environments`; `[]` when it declares none. A repeated name keeps its first place. */
@@ -90,7 +96,16 @@ export async function readMemberPromotionOrder(dir: string): Promise<PromotionSt
     if (existsSync(join(dir, ".chant", "pipeline.ts"))) {
       const { readMemberPipeline } = await import("../pipeline/read");
       const pipeline = readMemberPipeline(dir);
-      if (pipeline.status === "folded") return pipeline.spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
+      if (pipeline.status === "folded") {
+        // #5354: a held stage says so, with what the person who lifts the hold reads first.
+        const { stageHeldAt } = await import("../pipeline/stages");
+        const now = new Date();
+        return pipeline.spec.stages.map((s) => {
+          const held = stageHeldAt(s, now);
+          const { stage: _stage, ...rest } = held ?? { stage: "" };
+          return { name: s.name, canary: s.canary === true, ...(held ? { held: rest as NonNullable<PromotionStep["held"]> } : {}) };
+        });
+      }
       if (pipeline.status === "refused") return null;
     }
     const ts = join(dir, "chant.config.ts");

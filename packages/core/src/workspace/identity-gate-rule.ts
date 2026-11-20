@@ -87,14 +87,14 @@ export function admitApprover(rule: GateAdmissionRule, a: SealedGateApproval): s
 }
 
 /** Why no signature can show a principal is in the rule's class: the class is one the rule does not know. Null otherwise. */
-function unknownClassRefusal(rule: GateAdmissionRule, what: string): string | null {
+export function unknownClassRefusal(rule: GateAdmissionRule, what: string): string | null {
   const want = rule.class;
   if (want === null || rule.classes.some((c) => c.name === want)) return null;
   return `identity.gates.${rule.gate} names the class ${want}, which ${rule.unknownClass ?? "no pinned package supplies"}, so no ${what} can show it is in that class (known classes: ${rule.classes.map((c) => c.name).join(", ")})`;
 }
 
 /** Why `principal` is not in the rule's class, or null when it is or the rule names none. */
-function classRefusal(rule: GateAdmissionRule, principal: string): string | null {
+export function classRefusal(rule: GateAdmissionRule, principal: string): string | null {
   const want = rule.class;
   if (want === null) return null;
   const granted = grantedClasses(rule.classes, rule.roles, principal);
