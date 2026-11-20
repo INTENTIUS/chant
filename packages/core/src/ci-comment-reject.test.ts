@@ -119,7 +119,7 @@ describe("a reject comment", () => {
     const w = world({ approval: "pr-review" });
     const runs = chantNoteRuns({}, { reject: w.opts.reject! });
     const parsed = parseProductComment(words, "/plywood reject --stage staging not this one")!;
-    const done = await runs({ mr: { number: 3, state: "open", sameRepo: true } as never, note: { id: 1, body: "", author: "bob" } as never, parsed: parsed as never, base: "main", words });
+    const done = await runs({ mr: { number: 3, state: "open", sameRepo: true } as never, note: { id: 1, body: "", author: "bob" } as never, parsed: parsed as never, base: "main", words, role: "developer" } as never);
     expect(done).toMatchObject({ kind: "reply", text: expect.stringContaining("recorded github:bob's rejection") });
     expect(w.port.rejections[0]).toMatchObject({ rejectedBy: "github:bob", reason: "not this one" });
   });
