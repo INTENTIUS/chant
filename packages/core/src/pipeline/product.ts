@@ -303,8 +303,8 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     const approvalRaw = env.approval ?? input.approval;
     const approval = typeof approvalRaw === "object" ? approvalRaw.mode : approvalRaw;
     const quorum = rulesOf(env.approval_rules ?? env.approvalRules ?? input.approvalRules);
-    const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}), ...(env.urgent ? { urgent: { role: env.urgent.role } } : {}), ...(risk ? { holds: { risk } } : {}) };
     const risk = riskOf(env.risk, name);
+    const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}), ...(env.urgent ? { urgent: { role: env.urgent.role } } : {}), ...(risk ? { holds: { risk } } : {}) };
     const replan = env.replan_dependents ?? env.replanDependents;
     const pauseAfterRollback = env.pause_after_rollback ?? env.pauseAfterRollback;
     const onVerifyFail = env.on_verify_fail ?? env.onVerifyFail;
