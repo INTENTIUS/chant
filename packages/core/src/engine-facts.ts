@@ -17,6 +17,7 @@
  * types and ./lifecycle/index-document.ts (`npm run generate:graph-schema`).
  */
 import type { GraphIR } from "./graph-ir";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The format of {@link EngineGraphMeta}. Moves only for a change a reader could not ignore. */
 export const ENGINE_GRAPH_FORMAT = 1;
@@ -32,6 +33,18 @@ export const ENGINE_GRAPH_FORMAT = 1;
  * `MIN_CHOUDOUFU_GRAPH_VERSION`.
  */
 export const ENGINE_FACTS_FLOOR = "0.124.54";
+
+/**
+ * The first chant whose graph and drift records agree on ownership (#5333):
+ * `DRIFT_VERDICT_ENGINE_OWNERSHIP`, `engineOwnershipOfDrift` and
+ * `driftVerdictOfEngineOwnership` in `@intentius/chant/drift-record` map a drift record's verdict to the
+ * graph's `facts.ownership` and back, and `chant graph --live --overlay` (so
+ * `chant workspace graph --live --overlay`) puts a choudoufu live root's
+ * `pending`, `unowned` and `foreign` facts on the declared nodes, read from
+ * the terraform lexicon's `ObservationResult.engineFacts`, as a plunge
+ * member's declared nodes carry them.
+ */
+export const ENGINE_OWNERSHIP_FLOOR = NEXT_RELEASE;
 
 /** The marker values an engine read or recorded for one node. */
 export interface EngineMarkers {

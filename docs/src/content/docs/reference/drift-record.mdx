@@ -52,6 +52,21 @@ Change sets keep holding planned changes only. A drift record authorizes nothing
 
 In an attribute, `before` is what was expected and `after` is what the read found. The expected value comes from the record, a snapshot or the declaration. Values are optional; a card needs only the paths.
 
+### Ownership in the graph's words
+
+A graph node carries an ownership engine's verdict in `facts.ownership`: `bound`, `unowned`, `pending` or `foreign`, as choudoufu's `live-graph` and plunge's `graph --json` print it. A drift record keeps its own words in `ownership.verdict`. `@intentius/chant/drift-record` holds the one mapping between them, `DRIFT_VERDICT_ENGINE_OWNERSHIP`:
+
+| `ownership.verdict` | `facts.ownership` |
+|---|---|
+| `owned` | `bound` |
+| `foreign` | `foreign` |
+| `adoptable` | `unowned` |
+| `unknown` | unset |
+
+A `pending` node is a record with `status: "pending"` and no `ownership`. `engineOwnershipOfDrift(record)` gives a record's graph word, `pending` included, and `driftVerdictOfEngineOwnership(word)` gives the verdict for a graph word. `ENGINE_OWNERSHIP_FLOOR` in `@intentius/chant/engine-facts` names the first chant that has them.
+
+On a choudoufu live root, `chant graph --live --overlay` and `chant workspace graph --live --overlay` put the engine's facts on every declared node it described: `bound` on a live node, and `pending`, `unowned` and `foreign` on the declared node of a planned create, and of an object the `--owned` filter keeps to the declared side. A plunge member's declared nodes carry the same words from its checked-in `engine-graph.json`.
+
 ## The document
 
 | Field | Holds |
