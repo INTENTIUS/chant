@@ -951,7 +951,8 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
     test("sealed gate: the refusal's approve command ends in --sign", async () => {
       sealedGates.add("approve-live-apply");
       try {
-        expect(await refusalOnRename()).toContain("chant approve live-apply approve-live-apply --sign");
+        // #5407: the command binds the pending plan's digest before --sign.
+        expect(await refusalOnRename()).toMatch(/chant approve live-apply approve-live-apply --plan jcs1-sha256:[0-9a-f]{64} --sign$/);
       } finally {
         sealedGates.clear();
       }

@@ -585,8 +585,10 @@ describe("a redeploy's gate approval is bound like a rollback's (#2574, #2604)",
     expect(old.gateMismatch).toMatchObject({ planned, environment: "prod" });
     expect(old.gateMismatch?.approved).toBeUndefined();
     expect(describeGateMismatch("api", "prod-release", old.gateMismatch!)).toMatch(
-      /predates environment- and plan-bound component gates \(#2574\).*chant approve api prod-release --env prod$/,
+      /predates environment- and plan-bound component gates \(#2574\)/,
     );
+    // #5407: the approve command binds the pending plan's digest.
+    expect(describeGateMismatch("api", "prod-release", old.gateMismatch!).endsWith(`chant approve api prod-release --env prod --plan ${planned}`)).toBe(true);
     expect(ran).toEqual([]);
   });
 
