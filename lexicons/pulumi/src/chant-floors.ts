@@ -51,3 +51,8 @@ export const PULUMI_STACK_REFERENCE_GRAPH_FLOOR = NEXT_RELEASE;
  * The first pulumi lexicon release that puts `facts.ownershipRows` on a plunge member's nodes (#5402): each record's `meta.engineGraph.gaps` entry as `gaps` read `graph`, and any `ownershipRows` plunge prints on a node. It needs `@intentius/chant` at `ENGINE_OWNERSHIP_ROWS_FLOOR` or later.
  */
 export const PULUMI_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first pulumi lexicon release whose nodes carry `component` (`IRNode.component`), the node of the component resource that registered them, from the stack export's `parent` URNs and the preview's step states, so a graph reader draws a component as a box around its children and nested components nest (#5403).
+ */
+export const PULUMI_COMPONENT_GROUPS_FLOOR = NEXT_RELEASE;

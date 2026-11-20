@@ -204,6 +204,10 @@ The declared graph lists the instances the source gives: a literal `count = 3`, 
 
 `chant search` counts blocks: instance nodes are added to the graph `chant graph` prints, after the base graph `search` also reads is built.
 
+### Components: `component`
+
+A Pulumi resource registered by a component resource carries `component`, the id of that component's node. A terraform block names its module in its id (`app/module.app/aws_eip.pool`); a Pulumi id is the URN rule's and does not change with the parent, so the parent is a field. The value comes from the `parent` of the stack export and, for a node that exists only in `CHANT_PULUMI_OBSERVE=preview`, from the preview's step states. A component inside a component has its own `component`, so following the field upward gives the nesting, and the node at the top has none. A resource whose parent is the stack has none, and a stack with no components has no `component` on any node. The field is kept at every `--detail` level, and `chant workspace graph` prefixes it with the member like every id. A renderer draws a box per component from it, the way it draws a module.
+
 ### Edges from a lexicon that parses foreign source
 
 Most edges come from resolving an `AttrRef` in a lexicon's typed props. A lexicon that reads an estate someone else wrote has no such object: the terraform lexicon keeps each HCL block verbatim, where a reference is the string `"${aws_vpc.main.id}"`. Those lexicons resolve their own references against their own key space and publish the result, and the IR turns each one into an ordinary edge. A consumer sees the same edge whichever way it was found.

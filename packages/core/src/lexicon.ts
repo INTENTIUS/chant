@@ -3255,6 +3255,14 @@ export interface ResourceMetadata {
    */
   facts?: EngineFacts;
   /**
+   * The key of the resource that registered this one as its child (#5403),
+   * in the same key space as the observation's resources: a Pulumi
+   * component for its children. `buildLiveGraphIr` copies it onto the node as
+   * `IRNode.component`. Set only when the observation also holds that
+   * resource. Absent otherwise.
+   */
+  component?: string;
+  /**
    * The stack/env identity read off the resource's own ownership marker
    * (#1222) — the tags/labels/metadata chant stamped at synthesis, read back
    * verbatim on the same channel. This is what marker-scoped selection keys

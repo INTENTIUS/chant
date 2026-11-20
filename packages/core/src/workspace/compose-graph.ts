@@ -8,7 +8,7 @@
  * - Every node id becomes `<member>/<id>`. Member names can't hold `/`, and
  *   `::` keeps its meaning for stacks inside a member (`app/web::Bucket`).
  *   Edge ends, `$ref` values in attributes, `compositeInstance`,
- *   `runtimeOwner`, `instanceOf` (#4454) and export and import nodes are
+ *   `runtimeOwner`, `instanceOf` (#4454), `component` (#5403) and export and import nodes are
  *   rewritten the same way.
  * - `groups.byMember` maps each member to its node ids. `byLexicon` and
  *   `byComposite` keep their keys (a lexicon or composite type is the same
@@ -444,6 +444,7 @@ export function composeWorkspaceGraph(
       if (node.compositeInstance) composed.compositeInstance = prefix(m, node.compositeInstance);
       if (node.runtimeOwner) composed.runtimeOwner = prefix(m, node.runtimeOwner);
       if (node.instanceOf) composed.instanceOf = prefix(m, node.instanceOf);
+      if (node.component) composed.component = prefix(m, node.component);
       nodes.push(composed);
       ids.push(composed.id);
     }

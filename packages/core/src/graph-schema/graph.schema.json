@@ -1151,6 +1151,10 @@
           "description": "Live-only, undeclared nodes: the declared entity this node's owner-reference chain resolves to (#1077) — a Pod a declared Deployment's controller created, for instance. Presence of this field is what an overlay reads to paint the node `runtime` instead of `warn`/foreign; a node without it (including every declared, source-derived node) is unaffected.",
           "type": "string"
         },
+        "component": {
+          "description": "The node of the component resource that registered this one (#5403): a Pulumi resource whose `parent` is another resource of the stack. Terraform puts a block under its module in the id, `estate/module.app/aws_eip.pool`; a Pulumi id is the URN rule's and never changes with the parent, so the parent is named here instead. A component's own `component` is the component above it, so nested components nest, and following the field upward ends at a node that has none. Absent on a node whose parent is the stack, and on every node of a lexicon with no such parent. Always the id of another node of the same graph. Detail tiers keep it.",
+          "type": "string"
+        },
         "instanceOf": {
           "description": "On an instance node of a `count` or `for_each` block (#4454): the block node's id. The node's own id is that id followed by instanceKey, `aws_eip.pool[0]` under `aws_eip.pool`, and the block node stays in the graph as the rollup. Absent on every other node. See `./instance-nodes.ts`.",
           "type": "string"

@@ -614,6 +614,10 @@
           "type": "string",
           "description": "Added in contract 1 by #4486. With instanceOf, under an expanded module call: the module path as the engine prints it, module.app[0]. The id then carries the key on the call's segment, <member>/<root>/module.app[0]/aws_eip.pool[1]."
         },
+        "component": {
+          "type": "string",
+          "description": "Added in contract 1 by #5403. The node of the component resource that registered this one, prefixed like the ids: a Pulumi resource whose parent is another resource of the stack. A component's own component is the one above it, so nested components nest. Absent when the parent is the stack."
+        },
         "instanceRollup": {
           "type": "object",
           "description": "Added in contract 1 by #4489, written by chant 0.124.54 and newer. On a block node whose count or for_each the declared graph cannot count: why it stays one node, with no instance nodes under it. Absent on a block that is not expanded and on one whose instances are listed. The read contract lists every form that is rolled up and its code.",

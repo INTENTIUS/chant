@@ -98,6 +98,18 @@ export interface IRNode {
    */
   runtimeOwner?: string;
   /**
+   * The node of the component resource that registered this one (#5403): a
+   * Pulumi resource whose `parent` is another resource of the stack. Terraform
+   * puts a block under its module in the id, `estate/module.app/aws_eip.pool`;
+   * a Pulumi id is the URN rule's and never changes with the parent, so the
+   * parent is named here instead. A component's own `component` is the
+   * component above it, so nested components nest, and following the field
+   * upward ends at a node that has none. Absent on a node whose parent is the
+   * stack, and on every node of a lexicon with no such parent. Always the id
+   * of another node of the same graph. Detail tiers keep it.
+   */
+  component?: string;
+  /**
    * On an instance node of a `count` or `for_each` block (#4454): the block
    * node's id. The node's own id is that id followed by {@link instanceKey},
    * `aws_eip.pool[0]` under `aws_eip.pool`, and the block node stays in the
@@ -434,6 +446,16 @@ export function entityStack(entity: Declarable): string | undefined {
 export function entityFacts(entity: Declarable): EngineFacts | undefined {
   const facts = (entity as unknown as { facts?: unknown }).facts;
   return typeof facts === "object" && facts !== null && !Array.isArray(facts) ? (facts as EngineFacts) : undefined;
+}
+
+/**
+ * The id of the node whose component registered this entity (#5403), or
+ * undefined. Duck-typed like {@link entityStack}: the pulumi lexicon sets
+ * `component` on an entity whose export `parent` is another resource.
+ */
+export function entityComponent(entity: Declarable): string | undefined {
+  const component = (entity as unknown as { component?: unknown }).component;
+  return typeof component === "string" && component.length > 0 ? component : undefined;
 }
 
 /**
@@ -890,7 +912,7 @@ function subEnvelope(sub: SubForm, seen: Set<unknown>, reverse: Map<object, stri
 // directly, so projecting them into `attrs` would only restate an edge and a
 // group key the IR already carries.
 // `facts` (#4529) is an engine's observation, carried onto `IRNode.facts`, not configuration.
-const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack", "facts"]);
+const SKIP_KEYS = new Set(["lexicon", "entityType", "kind", "attributes", "Ref", "references", "stack", "facts", "component"]);
 
 /** The config bag of a node, paired with each key. Lexicon entities keep their
  * declared props in a (usually non-enumerable) `props` object; simpler entities
@@ -1071,6 +1093,8 @@ export function buildGraphIr(
     if (file) node.sourceLoc = { file };
     const facts = entityFacts(entity);
     if (facts) node.facts = facts;
+    const component = entityComponent(entity);
+    if (component && component !== name && nodeIds.has(component)) node.component = component;
     nodes.push(node);
 
     (byLexicon[entity.lexicon] ??= []).push(name);
@@ -1383,6 +1407,7 @@ export function buildLiveGraphIr(observations: LiveObservation[]): GraphIR {
       if (meta.ownerChain?.root === "declared") node.runtimeOwner = meta.ownerChain.entity;
       // An engine's facts (#4527) ride beside `physicalId`, as the engine gave them.
       if (meta.facts) node.facts = meta.facts;
+      if (meta.component && meta.component !== name) node.component = meta.component;
       nodes.push(node);
       (byLexicon[lexicon] ??= []).push(name);
       // A live lexicon maps to one deployable stack, same as the source IR.
@@ -1644,6 +1669,7 @@ export function sourceOverlayGraphs(declared: GraphIR, live: GraphIR, opts?: Ove
     if (obs.physicalId) merged.physicalId = obs.physicalId;
     if (obs.ownership) merged.ownership = obs.ownership;
     if (obs.facts) merged.facts = obs.facts;
+    if (obs.component && !merged.component) merged.component = obs.component;
     // ...and what was observed ABOUT it (#1279). The declared canvas holds what
     // the source says; the observation holds what the account says, and a fact
     // like `VpcId` exists only on the second. Dropping it here made every
