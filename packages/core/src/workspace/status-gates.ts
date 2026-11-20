@@ -21,7 +21,7 @@
 
 import { execFileSync } from "node:child_process";
 import { samePlanDigest } from "../lifecycle/plan-digest";
-import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateResolutionRecord, PendingGateRecord, PendingGateSoak } from "../lifecycle/gate-ledger";
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
 import { humanQuorumSince, tallyGateApprovals, type GateApprovalRule } from "../op/gate";
 import { quorumGroupLines, quorumRuleLine, type GateQuorumJudge } from "../op/gate-quorum";
@@ -134,6 +134,12 @@ export interface StatusGate {
    * gate `chant approve` passes.
    */
   answer?: { point: string; id: string; path: string };
+  /**
+   * The soak's state on the pending fact (#5326, #5342), on a soak's gate
+   * (`<stage>-soak`, `<gate>-wave-<k>-soak`): the clock, when it is up,
+   * why the run held, and the checks that failed. Absent on every other gate.
+   */
+  soak?: PendingGateSoak;
 }
 
 /** The rule for a gate, by name, as `identity.gates` at base sets it (#3163). Null when it sets none. */
@@ -260,6 +266,7 @@ function decide(component: string, standing: PendingGateRecord, facts: PendingGa
     signed: rule === null ? null : { class: rule.requirement.class },
     approve: standing.answer ? `chant workspace points answer ${standing.answer.id} --answer <value> --by <name>` : approveCommand(component, gate, env, planDigest, rule !== null),
     ...(standing.answer ? { answer: { point: standing.answer.point, id: standing.answer.id, path: standing.answer.path } } : {}),
+    ...(standing.soak ? { soak: standing.soak } : {}),
   };
 }
 

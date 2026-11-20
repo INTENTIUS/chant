@@ -33,7 +33,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { GATES_DIR } from "../lifecycle/gate-ledger";
@@ -66,6 +66,8 @@ import { trustQuorumJudge } from "../op/gate-quorum";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
 import { memberDecisionsReader, type DecisionKindReader } from "./status-decisions";
 import { gitTop, workingTree } from "./tree";
+import { readStageViews, stageRows, type StageLedgerReader, type StatusPipeline } from "./status-stages";
+import type { ReleaseCut } from "../lifecycle/release-store";
 import { handToRootChant } from "./which-chant";
 
 /** The version of the `status` output this chant writes. */
@@ -265,6 +267,15 @@ export interface StatusMember {
    * stage log names those environments. Added in contract 1.
    */
   stageQueues?: StatusStageQueue[];
+  /**
+   * The member's pipeline, one entry per stage in pipeline order (#5342):
+   * the release each runs, its gate, the change risk the gate reads, its
+   * soak and the time left, the canary soaks that hold it, a pause, and a
+   * rollback request. Every stage is listed, whatever environment was asked
+   * for. Absent when the member has no `.chant/pipeline.ts`, or it does not
+   * fold. Added in contract 1.
+   */
+  pipeline?: StatusPipeline;
 }
 
 /** One feature flag of a member (#4024), as `status --json` lists it. */
@@ -460,6 +471,30 @@ export interface StatusQuery {
   readPromotionOrder?: (dir: string) => Promise<PromotionStep[] | null>;
   /** Reads one record kind for the decisions covering each gate's member (#3616); the working tree unless a test swaps it. */
   readDecisionKind?: DecisionKindReader;
+  /** Reads one stage's own ledger, `<stage>/stage.jsonl` (#5342); git unless a test swaps it. */
+  readStageLedger?: StageLedgerReader;
+}
+
+/** The member's folded pipeline, or undefined when it has none or it does not fold (#5342). */
+async function memberPipeline(memberDir: string) {
+  if (!existsSync(join(memberDir, ".chant", "pipeline.ts"))) return undefined;
+  try {
+    const { readMemberPipeline } = await import("../pipeline/read");
+    const read = readMemberPipeline(memberDir);
+    return read.status === "folded" ? read.spec : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The member's release cuts as their ledger line has them, or null when they can't be read. */
+async function memberCuts(memberDir: string): Promise<ReleaseCut[] | null> {
+  try {
+    const { readCuts } = await import("../lifecycle/release-store");
+    return (await readCuts({ cwd: memberDir })).cuts;
+  } catch {
+    return null;
+  }
 }
 
 /** A factory view with the declaration's x- keys on it and on its check, publish and tiers (#3595). */
@@ -764,7 +799,27 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read, revokedOf, query.readOutcomes));
       const own = await hasMemberLedger(m, found.dir);
       const gatesDir = own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR;
-      const gates = await readMemberGates(gatesDir, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules, undefined, judge);
+      // #5342: a pipeline's gates are read for every stage, and `gates` keeps the environments asked for.
+      const spec = await memberPipeline(resolve(found.dir, m.dir));
+      const gateEnvs = [...envs, ...(spec?.stages.map((s) => s.name) ?? []).filter((n) => !envs.includes(n))];
+      const everyGate = await readMemberGates(gatesDir, own ? "members" : "flat", commit, gateEnvs, found.dir, now, query.readGates, rules, undefined, judge);
+      const gates = { ledger: everyGate.ledger, gates: everyGate.gates.filter((g) => g.env === null || envs.includes(g.env)) };
+      const pipeline: StatusPipeline | undefined = spec
+        ? {
+            name: spec.name,
+            stages: await readStageViews({
+              spec,
+              prefix: own ? `${MEMBERS_DIR}/${m.name}/` : "",
+              commit,
+              cwd: found.dir,
+              now,
+              gates: everyGate.gates,
+              cuts: await memberCuts(resolve(found.dir, m.dir)),
+              readReleases: async (path) => (await read(path, found.dir)).records,
+              ...(query.readStageLedger ? { readStageLedger: query.readStageLedger } : {}),
+            }),
+          }
+        : undefined;
       const stageQueues = (await readMemberStageQueues(gatesDir, commit, found.dir, query.readStageLogs)).filter((q) => envs.includes(q.stage));
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       // The declaration's x- keys go back on the objects that hold them (#3595).
@@ -811,6 +866,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         releaseCuts: await readReleaseCuts(resolve(found.dir, m.dir), releaseRule),
         featureFlags: flags === null ? null : flags.filter((f) => f.member === m.name).map(({ member: _member, ...f }) => f),
         ...(stageQueues.length > 0 ? { stageQueues } : {}),
+        ...(pipeline ? { pipeline } : {}),
         ...x(m.pointer),
       });
     }
@@ -1113,6 +1169,11 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
       }
     }
     lines.push(...table(rows));
+  }
+  // #5342: one line per stage of each member's pipeline.
+  if (doc.members.some((m) => m.pipeline && m.pipeline.stages.length > 0)) {
+    lines.push("");
+    lines.push(...table(stageRows(doc.members)));
   }
   const flagged = doc.members.filter((m) => (m.featureFlags ?? []).length > 0);
   if (flagged.length > 0) {

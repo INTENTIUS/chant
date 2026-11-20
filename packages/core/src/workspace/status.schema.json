@@ -242,7 +242,18 @@
             "required": ["name", "canary"],
             "properties": {
               "name": { "type": "string" },
-              "canary": { "type": "boolean", "description": "True when the entry sets canary: true." }
+              "canary": { "type": "boolean", "description": "True when the entry sets canary: true." },
+              "held": {
+                "type": "object",
+                "description": "Added in contract 1 by #5354. A pipeline stage's hold or freeze window now: until when (null when only a change to the pipeline lifts it), why, and what the person who lifts it reads first. Absent when the stage is open.",
+                "required": ["kind", "until"],
+                "properties": {
+                  "kind": { "enum": ["hold", "freeze"] },
+                  "until": { "type": ["string", "null"] },
+                  "reason": { "type": "string" },
+                  "description": { "type": "string" }
+                }
+              }
             }
           }
         },
@@ -302,6 +313,10 @@
           "description": "Added in contract 1 by #5353. The stages of the member's pipeline that keep a stage log (_gates/<pipeline>/stages.jsonl on chant/lifecycle), for the environments asked for: the release in each, the releases waiting for it, and the waiting releases a newer one replaced. A pipeline keeps the log when a stage declares after or queue. Absent when no stage log names those environments.",
           "type": "array",
           "items": { "$ref": "#/$defs/stageQueue" }
+        },
+        "pipeline": {
+          "description": "Added in contract 1 by #5342. The member's pipeline (.chant/pipeline.ts, read from the working tree), one entry per stage in pipeline order, whatever environment was asked for: the release each stage runs, its gate, the change risk the gate reads, its soak and the time left, the canary soaks that hold it, a pause, and a rollback request. Read from chant/lifecycle at lifecycle.commit; nothing is written, and no soak check is run. Absent when the member has no pipeline, or it does not fold.",
+          "$ref": "#/$defs/pipeline"
         }
       }
     },
@@ -993,6 +1008,199 @@
         }
       }
     },
+    "pipeline": {
+      "type": "object",
+      "required": ["name", "stages"],
+      "properties": {
+        "name": { "type": "string", "description": "The pipeline's name, the op its stage gates are recorded under." },
+        "stages": { "type": "array", "description": "Every stage, in pipeline order.", "items": { "$ref": "#/$defs/stage" } }
+      }
+    },
+    "stageRef": {
+      "type": "object",
+      "required": ["digest", "label"],
+      "properties": {
+        "digest": { "type": "string" },
+        "label": { "type": ["string", "null"], "description": "The release's label, or null when it has none." }
+      }
+    },
+    "soakState": {
+      "enum": ["unread", "soaking", "due", "failing", "clock-unknown", "ended"],
+      "description": "A soak's state as the last run that read it recorded it. unread: no standing fact on the soak's gate for the release the stage runs. soaking: the last run held it and time is left. due: the last run held it for time only and the time is up; the next promote reads the checks. failing: the last run held it on a check that failed or could not be read. clock-unknown: the last run found no apply time. ended: a person ended it early through its gate."
+    },
+    "stage": {
+      "type": "object",
+      "required": ["name", "canary", "after", "release", "gate", "risk", "soak", "canaryHolds", "paused", "onVerifyFail", "rollback", "rollbackHeld"],
+      "properties": {
+        "name": { "type": "string", "description": "The stage, which is its environment's name." },
+        "canary": { "type": "boolean", "description": "True for the canary stage, whose soak holds every stage after it (#5327)." },
+        "after": { "type": "array", "items": { "type": "string" }, "description": "The stages a release succeeds in before this one opens: its after, else the stage before it. Empty for the first stage." },
+        "release": {
+          "description": "The release the stage runs, from <stage>/releases.jsonl under the member's prefix. Null when the ledger records no deploy or can't be read.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["releaseDigest", "label", "gitSha", "at", "components", "mixed"],
+              "properties": {
+                "releaseDigest": { "type": ["string", "null"], "description": "The release the newest deploy was made from, or null when it named none." },
+                "label": { "type": ["string", "null"] },
+                "gitSha": { "type": "string", "description": "The newest deploy's commit." },
+                "at": { "type": "string", "description": "When the newest deploy was recorded." },
+                "components": { "type": "array", "items": { "type": "string" }, "description": "The components whose newest deploy is of that release (or commit, when it named none), sorted." },
+                "mixed": { "type": "boolean", "description": "True when the stage's components run more than one release." }
+              }
+            }
+          ]
+        },
+        "gate": {
+          "type": "object",
+          "description": "The stage's gate: <stage> under the pipeline's op, read from its newest pending fact as gates are.",
+          "required": ["name", "policy", "state", "releaseDigest", "label", "planDigest", "recordedAt", "approvals", "needed", "approve"],
+          "properties": {
+            "name": { "type": "string" },
+            "policy": { "enum": ["always", "never", "on-destructive"], "description": "The stage's gate policy, always when it declares none." },
+            "state": { "description": "The state of the newest pending fact, or null when no promote has reached the gate.", "oneOf": [{ "type": "null" }, { "enum": ["pending", "approved", "expired", "superseded"] }] },
+            "releaseDigest": { "type": ["string", "null"], "description": "The release the fact binds." },
+            "label": { "type": ["string", "null"] },
+            "planDigest": { "type": ["string", "null"], "description": "The digest the fact binds: the release's, or the promoted digests'." },
+            "recordedAt": { "type": ["string", "null"] },
+            "approvals": { "type": "integer", "minimum": 0, "description": "The approvals that count toward the fact." },
+            "needed": { "type": "integer", "minimum": 1 },
+            "approve": { "type": ["string", "null"], "description": "The chant approve line for the fact, or null when there is none." }
+          }
+        },
+        "risk": {
+          "description": "The change risk the stage's gate reads (#5387), for the release at its gate while its fact is pending, else for the release the stage runs. Null when that release carries no risk record.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["releaseDigest", "label", "score", "level", "reads", "approveAbove", "over", "overBy"],
+              "properties": {
+                "releaseDigest": { "type": "string" },
+                "label": { "type": ["string", "null"] },
+                "score": { "type": "number", "minimum": 0, "maximum": 1 },
+                "level": { "enum": ["low", "medium", "high"] },
+                "reads": { "type": "boolean", "description": "True when the stage sets holds.risk, so its gate reads the score." },
+                "approveAbove": { "type": ["number", "null"] },
+                "over": { "type": "boolean", "description": "True when the gate takes more approvals for this release. Risk only ever adds approvals." },
+                "overBy": { "type": "array", "items": { "type": "string" }, "description": "Why it is over, one line each." }
+              }
+            }
+          ]
+        },
+        "soak": {
+          "description": "The stage's soak (#5326), with its state from the newest pending fact on its gate. Null when the stage declares no soak.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["gate", "duration", "checks", "state", "releaseDigest", "to", "clockStart", "due", "leftMs", "holds", "failing", "recordedAt", "endedBy"],
+              "properties": {
+                "gate": { "type": "string", "description": "<stage>-soak under the pipeline's op; approving it ends the soak early." },
+                "duration": { "type": "string" },
+                "checks": { "type": "integer", "minimum": 0, "description": "How many checks the soak reads, its own and its overrides'." },
+                "state": { "$ref": "#/$defs/soakState" },
+                "releaseDigest": { "type": ["string", "null"] },
+                "to": { "type": ["string", "null"], "description": "The stage the promotion the soak held waits to go into." },
+                "clockStart": { "type": ["string", "null"] },
+                "due": { "type": ["string", "null"] },
+                "leftMs": { "type": ["integer", "null"], "minimum": 0, "description": "Milliseconds from the read to due, at least 0; null without a due time." },
+                "holds": { "type": "array", "items": { "type": "string" }, "description": "Why the last run held it, one line each." },
+                "failing": { "type": "array", "items": { "type": "string" }, "description": "The checks that failed on the last run, as <check> or <check>@<member>." },
+                "recordedAt": { "type": ["string", "null"] },
+                "endedBy": { "type": ["string", "null"], "description": "On ended: who ended it." }
+              }
+            }
+          ]
+        },
+        "canaryHolds": {
+          "type": "array",
+          "description": "Each canary stage upstream of this one, in pipeline order (#5327), with its soak's state. Empty when there is none.",
+          "items": {
+            "type": "object",
+            "required": ["stage", "state", "due", "leftMs", "holding"],
+            "properties": {
+              "stage": { "type": "string" },
+              "state": { "$ref": "#/$defs/soakState" },
+              "due": { "type": ["string", "null"] },
+              "leftMs": { "type": ["integer", "null"], "minimum": 0 },
+              "holding": { "type": "boolean", "description": "True when the canary's soak holds a promote into this stage now: soaking, failing or clock-unknown." }
+            }
+          }
+        },
+        "paused": {
+          "description": "The standing pause from the stage's ledger, <stage>/stage.jsonl (#5355), or null.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["by", "at", "reason", "cause", "waiting"],
+              "properties": {
+                "by": { "type": "string" },
+                "at": { "type": "string" },
+                "reason": { "type": ["string", "null"] },
+                "cause": { "oneOf": [{ "type": "null" }, { "const": "rollback" }], "description": "rollback when a rollback of a stage with pauseAfterRollback paused it." },
+                "waiting": { "type": "array", "items": { "$ref": "#/$defs/stageRef" }, "description": "The releases that waited while it is paused, oldest first; the newest enters on resume." }
+              }
+            }
+          ]
+        },
+        "onVerifyFail": { "enum": ["hold", "rollback"], "description": "What a failed verify or soak check does in the stage (#5328)." },
+        "rollback": {
+          "description": "The rollback request on the stage's ledger that no rollback has carried out (#5328), or null.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["id", "requestedAt", "by", "failure", "failed", "to", "members", "gate", "state", "approve", "command"],
+              "properties": {
+                "id": { "type": "string" },
+                "requestedAt": { "type": "string" },
+                "by": { "type": "string" },
+                "failure": { "oneOf": [{ "type": "null" }, { "enum": ["verify", "soak"] }] },
+                "failed": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/stageRef" }], "description": "The release that failed in the stage." },
+                "to": { "$ref": "#/$defs/stageRef", "description": "The release the rollback goes back to." },
+                "members": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["member", "state"],
+                    "properties": {
+                      "member": { "type": "string" },
+                      "state": { "type": "string", "description": "applied, left-applied, rolled-back or not-applied." },
+                      "rollback": { "type": "string", "description": "requested when the rollback restores it, else why not." }
+                    }
+                  }
+                },
+                "gate": { "type": "string", "description": "<stage>-rollback under the pipeline's op." },
+                "state": { "description": "The gate's state, or null when its pending fact is not on the ledger.", "oneOf": [{ "type": "null" }, { "enum": ["pending", "approved", "expired", "superseded"] }] },
+                "approve": { "type": "string", "description": "The chant approve line for the gate." },
+                "command": { "type": "string", "description": "chant components rollback <stage> --requested, which carries it out once the gate passes." }
+              }
+            }
+          ]
+        },
+        "rollbackHeld": {
+          "description": "The newest failure on the stage's ledger when no rollback could be requested for it and none has been requested or run since (#5328), or null.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["failureId", "at", "reason", "failure", "failed"],
+              "properties": {
+                "failureId": { "type": "string" },
+                "at": { "type": "string" },
+                "reason": { "type": "string" },
+                "failure": { "oneOf": [{ "type": "null" }, { "enum": ["verify", "soak"] }] },
+                "failed": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/stageRef" }] }
+              }
+            }
+          ]
+        }
+      }
+    },
     "stageRelease": {
       "type": "object",
       "required": ["digest", "label", "at"],
@@ -1064,6 +1272,7 @@
           }
         },
         "needed": { "type": "integer", "minimum": 1, "description": "The human approvals the gate needs: its quorum's count, 1 without one." },
+        "rules": { "type": "array", "items": { "type": "string" }, "description": "Added in contract 1 by #5354. Where each approval rule of the gate stands, one line each: named rules by their name, then each all/any group's line. Present when the gate's rules are named or grouped." },
         "signed": {
           "description": "Added in contract 1 by #3163. The declaration's rule for the gate, read at base (identity.gates, ws-080): only an approval sealed with chant approve --sign by a key the signers file at base lists for its approver counts, and when class is not null, only one whose approver the role grants at base put in that class. Approvals that don't meet it are left out of approvals and state. Null when any approval counts.",
           "oneOf": [
@@ -1078,6 +1287,22 @@
           ]
         },
         "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null and --plan <planDigest> when planDigest is not null (#2832), so the line approves the plan this read showed, and --sign when signed is not null (#3163). The caller adds --actor <principal>. For a gate that asks a decision point (#3170), the chant workspace points answer line for the question in answer." },
+        "soak": {
+          "type": "object",
+          "description": "Added in contract 1 by #5342. On a soak's gate (<stage>-soak, <gate>-wave-<k>-soak), the soak's state as the pending fact records it (#5326). Absent on every other gate.",
+          "required": ["stage", "clockStart", "due", "holds"],
+          "properties": {
+            "stage": { "type": "string" },
+            "wave": { "type": "integer", "minimum": 1 },
+            "to": { "type": "string" },
+            "clockStart": { "type": ["string", "null"] },
+            "due": { "type": ["string", "null"] },
+            "leftMs": { "type": "number", "description": "The time left when the run recorded the fact." },
+            "holds": { "type": "array", "items": { "type": "string" } },
+            "restartedAt": { "type": "string" },
+            "failing": { "type": "array", "items": { "type": "string" } }
+          }
+        },
         "answer": {
           "type": "object",
           "description": "The open question the gate waits on, when it asks a decision point (#3170): absent on a gate chant approve passes. Answered with chant workspace points answer <id>; the run that passes the gate then cites the answer record on the ledger.",

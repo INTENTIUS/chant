@@ -117,6 +117,65 @@ Each component has what the ledger records it running, and its `state`: `settled
     roll back: chant components rollback prod --release v1.3.2
 ```
 
+### Pipeline stages
+
+A member with a [pipeline](/chant/guide/pipeline/) has `pipeline` in the JSON: its name and every stage in pipeline order, whatever environment you ask for. The pipeline comes from the member's working tree, and each stage's facts come from `chant/lifecycle` at the commit the output names. Status only reads: a soak's state is the one its last run recorded.
+
+```json
+"pipeline": {
+  "name": "shop",
+  "stages": [
+    {
+      "name": "prod",
+      "canary": false,
+      "after": ["canary"],
+      "release": { "releaseDigest": "sha256:…", "label": "v1.1.0", "gitSha": "…", "at": "2026-11-20T11:30:00.000Z", "components": ["api"], "mixed": false },
+      "gate": { "name": "prod", "policy": "always", "state": "approved", "releaseDigest": "sha256:…", "label": "v1.1.0", "planDigest": "sha256:…", "recordedAt": "…", "approvals": 1, "needed": 1, "approve": "chant approve shop prod --env prod --plan sha256:…" },
+      "risk": { "releaseDigest": "sha256:…", "label": "v1.1.0", "score": 0.4, "level": "medium", "reads": true, "approveAbove": 0.5, "over": false, "overBy": [] },
+      "soak": null,
+      "canaryHolds": [{ "stage": "canary", "state": "soaking", "due": "2026-11-20T13:00:00.000Z", "leftMs": 3600000, "holding": true }],
+      "paused": null,
+      "onVerifyFail": "rollback",
+      "rollback": { "id": "…", "requestedAt": "…", "by": "ci", "failure": "verify", "failed": { "digest": "sha256:…", "label": "v1.1.0" }, "to": { "digest": "sha256:…", "label": "v1.0.0" }, "members": [{ "member": "api", "state": "applied", "rollback": "requested" }], "gate": "prod-rollback", "state": "pending", "approve": "chant approve shop prod-rollback --env prod --plan sha256:…", "command": "chant components rollback prod --requested" },
+      "rollbackHeld": null
+    }
+  ]
+}
+```
+
+| Field | Read from |
+|---|---|
+| `release` | the stage's release ledger: the release of the newest deploy, the components on it, and `mixed` when components run more than one release |
+| `gate` | the newest pending fact of gate `<stage>` under the pipeline's op, with the stage's gate policy; `state` is `null` before any promote reaches it |
+| `risk` | the release's [change risk](/chant/guide/change-risk/) read under the stage's `holds.risk`, for the release waiting at the gate, else the release the stage runs; `reads` is true when the stage sets `holds.risk` |
+| `soak` | the newest pending fact of gate `<stage>-soak`, which the last promote the soak held wrote; `leftMs` counts from its `due` to now |
+| `canaryHolds` | the soak of each [canary](/chant/guide/soak/#the-canary) stage upstream, with `holding` true while it holds a promote into this stage |
+| `paused` | the stage's ledger, `<stage>/stage.jsonl`: a standing pause and the releases waiting behind it |
+| `rollback` | the stage's ledger: a rollback request no rollback has run yet, with its gate's state and the two lines that carry it out |
+| `rollbackHeld` | the stage's ledger: the newest failure, when the stage held it with a reason in place of a request |
+
+A soak's `state` is what the last run that read it recorded:
+
+| State | Meaning |
+|---|---|
+| `unread` | waiting for the first promote out of the stage to read the soak for the release it runs |
+| `soaking` | the last run held it and time is left |
+| `due` | the time is up; the next promote reads the checks |
+| `failing` | the last run held it on a failing or unreadable check |
+| `clock-unknown` | the last run held it with the clock unstarted, for want of an apply time |
+| `ended` | a person approved the soak's gate and ended it early; `endedBy` names who |
+
+A soak's gate in `gates` also carries the pending fact's `soak` object. The text view adds one line per stage:
+
+```
+MEMBER  STAGE   RUNS    GATE                        RISK                    SOAK                 CANARY                    ROLLBACK
+shop    dev     v1.1.0  paused by carol, 1 waiting  0.40 medium within 0.9  -                    -                         -
+shop    canary  v1.1.0  -                           0.40 medium over 0.3    1h left              canary                    -
+shop    prod    v1.1.0  approved 1/1 v1.1.0         0.40 medium within 0.5  -                    held by canary (1h left)  to v1.0.0, pending
+```
+
+A product or dashboard feature-detects these fields on `STAGE_STATUS_FLOOR` from `@intentius/chant/pipeline`.
+
 ### Boxes
 
 With `--json`, each member also lists its `box`: the [box block](/chant/reference/workspace-declaration/#boxes) from the declaration, or `null` when it has none ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability has its `name`, its `broker` (`null` when the declaration names none) and its `scope`. A broker, such as a lobby, reads the scope it enforces for a box from here, so the scopes aren't hard-coded in the broker. The capabilities appear in the JSON only.
@@ -530,6 +589,9 @@ chant workspace status prod --compare-to staging --json
 
 # The prod gates still waiting for an approval, with the command for each
 chant workspace status prod --json | jq -r '.members[].gates[] | select(.state == "pending") | .approve'
+
+# Each pipeline stage held by a canary's soak, with the time left
+chant workspace status prod --json | jq -r '.members[].pipeline.stages[]? | select(any(.canaryHolds[]; .holding)) | .name + ": " + ([.canaryHolds[] | select(.holding) | .stage + " " + .state] | join(", "))'
 
 # Which steward runs each member, and how its last runs went
 chant workspace status prod --json | jq -r '.members[].stewards[] | .name + " (" + .form + "): " + ([.ops[] | .name + "=" + (.lastRun.status // "never")] | join(" "))'
