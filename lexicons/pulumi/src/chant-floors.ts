@@ -29,7 +29,6 @@ export const PULUMI_COST_HOLD_FLOOR = NEXT_RELEASE;
 export const PULUMI_PREVIEW_OBSERVATION_FLOOR = NEXT_RELEASE;
 
 /**
-<<<<<<< HEAD
  * The first pulumi lexicon release whose `classifyDisruption` classifies a
  * planned update from a preview's steps (in place, replace, destroy), with
  * `pulumiDisruptionQueries` for a preview in hand, and whose `healthTargets`
