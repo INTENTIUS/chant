@@ -55,6 +55,7 @@ import {
   type LedgerLocation,
 } from "./git";
 import type { RunOrigin } from "./release-ledger";
+import { isReleaseRisk, type ReleaseRisk } from "./release-risk";
 
 /** The directory on `chant/lifecycle` that holds releases, cuts and template bytes. */
 export const RELEASES_DIR = "_releases";
@@ -238,6 +239,14 @@ export interface ReleaseCut {
    * there were none, and on every cut written before #5159.
    */
   intents?: ReleaseCutIntent[];
+  /**
+   * The change risk the release carries (#5387, `./release-risk.ts`): the
+   * scores the waves that applied its commit recorded, bound to the release
+   * digest here, which a later stage's gate reads at promote. Outside the
+   * signature, like `intents`. Absent when no wave of the commit was scored,
+   * and on every cut written before chant's `RELEASE_RISK_FLOOR`.
+   */
+  risk?: ReleaseRisk;
 }
 
 /** One intent file a cut consumed (#5159). */
@@ -535,6 +544,8 @@ export function parseCuts(text: string | null): { cuts: ReleaseCut[]; malformed:
         (c.override === undefined || isCutOverride(c.override)) &&
         (c.green === undefined || isCutGreen(c.green)) &&
         (c.intents === undefined || isCutIntents(c.intents)) &&
+        // #5387: a record that does not read makes the cut unreadable, so a release never promotes as if it carried none.
+        (c.risk === undefined || isReleaseRisk(c.risk)) &&
         (c.composed === undefined || (typeof c.composed === "object" && c.composed !== null && typeof c.composed.base === "string" && Array.isArray(c.composed.sources)));
       if (!ok) {
         malformed++;
@@ -622,6 +633,7 @@ export async function appendCut(
       ...(input.override ? { override: input.override } : {}),
       ...(input.green ? { green: input.green } : {}),
       ...(input.intents && input.intents.length > 0 ? { intents: input.intents } : {}),
+      ...(input.risk ? { risk: input.risk } : {}),
     };
     const content = `${existing ? `${existing.replace(/\n$/, "")}\n` : ""}${JSON.stringify(cut, sortedJsonReplacer)}\n`;
     try {

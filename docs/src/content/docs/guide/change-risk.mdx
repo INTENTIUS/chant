@@ -90,6 +90,26 @@ A stage's gate takes `holds.risk` in `.chant/pipeline.ts`, as an Op waves spec d
 
 Over `approveAbove` the wave waits for an approval whatever its gate's policy says. Its gate also takes the `quorum` rules on top of its own. Here that means two approvers, one of whom holds `sre` in `.chant/trust.json` at base. Under the threshold the wave's gate stays the stage's. A run whose plan gave no change set holds the wave too. The holds are read at base with the rest of the wave's rules. The pull request's review answers the questions, so `holds.risk` takes only `approveAbove` and `quorum`.
 
+## Carry the score into later stages
+
+A later stage takes a release through `chant components promote --release`, which plans nothing, so the rating travels with the release:
+
+1. Each wave of the first stage that rates its change set under `holds.risk` writes the record beside its release records, in `_releases/risk/<commit>.jsonl` on `chant/lifecycle`. Set `holds.risk` on the first stage, or in the pipeline's `defaults`, for the merge to rate the change.
+2. `chant release cut` reads the records of the commit it cuts, keeps the newest per wave, and writes them on the cut line as the release's `risk`. With several waves, the release's rating is `1 - (1 - s1) * (1 - s2) * ...`, so each wave can only raise it.
+3. At promote, each gate whose stage sets `holds.risk` reads that rating under its own `approveAbove`. Over it, the gate takes the stage's `quorum` rules on top of its own, and a gate whose policy is `never` waits for an approval. The promote prints the stage's reading either way.
+
+```typescript
+{ name: "dev", waves: [/* ... */], gate: { policy: "never", holds: { risk: {} } } },
+{ name: "staging", waves: [/* ... */], gate: { policy: "never", holds: { risk: { approveAbove: 0.6 } } } },
+{ name: "prod", waves: [/* ... */], gate: { holds: { risk: { approveAbove: 0.3, quorum: [{ count: 2, roles: ["sre"] }] } } } },
+```
+
+Here dev rates each merge and asks for nothing more, staging waits for one approval above 0.6, and prod takes two `sre` approvers above 0.3. A gate that read a rating counts people's approvals only, and a permit that reads it counts only from a person `.chant/trust.json` at base proves.
+
+The first stage must rate with `holds.risk`, of its own or from `defaults`, for a release to carry a rating. A pipeline where a later stage reads `holds.risk` and the first stage rates nothing does not fold: the build names the later stage. A release with no record has no rating, and each stage's gate works as before. That covers a release cut before chant carried the rating.
+
+The pull request's plan note shows how each later stage reads the plan's rating: the stage, its `approveAbove`, and what the gate asks for there. `chant workspace status` shows each cut's rating, and `--json` gives it as `risk` on each entry of `releaseCuts`, with each later stage's reading under `stages`.
+
 ## Read the score in a Cedar gate policy
 
 An Op's `gate` step with `approval.risk` gets the record as `context.changeRisk` when its `plan` names a step that returned a change set (`terraformPlan`, `composeChangeSet`), the same step `context.plan` comes from. Cedar has no decimals, so the score is `percent`, from 0 to 100:
@@ -113,6 +133,6 @@ A permit that reads the rating passes the gate only from a human whose approval 
 
 ## Limits
 
-The rating never lets a plan apply with nobody approving it. Every risk setting refuses `allow_unattended` and `approveBelow`, and the rating never reaches a product's unattended-apply setting. A low rating passes no gate: under the threshold a plan needs its approval as before.
+The rating never lets a plan apply with nobody approving it. Every risk setting refuses `allow_unattended` and `approveBelow`, and the rating never reaches a product's unattended-apply setting. A low rating passes no gate: under the threshold a plan needs its approval as before, and a release promoted into a later stage needs its stage gate's approval as before.
 
 Without any of `ci.risk`, `holds.risk` and `approval.risk`, chant makes no record.

@@ -31,6 +31,7 @@
 
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import type { Release, ReleaseCut } from "../lifecycle/release-store";
+import type { WaveRisk } from "../lifecycle/release-risk";
 
 /** The first chant whose op-wave applies write release records (#4615). */
 export const OP_WAVE_RELEASE_RECORD_FLOOR = "0.124.55";
@@ -54,6 +55,12 @@ export interface OpWaveReleaseRequest {
   gitSha?: string;
   /** Who approved the wave, when a person did. */
   approver?: string;
+  /**
+   * The wave's change risk under `holds.risk` (#5387): written once per wave
+   * beside the release records, for `chant release cut` to bind to the
+   * release cut from `gitSha`.
+   */
+  risk?: WaveRisk;
 }
 
 /** How one record came out. */
@@ -64,6 +71,26 @@ export type OpWaveReleaseOutcome =
 /** Where an op wave job's release records go (#4615). */
 export interface OpWaveReleasePort {
   record(requests: readonly OpWaveReleaseRequest[]): Promise<OpWaveReleaseOutcome[]>;
+  /**
+   * Write the change risk the requests carry (#5387), once per wave and
+   * commit, before their release records, whose push carries it. Absent: no
+   * risk is written. Throws when it cannot be written.
+   */
+  recordRisk?(requests: readonly OpWaveReleaseRequest[]): Promise<void>;
+}
+
+/** The wave scores a batch of release requests carries, one per spec, wave and commit (#5387). */
+export function opWaveRiskLines(requests: readonly OpWaveReleaseRequest[], timestamp: string): import("../lifecycle/release-risk").WaveRiskLine[] {
+  const seen = new Set<string>();
+  const out: import("../lifecycle/release-risk").WaveRiskLine[] = [];
+  for (const req of requests) {
+    if (!req.risk || !req.gitSha) continue;
+    const key = JSON.stringify([req.gitSha, req.risk.op, req.risk.wave]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ version: 1, commit: req.gitSha, timestamp, ...req.risk });
+  }
+  return out;
 }
 
 /** What is wrong with a spec's or a run's `release`, empty when nothing is. */

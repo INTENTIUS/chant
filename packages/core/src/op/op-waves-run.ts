@@ -5234,7 +5234,9 @@ function stepReleaseRequests(options: RunOpWaveOptions, ctx: WaveContext, decisi
         gitSha = "";
       }
     }
-    requests.push({ ...names, target: run.target, planDigest: plan.planDigest, ...(gitSha ? { gitSha } : {}), ...(decision.approvedBy ? { approver: decision.approvedBy } : {}) });
+    // #5387: the wave's change risk rides with its release records, for the cut to bind.
+    const risk = decision.risk ? { risk: { op: spec.name, wave: ctx.k, name: wave.name, digest: decision.digest, risk: decision.risk } } : {};
+    requests.push({ ...names, target: run.target, planDigest: plan.planDigest, ...(gitSha ? { gitSha } : {}), ...(decision.approvedBy ? { approver: decision.approvedBy } : {}), ...risk });
   }
   return requests;
 }
@@ -5251,14 +5253,23 @@ async function writeStepReleases(port: OpWaveReleasePort, ctx: WaveContext, requ
  */
 async function submitStepReleases(port: OpWaveReleasePort, requests: readonly OpWaveReleaseRequest[], label: string, log: (line: string) => void): Promise<string[]> {
   if (requests.length === 0) return [];
+  // #5387: the change risk first, so the release records' push carries it. One that is not written fails the wave:
+  // a later stage would read the release as carrying no score and ask for fewer approvals than the score would.
+  const lost: string[] = [];
+  if (port.recordRisk && requests.some((r) => r.risk)) {
+    try {
+      await port.recordRisk([...requests]);
+    } catch (err) {
+      lost.push(`${label}: applied, and the change risk was not written beside its release records, so the wave fails rather than leave a release that carries no score: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   let outcomes: OpWaveReleaseOutcome[];
   try {
     outcomes = await port.record([...requests]);
   } catch (err) {
     log(`${label}: applied, and no release record was written: ${err instanceof Error ? err.message : String(err)}`);
-    return [];
+    return lost;
   }
-  const lost: string[] = [];
   for (const [i, req] of requests.entries()) {
     const got = outcomes[i];
     if (got?.recorded) log(`${req.target}: recorded on the "${got.env}" release ledger as ${got.component} ${got.digest}${got.releaseDigest ? ` under release ${got.releaseDigest}` : ""}`);

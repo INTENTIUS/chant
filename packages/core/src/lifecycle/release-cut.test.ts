@@ -216,6 +216,33 @@ describe("cutRelease", () => {
     });
   });
 
+  test("binds the change risk the commit's waves recorded to the release on its cut line (#5387)", async () => {
+    await withTestDir(async (dir) => {
+      const sha = initRepo(dir);
+      green(dir, sha);
+      const { appendWaveRisk, readReleaseRisk } = await import("./release-risk");
+      const { scoreChangeRisk } = await import("../change-risk");
+      const risk = scoreChangeRisk({ changeSet: { members: [], entries: [{ member: "api", address: "a", type: "t", action: "delete" } as never] } });
+      const line = { version: 1 as const, commit: sha, timestamp: "2026-10-16T09:00:00.000Z", op: "shop-dev", wave: 1, name: "dev", digest: "sha256:w", risk };
+      // Another commit's score is not this release's.
+      await appendWaveRisk([line, { ...line, commit: "e".repeat(40) }], { cwd: dir });
+      const result = await cut(dir, fixtureCompiler(), "v1");
+      expect(result.cut?.risk).toEqual(await readReleaseRisk(sha, { cwd: dir }));
+      expect(result.cut?.risk).toMatchObject({ commit: sha, score: risk.score, waves: [{ op: "shop-dev", wave: 1 }] });
+      const { cuts } = await readCuts({ cwd: dir });
+      expect(cuts[0]?.risk?.score).toBe(risk.score);
+    });
+  });
+
+  test("a commit no wave scored cuts a release that carries no risk (#5387)", async () => {
+    await withTestDir(async (dir) => {
+      const sha = initRepo(dir);
+      green(dir, sha);
+      const result = await cut(dir, fixtureCompiler(), "v1");
+      expect(result.cut).not.toHaveProperty("risk");
+    });
+  });
+
   test("refuses a commit that isn't green, and writes nothing", async () => {
     await withTestDir(async (dir) => {
       initRepo(dir);

@@ -34,6 +34,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pipelineChange, pipelineChangeSection } from "./pipeline/diff";
+import { readPipelineAt } from "./pipeline/read";
+import { laterStageRisk, laterStageRiskLines } from "./lifecycle/release-risk";
+import type { ChangeRisk } from "./change-risk";
 import { prNoteMarker, prStatusContext, renderPrNote, type PrOverdue, type PrReport } from "./pr-loop";
 import { prStatusDescription, prStatusState } from "./pr-status";
 import { forgePrincipalOf, type PrForge } from "./pr-forge";
@@ -62,6 +65,21 @@ export function pipelineNoteSection(base: string, head: string, cwd: string = pr
   return pipelineChangeSection({ ...change, diff: lines });
 }
 
+/**
+ * The note's section for how each later stage reads the plan's change risk
+ * (#5387): the pipeline at `base` in `cwd`, each stage after the first whose
+ * gate sets `holds.risk`, and what the score asks for there once a release
+ * carries it. Undefined when the base has no pipeline or no later stage
+ * sets `holds.risk`.
+ */
+export function stageRiskNoteSection(base: string, risk: Pick<ChangeRisk, "score" | "reasons">, cwd: string = process.cwd()): string | undefined {
+  if (!SHA.test(base)) return undefined;
+  const read = readPipelineAt(base, cwd);
+  if (read.status !== "folded") return undefined;
+  const lines = laterStageRiskLines(laterStageRisk(read.spec, { score: risk.score, reasons: Array.isArray(risk.reasons) ? risk.reasons : [] }), risk.score);
+  return lines.length > 0 ? lines.slice(1).join("\n") : undefined;
+}
+
 /** The most diff lines the note's pipeline section shows (#5324). */
 const PIPELINE_NOTE_LINES = 120;
 
@@ -72,14 +90,25 @@ function mergeBaseOf(a: string, b: string): string | undefined {
 }
 
 /** `note` with the pipeline section added before its hidden lines, when there is one and the note stays within the forge's limit. */
-function withPipelineSection(note: string, input: Pick<PlanPostInput, "pipelineSection" | "forge">, base: string, head: string): string {
-  let section: string | undefined;
+function withPipelineSection(note: string, input: Pick<PlanPostInput, "pipelineSection" | "stageRiskSection" | "forge">, base: string, head: string, risk?: ChangeRisk): string {
+  const sections: string[] = [];
   try {
-    section = (input.pipelineSection ?? ((b, h) => pipelineNoteSection(b, h)))(base, head);
+    const own = (input.pipelineSection ?? ((b, h) => pipelineNoteSection(b, h)))(base, head);
+    if (own) sections.push(own);
   } catch {
-    section = undefined;
+    // A pipeline that cannot be read shows no diff.
   }
-  if (!section) return note;
+  // #5387: how each later stage reads the plan's change risk.
+  if (risk) {
+    try {
+      const own = (input.stageRiskSection ?? ((b, r) => stageRiskNoteSection(b, r)))(base, risk);
+      if (own) sections.push(own);
+    } catch {
+      // A pipeline that cannot be read shows no stage's reading.
+    }
+  }
+  if (sections.length === 0) return note;
+  const section = sections.join("\n\n");
   const limit = input.forge.kind === "gitlab" ? GITLAB_NOTE_LIMIT : GITHUB_COMMENT_LIMIT;
   // The hidden lines a note ends with stay last: they are read back by line.
   const lines = note.replace(/\n*$/, "").split("\n");
@@ -177,6 +206,13 @@ export interface PlanPostInput {
    * nothing.
    */
   pipelineSection?: (base: string, head: string) => string | undefined;
+  /**
+   * The note's section for how each later stage reads the plan's change
+   * risk (#5387), or undefined when no later stage sets `holds.risk`.
+   * Default: {@link stageRiskNoteSection} in the job's checkout, which folds
+   * the pipeline at `base` and runs nothing.
+   */
+  stageRiskSection?: (base: string, risk: ChangeRisk) => string | undefined;
 }
 
 /** How the note job keeps the plan job's run record (#4899). */
@@ -400,7 +436,7 @@ export async function postPlanReport(input: PlanPostInput): Promise<PlanPostResu
       const own = productLineOf((input.noteWords ?? noteWordsFromEnv())?.productMarker, (read.report as { marker?: unknown }).marker);
       if (!(input.member && report.status === "nothing" && !report.overdue?.length && !report.migrations?.length)) note = planNoteFor(report, input.forge, prNoteMarker(input.env, input.member), input.baseTip, own);
       // #5324: a change to the pipeline shows its folded spec's diff.
-      if (note !== undefined) note = withPipelineSection(note, input, report.base, input.head);
+      if (note !== undefined) note = withPipelineSection(note, input, report.base, input.head, report.risk);
     } catch (err) {
       refused = `the plan report does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";
@@ -637,7 +673,7 @@ async function postPlanNoteHandoff(input: PlanPostInput): Promise<PlanPostResult
         : planBodyHandoffNote(h, input.forge, prNoteMarker(input.env, input.member), noteWords, input.baseTip, added);
       // #5324: a change to the pipeline shows its folded spec's diff, measured from where the pull request left the target branch.
       const base = input.baseTip && SHA.test(input.baseTip) ? mergeBaseOf(input.baseTip, input.head) : undefined;
-      if (note !== undefined && base) note = withPipelineSection(note, input, base, input.head);
+      if (note !== undefined && base) note = withPipelineSection(note, input, base, input.head, "note" in h ? h.note.risk : undefined);
     } catch (err) {
       refused = `the plan note does not render: ${err instanceof Error ? err.message : String(err)}`;
       state = "failure";

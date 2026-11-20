@@ -20,7 +20,7 @@
  */
 
 import { opWavesControlProblems, type GateApprovalSource, type OpWave, type OpWaveGatePolicy, type OpWaveHooks, type OpWavePoint, type OpWavesControl, type OpWavesSpec } from "../op/op-waves";
-import type { OpWaveHolds } from "../op/op-waves-capability-spec";
+import { opWaveHoldsProblems, type OpWaveHolds } from "../op/op-waves-capability-spec";
 import { quorumProblems, QUORUM_MAX_DEPTH, type GateQuorumNode } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
@@ -289,6 +289,8 @@ function gateProblems(gate: unknown, where: string): string[] {
   else if (gate.quorum !== undefined) out.push(...quorumProblems(gate.quorum, `${where}.gate.quorum`, { notAuthor: true, proven: true, combine: true }).map((p) => p.replace(/`/g, "")));
   if (gate.point !== undefined && typeof gate.point !== "string" && !isMap(gate.point)) out.push(`${where}.gate.point must name a decision point`);
   if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"?, "risk"? }`);
+  // #5387: a later stage's holds are read at promote, where no op-waves spec checks them, so they are checked here.
+  else if (gate.holds !== undefined) out.push(...opWaveHoldsProblems(gate.holds).map((p) => `${where}.gate: ${p}`));
   if (gate.urgent !== undefined) {
     if (!isMap(gate.urgent)) out.push(`${where}.gate.urgent must be { "role" }`);
     else {
@@ -407,6 +409,26 @@ function graphProblems(stages: unknown[]): string[] {
 }
 
 /**
+ * A later stage's `holds.risk` reads the score its release carries (#5387),
+ * and a release carries one only when the first stage's waves score it. A
+ * later stage that sets `holds.risk` while the first stage has none, of its
+ * own or from `defaults`, would never read a score, so it is refused.
+ */
+function laterRiskProblems(stages: unknown[], defaults: unknown): string[] {
+  const holdsOf = (s: unknown): unknown => (isMap(s) && isMap(s.gate) ? s.gate.holds : undefined);
+  const riskIn = (holds: unknown): boolean => isMap(holds) && holds.risk !== undefined;
+  const first = stages[0];
+  const own = holdsOf(first);
+  const firstScores = own !== undefined ? riskIn(own) : isMap(defaults) && riskIn(defaults.holds);
+  if (firstScores) return [];
+  const firstName = isMap(first) && typeof first.name === "string" ? first.name : "the first stage";
+  return stages
+    .slice(1)
+    .filter((s) => riskIn(holdsOf(s) ?? (isMap(defaults) ? defaults.holds : undefined)))
+    .map((s) => `stage "${(s as { name: string }).name}" reads holds.risk at its gate, and the first stage "${firstName}" sets no holds.risk, of its own or from defaults; the first stage must score with holds.risk for a release to carry a score that a later stage reads`);
+}
+
+/**
  * Everything wrong with a folded pipeline, one line each; empty when it
  * reads. The stage-level checks are here; each stage's op-waves spec is
  * checked again by `assertOpWavesSpec` when it is derived (`./stages.ts`).
@@ -421,6 +443,7 @@ export function pipelineSpecProblems(value: unknown): string[] {
     const seen = new Set<string>();
     value.stages.forEach((s, i) => out.push(...stageProblems(s, i, seen)));
     if (out.length === 0) out.push(...graphProblems(value.stages));
+    if (out.length === 0) out.push(...laterRiskProblems(value.stages, value.defaults));
     out.push(...stageArtifactsSpecProblems(value));
   }
   if (value.defaults !== undefined) {

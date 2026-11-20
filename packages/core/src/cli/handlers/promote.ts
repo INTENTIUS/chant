@@ -1235,16 +1235,19 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   return publishAfterPromote(project.projectPath, pipeline, to, under);
 }
 
-/** The release a promote deploys, as the stage log names it (#5353): its label, commit and when it was first cut. */
+/** The release a promote deploys, as the stage log names it (#5353): its label, commit and when it was first cut, and the change risk its cut carries (#5387). */
 async function entryRelease(under: UnderRelease): Promise<import("../../pipeline/promote").PipelineEntryRelease> {
   const { readCuts } = await import("../../lifecycle/release-store");
   const cuts = await readCuts().then((r) => r.cuts, () => []);
   const cut = cuts.find((c) => c.releaseDigest === under.release.releaseDigest);
+  // #5387: the change risk a cut of the release bound, which each stage gate with holds.risk reads.
+  const risk = cuts.find((c) => c.releaseDigest === under.release.releaseDigest && c.risk)?.risk;
   return {
     releaseDigest: under.release.releaseDigest,
     commit: under.release.commit,
     ...(under.label ? { label: under.label } : {}),
     ...(cut ? { cutAt: cut.timestamp } : {}),
+    ...(risk ? { risk } : {}),
   };
 }
 

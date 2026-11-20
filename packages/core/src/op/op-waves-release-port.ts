@@ -6,7 +6,7 @@
  */
 
 import type { Release, ReleaseCut } from "../lifecycle/release-store";
-import { releaseOfCommit, type OpWaveReleaseOutcome, type OpWaveReleasePort } from "./op-waves-release";
+import { opWaveRiskLines, releaseOfCommit, type OpWaveReleaseOutcome, type OpWaveReleasePort } from "./op-waves-release";
 
 /**
  * The release ledger on `chant/lifecycle` (#4615): each request through
@@ -16,6 +16,13 @@ import { releaseOfCommit, type OpWaveReleaseOutcome, type OpWaveReleasePort } fr
  */
 export function gitOpWaveReleasePort(opts: { cwd?: string; actor?: string } = {}): OpWaveReleasePort {
   return {
+    // #5387: each wave's change risk, on the commit's file, pushed with the release records after it.
+    async recordRisk(requests) {
+      const lines = opWaveRiskLines(requests, new Date().toISOString());
+      if (lines.length === 0) return;
+      const { appendWaveRisk } = await import("../lifecycle/release-risk");
+      await appendWaveRisk(lines, opts.cwd ? { cwd: opts.cwd } : undefined);
+    },
     async record(requests) {
       if (requests.length === 0) return [];
       const { maybeRecordAutoRelease } = await import("../components/auto-release");

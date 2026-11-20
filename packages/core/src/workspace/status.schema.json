@@ -268,6 +268,27 @@
                   "key": { "type": ["string", "null"], "description": "The fingerprint of the key in the signature. Reported, never trusted." },
                   "reason": { "type": "string" }
                 }
+              },
+              "risk": {
+                "type": "object",
+                "description": "Added in contract 1 by #5387. The change risk the cut carries: the score the waves that applied its commit recorded under holds.risk, combined, and how each stage after the first whose gate sets holds.risk in the member's pipeline reads it. Absent when the cut carries none.",
+                "required": ["score", "level", "stages"],
+                "properties": {
+                  "score": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "level": { "enum": ["low", "medium", "high"] },
+                  "stages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["stage", "approveAbove", "over"],
+                      "properties": {
+                        "stage": { "type": "string" },
+                        "approveAbove": { "type": ["number", "null"], "description": "The stage's threshold, or null when its holds.risk sets none." },
+                        "over": { "type": "boolean", "description": "True when the stage's gate takes more approvals for this release." }
+                      }
+                    }
+                  }
+                }
               }
             }
           }

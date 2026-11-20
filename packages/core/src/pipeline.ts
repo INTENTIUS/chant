@@ -51,6 +51,18 @@ export const STAGE_GRAPH_FLOOR = NEXT_RELEASE;
 export const STAGE_PAUSE_URGENT_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose release carries its change risk (#5387): a wave
+ * that scores its change set under `holds.risk` writes the record beside its
+ * release records, `chant release cut` binds the commit's records to the
+ * release on its cut line, and `components promote --release` reads it at
+ * each stage gate whose `holds.risk` is set, adding the risk's approval rules
+ * over the threshold. The plan note shows how each later stage reads the
+ * plan's score, and `workspace status` each cut's. A product feature-detects
+ * a later stage's `holds.risk` on this name.
+ */
+export const RELEASE_RISK_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */
@@ -62,6 +74,24 @@ export * from "./pipeline/spec";
 export { foldPipelineSource, pipelineFindingLine, PIPELINE_FOLD_RULE, PIPELINE_MODULE, type PipelineFinding, type PipelineFold } from "./pipeline/fold";
 export { artifactsPublishHook, promotionOrderOf, pipelineStage, releaseCutHook, stageHeldAt, stageHeldLine, stageWavesName, stageWavesSpec, type StageHeld } from "./pipeline/stages";
 export { gitShowPipeline, promoteBase, readMemberPipeline, readPipelineAt, type PipelineRead, type PipelineShow } from "./pipeline/read";
+export {
+  isReleaseRisk,
+  laterStageRisk,
+  laterStageRiskLines,
+  readReleaseRisk,
+  releaseRiskAt,
+  releaseRiskOf,
+  riskAtThreshold,
+  stageRiskRead,
+  stageRiskSettings,
+  RELEASE_RISK_DIR,
+  type ReleaseRisk,
+  type StageRiskRead,
+  type StageRiskSettings,
+  type StageRiskView,
+  type WaveRisk,
+  type WaveRiskLine,
+} from "./lifecycle/release-risk";
 export { lineDiff, pipelineChange, pipelineChangeSection, pipelineSpecLines, type PipelineChange } from "./pipeline/diff";
 export {
   gitStageArtifactPort,
