@@ -159,7 +159,7 @@ describe("each stage's op-waves spec", () => {
   });
 
   test("the stage order is the promotion order", () => {
-    expect(promotionOrderOf(asPipelineSpec({ ...spec, stages: spec.stages.map((s, i) => (i === 0 ? { ...s, canary: true } : s)) }))).toEqual([
+    expect(promotionOrderOf(asPipelineSpec({ ...spec, stages: spec.stages.map((s, i) => (i === 0 ? { ...s, canary: true, soak: { duration: "1h", checks: [{ kind: "drift" }] } } : s)) }))).toEqual([
       { name: "dev", canary: true },
       { name: "staging", canary: false },
       { name: "prod", canary: false },

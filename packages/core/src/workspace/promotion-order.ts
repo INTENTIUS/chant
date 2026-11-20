@@ -9,8 +9,10 @@
  * A component's own `environments` (`component.schema.json`) say where its
  * release is hosted in each environment and never set the order.
  *
- * `canary` marks a step as the canary step. It is declared and surfaced only:
- * no chant command acts on it yet.
+ * `canary` marks a step as the canary step. An `environments` entry has no
+ * soak to hold the steps after it, so `chant lint` warns on one (COR027).
+ * In a pipeline (`../pipeline/stages.ts`), the canary stage's soak holds
+ * every stage after it (#5327), and the step carries that stage's mark.
  */
 
 import { existsSync, readFileSync } from "node:fs";

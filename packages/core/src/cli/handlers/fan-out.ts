@@ -78,6 +78,9 @@ import { formatError, formatInfo, formatWarning } from "../format";
 import { reportUninstalledDependencies } from "../dependencies";
 import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { resolveBuildRoot } from "./lifecycle";
+import { fanOutCanarySoak, fanOutCanarySoakOf, fanOutHasCanaryWave } from "../../components/fan-out-canary";
+import { promoteBase, readPipelineAt } from "../../pipeline/read";
+import type { Soak } from "../../pipeline/soak";
 import { GATED_EXIT_CODE, autoReleaseRun, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
 import { withComponentEndpoint } from "../component-endpoint";
@@ -463,6 +466,34 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   const { applyLeaseOptions } = await import("../../components/apply-lease");
   const leasing = await applyLeaseOptions(process.cwd());
 
+  // #5327: the canary wave's soak, the soak of the pipeline stage this fan-out runs in, holds every wave after it.
+  if (args.canary?.length && fanOutHasCanaryWave(derived.plan.waves, args.canary)) {
+    const soak = canaryStageSoak(projectPath, env);
+    if (typeof soak === "number") return soak;
+    if (soak && !waveGate) {
+      console.error(formatError({
+        message: `stage "${env}" of the member's pipeline has a soak, which holds the waves after the canary, and this fan-out runs every wave at once`,
+        hint: "Pass --wave-gate <name> so each wave after the canary waits for its soak.",
+      }));
+      return 1;
+    }
+    if (soak && waveGate) {
+      const { gitGateLedgerPort } = await import("../../op/gate");
+      const { soakCheckReader } = await import("../../pipeline/soak-checks");
+      const { jobSoakSources } = await import("../../pipeline/soak-sources");
+      waveGate.soak = fanOutCanarySoak({
+        op: FAN_OUT_GATE_OP,
+        gate: waveGate.gate,
+        soak,
+        env,
+        canaryWave: () => wavesSoFar.find((w) => w.wave === 1),
+        port: gitGateLedgerPort(),
+        read: soakCheckReader(jobSoakSources({ op: FAN_OUT_GATE_OP, cwd: projectPath })),
+        log: (line) => console.error(formatInfo(line)),
+      });
+    }
+  }
+
   let result;
   try {
     result = await runFanOut(runPlan, derived.components, registry, {
@@ -575,6 +606,13 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
     );
   }
 
+  // #5327: the canary's soak stopped the run before a later wave planned.
+  if (result.soak) {
+    console.error(formatInfo(result.soak.message));
+    console.error(formatInfo(result.soak.hint));
+    if (!result.gate) return result.status === "gated" ? GATED_EXIT_CODE : failedRunExitCode(result.results);
+  }
+
   // A failed root outranks a gate in the status, but a gated-wave run that
   // stopped at a wave's gate still prints how to approve it.
   if (result.gate && (result.status === "gated" || waveGate)) {
@@ -602,4 +640,21 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
   // A step that refused the wave's plan because its target moved since the
   // approval exits 3, the code of a wave whose plan changed (#3997).
   return result.status === "ok" ? 0 : failedRunExitCode(result.results);
+}
+
+/**
+ * The soak a fan-out's canary takes (#5327): stage `env`'s soak in the
+ * member's pipeline at the default branch's tip, as a promote reads it.
+ * Undefined with no pipeline, no such stage, or no soak; exit 1 when the
+ * pipeline there does not fold, since its soak cannot be read.
+ */
+function canaryStageSoak(projectPath: string, env: string): Soak | undefined | number {
+  const base = promoteBase(projectPath);
+  if (!base) return undefined;
+  const read = readPipelineAt(base, projectPath);
+  if (read.status === "refused") {
+    console.error(formatError({ message: `the pipeline at ${base.slice(0, 12)} does not fold, so the canary's soak cannot be read and nothing ran: ${read.line}` }));
+    return 1;
+  }
+  return read.status === "folded" ? fanOutCanarySoakOf(read.spec, env) : undefined;
 }

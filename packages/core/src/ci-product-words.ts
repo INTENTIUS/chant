@@ -1382,7 +1382,7 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     concept: "the members that apply first, in a wave of their own",
     section: "apply",
     value: "a list of member names or globs",
-    chant: "the first wave of the op-waves spec",
+    chant: "the first wave of the op-waves spec, marked `canary` (#5327): its soak, the environment's soak unless the wave has its own, holds every wave after it",
     products: ["terragucci", "plywood"],
   },
   {

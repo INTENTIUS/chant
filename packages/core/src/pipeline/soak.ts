@@ -522,6 +522,18 @@ export function soakHoldLines(decision: Pick<SoakDecision, "holds">): string[] {
   });
 }
 
+/**
+ * How many checks a soak reads, its own and its overrides' (#5327). A
+ * canary with none holds nothing but a timer, so a pipeline refuses it and
+ * existing config warns.
+ */
+export function soakCheckCount(soak: { checks?: unknown; overrides?: unknown } | undefined): number {
+  if (!soak) return 0;
+  const count = (checks: unknown): number => (Array.isArray(checks) ? checks.length : 0);
+  const overrides: unknown[] = Array.isArray(soak.overrides) ? soak.overrides : [];
+  return count(soak.checks) + overrides.reduce<number>((n, o) => n + (typeof o === "object" && o !== null ? count((o as { checks?: unknown }).checks) : 0), 0);
+}
+
 /** How a soak reads in the plan note and the docs: its duration and its checks. */
 export function soakSummary(soak: Soak): string {
   const checks = (soak.checks ?? []).map((c) => `${soakCheckName(c)} (${soakOnFail(c)})`);

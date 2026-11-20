@@ -213,7 +213,7 @@ The mechanism ships as `resolveEnvironmentSet` and `environmentSetJobInputs` fro
 | `labels.<label>` | the members a labelled pull request plans, by glob | a list of globs | `ci.labels` |
 | `locks.when` | when a pull request takes its locks, in the product's stage words | `plan`, `apply`, `preview`, `up` | `ci.locks` |
 | `locks.grain` | what one lock covers | `resource`, `stack` | `ci.lockGrain` |
-| `waves.canary` | the members that apply first, in a wave of their own | a list of member names or globs | the first wave of the op-waves spec |
+| `waves.canary` | the members that apply first, in a wave of their own | a list of member names or globs | the first wave of the op-waves spec, marked `canary`: its soak, the environment's soak unless the wave has its own, holds every wave after it |
 | `waves.after.<name>` | the members one member applies after | a list of member names | the wave order of the op-waves spec |
 
 ## Approval and policy

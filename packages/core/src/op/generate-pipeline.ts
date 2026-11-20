@@ -27,7 +27,7 @@ import {
   type OpPipelineJob,
   type OpWavesPipelineOptions,
 } from "../lexicon";
-import { assertOpWavesSpec, type OpWaveJob, type OpWavesSpec } from "./op-waves";
+import { assertOpWavesSpec, opWavesCanaryWarnings, type OpWaveJob, type OpWavesSpec } from "./op-waves";
 import { opWavesQuorumFindings, type OpWavesProofSources } from "./op-waves-quorum-warnings";
 
 /**
@@ -146,7 +146,7 @@ export interface GenerateOpWavesPipelineResult {
   files?: OpPipelineFile[];
   jobs?: OpWaveJob[];
   error?: string;
-  /** What the spec allows but should not rely on (#5349), one line each, from `opWavesQuorumFindings`. */
+  /** What the spec allows but should not rely on, one line each: `opWavesQuorumFindings` (#5349), then `opWavesCanaryWarnings` (#5327). */
   warnings?: string[];
 }
 
@@ -178,7 +178,8 @@ export async function generateOpWavesPipeline(
   // #5349: rules no approver can meet (refused once UNPROVABLE_QUORUM_REFUSED is true), and counts plain lines can meet.
   const findings = opWavesQuorumFindings(spec, proof ?? (await opWavesProofSourcesAt(cwd ?? process.cwd())));
   if (findings.refusals.length > 0) return { success: false, error: findings.refusals.join("\n") };
-  const warnings = findings.warnings;
+  // #5327: a canary wave with no soak checks holds nothing; existing config warns.
+  const warnings = [...findings.warnings, ...opWavesCanaryWarnings(spec)];
   const discovered = await discoverOps({ cwd });
   if (discovered.errors.length > 0) return { success: false, error: discovered.errors.join("\n") };
   const named = [...new Set([spec.op, ...spec.waves.flatMap((w) => w.runs.map((r) => r.op ?? spec.op))])];

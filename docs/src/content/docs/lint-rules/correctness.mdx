@@ -266,6 +266,26 @@ binds: jobQueue
 
 ---
 
+## COR027: Canary Without Soak Checks
+
+A canary holds the steps after it through its soak. An entry of a member's `environments` in `chant.config.ts` can be marked `canary: true`, and it carries no soak checks, so it holds nothing: the environments after it are promoted without waiting for it. `chant lint` warns on each such entry in a member with no `.chant/pipeline.ts`. In a pipeline, a canary stage with no soak checks fails the build instead (EVL012), and a member with a pipeline promotes by it, so the warning is left out there.
+
+**Severity:** warning
+
+```typescript
+// ❌ Triggers COR027 — chant.config.ts
+environments: ["dev", { name: "staging", canary: true }, "prod"],
+```
+
+```typescript
+// ✅ Fixed — .chant/pipeline.ts
+{ name: "staging", canary: true, waves: [staging], soak: { duration: "6h", checks: [{ kind: "health" }] } },
+```
+
+See [The canary](/chant/guide/soak/#the-canary).
+
+---
+
 ## OPS012: Activity Step Args Don't Match the Activity's Contract
 
 An activity step's `args` and `outcomeAttribute.from` must match the activity's registered `ActivityContract`: its name and arg schema, plus its return schema when one is declared. The check skips a step whose `fn` has no registered contract, since contracts are opt-in per activity.

@@ -24,7 +24,7 @@ import { opWaveHoldsProblems, type OpWaveHolds } from "../op/op-waves-capability
 import { quorumProblems, QUORUM_MAX_DEPTH, type GateQuorumNode } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
-import { soakProblems, type Soak } from "./soak";
+import { soakCheckCount, soakProblems, type Soak } from "./soak";
 
 /** The `kind` a folded pipeline carries. A reader refuses any other. */
 export const PIPELINE_SPEC_KIND = "chant.pipeline/v1";
@@ -116,7 +116,13 @@ export interface PipelineStage {
    * per-environment inputs are read by. Lowercase letters, digits, `-` and `_`.
    */
   name: string;
-  /** The canary stage: the first to take a release. Declared and shown. */
+  /**
+   * The canary stage (#5327): its soak holds every stage after it. A
+   * promote into any stage downstream of the canary reads the canary's
+   * soak, through its gate `<canary>-soak`, before that stage's gate, so a
+   * promote from a later stage or one that skips the canary waits for it
+   * too. A canary stage takes a `soak` with at least one check.
+   */
   canary?: boolean;
   /** The waves the stage applies, in order. */
   waves: PipelineWave[];
@@ -345,8 +351,13 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
         out.push(...soakProblems(w.soak, `${at}.waves[${k}]`));
         if (w.soak !== undefined && w.rest === true) out.push(`${at}.waves[${k}] has soak and rest; the waves a rest wave walks run in its one job, so none of them can wait for a soak`);
         if (w.soak !== undefined && k === (stage.waves as unknown[]).length - 1) out.push(`${at}.waves[${k}] has soak and is the stage's last wave; a wave's soak holds the wave after it, so the last wave's goes on the stage (${at}.soak)`);
+        out.push(...canaryWaveProblems(w, k, (stage.waves as unknown[]).length, stage.soak, at));
       }
     });
+  }
+  // #5327: a canary holds the stages after it through its soak, so a canary with no check holds nothing.
+  if (stage.canary === true && soakCheckCount(isMap(stage.soak) ? stage.soak : undefined) === 0) {
+    out.push(`${at} is the canary and its soak has no checks; the canary's soak holds every stage after it, so give the stage a soak with at least one check (${at}.soak.checks)`);
   }
   out.push(...gateProblems(stage.gate, at));
   if (stage.hooks !== undefined && !isMap(stage.hooks)) out.push(`${at}.hooks must be { "before"?, "after"?, "apply"? }`);
@@ -369,6 +380,44 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   if (stage.queue !== undefined && !(PIPELINE_STAGE_QUEUES as readonly unknown[]).includes(stage.queue)) out.push(`${at}.queue is ${PIPELINE_STAGE_QUEUES.join(", ")}`);
   out.push(...soakProblems(stage.soak, at));
   return out;
+}
+
+/**
+ * A canary wave inside a stage (#5327): the stage's first wave, with a wave
+ * after it to hold, and soak checks of its own or, when it declares no
+ * soak, the stage's, which it then takes (`./stages.ts`).
+ */
+function canaryWaveProblems(w: Record<string, unknown>, k: number, count: number, stageSoak: unknown, at: string): string[] {
+  if (w.canary === undefined) return [];
+  if (typeof w.canary !== "boolean") return [`${at}.waves[${k}].canary must be true or false`];
+  if (!w.canary) return [];
+  const out: string[] = [];
+  if (k !== 0) out.push(`${at}.waves[${k}] is a canary wave and not the stage's first wave; the canary applies before every other wave`);
+  if (count === 1) out.push(`${at}.waves[${k}] is a canary wave and the stage's only wave, so no wave waits for it; mark the stage canary instead (${at}.canary)`);
+  if (w.rest === true) out.push(`${at}.waves[${k}] is a canary wave and has rest; the waves a rest wave walks run in its one job, so none of them could wait for the canary's soak`);
+  const soak = w.soak !== undefined ? w.soak : stageSoak;
+  if (soakCheckCount(isMap(soak) ? soak : undefined) === 0) {
+    out.push(`${at}.waves[${k}] is a canary wave with no soak checks, of its own or the stage's; its soak holds the waves after it, so give it a soak with at least one check (${at}.waves[${k}].soak, or ${at}.soak)`);
+  }
+  return out;
+}
+
+/**
+ * The canary stages a promote into `to` waits on (#5327), in pipeline
+ * order: each stage marked `canary` that `to` follows, directly or through
+ * the stages between ({@link stageUpstreams}). `to` itself is not one.
+ */
+export function canaryStagesBefore(spec: Pick<PipelineDeclaration, "stages">, to: string): PipelineStage[] {
+  const seen = new Set<string>();
+  const walk = (name: string): void => {
+    for (const up of stageUpstreams(spec, name)) {
+      if (seen.has(up)) continue;
+      seen.add(up);
+      walk(up);
+    }
+  };
+  walk(to);
+  return spec.stages.filter((s) => s.canary === true && s.name !== to && seen.has(s.name));
 }
 
 /**
@@ -539,7 +588,7 @@ export const PIPELINE_SPEC_SCHEMA = {
         properties: {
           name: { type: "string", pattern: NAME.source },
           canary: { type: "boolean" },
-          waves: { type: "array", minItems: 1, items: { type: "object", required: ["name"], properties: { name: { type: "string", pattern: NAME.source }, failureTolerance: { $ref: "#/$defs/tolerance" }, soak: { $ref: "#/$defs/soak" } } } },
+          waves: { type: "array", minItems: 1, items: { type: "object", required: ["name"], properties: { name: { type: "string", pattern: NAME.source }, failureTolerance: { $ref: "#/$defs/tolerance" }, soak: { $ref: "#/$defs/soak" }, canary: { type: "boolean" } } } },
           gate: {
             type: "object",
             additionalProperties: false,

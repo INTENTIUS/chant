@@ -23,7 +23,11 @@
  * `./soak-gate.ts`): while it holds, the promote records the soak's pending
  * fact (gate `<from>-soak`) and exits 3 with the time left. Its clock starts
  * at the newest apply of the promoted components in the `from` stage's
- * release ledger.
+ * release ledger. Then the soak of each canary stage `to` follows (#5327,
+ * `canaryStagesBefore`), through the canary's own gate `<canary>-soak` and
+ * its own clock: a promote from a later stage reads it again, and a skip
+ * past the canary finds no apply there and holds until a person ends the
+ * canary's soak early.
  *
  * A gate that waits records its pending fact and the promote exits 3, as a
  * gated run does; `chant approve <pipeline> <gate> --plan <digest>` passes it.
@@ -67,7 +71,7 @@
 
 import { createHash } from "node:crypto";
 import { approveCommand, evaluateGate, type GateApprovalRule, type GateLedgerPort } from "../op/gate";
-import { pipelineTracksStages, stageUpstreams, type PipelineSpec, type PipelineStage } from "./spec";
+import { canaryStagesBefore, pipelineTracksStages, stageUpstreams, type PipelineSpec, type PipelineStage } from "./spec";
 import { replacedIn, stageQueueOf, succeededIn, type StageLine, type StageLogPort } from "../lifecycle/stage-log";
 import { gateRejections, rejectionLine } from "../op/gate-reject";
 import { gateSealRefusal, type GateSigners } from "../lifecycle/gate-seal";
@@ -684,6 +688,60 @@ export async function pipelineUrgentGate(input: {
   const approval = got.resolution;
   await port.appendApplied?.({ version: 1, kind: "applied", op: spec.name, gate, planDigest: digest, approvedAt: approval.timestamp, approvedBy: approval.resolvedBy, timestamp: now, ...(input.gitSha ? { commit: input.gitSha } : {}) });
   return { passed: true, approval, role: rule.role, lines: [`stage ${stage.name}: urgent, ${spec.name} ${gate} approved by ${approval.resolvedBy} (${rule.role})`] };
+}
+
+/**
+ * Every soak in front of a promotion into `to`, in order (#5326, #5327):
+ * the soak of each stage promoted from (`upstreams` on a join, else
+ * `from`), then the soak of each canary stage `to` follows and is not one
+ * of those ({@link canaryStagesBefore}). Each is read through its own gate
+ * by {@link pipelinePromoteSoak}; the first that holds stops the promote.
+ * `items` gives what a stage applied of what is promoted, and `read` its
+ * check reader. A canary with nothing applied says so in `notes` and
+ * holds, since its clock cannot start. `lines` are the passed soaks' lines.
+ */
+export async function pipelinePromoteSoaks(input: {
+  spec: PipelineSpec;
+  from: string;
+  to: string;
+  upstreams?: readonly string[];
+  items: (stage: string) => Promise<readonly { component: string; source: { timestamp: string } }[]>;
+  digest: string;
+  releaseDigest?: string;
+  port: GateLedgerPort;
+  read: (stage: string) => SoakCheckReader;
+  now: Date;
+  gitSha?: string;
+  notify?: SoakGateInput["notify"];
+}): Promise<SoakGateOutcome & { notes: string[] }> {
+  const sources = input.upstreams ? [...input.upstreams] : [input.from];
+  const canaries = canaryStagesBefore(input.spec, input.to).map((s) => s.name).filter((name) => !sources.includes(name));
+  const notes: string[] = [];
+  const lines: string[] = [];
+  let last: SoakGateOutcome | undefined;
+  for (const source of [...sources, ...canaries]) {
+    const items = await input.items(source);
+    if (canaries.includes(source) && items.length === 0) {
+      notes.push(`the canary stage ${source} has no apply of what this promote deploys, so its soak cannot start; promote through ${source} first, or end its soak early through its gate`);
+    }
+    const soak = await pipelinePromoteSoak({
+      spec: input.spec,
+      from: source,
+      to: input.to,
+      items,
+      digest: input.digest,
+      ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
+      port: input.port,
+      read: input.read(source),
+      now: input.now,
+      ...(input.gitSha ? { gitSha: input.gitSha } : {}),
+      ...(input.notify ? { notify: input.notify } : {}),
+    });
+    if (!soak.passed) return { ...soak, notes };
+    lines.push(...soak.lines);
+    last = soak;
+  }
+  return { passed: true, lines, decision: last!.decision, notes };
 }
 
 /**

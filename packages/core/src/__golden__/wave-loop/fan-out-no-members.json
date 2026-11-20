@@ -167,7 +167,8 @@
             }
           ],
           "status": "applied",
-          "approvedBy": "ana"
+          "approvedBy": "ana",
+          "settledAt": "2026-10-11T00:00:00.000Z"
         },
         {
           "wave": 2,
@@ -185,7 +186,8 @@
             }
           ],
           "status": "applied",
-          "approvedBy": "ana"
+          "approvedBy": "ana",
+          "settledAt": "2026-10-11T00:00:00.000Z"
         },
         {
           "wave": 3,
@@ -202,7 +204,8 @@
             }
           ],
           "status": "applied",
-          "approvedBy": "ana"
+          "approvedBy": "ana",
+          "settledAt": "2026-10-11T00:00:00.000Z"
         }
       ]
     },
@@ -424,7 +427,8 @@
           }
         ],
         "status": "applied",
-        "approvedBy": "ana"
+        "approvedBy": "ana",
+        "settledAt": "2026-10-11T00:00:00.000Z"
       },
       {
         "wave": 2,
@@ -442,7 +446,8 @@
           }
         ],
         "status": "applied",
-        "approvedBy": "ana"
+        "approvedBy": "ana",
+        "settledAt": "2026-10-11T00:00:00.000Z"
       },
       {
         "wave": 3,
@@ -459,7 +464,8 @@
           }
         ],
         "status": "applied",
-        "approvedBy": "ana"
+        "approvedBy": "ana",
+        "settledAt": "2026-10-11T00:00:00.000Z"
       }
     ],
     "components": [
@@ -741,7 +747,8 @@
           "digest": "",
           "members": [],
           "status": "applied",
-          "approvedBy": "ana"
+          "approvedBy": "ana",
+          "settledAt": "2026-10-11T00:00:00.000Z"
         },
         {
           "wave": 2,
@@ -846,7 +853,8 @@
         "digest": "",
         "members": [],
         "status": "applied",
-        "approvedBy": "ana"
+        "approvedBy": "ana",
+        "settledAt": "2026-10-11T00:00:00.000Z"
       },
       {
         "wave": 2,

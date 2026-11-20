@@ -10,6 +10,11 @@
  * it wait as they do for a gate. Running the job again reads the clock and
  * the checks again; approving that gate ends the soak early. The wave's own
  * gate still decides after it.
+ *
+ * A canary wave (#5327, `OpWave.canary`, the first wave) holds every wave
+ * after it, not only the next: each later wave's job reads the canary's
+ * soak through the same gate, `<gate>-wave-1-soak`, before the soak of the
+ * wave just before it. It is one soak with one clock and one early end.
  */
 
 import { createHash } from "node:crypto";
@@ -51,35 +56,64 @@ export function waveSoakAppliedFrom(records: readonly OpRunRecord[], spec: Pick<
 }
 
 /**
- * The soak of the wave before wave `k`: undefined when it declares none or
- * passed, else the result the job ends with (exit 3). `log` gets each line.
+ * The waves whose soak wave `k`'s job reads before it plans, 1-based, in
+ * order: the canary wave (#5327) when wave `k` comes after it, and the wave
+ * just before `k` when it declares a soak (#5326). One wave is read once,
+ * through its one gate, so the canary's soak right before wave 2 is the
+ * same hold wave 3 reads.
+ */
+export function opWaveSoaksBefore(spec: Pick<OpWavesSpec, "waves">, k: number): number[] {
+  const out: number[] = [];
+  const canary = spec.waves[0]?.canary === true && spec.waves[0].soak !== undefined ? 1 : undefined;
+  if (canary !== undefined && k > canary) out.push(canary);
+  if (k > 1 && spec.waves[k - 2]?.soak !== undefined && !out.includes(k - 1)) out.push(k - 1);
+  return out;
+}
+
+/**
+ * The soaks in front of wave `k` ({@link opWaveSoaksBefore}): undefined when
+ * there is none or each passed, else the result the job ends with (exit 3)
+ * for the first that holds. `log` gets each line.
  */
 export async function opWaveSoakStop(
   input: { spec: OpWavesSpec; k: number; cwd: string; gates?: GateLedgerPort; soak?: OpWaveSoakOptions; log: (line: string) => void },
 ): Promise<SoakGateOutcome | undefined> {
+  for (const j of opWaveSoaksBefore(input.spec, input.k)) {
+    const held = await waveSoakStop(input, j);
+    if (held) return held;
+  }
+  return undefined;
+}
+
+/** The soak of wave `j` in front of wave `k`. */
+async function waveSoakStop(
+  input: { spec: OpWavesSpec; k: number; cwd: string; gates?: GateLedgerPort; soak?: OpWaveSoakOptions; log: (line: string) => void },
+  j: number,
+): Promise<SoakGateOutcome | undefined> {
   const { spec, k, cwd, log } = input;
-  const before = k > 1 ? spec.waves[k - 2] : undefined;
+  const before = spec.waves[j - 1];
   if (!before?.soak) return undefined;
+  const what = `wave ${j} (${before.name})${before.canary ? ", the canary," : ""}`;
   const env = spec.labels?.Env ?? DEFAULT_RUN_ENV;
   const applied = input.soak?.applied
-    ? await input.soak.applied(k - 1)
+    ? await input.soak.applied(j)
     : await (async () => {
         await fetchLifecycle({ cwd }).catch(() => false);
-        return waveSoakAppliedFrom((await readRunLedger(env, spec.name, { cwd })).records, spec, k - 1);
+        return waveSoakAppliedFrom((await readRunLedger(env, spec.name, { cwd })).records, spec, j);
       })();
   if (applied && applied.subjects.length === 0) {
-    log(`wave ${k - 1} (${before.name}) applied nothing on its last run, so it has nothing to soak`);
+    log(`${what} applied nothing on its last run, so it has nothing to soak`);
     return undefined;
   }
   const words = activeProductWords();
   const outcome = await soakAtGate({
     op: spec.name,
-    gate: waveSoakGate(opWaveGateName(spec, k - 1)),
+    gate: waveSoakGate(opWaveGateName(spec, j)),
     soak: before.soak,
     stage: env,
     holds: `wave ${k} (${spec.waves[k - 1]?.name ?? k})`,
-    wave: k - 1,
-    digest: applied?.digest ?? `sha256:${createHash("sha256").update(JSON.stringify([spec.name, k - 1, "no-run"])).digest("hex")}`,
+    wave: j,
+    digest: applied?.digest ?? `sha256:${createHash("sha256").update(JSON.stringify([spec.name, j, "no-run"])).digest("hex")}`,
     subjects: applied?.subjects ?? [],
     port: input.gates ?? gitGateLedgerPort({ cwd }),
     read: input.soak?.read ?? soakCheckReader(jobSoakSources({ op: spec.name, cwd })),

@@ -11,6 +11,7 @@ import { loadLocalRules } from "../../lint/rule-loader";
 import { loadCoreRules } from "../../lint/rules/index";
 import { loadComponentChecks, signalOnlyRootsOf } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
+import { canaryConfigDiagnostics } from "../../lint/canary-checks";
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
 import type { RollbackPolicy } from "../../components/capability";
 import { coreOpChecks, workspaceIdentityGates } from "../../lint/rules/op";
@@ -892,8 +893,12 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
    * and the ones that did resolve are still better than none.
    */
   let buildParams = options.buildParams;
+  // #5327: where the loaded config came from, for COR027's diagnostic.
+  let projectConfigPath: string | undefined;
   try {
-    const chantConfig = (await loadChantConfig(projectRoot)).config;
+    const loadedProject = await loadChantConfig(projectRoot);
+    const chantConfig = loadedProject.config;
+    projectConfigPath = loadedProject.configPath;
     projectConfig = chantConfig as LintProjectConfig;
     knowledgeBundle = await loadOkfBundle(resolveKnowledgeDir(chantConfig, projectRoot));
     buildParams ??= resolveBuildParams(chantConfig.buildParams, { env: process.env }).provenance;
@@ -1017,6 +1022,18 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     const postOpResult = await runOpCheckDiagnostics(infraPath, files, buildParams, loaded.plugins);
     diagnostics.push(...postOpResult.diagnostics);
     suppressed.push(...postOpResult.suppressed);
+  }
+
+  // #5327: COR027, a canary in `environments`, which carries no soak checks. Run once, after any `--fix`; it has no fix.
+  if (projectConfigPath && projectConfig?.environments) {
+    diagnostics.push(
+      ...canaryConfigDiagnostics({
+        configPath: projectConfigPath,
+        configText: existsSync(projectConfigPath) ? readFileSync(projectConfigPath, "utf8") : undefined,
+        environments: projectConfig.environments,
+        hasPipeline: existsSync(pipelineFile),
+      }),
+    );
   }
 
   // chant #3750: each lexicon's own post-synth checks, over an in-memory

@@ -75,10 +75,11 @@ import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 import { actorFromEnv } from "../../actor";
 import { promoteBase, readPipelineAt } from "../../pipeline/read";
-import { pipelinePromoteRejected, pipelinePromoteSoak, pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, pipelineUrgentUpstream, promotedDigest, urgentUpstreamStop, type PipelinePromoteStop } from "../../pipeline/promote";
+import { pipelinePromoteRejected, pipelinePromoteSoaks, pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, pipelineUrgentUpstream, promotedDigest, urgentUpstreamStop, type PipelinePromoteStop } from "../../pipeline/promote";
 import { gitStageLedgerPort, pauseLine, releaseMissingIn, stagePaused, stagePausedLine, supersededBy, waitingLine, type StageLedgerPort } from "../../pipeline/stage-ledger";
 import { stageSoakGate } from "../../pipeline/soak-gate";
 import { stageWavesName } from "../../pipeline/stages";
+import { canaryStagesBefore } from "../../pipeline/spec";
 import { soakCheckReader } from "../../pipeline/soak-checks";
 import { jobSoakSources } from "../../pipeline/soak-sources";
 import { isPendingGateExpired } from "../../lifecycle/gate-ledger-select";
@@ -1198,7 +1199,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     const port = gitGateLedgerPort();
     const head = await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}));
     const proof = await promoteProof(project.projectPath);
-    // The order at promote: a pause (above), then a rejection, then the soak of each stage promoted from, then the gates and risk.
+    // The order at promote: a pause (above), then a rejection, then the soak of each stage promoted from and of each canary upstream, then the gates and risk.
     // #5354: a rejected release stops here, before a soak records anything for it.
     const rejection = await pipelinePromoteRejected({ spec: pipeline, to, skipped, digest, ...(under ? { releaseDigest: under.release.releaseDigest } : {}), port, ...(proof ? { proof } : {}), ...(args.urgent ? { urgent: true } : {}) });
     if (rejection) {
@@ -1208,27 +1209,27 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     }
     // #5326: the soak of each stage promoted from holds the promotion next; it adds a wait and never stands in for a gate.
     // An urgent promote waits on it too, unless a person ends the soak through its gate.
-    for (const source of upstreams ?? [from]) {
-      const items = source === from ? plan.items : soakItemsOf(await readLedger(source), plan.items.map((i) => i.component), under?.release.releaseDigest);
-      const soak = await pipelinePromoteSoak({
-        spec: pipeline,
-        from: source,
-        to,
-        items,
-        digest,
-        ...(under ? { releaseDigest: under.release.releaseDigest } : {}),
-        port,
-        read: soakCheckReader(jobSoakSources({ op: stageWavesName(pipeline, source), cwd: project.projectPath })),
-        now: new Date(),
-        ...head,
-        ...(pipeline.defaults?.notify ? { notify: { config: pipeline.defaults.notify, source: activeProductWords().notify.source, project: pipeline.name } } : {}),
-      });
-      if (!soak.passed) {
-        console.error(formatError({ message: `${soak.message} [${soak.code}]`, hint: soak.hint }));
-        return soak.exitCode;
-      }
-      for (const line of soak.lines) console.error(formatInfo(line));
+    // #5327: then the soak of each canary stage upstream, through its own gate, so a later stage or a skip waits for the canary.
+    const soak = await pipelinePromoteSoaks({
+      spec: pipeline,
+      from,
+      to,
+      ...(upstreams ? { upstreams } : {}),
+      items: async (source) => (source === from ? plan.items : soakItemsOf(await readLedger(source), plan.items, under?.release.releaseDigest)),
+      digest,
+      ...(under ? { releaseDigest: under.release.releaseDigest } : {}),
+      port,
+      read: (source) => soakCheckReader(jobSoakSources({ op: stageWavesName(pipeline, source), cwd: project.projectPath })),
+      now: new Date(),
+      ...head,
+      ...(pipeline.defaults?.notify ? { notify: { config: pipeline.defaults.notify, source: activeProductWords().notify.source, project: pipeline.name } } : {}),
+    });
+    for (const line of soak.notes) console.error(formatInfo(line));
+    if (!soak.passed) {
+      console.error(formatError({ message: `${soak.message} [${soak.code}]`, hint: soak.hint }));
+      return soak.exitCode;
     }
+    for (const line of soak.lines) console.error(formatInfo(line));
     const release = under ? await entryRelease(under) : undefined;
     const first = pipeline.stages[0]!.name;
     const firstStageCommits = upstreams?.includes(first) ? new Set((await readLedger(first)).filter((r) => r.env === first).map((r) => r.gitSha)) : undefined;
@@ -1280,13 +1281,14 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
 /**
  * What an upstream stage other than `--from` applied of the promoted
  * components (#5326), for its soak's clock: each component's newest record
- * there, of the release when one is promoted. A component with none is left
- * out; with none at all the soak cannot count its clock and holds.
+ * there, of the release when one is promoted, else of the digest promoted
+ * (#5327). A component with none is left out; with none at all the soak
+ * cannot count its clock and holds.
  */
-function soakItemsOf(records: ReleaseRecord[], components: readonly string[], releaseDigest: string | undefined): { component: string; source: { timestamp: string } }[] {
+function soakItemsOf(records: ReleaseRecord[], items: readonly { component: string; digest: string }[], releaseDigest: string | undefined): { component: string; source: { timestamp: string } }[] {
   const out: { component: string; source: { timestamp: string } }[] = [];
-  for (const component of components) {
-    const own = records.filter((r) => r.component === component && (releaseDigest === undefined || r.releaseDigest === releaseDigest));
+  for (const { component, digest } of items) {
+    const own = records.filter((r) => r.component === component && (releaseDigest === undefined ? r.digest === digest : r.releaseDigest === releaseDigest));
     const newest = own.sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)).at(-1);
     if (newest) out.push({ component, source: { timestamp: newest.timestamp } });
   }
@@ -1421,8 +1423,9 @@ async function recordUrgent(input: {
 /**
  * `components promote --to <stage> --pending` (#5326): the promotion into
  * `stage` that a soak holds, run again. The stage before it in the pipeline
- * read at base names the soak's gate; its newest standing pending fact for
- * `stage` names the release. Nothing pending, or the stage already running
+ * read at base, and each canary stage upstream of it (#5327), names a
+ * soak's gate; the newest standing pending fact of those for `stage` names
+ * the release. Nothing pending, or the stage already running
  * that release, exits 0 with a line; otherwise the promote runs as `--release
  * <digest>` would, soak and gates included.
  */
@@ -1441,11 +1444,14 @@ async function runPendingPromotion(ctx: CommandContext, to: string): Promise<num
     return 0;
   }
   const from = pipeline.stages[at - 1]!.name;
+  // #5327: a canary stage upstream holds the promotion through its own soak gate too.
+  const holders = [from, ...canaryStagesBefore(pipeline, to).map((s) => s.name).filter((n) => n !== from)];
+  const gates = new Map(holders.map((n) => [stageSoakGate(n), n]));
   await fetchLifecycle().catch(() => false);
   const now = new Date().toISOString();
   const { pending } = await gitGateLedgerPort().read(pipeline.name);
   const standing = pending
-    .filter((p) => p.gate === stageSoakGate(from) && p.soak?.to === to && p.releaseDigest && !isPendingGateExpired(p, now))
+    .filter((p) => gates.has(p.gate) && p.soak?.to === to && p.releaseDigest && !isPendingGateExpired(p, now))
     .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
     .at(-1);
   if (!standing?.releaseDigest) {
@@ -1456,7 +1462,7 @@ async function runPendingPromotion(ctx: CommandContext, to: string): Promise<num
     console.error(formatInfo(`${to} already runs the release ${standing.releaseDigest}, so nothing is pending`));
     return 0;
   }
-  console.error(formatInfo(`promoting the release ${standing.releaseDigest} into ${to}, held since ${standing.timestamp} by the soak of ${from}`));
+  console.error(formatInfo(`promoting the release ${standing.releaseDigest} into ${to}, held since ${standing.timestamp} by the soak of ${gates.get(standing.gate) ?? from}`));
   return runComponentsPromote({ ...ctx, args: { ...args, pendingPromotion: false, release: standing.releaseDigest } });
 }
 

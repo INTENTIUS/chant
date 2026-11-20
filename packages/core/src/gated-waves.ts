@@ -199,6 +199,8 @@ export interface WaveRecord {
   approved?: string;
   /** Components that failed to plan or to apply, with why. */
   failed?: Array<{ component: string; error?: string }>;
+  /** When the wave's applies ended, ISO 8601 (#5327): the clock of a canary wave's soak. Absent on a wave that applied nothing, and on a record written before it. */
+  settledAt?: string;
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -239,6 +241,7 @@ export function readWaveRecords(value: unknown): WaveRecord[] {
       ...(typeof raw.approvedBy === "string" ? { approvedBy: raw.approvedBy } : {}),
       ...(typeof raw.approved === "string" ? { approved: raw.approved } : {}),
       ...(failed.length > 0 ? { failed } : {}),
+      ...(typeof raw.settledAt === "string" ? { settledAt: raw.settledAt } : {}),
     });
   }
   return out;

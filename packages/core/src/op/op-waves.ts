@@ -89,7 +89,7 @@
  * the wave (exit 8). See `./op-waves-run.ts`.
  */
 
-import { soakProblems, type Soak } from "../pipeline/soak";
+import { soakCheckCount, soakProblems, type Soak } from "../pipeline/soak";
 import type { OpEnvironment, OpSetupStep, OpWaveJobInputs } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
 import type { CloudTradeSpec } from "../ci-identity";
@@ -475,6 +475,15 @@ export interface OpWave {
    * none: the stage's soak holds what comes after it.
    */
   soak?: Soak;
+  /**
+   * The canary wave (#5327): the members that apply first, in a wave of
+   * their own, as a product's `waves.canary` puts them. Only the first wave
+   * takes it. Its soak holds every wave after it: each later wave's job
+   * reads that soak before it plans, through the same gate
+   * `<gate>-wave-1-soak`, so a job run out of order waits too. A canary
+   * wave with no soak checks holds nothing, and the generator warns.
+   */
+  canary?: boolean;
 }
 
 /**
@@ -1045,6 +1054,23 @@ export function opWaveToleratedFailures(tolerance: number | string | undefined, 
   return typeof tolerance === "number" ? tolerance : Math.floor((runs * Number(tolerance.slice(0, -1))) / 100);
 }
 
+/**
+ * Warnings for a spec's canary wave (#5327), one line each: a canary wave
+ * with no soak checks, which holds nothing once it applies, and a canary
+ * that is the only wave, which has nothing after it to hold. The spec is
+ * not refused: a product's `waves.canary` orders the waves as it did.
+ */
+export function opWavesCanaryWarnings(spec: Pick<OpWavesSpec, "waves">): string[] {
+  const first = spec.waves[0];
+  if (!first?.canary) return [];
+  const out: string[] = [];
+  if (soakCheckCount(first.soak) === 0) {
+    out.push(`wave 1 (${first.name}) is the canary and has no soak checks, so the waves after it go on as soon as it applies. Give the canary wave a soak with checks, such as the environment's soak`);
+  }
+  if (spec.waves.length === 1) out.push(`wave 1 (${first.name}) is the canary and the only wave, so no wave waits for it; the stage's soak holds the next stage`);
+  return out;
+}
+
 /** Refuse a spec no job could run, naming what is wrong. */
 export function assertOpWavesSpec(spec: OpWavesSpec): void {
   const where = `Op waves "${spec.name}"`;
@@ -1249,6 +1275,12 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
       if (wave === spec.waves[spec.waves.length - 1]) problems.push(`wave "${wave.name}" has soak and is the last wave; a wave's soak holds the wave after it`);
       if (wave.rest) problems.push(`wave "${wave.name}" has soak and rest; the waves a rest wave walks run in its one job`);
       if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
+    }
+    if (wave.canary !== undefined) {
+      // #5327: the canary applies first, and its soak holds the waves after it in their own jobs.
+      if (typeof wave.canary !== "boolean") throw new Error(`${where}: wave "${wave.name}" has canary ${JSON.stringify(wave.canary)}; use true or false.`);
+      if (wave.canary && wave !== spec.waves[0]) throw new Error(`${where}: wave "${wave.name}" is a canary wave and not the first wave; the canary applies before every other wave.`);
+      if (wave.canary && wave.rest) throw new Error(`${where}: wave "${wave.name}" is a canary wave and has rest; the waves a rest wave walks run in its one job, so none of them could wait for the canary's soak.`);
     }
     if (wave.together !== undefined && typeof wave.together !== "boolean") throw new Error(`${where}: wave "${wave.name}" has together ${JSON.stringify(wave.together)}; use true or false.`);
     if (wave.together && spec.step === undefined) throw new Error(`${where}: wave "${wave.name}" plans its runs together, which only a \`step\`'s capability does. Give step.`);
