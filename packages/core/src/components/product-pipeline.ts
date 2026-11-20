@@ -456,6 +456,38 @@ export function productAlertAgent(wordsIn: CiProductWordsInput | CiProductWords,
 }
 
 /**
+ * The failed-apply agent's Op spec (#5357): a workflow of its own that runs
+ * on its schedule (`AGENT_ALERT_SCHEDULE` unless `schedule` names another
+ * cron) and when started by hand, and answers the failed applies the apply
+ * jobs recorded (`CHANT_AGENT_FACTS=apply-failed` on those jobs, with the
+ * relay key) with a pull request from `<product>/agent/<name>-<member>`.
+ * The triage comment stays. Off until a product asks for it.
+ */
+export function productApplyFailedAgent(wordsIn: CiProductWordsInput | CiProductWords, options: ProductAgentOptions & { schedule?: string } = {}): ScheduledOpSpec {
+  const words = assertProductWords(wordsIn);
+  const { name: given, runner, schedule, task: _task, ...settings } = options;
+  const name = given ?? `${words.product}-apply-failed-agent`;
+  const agent: OpAgentSpec = { on: "apply-failed", ...settings };
+  resolveAgentSpec(name, agent, words.product);
+  return { name, trigger: { kind: "cron", schedule: schedule ?? AGENT_ALERT_SCHEDULE }, agent, ...(runner !== undefined ? { runner } : {}) };
+}
+
+/**
+ * A scheduled agent's Op spec (#5357): a workflow of its own on `schedule`,
+ * a cron, which does `task` on each run and answers with a pull request
+ * from `<product>/agent/<name>`. Off until a product asks for it.
+ */
+export function productScheduleAgent(wordsIn: CiProductWordsInput | CiProductWords, options: ProductAgentOptions & { schedule: string; task: string }): ScheduledOpSpec {
+  const words = assertProductWords(wordsIn);
+  const { name: given, runner, schedule, relayKeyEnv: _relay, ...settings } = options;
+  const name = given ?? `${words.product}-schedule-agent`;
+  const agent: OpAgentSpec = { on: "schedule", ...settings };
+  resolveAgentSpec(name, agent, words.product);
+  if (typeof schedule !== "string" || schedule.trim().split(/\s+/).length !== 5) throw new Error(`the scheduled agent ${name} needs schedule, a five-field cron`);
+  return { name, trigger: { kind: "cron", schedule }, agent, ...(runner !== undefined ? { runner } : {}) };
+}
+
+/**
  * The `agent` of a scheduled drift Op (#4616): after the Op's run exits with
  * chant's `drift` code, the agent changes the code to say what is live and
  * opens or updates a pull request from `<product>/agent/<op>`.

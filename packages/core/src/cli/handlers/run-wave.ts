@@ -330,6 +330,16 @@ async function respondWave(spec: OpWavesSpec, k: number, outcome: import("../../
   try {
     const { respondOpWave, triageOfOpWave } = await import("../../ci-respond-run");
     const { resolveResponses } = await import("../../ci-respond");
+    // #5357: with CHANT_AGENT_FACTS=apply-failed, a failed wave records its facts for the failed-apply agent, beside its triage.
+    const { agentFactsOn, recordApplyFailed } = await import("../../ci-agent-triggers");
+    if (agentFactsOn(process.env, "apply-failed")) {
+      const failed = triageOfOpWave(spec, k, outcome);
+      if (failed) {
+        const { activeProductWords } = await import("../../ci-product-words");
+        const line = await recordApplyFailed(failed, { op: spec.name, product: activeProductWords().product });
+        if (line) console.error(line);
+      }
+    }
     const responses = resolveResponses(spec.respond);
     if (responses["wave-refused"] === "off" && responses["apply-failed"] === "off") return;
     if (outcome.result && outcome.result.exitCode === 0 && !triageOfOpWave(spec, k, outcome)) return;

@@ -10,9 +10,10 @@
  * of new facts. Nothing a caller passes to the workflow is read.
  *
  * The file is `_alerts/<trigger>.jsonl` at the repository's ledger root, one
- * fact per line. A fact is trigger-neutral: `trigger` names what wrote it,
- * so a later trigger (a failed apply, a schedule) writes its own file here
- * and the same reading and joining apply.
+ * fact per line. A fact is trigger-neutral: `trigger` names what wrote it.
+ * A failed apply (#5357) writes `_alerts/apply-failed.jsonl` with the same
+ * key, and the same reading and joining apply. A scheduled run's fact is
+ * the run itself and is not written here (`./ci-agent-triggers.ts`).
  *
  * - A fact is recorded once. A second delivery with the same `key` (the
  *   source's own id) or the same `idempotencyKey` (the delivery's
@@ -47,7 +48,7 @@ export interface AgentFact {
   v: 1;
   /** `sha256:` of `trigger` and `key`. */
   id: string;
-  /** What wrote it: `alert` today. */
+  /** What wrote it: `alert` or `apply-failed`; `schedule` for the fact a scheduled run makes of itself. */
   trigger: string;
   /** The workspace member it is for; "" for the repository. */
   member: string;
@@ -207,6 +208,8 @@ export function pendingAgentFacts(o: {
   facts: readonly AgentFact[];
   runs: readonly Pick<OpRunRecord, "outcomes">[];
   relayKey: string | undefined;
+  /** How a fact is checked, in place of the relay key's signature: a schedule's fact is the run's own (#5357). */
+  verify?: (f: AgentFact) => boolean;
   now: Date;
   windowMs: number;
   maxAgeMs?: number;
@@ -220,7 +223,7 @@ export function pendingAgentFacts(o: {
   const fresh: AgentFact[] = [];
   const seen: AgentFact[] = [];
   for (const f of o.facts) {
-    if (!verifyAgentFact(o.relayKey, f)) {
+    if (!(o.verify ? o.verify(f) : verifyAgentFact(o.relayKey, f))) {
       setAside.push({ id: f.id, reason: "unsigned" });
       continue;
     }

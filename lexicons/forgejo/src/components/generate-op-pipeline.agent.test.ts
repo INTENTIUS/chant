@@ -57,3 +57,20 @@ describe("the alert agent on Forgejo", () => {
     expect(land.env?.CHANT_RELAY_KEY).toBeDefined();
   });
 });
+
+// #5357: the failed-apply and scheduled agents on Forgejo.
+describe("the failed-apply and scheduled agents on Forgejo", () => {
+  test("run on workflow_dispatch and their schedule, with the settings' digest on the land line", () => {
+    for (const spec of [
+      { name: "chant-apply-failed-agent", agent: { on: "apply-failed" as const } },
+      { name: "chant-versions", trigger: { kind: "cron" as const, schedule: "0 7 * * 1" }, agent: { on: "schedule" as const, task: "Raise the pins." } },
+    ]) {
+      const out = generateForgejoOpPipeline([spec]);
+      const d = parseYAML(out.files[0]!.yaml) as unknown as { on: Record<string, unknown>; jobs: Record<string, { steps: Array<{ run?: string; env?: Record<string, string> }> }> };
+      expect(Object.keys(d.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+      const land = d.jobs[`${spec.name}-push`]!.steps.at(-1)!;
+      expect(land.run).toMatch(/chant agent land --forge forgejo --output \.chant\/agent --digest sha256:[0-9a-f]{64}/);
+      expect(land.env?.CHANT_RELAY_KEY === undefined).toBe(spec.agent.on === "schedule");
+    }
+  });
+});

@@ -166,7 +166,9 @@ export {
   componentWavesSpec,
   productAgentSpec,
   productAlertAgent,
+  productApplyFailedAgent,
   productCommand,
+  productScheduleAgent,
   productDriftAgent,
   productPipelineJobs,
   productWavesSpec,
@@ -548,6 +550,18 @@ export { CI_AGENT_FLOOR, agentForbiddenPaths, type AgentSettings, type OpAgentSp
  */
 export { AGENT_ALERT_FLOOR, ALERT_SOURCES, DATADOG_PAYLOAD_TEMPLATE, HONEYCOMB_PAYLOAD_TEMPLATE, type AlertRecord, type AlertSource } from "./ci-agent-alert";
 export { AGENT_JOIN_WINDOW_MINUTES } from "./agent-facts";
+
+/**
+ * Agent jobs from a failed apply and on a schedule (#5357):
+ * `productApplyFailedAgent` and `productScheduleAgent` return the agents'
+ * Op specs; an apply job records its failure for the agent with
+ * `CHANT_AGENT_FACTS=apply-failed` and the relay key (chant's own wave and
+ * `pr-apply` jobs, or `chant agent apply-failed` in a product's own job),
+ * and `opWavesAgentFactsEnv` gives a product's wave jobs those variables.
+ * Every agent's settings are checked against the default branch. Feature-
+ * detect on `AGENT_FACT_TRIGGERS_FLOOR`.
+ */
+export { AGENT_FACT_TRIGGERS_FLOOR, AGENT_FACTS_ENV, APPLY_FAILED_ERROR_MAX, agentFactsOn, opWavesAgentFactsEnv, recordApplyFailed, type ApplyFailedRecord } from "./ci-agent-triggers";
 
 /**
  * The agent guard (#4770): a Claude Code PreToolUse hook on Bash and a

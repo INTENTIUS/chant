@@ -1,6 +1,6 @@
 ---
 title: Let an Agent Change Code on Request
-description: Generate the agent jobs that answer an agent comment on a pull request, follow a drift check, or answer a production alert, with a spend limit and the write token kept out of the model's job.
+description: Generate the agent jobs that answer an agent comment on a pull request, follow a drift check, answer a production alert or a failed apply, or run a task on a schedule, with a spend limit and the write token kept out of the model's job.
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/agent-jobs/.
@@ -9,7 +9,7 @@ prompt: |
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
-This guide is for a repository that wants a coding agent to change code when someone asks, when a drift check finds the cloud has moved, or when a production alert fires. The agent runs as two generated jobs from a scheduled Op spec's `agent` ([#4616](https://github.com/INTENTIUS/chant/issues/4616)). The first runs the model with a read token. The second holds the write token and lands the change.
+This guide is for a repository that wants a coding agent to change code when someone asks, when a drift check finds the cloud has moved, when a production alert fires, when an apply fails, or on a schedule. The agent runs as two generated jobs from a scheduled Op spec's `agent` ([#4616](https://github.com/INTENTIUS/chant/issues/4616)). The first runs the model with a read token. The second holds the write token and lands the change.
 
 Nothing the agent does applies, approves or merges. A change it pushes plans like any other, and a person reviews it.
 
@@ -77,6 +77,48 @@ The change goes to `<product>/agent/<name>-<member>` (`<product>/agent/<name>` f
 The push job reads the decision as data. Before it lands anything it checks that every fact the decision names is on the ledger, signed with the relay key, and taken by no other run. Each run record carries `trigger: "alert"`, the facts it took, the member, its window, and each alert's source and id.
 
 A CI product gets the spec from `productAlertAgent(words, options)` in `@intentius/chant/ci-product`, and feature-detects on `AGENT_ALERT_FLOOR`.
+
+## Answer a failed apply
+
+A failed-apply agent opens a pull request when an apply fails for a reason the code can fix. It reads the same kind of fact as an alert agent, so the joining, the limits and the push job's checks are the same. Add a spec whose `agent` has `on: "apply-failed"`:
+
+```json
+{ "name": "chant-apply-failed-agent", "agent": { "on": "apply-failed", "maxRuns": 4, "maxCostUsd": 10 } }
+```
+
+The apply jobs record the facts. Give them `CHANT_AGENT_FACTS=apply-failed` and the relay key in `CHANT_RELAY_KEY`:
+
+- chant's own wave jobs: the waves pipeline's `agentFacts` option, `{ "relayKeyEnv": "CHANT_RELAY_KEY" }`, puts both on each wave job's command step. A pipeline whose waves are split keeps its apply jobs without a token, so they record nothing.
+- `chant components pr-apply`: set both variables on the apply job.
+- a product's own apply job: run `chant agent apply-failed --op <name> --from <log> [--member <m>]` after the apply fails, with both variables set. The last 8,000 characters of the log are the error.
+
+A failed apply records one fact per member that did not apply under `_alerts/apply-failed.jsonl` on `chant/lifecycle`, signed with the relay key, and pushes the ledger. The same member failing again at the same commit is the same fact. The triage comment posts as before.
+
+The agent's workflow runs every 15 minutes, or on the spec's own `cron` trigger, and when started by hand on the default branch. On GitLab it runs in a pipeline schedule with `CHANT_SCHEDULED_OP` set to the spec's name, or in a pipeline of the default branch started by hand with the same variable. Each failure reaches the prompt as JSON data: the op, how the triage names the apply, the member, the exit code, the failed resources and the engine's error output, at most 8,000 characters per member and 20,000 in all. The change goes to `<product>/agent/<name>-<member>`. Each run record carries `trigger: "apply-failed"`, the facts it took, the member, its window, and the op and member of each failure.
+
+A CI product gets the spec from `productApplyFailedAgent(words, options)`, and the wave jobs' variables from `opWavesAgentFactsEnv(forge, { relayKeyEnv })`.
+
+## Run a task on a schedule
+
+A scheduled agent does a recurring task, such as reviewing provider and module versions, and opens a pull request when the task changes something. Add a spec with `on: "schedule"`, the task, and a `cron` trigger:
+
+```json
+{
+  "name": "chant-versions-agent",
+  "trigger": { "kind": "cron", "schedule": "0 7 * * 1" },
+  "agent": { "on": "schedule", "task": "Raise each provider and module version pin to the newest release that keeps the plan clean.", "maxRuns": 1 }
+}
+```
+
+The task comes from the workflow file on the default branch and reaches the prompt as the maintainers' instruction. A scheduled run is its own fact: its key is the agent's name and the CI run's id, so a run started again (a retry, or a start by hand within `window` minutes) joins the run already made and starts nothing. The fact is never written to the ledger; the run record that takes it marks it spent. A scheduled agent holds no relay key. The change goes to `<product>/agent/<name>`, and each run record carries `trigger: "schedule"`.
+
+A CI product gets the spec from `productScheduleAgent(words, { schedule, task, ... })`.
+
+## Settings come from the default branch
+
+Every agent reads its settings and caps from the default branch, whatever started it. The generated command lines carry a digest of the settings (`--digest sha256:...`), and `chant agent prepare`, `run` and `land` refuse variables that do not match it. On GitLab a pipeline variable can replace a job's variable, and the digest on the script line is what it cannot replace. `prepare` and `land` also refuse a job whose commit is not on the default branch, so a workflow that a pull request changed, started on the pull request's branch, does not run the agent. A pull request that raises `maxRuns` or `maxCostUsd` changes nothing until it merges. Both jobs note the remote's default branch as `origin/HEAD` in their checkout.
+
+Products feature-detect the failed-apply and scheduled agents, and the settings check, on `AGENT_FACT_TRIGGERS_FLOOR`.
 
 ## The spend limit
 

@@ -19,7 +19,14 @@
  * An alert agent (#5329) is a workflow of its own, started by the relay's
  * `workflow_dispatch` and by its schedule. Both jobs check out the default
  * branch and the ledger, and the decision and land steps alone hold the
- * relay key, which the alert facts are checked with.
+ * relay key, which the alert facts are checked with. A failed-apply agent
+ * and a scheduled agent (#5357) are laid out the same way, on
+ * `workflow_dispatch` and their schedule; a scheduled agent holds no relay
+ * key, since its fact is its own run.
+ *
+ * Every command line carries the settings' digest (`--digest`), and both
+ * checkouts note the remote's default branch (`origin/HEAD`), so the
+ * commands refuse settings that are not the default branch's (#5357).
  *
  * Forgejo's runner ignores `permissions:` and has no author association, so
  * there `chant agent prepare` asks the forge whether the commenter can write,
@@ -40,7 +47,10 @@ import {
   agentCommandLines,
   agentGitAuthLines,
   agentHeadFetchLine,
+  agentSettingsDigest,
   agentSettingsEnv,
+  AGENT_SIGNED_TRIGGERS,
+  isFactTrigger,
   type AgentSettings,
 } from "@intentius/chant/ci-agent";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
@@ -55,6 +65,9 @@ const PUSH_TOKEN_ENV = "CHANT_AGENT_TOKEN";
 /** The files the handover keeps when the agent directory is too large to hand on whole. */
 const HANDED = { label: "chant-agent", noteFiles: [AGENT_DECISION_FILE, AGENT_RC_FILE, AGENT_PATCH_FILE, "prompt.sha256"] } as const;
 const DRIFT_HANDED = { label: "chant-agent", noteFiles: [AGENT_DRIFT_FILE] } as const;
+
+/** Notes the remote's default branch as `origin/HEAD`, with the checkout's token, for the base check (#5357). */
+export const AGENT_DEFAULT_BRANCH_LINE = "git remote set-head origin --auto >/dev/null 2>&1 || true";
 
 /** The name of the push job beside the agent job. */
 export function agentPushJobName(jobName: string): string {
@@ -127,18 +140,19 @@ export function driftRunOutputs(forge: "github" | "forgejo"): Record<string, str
 /** The agent job and the push job. */
 export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string, unknown>; push: Record<string, unknown> } {
   const s = i.settings;
-  const lines = agentCommandLines(i.forge, i.bin);
+  // #5357: the settings' digest on every line, so the commands refuse variables that are not these.
+  const lines = agentCommandLines(i.forge, i.bin, AGENT_DIR, agentSettingsDigest(s));
   const drop = dropForgeTokens("sh");
   const comment = s.on === "comment";
-  const alert = s.on === "alert";
+  const alert = isFactTrigger(s.on);
   const settingsEnv = agentSettingsEnv(s);
-  // #5329: the relay key checks the alert facts, in the decision and land steps alone.
-  const relayKey = alert ? { [AGENT_RELAY_KEY_ENV]: githubSecret(s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV) } : {};
+  // #5329, #5357: the relay key checks the facts, in the decision and land steps alone.
+  const relayKey = AGENT_SIGNED_TRIGGERS.includes(s.on) ? { [AGENT_RELAY_KEY_ENV]: githubSecret(s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV) } : {};
   const checkout = (head: boolean): Record<string, unknown> => ({
     name: head ? "Check out the target branch's commit and the pull request's head" : alert ? "Check out the default branch's commit and the ledger" : "Check out the commit the drift check ran on",
     env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, ...(head ? { PR_NUMBER: "${{ github.event.issue.number }}" } : {}) },
-    // The ledger branch too: prepare counts the agent's runs on it, and land appends to it.
-    run: [checkoutScript(true, true), ...(head ? [agentHeadFetchLine(i.forge, "PR_NUMBER")] : [])].join("\n"),
+    // The ledger branch too: prepare counts the agent's runs on it, and land appends to it. origin/HEAD names the default branch the commands check against.
+    run: [checkoutScript(true, true), AGENT_DEFAULT_BRANCH_LINE, ...(head ? [agentHeadFetchLine(i.forge, "PR_NUMBER")] : [])].join("\n"),
   });
   const before = i.beforeScript.map((line) => ({ run: `${drop}\n${line}` }));
   const timeout = s.timeout + 15;
