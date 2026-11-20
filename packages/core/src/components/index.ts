@@ -142,6 +142,20 @@ export {
   DriverRunFailure,
 } from "./driver";
 export {
+  STEP_ENVIRONMENTS_KEY,
+  STEP_ENVIRONMENTS_FLOOR,
+  type StepEnvironments,
+  type StepEnvironmentOptions,
+  type StepEnvironmentRefusal,
+  StepEnvironmentRefusedError,
+  hasStepEnvironments,
+  stepEnvironmentNames,
+  stepForEnvironment,
+  stepInputForEnvironment,
+  componentForEnvironment,
+  componentsForEnvironment,
+} from "./step-environments";
+export {
   type FanOutRequest,
   type FanOutPlan,
   type FanOutGroup,

@@ -29,6 +29,7 @@
 
 import { resolvePlannedLock, type PlannedLock } from "../lifecycle/lock-rows";
 import type { PlanShape } from "./covered-round";
+import { stepInputForEnvironment } from "./step-environments";
 import { assertPlanFlagsAccepted, assertTargetsAccepted, resolveStepInput, unresolvedWiringSources, type DriverComponent, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { componentDeployInputs, type ComponentDeployInputs } from "./deploy-inputs";
@@ -160,7 +161,9 @@ export async function planWaveComponent(
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
       if (!capability.plan) continue;
-      const { kind: _kind, ...rest } = step;
+      const { kind: _kind, ...declared } = step;
+      // #5360: the step's inputs for this environment.
+      const rest = stepInputForEnvironment(declared, ctx.env, { component: component.name, phase: "deploy", kind: step.kind });
       const input = resolveStepInput(rest, {}, componentOutputs);
       const planned = bindPlanFlags(ctx, bindTargets(step.kind, ctx, await capability.plan(planContext(ctx, rest, componentOutputs), input as never)));
       const member = { member: planned.member, planDigest: planned.planDigest };
@@ -297,7 +300,8 @@ export async function readComponentOutputs(
   for (const step of capabilitySteps(component.deploy)) {
     const capability = registry.resolve(step.kind);
     if (!capability.outputs) continue;
-    const { kind: _kind, ...rest } = step;
+    const { kind: _kind, ...declared } = step;
+    const rest = stepInputForEnvironment(declared, ctx.env, { component: component.name, phase: "deploy", kind: step.kind });
     const input = resolveStepInput(rest, {}, componentOutputs);
     found = { ...found, ...(await capability.outputs(ctx, input as never)) };
   }

@@ -16,6 +16,25 @@ deploy: [
 ]
 ```
 
+## A step's target per environment
+
+A step may carry `environments`, keyed by environment name, with the inputs that differ there. Before the capability sees its input, chant merges the entry for the run's environment over the step's own keys, one level deep, and drops the map. The component stays the same in every environment, so `chant components promote --to staging` applies the staging target and records it under staging, and `rollback` and `redeploy` apply the target of the environment they name.
+
+```ts
+phase("Apply", [
+  { kind: "terraform-apply", vars: { region: "us-east-1" }, environments: {
+    staging: { root: "envs/staging/network" },
+    prod:    { root: "envs/prod/network", vars: { region: "us-east-2" } },
+  } },
+  { kind: "pulumi-up", dir: "infra/shop", environments: {
+    staging: { stack: "acme/shop/staging" },
+    prod:    { stack: "acme/shop/prod" },
+  } },
+])
+```
+
+An environment the map does not name is refused before anything runs, and the refusal lists the environments it names. A pull request's environment `pr-<n>` takes the entry of its template environment (`ci.prEnvironment`), and a `pulumi-up` step then derives its review stack from that entry's stack. A step without `environments` runs as written in every environment.
+
 ## Fan-out is composition, not orchestrator knowledge
 
 A single component can expand to many units — one CloudFormation stack per instance in a cluster, one host in a fleet. The fan-out is authored in the composition, never known by the driver.

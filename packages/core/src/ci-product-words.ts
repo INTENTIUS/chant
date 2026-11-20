@@ -868,6 +868,14 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "`environments` in the member's `chant.config.ts`, in order, which `promotionOrder` reads and `chant components promote` follows",
     products: [],
   },
+  {
+    key: "environments.<name>.targets.<member>",
+    concept: "the target a member applies in one environment: a stack, a root, or the step's inputs there",
+    section: "stage",
+    value: "a target name or path, or a map of the step's inputs",
+    chant: "the member's step's `environments.<name>` entry, which core merges over the step's input for the run's environment",
+    products: [],
+  },
   // Apply
   {
     key: "apply.when",

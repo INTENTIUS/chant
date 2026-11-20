@@ -74,6 +74,15 @@ export interface Step {
   revision?: Wiring;
   /** Named inputs passed into an apply step; each may be a literal or any wiring reference. */
   inputs?: Record<string, Wiring>;
+  /**
+   * The step's inputs per environment (#5360), keyed by environment name:
+   * for the run's environment, core merges that entry's keys over the
+   * step's own, one level deep, before the capability sees its input, such
+   * as `{ dev: { stack: "acme/shop/dev" }, prod: { stack: "acme/shop/prod" } }`
+   * on a `pulumi-up` step. An environment the map does not name is refused
+   * before anything runs. See ./step-environments.ts.
+   */
+  environments?: Record<string, Record<string, unknown>>;
   [param: string]: unknown;
 }
 

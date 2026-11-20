@@ -6,6 +6,7 @@ import { NEXT_RELEASE } from "./release-floors";
 import type { FloorRow } from "./floor-table";
 
 export const FLOOR_ROWS: readonly FloorRow[] = [
+  { name: "STEP_ENVIRONMENTS_FLOOR", version: NEXT_RELEASE, gates: "The first chant that resolves a component step's `environments` for the run's environment before its capability sees the input (#5360), for `pulumi-up`'s stack, `terraform-apply`'s root and vars and every other engine step, in `run --components`, promote, rollback, redeploy and a release cut.", issue: "#5360", file: "components/step-environments.ts", modules: ["@intentius/chant/components","@intentius/chant/components/index","@intentius/chant/components/step-environments"] },
   { name: "CACHE4_PIN_FLOOR", version: "0.124.78", gates: "The first chant whose table has the `cache4` row (#4816).", issue: "#4816", file: "action-pins.ts", modules: ["@intentius/chant/action-pins"] },
   { name: "AGENT_GUARD_FLOOR", version: "0.124.77", gates: "The first chant with the shared agent guard (#4770).", issue: "#4770", file: "agent-guard.ts", modules: ["@intentius/chant/agent-guard","@intentius/chant/ci-product"] },
   { name: "CAPABILITY_TEMPLATES_FLOOR", version: "0.124.54", gates: "The first chant whose capabilities document carries `templates` (#4531).", issue: "#4531", file: "capabilities/templates.ts", modules: ["@intentius/chant/capabilities/templates"] },

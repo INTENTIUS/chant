@@ -39,6 +39,7 @@ import {
 } from "../../lifecycle/release-ledger";
 import { isComponentList, resolveComponentTargets } from "../../components/cli-support";
 import { applyConfigDefaults } from "../../components/config-defaults";
+import { componentForEnvironment } from "../../components/step-environments";
 import { withDeclaredReads } from "../../components/declared-reads";
 import { fanOutRegistry } from "../../components/fan-out-support";
 import { renderDriverHuman } from "../../components/driver-output";
@@ -452,10 +453,17 @@ async function deployPlanIn(
 ): Promise<number> {
   const { args } = ctx;
   if (refusesBothStreams(args)) return 1;
-  const byName = new Map(project.targets.map((c) => [c.name, applyConfigDefaults(c, project.config)]));
+  // #5360: each step's inputs for the environment deployed to, so the plan, the release pin and the run read that environment's target.
+  const resolvedFor = new Map(project.targets.map((c) => [c.name, componentForEnvironment(applyConfigDefaults(c, project.config), plan.to)]));
+  const byName = new Map([...resolvedFor].map(([name, r]) => [name, r.component]));
   const prepared: DriverComponent[] = [];
   const removed = new Map<string, string[]>();
-  const refusals: string[] = [];
+  const refusals: string[] = plan.items.flatMap((item) => (resolvedFor.get(item.component)?.refusals ?? []).map((r) => r.message));
+  if (refusals.length > 0) {
+    for (const message of refusals) console.error(formatError({ message }));
+    console.error(formatError({ message: `nothing was deployed` }));
+    return 1;
+  }
   // #4222: a component with no artifact, deployed from the templates the release records, and its record's digest.
   const templateDigests = new Map<string, string>();
   const { releaseTemplatesDigest } = await import("../../components/release-promote");

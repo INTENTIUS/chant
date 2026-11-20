@@ -63,6 +63,7 @@
 import type { CapabilityRegistry, GroupRun, PlannedOutputs } from "./capability";
 import type { FanOutGroup, FanOutGroupFallback, FanOutPlan } from "./fan-out";
 import { groupsByComponent, planComponentGroup } from "./groups";
+import { stepInputForEnvironment } from "./step-environments";
 import { deployContext, resolveComponentGraph, resolveStepInput, unresolvedWiringReferences, type DriverComponent, type DriverGate, type DriverPhase, type DriverStep } from "./driver";
 import { componentPlanDigest } from "./gate-plan";
 import { gateName, RELEASE_GATE_OP } from "../op/gate-name";
@@ -412,7 +413,9 @@ export async function planReleaseSet(input: ReleaseChangeSetInput): Promise<Rele
         const unknown = unknownOf(component, new Set());
         let exposes: PlannedOutputs | undefined;
         for (const step of plannable) {
-          const { kind, ...rest } = step;
+          const { kind, ...declared } = step;
+          // #5360: the step's inputs for this environment.
+          const rest = stepInputForEnvironment(declared, env, { component: name, phase: "deploy", kind });
           const result = await registry.resolve(kind).plan!(planContext(ctx, rest, outputs), resolveStepInput(rest, {}, outputs) as never);
           if (result.outputs) exposes = { known: { ...(exposes?.known ?? {}), ...result.outputs.known }, unknown: [...new Set([...(exposes?.unknown ?? []), ...result.outputs.unknown])].sort() };
           parts.push(
