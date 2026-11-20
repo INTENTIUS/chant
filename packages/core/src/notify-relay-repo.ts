@@ -232,3 +232,97 @@ export async function prepareRelayCheckout(o: { url: string; token: string; forg
   if ("error" in cloned) return cloned;
   return { dir: cloned.dir, branch: probe.branch, repo, user: checked.user, gitEnv };
 }
+
+// ── starting the alert agent's workflow (#5329) ──────────────────────────
+
+/**
+ * What a dispatch token reaches, as {@link readDispatchReach} reads it.
+ *
+ * - GitHub: whether it is a classic token, whether its account administers
+ *   the repository, and what a ref creation that cannot succeed answered
+ *   (an all-zero commit): 403 or 404 when the token cannot write contents,
+ *   422 when it can and only the commit was wrong.
+ * - Forgejo: whether its user administers the repository or may push.
+ * - GitLab: whether it is a pipeline trigger token (`glptt-`), and whether
+ *   the API takes it as an access token.
+ */
+export type DispatchReach =
+  | { kind: "github"; classic: boolean; admin: boolean; refWrite: number }
+  | { kind: "forgejo"; admin: boolean; push: boolean }
+  | { kind: "gitlab"; trigger: boolean; apiToken: boolean };
+
+/** Read what a dispatch token reaches in `repo`. Throws when a read the check needs is refused. */
+export async function readDispatchReach(repo: RelayRepo, token: string, fetchImpl: ForgeFetch = globalThis.fetch as unknown as ForgeFetch): Promise<DispatchReach> {
+  if (repo.forge === "gitlab") {
+    const res = await fetchImpl(`${repo.apiBase}/personal_access_tokens/self`, { method: "GET", headers: authHeaders("gitlab", token) });
+    return { kind: "gitlab", trigger: token.startsWith("glptt-"), apiToken: res.ok };
+  }
+  const headers = authHeaders(repo.forge, token);
+  const at = `${repo.apiBase}/repos/${repo.path}`;
+  const r = await fetchImpl(at, { method: "GET", headers });
+  if (!r.ok) throw new Error(`GET /repos/${repo.path} answered ${r.status}`);
+  const text = await r.text();
+  const body: unknown = text ? JSON.parse(text) : null;
+  const perms = isObject(body) && isObject(body.permissions) ? body.permissions : {};
+  if (repo.forge === "forgejo") return { kind: "forgejo", admin: perms.admin === true, push: perms.push !== false };
+  const classic = Boolean((r as { headers?: { get(n: string): string | null } }).headers?.get("x-oauth-scopes"));
+  const probe = await fetchImpl(`${at}/git/refs`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ ref: "refs/chant/dispatch-probe", sha: "0".repeat(40) }) });
+  return { kind: "github", classic, admin: perms.admin === true, refWrite: probe.status };
+}
+
+/** Why a token reaching `reach` can do more than start a workflow, or null when it can only do that. */
+export function dispatchTokenVerdict(reach: DispatchReach, repoPath: string): string | null {
+  if (reach.kind === "gitlab") {
+    if (reach.apiToken) return "GitLab takes the token as an access token; give the relay a pipeline trigger token (Settings > CI/CD > Pipeline trigger tokens)";
+    if (!reach.trigger) return "the token is not a GitLab pipeline trigger token (glptt-)";
+    return null;
+  }
+  if (reach.kind === "forgejo") {
+    if (reach.admin) return `the token's user administers ${repoPath}`;
+    if (reach.push) return `the token's user may push to ${repoPath}; give the relay a user with Actions write and Code read`;
+    return null;
+  }
+  if (reach.classic) return "a classic token reaches every repo its account can; give the relay a fine-grained token for this repo with Actions: Read and write, and nothing else";
+  if (reach.admin) return `the token's account administers ${repoPath}`;
+  if (reach.refWrite !== 403 && reach.refWrite !== 404) return `the token can write ${repoPath}'s contents (creating a ref answered ${reach.refWrite}); give it Actions: Read and write, and Contents no more than read`;
+  return null;
+}
+
+/** Read what the dispatch token reaches, and judge it. Never throws. */
+export async function checkDispatchToken(repo: RelayRepo, token: string, fetchImpl?: ForgeFetch): Promise<{ ok: true } | { error: string }> {
+  if (!token) return { error: "the dispatch token is empty" };
+  try {
+    const why = dispatchTokenVerdict(await readDispatchReach(repo, token, fetchImpl), repo.path);
+    return why ? { error: why } : { ok: true };
+  } catch (e) {
+    return { error: `the forge could not be read with the dispatch token (${(e as Error).message})` };
+  }
+}
+
+/** A workflow file name the dispatch names, such as `chant-alert-agent.yml`. */
+export const WORKFLOW_FILE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}\.ya?ml$/;
+
+/**
+ * Start the alert agent's workflow on `branch` with no inputs: a
+ * `workflow_dispatch` of `workflow` on GitHub and Forgejo, a pipeline from
+ * the trigger token on GitLab.
+ */
+export async function dispatchAgentWorkflow(o: { repo: RelayRepo; token: string; branch: string; workflow?: string; fetch?: ForgeFetch }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const fetchImpl = o.fetch ?? (globalThis.fetch as unknown as ForgeFetch);
+  try {
+    if (o.repo.forge === "gitlab") {
+      const body = new URLSearchParams({ token: o.token, ref: o.branch }).toString();
+      const res = await fetchImpl(`${o.repo.apiBase}/projects/${encodeURIComponent(o.repo.path)}/trigger/pipeline`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body });
+      return res.ok ? { ok: true } : { ok: false, error: `the pipeline trigger answered ${res.status}` };
+    }
+    if (!o.workflow || !WORKFLOW_FILE.test(o.workflow)) return { ok: false, error: "no workflow file is named to start" };
+    const res = await fetchImpl(`${o.repo.apiBase}/repos/${o.repo.path}/actions/workflows/${encodeURIComponent(o.workflow)}/dispatches`, {
+      method: "POST",
+      headers: { ...authHeaders(o.repo.forge, o.token), "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: o.branch }),
+    });
+    return res.ok ? { ok: true } : { ok: false, error: `workflow_dispatch of ${o.workflow} answered ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}

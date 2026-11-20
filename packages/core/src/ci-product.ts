@@ -131,6 +131,7 @@ export {
   componentWaveSteps,
   componentWavesSpec,
   productAgentSpec,
+  productAlertAgent,
   productCommand,
   productDriftAgent,
   productPipelineJobs,
@@ -488,6 +489,14 @@ export async function runChantInProcess(argv: string[], words: CiProductWordsInp
  * `CI_AGENT_FLOOR`.
  */
 export { CI_AGENT_FLOOR, agentForbiddenPaths, type AgentSettings, type OpAgentSpec } from "./ci-agent";
+
+/**
+ * Agent jobs from a production alert (#5329): `productAlertAgent` returns the
+ * alert agent's Op spec, and the relay (`chant notify relay`) reads the
+ * alert sources and records the facts. Feature-detect on `AGENT_ALERT_FLOOR`.
+ */
+export { AGENT_ALERT_FLOOR, ALERT_SOURCES, DATADOG_PAYLOAD_TEMPLATE, HONEYCOMB_PAYLOAD_TEMPLATE, type AlertRecord, type AlertSource } from "./ci-agent-alert";
+export { AGENT_JOIN_WINDOW_MINUTES } from "./agent-facts";
 
 /**
  * The agent guard (#4770): a Claude Code PreToolUse hook on Bash and a

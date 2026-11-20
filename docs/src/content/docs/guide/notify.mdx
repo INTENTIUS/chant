@@ -246,6 +246,49 @@ The relay pushes `chant/lifecycle` with the token and needs nothing more, so it 
 
 The token reaches git as an `http.extraHeader` in the environment of the relay's git calls (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`). It is not written to a file or into the remote's address. `NOTIFY_RELAY_CLONE_FLOOR` in `@intentius/chant/notify-relay` is the first chant that does this.
 
+### Take production alerts
+
+The relay also takes alerts for the [alert agent](/chant/guide/agent-jobs/#answer-a-production-alert) at `POST /alert/<source>`. Alerts are on for a source once the relay has a secret for it: `CHANT_ALERT_SECRET` for every source, or `CHANT_ALERT_SECRET_<SOURCE>` for one, such as `CHANT_ALERT_SECRET_PAGERDUTY`. A source with no secret answers 404.
+
+| Source | Point it at | The relay checks |
+|---|---|---|
+| Alertmanager | `/alert/alertmanager`, a webhook receiver with `http_config.authorization.credentials` set to the secret | the bearer token, and each alert's `startsAt` |
+| PagerDuty | `/alert/pagerduty?member=<name>`, a v3 webhook subscription whose signing secret is the secret | `X-PagerDuty-Signature`, and the event's `occurred_at` |
+| Datadog | `/alert/datadog`, a webhook with the custom header `X-Chant-Alert-Token` set to the secret and the payload below | the token, and the payload's `date` |
+| Honeycomb | `/alert/honeycomb?member=<name>`, a webhook recipient whose shared secret is the secret, with the trigger payload below | `X-Honeycomb-Webhook-Token`, and the payload's `timestamp` |
+| Sentry | `/alert/sentry?member=<name>`, an integration's webhook whose client secret is the secret | `Sentry-Hook-Signature`, and `Sentry-Hook-Timestamp` |
+| Anything else | `/alert/generic`, with `X-Chant-Timestamp` (Unix seconds) and `X-Chant-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<body>` | the signature, and the timestamp |
+
+Alertmanager, Datadog and Honeycomb send a shared token instead of a signature of the body, and the relay compares the token in constant time. A delivery that does not verify, or whose alerts are all older than `CHANT_ALERT_MAX_AGE` seconds (900 by default), is refused with 401 and the relay logs why.
+
+Datadog's payload:
+
+```json
+{"id":"$ID","alert_id":"$ALERT_ID","title":"$ALERT_TITLE","transition":"$ALERT_TRANSITION","date":"$DATE","priority":"$ALERT_PRIORITY","tags":"$TAGS","link":"$LINK","body":"$EVENT_MSG"}
+```
+
+Honeycomb's trigger payload:
+
+```json
+{"id":"{{ .ID }}","name":"{{ .Name }}","status":"{{ .Alert.Status }}","instance_id":"{{ .Alert.InstanceID }}","timestamp":"{{ .Alert.Timestamp }}","summary":"{{ .Alert.Summary }}","result_url":"{{ .Result.URL }}"}
+```
+
+A generic delivery is one alert, `{ "id", "title", "member"?, "severity"?, "url"?, "details"?, "at"? }`, or `{ "alerts": [ ... ] }`. An alert whose `status` is anything but `firing` is left out, and so is a resolve, an acknowledgement or a recovery from the other sources.
+
+The member an alert is for comes from an Alertmanager `member` label, a Datadog `member:<name>` tag or a generic `member`, else from the address's `?member=`. Without one, the alert is for the repository.
+
+Each firing alert becomes a fact under `_alerts/alert.jsonl` on `chant/lifecycle`, signed with the relay key. A second delivery of the same alert, by the source's own id or by the same `Idempotency-Key` header (Honeycomb's delivery id counts as one), is recorded once. A fact that could not be pushed answers 500, so the source sends the alert again.
+
+After a new fact lands, the relay starts the alert agent's workflow with no inputs:
+
+| Forge | `CHANT_ALERT_DISPATCH_TOKEN` holds | The relay starts |
+|---|---|---|
+| GitHub | a fine-grained token for the one repository with Actions: Read and write | `workflow_dispatch` of `CHANT_ALERT_WORKFLOW`, such as `chant-alert-agent.yml`, on the default branch |
+| Forgejo | a token of a user with write on Actions and read on the code | the same `workflow_dispatch` |
+| GitLab | a pipeline trigger token (Settings > CI/CD > Pipeline trigger tokens) | a pipeline of the default branch, with no variables |
+
+The relay refuses to start with a dispatch token that can do more: on GitHub a classic token, an administrator's, or one that can write the repository's contents (the relay asks to create a ref on an all-zero commit, which such a token is refused); on Forgejo a token whose user may push or administers the repository; on GitLab anything the API takes as an access token. The dispatch token goes with `--repo`. Without one, the alert agent's schedule picks the facts up. A start that does not go through is logged, and the schedule picks the fact up too.
+
 ## See also
 
 - [Op Waves](/chant/guide/op-waves/): the waves, their gates and exit codes

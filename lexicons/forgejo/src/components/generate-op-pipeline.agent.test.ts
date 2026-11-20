@@ -44,3 +44,16 @@ describe("the drift agent of a workspace member on Forgejo", () => {
     expect(agent.steps.some((s) => s.run?.includes("chant agent prepare --forge forgejo --output .chant/agent"))).toBe(true);
   });
 });
+
+// #5329: the alert agent on Forgejo, started by the relay's workflow_dispatch and by its schedule.
+describe("the alert agent on Forgejo", () => {
+  const out = generateForgejoOpPipeline([{ name: "chant-alert-agent", agent: { on: "alert" } }]);
+  const d = parseYAML(out.files[0]!.yaml) as unknown as { on: Record<string, unknown>; jobs: Record<string, { steps: Array<{ run?: string; env?: Record<string, string> }> }> };
+
+  test("runs on workflow_dispatch and its schedule, and lands with the relay key", () => {
+    expect(Object.keys(d.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+    const land = d.jobs["chant-alert-agent-push"]!.steps.at(-1)!;
+    expect(land.run).toContain("chant agent land --forge forgejo");
+    expect(land.env?.CHANT_RELAY_KEY).toBeDefined();
+  });
+});

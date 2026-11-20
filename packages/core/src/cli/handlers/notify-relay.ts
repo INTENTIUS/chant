@@ -31,13 +31,21 @@
  * and gitlab.com, and `--host` and `--port` override `CHANT_RELAY_HOST` and
  * `CHANT_RELAY_PORT`. `CHANT_RELAY_REPO` and `CHANT_RELAY_FORGE` stand in for
  * the flags.
+ *
+ * Alerts (#5329) are on when `CHANT_ALERT_SECRET` or a source's own
+ * `CHANT_ALERT_SECRET_<SOURCE>` is set. Each delivery's facts are written
+ * and pushed one at a time with the clicks. With `--repo` and
+ * `CHANT_ALERT_DISPATCH_TOKEN`, the relay starts the alert agent's workflow
+ * (`CHANT_ALERT_WORKFLOW` on GitHub and Forgejo) after each new fact, and
+ * refuses to start when that token can do more than start a workflow.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { activeProductWords } from "../../ci-product-words";
 import { CHANT_EXIT } from "../../exit-codes";
 import { DEFAULT_RELAY_MAX_AGE_SECONDS } from "../../notify";
-import { DEFAULT_RELAY_HOST, DEFAULT_RELAY_PORT, RELAY_ENV, RELAY_REPO_ENV, startRelayServer, type RelayDeps, type RelayPending, type RelaySettings } from "../../notify-relay";
+import { alertSecretEnv, DEFAULT_RELAY_HOST, DEFAULT_RELAY_PORT, RELAY_ENV, RELAY_REPO_ENV, startRelayServer, type RelayDeps, type RelayPending, type RelaySettings } from "../../notify-relay";
+import { ALERT_SOURCES, type AlertSource } from "../../ci-agent-alert";
 import { formatError, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
 
@@ -47,7 +55,16 @@ export function relaySettingsFromEnv(env: NodeJS.ProcessEnv): { settings: RelayS
   if (!key) return { error: `${RELAY_ENV.key} is not set; it holds the key notify signs the buttons with (notify.relay on the sending side)` };
   const slackSecret = env[RELAY_ENV.slackSecret] || undefined;
   const teamsSecret = env[RELAY_ENV.teamsSecret] || undefined;
-  if (!slackSecret && !teamsSecret) return { error: `set ${RELAY_ENV.slackSecret}, ${RELAY_ENV.teamsSecret} or both, so the relay can verify a click` };
+  const alertSecrets: Partial<Record<AlertSource, string>> = {};
+  for (const source of ALERT_SOURCES) {
+    const secret = env[alertSecretEnv(source)] || env[RELAY_ENV.alertSecret] || undefined;
+    if (secret) alertSecrets[source] = secret;
+  }
+  const alerts = Object.keys(alertSecrets).length > 0;
+  if (!slackSecret && !teamsSecret && !alerts) return { error: `set ${RELAY_ENV.slackSecret}, ${RELAY_ENV.teamsSecret} or both, so the relay can verify a click, or ${RELAY_ENV.alertSecret} for alerts` };
+  const alertAgeText = env[RELAY_ENV.alertMaxAge];
+  const alertMaxAge = alertAgeText === undefined || alertAgeText === "" ? undefined : Number(alertAgeText);
+  if (alertMaxAge !== undefined && (!Number.isInteger(alertMaxAge) || alertMaxAge <= 0)) return { error: `${RELAY_ENV.alertMaxAge} is a whole number of seconds (got ${JSON.stringify(alertAgeText)})` };
   const maxAgeText = env[RELAY_ENV.maxAge];
   const maxAge = maxAgeText === undefined || maxAgeText === "" ? DEFAULT_RELAY_MAX_AGE_SECONDS : Number(maxAgeText);
   if (!Number.isInteger(maxAge) || maxAge <= 0) return { error: `${RELAY_ENV.maxAge} is a whole number of seconds (got ${JSON.stringify(maxAgeText)})` };
@@ -56,7 +73,15 @@ export function relaySettingsFromEnv(env: NodeJS.ProcessEnv): { settings: RelayS
   if (!Number.isInteger(port) || port < 0 || port > 65535) return { error: `${RELAY_ENV.port} is a port number (got ${JSON.stringify(portText)})` };
   const slackResponse = env[RELAY_ENV.slackResponse]?.split(",").map((s) => s.trim()).filter(Boolean);
   return {
-    settings: { key, ...(slackSecret ? { slackSecret } : {}), ...(teamsSecret ? { teamsSecret } : {}), maxAgeSeconds: maxAge, ...(slackResponse?.length ? { slackResponse } : {}) },
+    settings: {
+      key,
+      ...(slackSecret ? { slackSecret } : {}),
+      ...(teamsSecret ? { teamsSecret } : {}),
+      maxAgeSeconds: maxAge,
+      ...(slackResponse?.length ? { slackResponse } : {}),
+      ...(alerts ? { alertSecrets } : {}),
+      ...(alertMaxAge !== undefined ? { alertMaxAgeSeconds: alertMaxAge } : {}),
+    },
     host: env[RELAY_ENV.host] || DEFAULT_RELAY_HOST,
     port,
   };
@@ -97,13 +122,24 @@ export async function fetchDefaultBranch(cwd: string): Promise<void> {
   }
 }
 
-/** The relay's reads and writes against the checkout at `cwd`. */
-export function checkoutRelayDeps(cwd: string, principal: string): RelayDeps {
+/** The relay's reads and writes against the checkout at `cwd`. `dispatch` starts the alert agent's workflow (#5329). */
+export function checkoutRelayDeps(cwd: string, principal: string, dispatch?: RelayDeps["dispatch"]): RelayDeps {
   const words = activeProductWords();
   const one = serial();
   return {
     principal,
     words,
+    ...(dispatch ? { dispatch } : {}),
+    recordAlerts: (facts) =>
+      one(async () => {
+        const { fetchLifecycle, pushLifecycleRebasing } = await import("../../lifecycle/git");
+        const { recordAgentFacts } = await import("../../agent-facts");
+        await fetchLifecycle({ cwd });
+        const out = await recordAgentFacts(facts, { cwd });
+        // The fact must be on the remote before the workflow that reads it starts.
+        if (out.recorded.length > 0) await pushLifecycleRebasing({ cwd, requireLanded: true });
+        return out;
+      }),
     signers: () =>
       one(async () => {
         await fetchDefaultBranch(cwd);
@@ -223,9 +259,26 @@ export async function serveNotifyRelay(o: RelayRepoOptions, env: NodeJS.ProcessE
   } else if (o.tokenEnv || o.forge) {
     return fail("--token-env and --forge go with --repo <url>");
   }
-  const deps = checkoutRelayDeps(cwd, principal);
+  // #5329: the relay starts the alert agent's workflow with a token that can do that and nothing else.
+  let dispatch: RelayDeps["dispatch"];
+  const dispatchToken = env[RELAY_ENV.alertDispatchToken]?.trim();
+  if (read.settings.alertSecrets && dispatchToken) {
+    if (!repoUrl) return fail(`${RELAY_ENV.alertDispatchToken} goes with --repo <url>, the repository whose workflow it starts`);
+    const { checkDispatchToken, dispatchAgentWorkflow, relayRepo, WORKFLOW_FILE } = await import("../../notify-relay-repo");
+    const repo = relayRepo(repoUrl, o.forge ?? (env[RELAY_REPO_ENV.forge] || undefined));
+    if ("error" in repo) return fail(repo.error);
+    const workflow = env[RELAY_ENV.alertWorkflow]?.trim();
+    if (repo.forge !== "gitlab" && !(workflow && WORKFLOW_FILE.test(workflow))) return fail(`${RELAY_ENV.alertWorkflow} names the alert agent's workflow file, such as ${words.product}-alert-agent.yml`);
+    const checked = await checkDispatchToken(repo, dispatchToken);
+    if ("error" in checked) return fail(`${RELAY_ENV.alertDispatchToken} may only start a workflow, and this one can do more: ${checked.error}`);
+    const branch = (await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd })).stdout.trim();
+    dispatch = () => dispatchAgentWorkflow({ repo, token: dispatchToken, branch, ...(workflow ? { workflow } : {}) });
+  }
+  const deps = checkoutRelayDeps(cwd, principal, dispatch);
   const { url } = await startRelayServer(read.settings, deps, { host: read.host, port: read.port, log: (line) => console.error(formatInfo(line)) });
+  const alertSources = Object.keys(read.settings.alertSecrets ?? {});
   console.error(formatInfo(`${words.product} notify relay listens at ${url} (POST /slack, POST /teams, GET /healthz), recording approvals relayed by ${principal}`));
+  if (alertSources.length > 0) console.error(formatInfo(`alerts from ${alertSources.join(", ")} at POST /alert/<source>; ${dispatch ? "each new alert starts the agent's workflow" : `no ${RELAY_ENV.alertDispatchToken}, so the agent's schedule picks alerts up`}`));
   await new Promise<void>(() => {});
   return 0;
 }

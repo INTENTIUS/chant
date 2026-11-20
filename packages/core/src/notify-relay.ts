@@ -38,8 +38,30 @@
  *
  * Decline records nothing and says who declined. The type-the-name prompt
  * of `chant approve` (#4575) is for a terminal; a signed click is the
- * person's confirmation here. The relay starts no job: the resume job
- * applies the wave once the approval stands.
+ * person's confirmation here. A click starts no job: the resume job applies
+ * the wave once the approval stands.
+ *
+ * A production alert (#5329) reaches `POST /alert/<source>` when the relay
+ * has a secret for that source (`./ci-agent-alert.ts` lists them and how
+ * each proves a delivery). The relay:
+ *
+ * 1. refuses a delivery whose signature or shared token does not verify,
+ *    or that is older than its maximum age, with 401, and logs why;
+ * 2. maps each firing alert to an alert record and writes it as a fact
+ *    under `_alerts/` on `chant/lifecycle`, signed with the relay key
+ *    (`./agent-facts.ts`). A delivery the ledger holds already, by the
+ *    source's id or the `Idempotency-Key` header, is recorded once;
+ * 3. starts the alert agent's workflow with no inputs, with a token that
+ *    can do that and nothing else: a GitHub or Forgejo token for
+ *    `workflow_dispatch`, or a GitLab pipeline trigger token
+ *    (`./notify-relay-repo.ts` refuses one that can push). The agent job
+ *    reads the facts and checks each signature itself, and its schedule
+ *    picks up a fact whose start did not arrive.
+ *
+ * That is all the relay may do: record an approval or a decision point's
+ * answer that a signed click asks for, record alert facts, and start the
+ * alert agent's workflow. It never approves on its own, merges, applies,
+ * or pushes anywhere but `chant/lifecycle`.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -47,6 +69,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { CiProductWords } from "./ci-product-words";
 import type { GatedRequest } from "./lifecycle/gated-request-digest";
 import { readRelayToken, RELAY_APPROVE_ACTION, RELAY_DECLINE_ACTION, type RelayRef } from "./notify";
+import { signAgentFact, type AgentFact } from "./agent-facts";
+import { ALERT_SOURCES, alertKey, readAlertDelivery, type AlertSource } from "./ci-agent-alert";
 
 /**
  * The first chant whose relay answers a gate's decision point and whose
@@ -80,7 +104,18 @@ export const RELAY_ENV = {
   port: "CHANT_RELAY_PORT",
   /** Comma-separated address prefixes a Slack response_url may have. */
   slackResponse: "CHANT_RELAY_SLACK_RESPONSE",
+  /** The secret every alert source shares, unless `CHANT_ALERT_SECRET_<SOURCE>` names one of its own (#5329). */
+  alertSecret: "CHANT_ALERT_SECRET",
+  /** How old an alert delivery may be, in seconds. */
+  alertMaxAge: "CHANT_ALERT_MAX_AGE",
+  /** The token the relay starts the alert agent's workflow with: `workflow_dispatch` on GitHub and Forgejo, a pipeline trigger token on GitLab. */
+  alertDispatchToken: "CHANT_ALERT_DISPATCH_TOKEN",
+  /** The alert agent's workflow file on GitHub and Forgejo, such as `chant-alert-agent.yml`. */
+  alertWorkflow: "CHANT_ALERT_WORKFLOW",
 } as const;
+
+/** The variable holding one alert source's own secret: `CHANT_ALERT_SECRET_PAGERDUTY` and so on. */
+export const alertSecretEnv = (source: AlertSource): string => `${RELAY_ENV.alertSecret}_${source.toUpperCase()}`;
 
 /** The variables that stand in for `--repo`, the default `--token-env`, and `--forge` (#4759). */
 export const RELAY_REPO_ENV = {
@@ -269,6 +304,10 @@ export interface RelayDeps {
   principal: string;
   words: CiProductWords;
   now?: () => Date;
+  /** Write alert facts under `_alerts/` and push them (#5329): the ones the ledger held already come back as duplicates. */
+  recordAlerts?(facts: AgentFact[]): Promise<{ recorded: AgentFact[]; duplicates: AgentFact[] }>;
+  /** Start the alert agent's workflow with no inputs. Absent: the agent's schedule picks the facts up. */
+  dispatch?(): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 export interface RelaySettings {
@@ -278,6 +317,10 @@ export interface RelaySettings {
   teamsSecret?: string;
   maxAgeSeconds?: number;
   slackResponse?: string[];
+  /** The alert sources the relay reads, by their secret (#5329). A source with none answers 404: alerts are off until a secret is set. */
+  alertSecrets?: Partial<Record<AlertSource, string>>;
+  /** How old an alert delivery may be, in seconds. */
+  alertMaxAgeSeconds?: number;
 }
 
 /** The relay's answer to a click, and the line for the thread. */
@@ -381,7 +424,7 @@ const json = (status: number, body: unknown): RelayResponse => ({ status, header
 const plain = (status: number, body: string): RelayResponse => ({ status, headers: { "content-type": "text/plain" }, body });
 
 /**
- * One request: `POST /slack`, `POST /teams`, `GET /healthz`. A Slack answer
+ * One request: `POST /slack`, `POST /teams`, `POST /alert/<source>`, `GET /healthz`. A Slack answer
  * goes to the click's response_url, in the message's thread, when that is
  * Slack's; a Teams answer is the reply Teams posts under the message.
  */
@@ -394,6 +437,10 @@ export async function handleRelayRequest(
   const log = options.log ?? (() => {});
   const path = req.path.split("?")[0]!;
   if (req.method === "GET" && path === "/healthz") return plain(200, "ok");
+  const alertSource = /^\/alert\/([a-z]+)$/.exec(path)?.[1];
+  if (req.method === "POST" && alertSource && (ALERT_SOURCES as readonly string[]).includes(alertSource) && settings.alertSecrets?.[alertSource as AlertSource]) {
+    return handleAlertRequest(alertSource as AlertSource, req, settings, deps, log, options.now);
+  }
   if (req.method !== "POST" || (path !== "/slack" && path !== "/teams")) return plain(404, "not found");
   if (path === "/slack") {
     const refused = verifySlackRequest(req.headers, req.body, settings.slackSecret, options.now);
@@ -430,6 +477,60 @@ export async function handleRelayRequest(
   const answer = await decideRelayClick(click, settings, deps);
   log(`teams: ${click.chatUser} ${click.action}: ${answer.outcome}: ${answer.text}`);
   return json(200, { type: "message", text: answer.text });
+}
+
+/**
+ * `POST /alert/<source>[?member=<name>]` (#5329): check the delivery, record
+ * its firing alerts as signed facts, and start the alert agent's workflow
+ * when one was new. A fact that could not be written answers 500, so the
+ * source sends it again; a start that did not go through is logged, and
+ * the agent's schedule picks the fact up.
+ */
+async function handleAlertRequest(source: AlertSource, req: RelayRequest, settings: RelaySettings, deps: RelayDeps, log: (line: string) => void, nowMs?: number): Promise<RelayResponse> {
+  const now = deps.now ? deps.now() : new Date(nowMs ?? Date.now());
+  const member = new URLSearchParams(req.path.split("?")[1] ?? "").get("member") ?? undefined;
+  const read = readAlertDelivery(source, { headers: req.headers, body: req.body, ...(member !== undefined ? { member } : {}) }, settings.alertSecrets?.[source], { now, ...(settings.alertMaxAgeSeconds !== undefined ? { maxAgeSeconds: settings.alertMaxAgeSeconds } : {}) });
+  if (!read.ok) {
+    log(`alert ${source}: refused a delivery: ${read.reason}`);
+    return plain(read.status, read.reason);
+  }
+  if (read.alerts.length === 0) {
+    log(`alert ${source}: nothing firing (${read.ignored} not firing, ${read.stale} stale)`);
+    return json(200, { recorded: 0, duplicates: 0, ignored: read.ignored, stale: read.stale });
+  }
+  if (!settings.key || !deps.recordAlerts) return plain(503, "the relay records no alerts: it has no relay key or no ledger");
+  const received = now.toISOString();
+  const facts = read.alerts.map((a, n) =>
+    signAgentFact(settings.key!, {
+      trigger: "alert",
+      member: a.member,
+      key: alertKey(a),
+      ...(read.idempotencyKey ? { idempotencyKey: read.alerts.length === 1 ? read.idempotencyKey : `${read.idempotencyKey}#${n}` } : {}),
+      at: a.at,
+      received,
+      by: deps.principal,
+      data: { ...a },
+    }),
+  );
+  let out: { recorded: AgentFact[]; duplicates: AgentFact[] };
+  try {
+    out = await deps.recordAlerts(facts);
+  } catch (e) {
+    log(`alert ${source}: could not record ${facts.length} alert${facts.length === 1 ? "" : "s"}: ${(e as Error).message}`);
+    return plain(500, "the alert was not recorded; send it again");
+  }
+  log(`alert ${source}: recorded ${out.recorded.length}, ${out.duplicates.length} already recorded`);
+  let started = false;
+  if (out.recorded.length > 0 && deps.dispatch) {
+    try {
+      const d = await deps.dispatch();
+      started = d.ok;
+      if (!d.ok) log(`alert ${source}: the agent's workflow did not start (${d.error}); its schedule picks the alert up`);
+    } catch (e) {
+      log(`alert ${source}: the agent's workflow did not start (${(e as Error).message}); its schedule picks the alert up`);
+    }
+  }
+  return json(200, { recorded: out.recorded.length, duplicates: out.duplicates.length, ignored: read.ignored, stale: read.stale, started });
 }
 
 /** The largest request body the relay reads. Slack and Teams send a few kilobytes. */

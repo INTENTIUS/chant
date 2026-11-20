@@ -145,3 +145,37 @@ describe("the drift agent of a workspace member", () => {
     expect(agent.env?.CHANT_AGENT_MAX_COST_USD).toBe("2.5");
   });
 });
+
+// #5329: the alert agent, started by the relay's workflow_dispatch and by its schedule.
+describe("the alert agent", () => {
+  const ALERT: ScheduledOpSpec = { name: "chant-alert-agent", agent: { on: "alert", maxRuns: 4, window: 20 } };
+  const { doc, name, jobs } = gen(ALERT);
+  const agent = doc.jobs["chant-alert-agent"]!;
+  const push = doc.jobs["chant-alert-agent-push"]!;
+  const all = [agent, push].flatMap((j) => j.steps.map((s) => s.run ?? "")).join("\n");
+
+  test("is a workflow of its own on workflow_dispatch with no inputs, and on its schedule", () => {
+    expect(name).toBe("chant-alert-agent.yml");
+    expect(doc.on).toEqual({ schedule: [{ cron: "*/15 * * * *" }], workflow_dispatch: {} });
+    expect(jobs[0]!.trigger).toEqual({ kind: "cron", schedule: "*/15 * * * *" });
+    expect(gen({ ...ALERT, trigger: { kind: "cron", schedule: "*/5 * * * *" } }).doc.on).toMatchObject({ schedule: [{ cron: "*/5 * * * *" }] });
+    expect(() => gen({ ...ALERT, trigger: { kind: "push" } })).toThrow(/alert agent/);
+  });
+
+  test("the decision and land steps alone hold the relay key; the model's step holds its key and no forge token", () => {
+    expect(agent.if).toBeUndefined();
+    expect(agent.needs).toBeUndefined();
+    expect(agent.permissions).toEqual({ contents: "read", "pull-requests": "read" });
+    expect(agent.env).toMatchObject({ CHANT_AGENT_ON: "alert", CHANT_AGENT_WINDOW: "20", CHANT_AGENT_BRANCH: "chant/agent/chant-alert-agent" });
+    const decide = agent.steps.find((s) => s.run?.includes("chant agent prepare"))!;
+    expect(decide.env?.CHANT_RELAY_KEY).toBe("${{ secrets.CHANT_RELAY_KEY }}");
+    expect(agent.steps.at(-1)!.env).toEqual({ ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" });
+    expect(push.steps.at(-1)!.env?.CHANT_RELAY_KEY).toBe("${{ secrets.CHANT_RELAY_KEY }}");
+    expect(agent.steps[0]!.run).toContain("chant/lifecycle");
+  });
+
+  test("never applies, approves or merges", () => {
+    expect(all).not.toMatch(/chant (run|approve)\b|gh pr merge|--admin|\bterraform apply\b|\bpulumi up\b/);
+    expect(push.permissions).toEqual({ contents: "write", "pull-requests": "write", issues: "write" });
+  });
+});

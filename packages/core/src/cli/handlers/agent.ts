@@ -92,13 +92,15 @@ export async function runAgentCommandLine(ctx: CommandContext): Promise<number> 
   }
   const readRuns = async () => (await readRunLedger(settings.env, settings.name)).records;
   const forge = (): PrForge => forgeFromEnv(kind as ForgeKind);
+  // #5329: the alert facts under _alerts/ on the ledger branch the checkout fetched.
+  const readFacts = async () => (await import("../../agent-facts")).readAgentFacts("alert");
 
   try {
     if (action === "prepare") {
       // INTENTIUS/terragucci#1461: team membership is read with the pipeline's team token when it has one, else the job's.
       const teams = settings.commentAllow && settings.on === "comment" && kind !== "gitlab" ? await teamReadsFor(kind as "github" | "forgejo") : undefined;
-      const d = await prepareAgentRun({ settings, words, dir, env: process.env, event: eventOf(), forge: settings.on === "comment" && kind !== "gitlab" ? forge() : undefined, ...(teams ? { teams } : {}), readRuns, git, now: new Date() });
-      console.error(formatInfo(d.go ? `${words.product} agent: runs on ${d.sha?.slice(0, 12)}${d.pr ? ` for #${d.pr}` : ""}` : `${words.product} agent: does not run: ${d.reason}`));
+      const d = await prepareAgentRun({ settings, words, dir, env: process.env, event: eventOf(), forge: settings.on === "comment" && kind !== "gitlab" ? forge() : undefined, ...(teams ? { teams } : {}), readRuns, ...(settings.on === "alert" ? { readFacts } : {}), git, now: new Date() });
+      console.error(formatInfo(d.go ? `${words.product} agent: runs on ${d.sha?.slice(0, 12)}${d.pr ? ` for #${d.pr}` : ""}${d.facts ? ` for ${d.facts.length} alert${d.facts.length === 1 ? "" : "s"}${d.member ? ` of ${d.member}` : ""}` : ""}` : `${words.product} agent: does not run: ${d.reason}`));
       return CHANT_EXIT.done;
     }
     if (action === "run") {
@@ -121,6 +123,7 @@ export async function runAgentCommandLine(ctx: CommandContext): Promise<number> 
         git(["push", "-q", ...(lease ? [`--force-with-lease=${lease}`] : []), "origin", `HEAD:${ref}`], { cwd });
       },
       readRuns,
+      ...(settings.on === "alert" ? { readFacts } : {}),
       record: async (input) => {
         await appendRunRecord(input);
         await pushLifecycle();
