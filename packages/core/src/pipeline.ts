@@ -63,6 +63,18 @@ export const STAGE_PAUSE_URGENT_FLOOR = NEXT_RELEASE;
 export const RELEASE_RISK_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant with soaks (#5326): a stage's and a wave's `soak` in
+ * `.chant/pipeline.ts` (a duration, checks of the kinds `http`,
+ * `prometheus`, `cloudwatch-alarm`, `command`, `health`, `drift`, `apply`
+ * and `policy`, each `restart` or `hold` on failure, and overrides by member
+ * glob), the `<stage>-soak` gate a person ends one early through, the `soak`
+ * notify event, the pipeline's `recheck` schedule with `components promote
+ * --pending`, and `decideSoak` for a product that decides a soak itself. A
+ * product feature-detects soaks on this name before it writes the keys.
+ */
+export const SOAK_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */
@@ -92,7 +104,38 @@ export {
   type WaveRisk,
   type WaveRiskLine,
 } from "./lifecycle/release-risk";
-export { lineDiff, pipelineChange, pipelineChangeSection, pipelineSpecLines, type PipelineChange } from "./pipeline/diff";
+export { lineDiff, pipelineChange, pipelineChangeSection, pipelineSoakSection, pipelineSpecLines, type PipelineChange } from "./pipeline/diff";
+export {
+  decideSoak,
+  soakCheckName,
+  soakDurationMs,
+  soakGlobMatch,
+  soakHoldLines,
+  soakOnFail,
+  soakProblems,
+  soakRuleFor,
+  soakSpan,
+  soakSummary,
+  SOAK_CHECK_KINDS,
+  SOAK_MEMBER_KINDS,
+  type DecideSoakInput,
+  type Soak,
+  type SoakCheck,
+  type SoakCheckContext,
+  type SoakCheckKind,
+  type SoakCheckReader,
+  type SoakCheckResult,
+  type SoakClockState,
+  type SoakDecision,
+  type SoakHold,
+  type SoakOnFail,
+  type SoakOverride,
+  type SoakRule,
+  type SoakSubject,
+} from "./pipeline/soak";
+export { driftNamedTargets, healthVerdict, runRecordSoakSources, soakCheckReader, type SoakApplyState, type SoakDenial, type SoakExecResult, type SoakSources } from "./pipeline/soak-checks";
+export { soakAtGate, stageSoakGate, waveSoakGate, SOAK_FACT_EXPIRY, type SoakGateInput, type SoakGateOutcome } from "./pipeline/soak-gate";
+export { pipelinePromoteSoak } from "./pipeline/promote";
 export {
   gitStageArtifactPort,
   parseStageArtifactRecords,

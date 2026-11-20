@@ -49,6 +49,7 @@
  *   (`pointGateResumable`, #3835).
  */
 
+import { opWaveSoakStop, type OpWaveSoakOptions } from "./op-waves-soak";
 import { NEXT_RELEASE } from "../release-floors";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -1045,6 +1046,8 @@ export interface RunOpWaveOptions {
    * again. See {@link OpWaveInProcessHook}.
    */
   inProcessHooks?: Readonly<Record<string, OpWaveInProcessHook>>;
+  /** The seams of the soak of the wave before this one (#5326): its check reader, what it applied, and the time. Default: the job's own. */
+  soak?: OpWaveSoakOptions;
 }
 
 /** Where an op wave job's run record goes (#4551). */
@@ -2795,6 +2798,16 @@ async function runOpWaveJob(options: RunOpWaveOptions): Promise<RunOpWaveResult>
     writeOpWaveOutcome(options, dir, stopped, before.stop.members);
     if (options.phase === "plan") saveOpWavePlan(options, { end: stopped });
     return stopped;
+  }
+  // #5326: the wave before this one soaks first; while it holds, this job plans nothing and exits 3.
+  if (options.share === undefined && options.group === undefined && options.phase !== "apply") {
+    const soaking = await opWaveSoakStop({ spec, k: options.wave, cwd, ...(options.gates ? { gates: options.gates } : {}), ...(options.soak ? { soak: options.soak } : {}), log });
+    if (soaking && !soaking.passed) {
+      const held: RunOpWaveResult = { exitCode: soaking.exitCode, applied: [], failed: [], moved: [], hooks: [] };
+      writeOpWaveOutcome(options, dir, held);
+      if (options.phase === "plan") saveOpWavePlan(options, { end: held });
+      return held;
+    }
   }
   if (blocked.size > 0) log(`wave ${options.wave}: ${blockedWords(blocked)}, so not planned or applied`);
   const mine = jobRuns(options);

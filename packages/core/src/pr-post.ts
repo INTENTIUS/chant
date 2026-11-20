@@ -33,7 +33,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { pipelineChange, pipelineChangeSection } from "./pipeline/diff";
+import { pipelineChange, pipelineChangeSection, pipelineSoakSection } from "./pipeline/diff";
 import { readPipelineAt } from "./pipeline/read";
 import { laterStageRisk, laterStageRiskLines } from "./lifecycle/release-risk";
 import type { ChangeRisk } from "./change-risk";
@@ -58,11 +58,15 @@ import { isPlanNote, PLAN_BODY_LIMIT, PLAN_SUBJECT_LIMIT, planNoteMarker, planSu
 export function pipelineNoteSection(base: string, head: string, cwd: string = process.cwd()): string | undefined {
   const known = (sha: string) => spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd, stdio: "ignore" }).status === 0;
   if (!SHA.test(base) || !SHA.test(head) || !known(base) || !known(head)) return undefined;
+  // #5326: the soaks the change passes through, from the pipeline at base.
+  const atBase = readPipelineAt(base, cwd);
+  const soak = pipelineSoakSection(atBase.status === "folded" ? atBase.spec : undefined);
   const change = pipelineChange(base, head, cwd);
-  if (!change) return undefined;
+  if (!change) return soak;
   // A long diff is cut, so the section never takes over the note.
   const lines = change.diff.length > PIPELINE_NOTE_LINES ? [...change.diff.slice(0, PIPELINE_NOTE_LINES), ` ... ${change.diff.length - PIPELINE_NOTE_LINES} more lines; \`chant pipeline spec\` prints the whole spec`] : change.diff;
-  return pipelineChangeSection({ ...change, diff: lines });
+  const section = pipelineChangeSection({ ...change, diff: lines });
+  return soak ? `${section}\n\n${soak}` : section;
 }
 
 /**

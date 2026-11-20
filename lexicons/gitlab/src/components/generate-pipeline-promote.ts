@@ -7,6 +7,11 @@
  * stage matches runs `<bin> components promote --to <stage> --release
  * "$CHANT_PROMOTE_RELEASE"`. Each job fetches the full history and runs one
  * at a time per stage through its resource group.
+ *
+ * With `recheck` (#5326) each stage also gets `recheck-<stage>`, which runs
+ * on a scheduled pipeline (`$CI_PIPELINE_SOURCE == "schedule"`; the schedule
+ * is the project's pipeline schedule, set to `recheck`'s cron line) and runs
+ * `<bin> components promote --to <stage> --pending`.
  */
 
 import { assertGitlabEnvironment, assertRunnerLabels, CI_IMAGE, environmentDoc, GITLAB_FULL_HISTORY, gitlabTags } from "@intentius/chant/ci-jobs";
@@ -32,24 +37,27 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
   const tags = gitlabTags(input.runner);
-  const entries: Array<readonly [string, unknown]> = input.stages.map((stage) => [
-    `promote-${stage.name}`,
-    {
-      image: CI_IMAGE,
-      ...(tags ? { tags } : {}),
-      timeout: `${timeout.minutes} minutes`,
-      ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
-      resource_group: `${input.pipeline}-promote-${stage.name}`,
-      // #5348: the stage's own identity and its config and secret set.
-      ...(stage.cloud ? { id_tokens: gitlabTradeIdTokens(stage.cloud) } : {}),
-      variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}) },
-      rules: [{ if: `$CI_PIPELINE_SOURCE == "web" && $CHANT_PROMOTE_STAGE == "${stage.name}"` }],
-      script: [...(stage.cloud ? gitlabTradeLines() : []), ...(stage.setup ?? []), `${bin} components promote --to ${stage.name} --release "$CHANT_PROMOTE_RELEASE"`],
-    },
+  const job = (stage: PipelinePromoteInput["stages"][number], rule: string, command: string) => ({
+    image: CI_IMAGE,
+    ...(tags ? { tags } : {}),
+    timeout: `${timeout.minutes} minutes`,
+    ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
+    resource_group: `${input.pipeline}-promote-${stage.name}`,
+    // #5348: the stage's own identity and its config and secret set.
+    ...(stage.cloud ? { id_tokens: gitlabTradeIdTokens(stage.cloud) } : {}),
+    variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}) },
+    rules: [{ if: rule }],
+    script: [...(stage.cloud ? gitlabTradeLines() : []), ...(stage.setup ?? []), command],
+  });
+  const entries: Array<readonly [string, unknown]> = input.stages.flatMap((stage): Array<readonly [string, unknown]> => [
+    [`promote-${stage.name}`, job(stage, `$CI_PIPELINE_SOURCE == "web" && $CHANT_PROMOTE_STAGE == "${stage.name}"`, `${bin} components promote --to ${stage.name} --release "$CHANT_PROMOTE_RELEASE"`)],
+    // #5326: the promotion a soak holds, tried again on a scheduled pipeline, in the stage's resource group.
+    ...(input.recheck ? [[`recheck-${stage.name}`, job(stage, `$CI_PIPELINE_SOURCE == "schedule"`, `${bin} components promote --to ${stage.name} --pending`)] as const] : []),
   ]);
   const header = [
     `# chant promote for "${input.pipeline}": start a pipeline from the web with CHANT_PROMOTE_STAGE`,
     "# (one of " + input.stages.map((s) => s.name).join(", ") + ") and CHANT_PROMOTE_RELEASE (the release's label or digest).",
+    ...(input.recheck ? [`# A pipeline schedule with the cron line "${input.recheck.schedule}" runs the recheck jobs; each promotes the release a soak holds.`] : []),
   ];
   return [{ name: `${input.pipeline}-promote.gitlab-ci.yml`, yaml: emitGitlabFile(entries, header) }];
 }

@@ -42,6 +42,8 @@ describe("the stage-hooks bundle", () => {
       "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",
       "packages/core/src/op/stage-hooks.ts",
+      // A wave's soak is checked with the spec (#5326): its rules, which import only node:crypto.
+      "packages/core/src/pipeline/soak.ts",
       "packages/core/src/wave-blocked.ts",
       "packages/core/src/wave-layout.ts",
     ]);

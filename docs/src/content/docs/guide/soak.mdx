@@ -1,0 +1,95 @@
+---
+title: Soak Before the Next Stage
+description: Hold the next stage, or the next wave, until checks have kept passing for a while after an apply. A promote during the soak exits 3 with the time left, a scheduled job tries it again, and a person can end a soak early through its gate.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/soak/.
+  In the member's directory, run `npx chant pipeline spec` and show me each stage's and wave's `soak`.
+  Then show me the plan note's Soak section for my open pull request, if it has one.
+  Never deploy to a real cloud account or shared environment, approve (`chant approve`), merge, or cut a release (`chant release cut --yes`).
+---
+
+A soak holds the next stage until the stage before it has stayed healthy for a while. A stage in [`.chant/pipeline.ts`](/chant/guide/pipeline/) declares a duration and the checks that must keep passing after its last apply. A promotion into the next stage passes its gate only once the soak is over.
+
+No process waits for the clock. A promote reads the soak when it runs: when the clock started, how long the soak is, and what each check says now. While the soak holds, the promote records the soak's pending fact, prints the time left and exits 3. Running the promote again, by hand or from the pipeline's scheduled job, reads the clock and the checks again.
+
+A soak only adds a wait. Once it is over, or a person ends it, the next stage's own gate still decides, so nothing is promoted without the approval that gate asks for.
+
+## Declare a soak
+
+```ts
+import { pipeline } from "@intentius/chant/pipeline";
+
+export default pipeline({
+  name: "shop",
+  recheck: { schedule: "*/30 * * * *" },
+  stages: [
+    {
+      name: "staging",
+      waves: [{ name: "staging", runs: [{ target: "staging" }] }],
+      soak: {
+        duration: "24h",
+        checks: [
+          { kind: "http", url: "https://staging.shop.example/healthz", status: 200, body: "ok" },
+          { kind: "prometheus", url: "https://prometheus.example", query: "sum(rate(http_requests_total{code=~\"5..\"}[5m]))", max: 1 },
+          { kind: "health", covers: ["AWS::ECS::Service", "aws_lb_target_group"] },
+          { kind: "drift", onFail: "hold" },
+        ],
+        overrides: [{ members: ["payments/**"], duration: "72h" }],
+      },
+    },
+    { name: "prod", waves: [{ name: "prod", runs: [{ target: "prod" }] }], gate: { quorum: [{ count: 2 }] } },
+  ],
+});
+```
+
+`duration` is `<n>m`, `<n>h`, `<n>d`, or `0` to wait for the checks alone. The clock starts at the newest apply of the promoted components in the stage's release ledger. A soak on a wave holds the wave after it in the same way, from that wave's newest run on the run ledger, so the waves of a module rollout soak one after another. The last wave of a stage takes none; the stage's soak covers what comes after it.
+
+`overrides` set the duration and checks per member glob. The first override whose glob names a member decides that member's duration and checks, and a field it leaves out is the soak's. `*` stays within one `/` segment and `**` crosses them. Every member shares one clock, the last apply, and the soak is due once the longest duration has passed.
+
+## Checks
+
+| Kind | Passes when | Settings |
+|---|---|---|
+| `http` | the URL answers with a listed status, and its body matches `body` when given | `url`, `status` (default 200, or a list), `body` (a regular expression), `timeoutSeconds` |
+| `prometheus` | every sample of the instant query is within `min` and `max`; a query with no sample does not pass | `url` (the server), `query`, `min`, `max`, `timeoutSeconds` |
+| `cloudwatch-alarm` | the alarm is `OK`, read with the AWS CLI the job is logged in with | `alarm`, `region` |
+| `command` | the command exits 0 | `command` (a list of words), `timeoutSeconds` |
+| `health` | every resource `chant lifecycle health <stage>` reads is healthy; unhealthy, unknown, unread and not deployed all fail | `covers`: resource names, types or globs the check is scoped to; a scope that matches nothing fails |
+| `drift` | the stage's open drift issue names none of the member's targets in a code span | none |
+| `apply` | the newest apply of each target did not fail; one still running, or none on record, passes | none |
+| `policy` | no target's newest policy denial was recorded at or after the clock started | none |
+
+A check that cannot be read, such as a Prometheus server that does not answer, counts as failing. A resource with no health read is `unknown` in `lifecycle health`, so a `health` check over a whole Terraform root or Pulumi stack holds while any resource is uncovered; `covers` scopes it to the resources it can observe.
+
+Each check sets what a failure does with `onFail`:
+
+- `restart`, the default: the soak starts over once the check passes again. A `restart` check is read on every run.
+- `hold`: the next stage stays held until the check passes or a person ends the soak, and the elapsed time is kept. A `hold` check is read once the duration is up, since a failure before then would hold all the same.
+
+Either way the next stage is held, and the first run that finds a check failing sends a `soak` [notify](/chant/guide/notify/) event through the pipeline's `defaults.notify`.
+
+## While a soak holds
+
+```
+error: stage prod waits for the soak of staging: 3h 20m left, until 2026-11-21T10:00:00.000Z [pipeline-soak-waiting]
+hint: Run it again once the soak is up, or end the soak early with: chant approve shop staging-soak --env staging --plan sha256:...
+```
+
+The pending fact of gate `<stage>-soak` under the pipeline's name carries the soak: `clockStart`, `due`, `leftMs`, one line per hold, and the checks that failed. A later run reads that back, which is how a `restart` check that passes again starts the clock over.
+
+With `recheck.schedule`, `chant pipeline generate` renders a `recheck-<stage>` job per later stage. On GitHub and Forgejo the promote workflow runs on that schedule; on GitLab the jobs run on a scheduled pipeline, which the project's pipeline schedule sets to the same cron line. Each job runs `chant components promote --to <stage> --pending`, which promotes the release named by the newest standing soak fact for that stage, soak and gates included, and exits 0 when nothing is pending.
+
+## End a soak early
+
+A person ends a soak by approving its gate: `chant approve <pipeline> <stage>-soak --plan <release digest>`, under the stage's approval rules. The approval names who, and the promote records it on `_gates/<pipeline>/applied.jsonl`. A product maps its own comment onto that approval, such as `/terragucci skip-soak`. Ending the soak opens nothing by itself: the next stage's gate still waits for its own approval.
+
+For a wave, the gate is `<gate>-wave-<k>-soak` under the op-waves spec's name, where `k` is the wave that soaks.
+
+## In the plan note
+
+A pull request's plan note gets a Soak section whenever the pipeline at the base commit declares one: each stage's soak with the stages it holds, and each wave's with the wave it holds, so a reviewer sees every soak the change passes through before it merges.
+
+## In a product
+
+A product writes `environments.<name>.soak` and `recheck.schedule` from its config into `.chant/pipeline.ts` with `pipelineFromConfig`; the keys are in [CI product config](/chant/reference/ci-product-config/). A product that decides a soak itself calls `decideSoak` and `soakCheckReader` from `@intentius/chant/pipeline`, and feature-detects all of this on `SOAK_FLOOR`.

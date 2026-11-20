@@ -19,6 +19,12 @@
  *    `on-destructive` wait, since a promote has no plan to call destructive
  *    before it is gated.
  *
+ * Before the gates, the soak of the stage promoted from (#5326,
+ * `./soak-gate.ts`): while it holds, the promote records the soak's pending
+ * fact (gate `<from>-soak`) and exits 3 with the time left. Its clock starts
+ * at the newest apply of the promoted components in the `from` stage's
+ * release ledger.
+ *
  * A gate that waits records its pending fact and the promote exits 3, as a
  * gated run does; `chant approve <pipeline> <gate> --plan <digest>` passes it.
  *
@@ -70,6 +76,8 @@ import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import { stageHeldAt, stageHeldLine } from "./stages";
 import { stageRiskContext, stageRiskRead, type ReleaseRisk } from "../lifecycle/release-risk";
 import type { ResolvedGateApproval } from "../op/gate-approval";
+import { soakAtGate, stageSoakGate, type SoakGateInput, type SoakGateOutcome } from "./soak-gate";
+import type { SoakCheckReader } from "./soak";
 
 /** A refusal or a wait, with the exit code the promote ends with. */
 export interface PipelinePromoteStop {
@@ -91,7 +99,8 @@ export interface PipelinePromoteStop {
     | "pipeline-release-superseded"
     | "pipeline-no-urgent-rule"
     | "pipeline-urgent-skips"
-    | "pipeline-urgent-upstream";
+    | "pipeline-urgent-upstream"
+    | "pipeline-soak-waiting";
   /** Lines the promote prints before the stop, such as a rejection that does not count and why (#5354). */
   lines?: string[];
 }
@@ -188,6 +197,88 @@ export function pipelinePromoteSource(input: {
 export type PipelineGatesOutcome = { passed: true; lines: string[]; urgent?: { approval: GateResolutionRecord; role: string } } | ({ passed: false } & PipelinePromoteStop);
 
 /**
+ * The reader of the rejections at a stage's gates (#5354): the pipeline's
+ * rejection ledger read once, each rejection that does not count noted in
+ * `lines`, and the stop for the first gate a standing rejection names.
+ */
+function rejectionReader(input: {
+  spec: PipelineSpec;
+  digest: string;
+  releaseDigest?: string;
+  port: GateLedgerPort;
+  proof?: PipelineGateProof;
+  identityOf: (gate: string) => Promise<GateApprovalRule | null>;
+  lines: string[];
+}): (stage: PipelineStage, gates: readonly string[]) => Promise<({ passed: false } & PipelinePromoteStop) | undefined> {
+  const { spec, port, digest, lines } = input;
+  const proof = input.proof ?? NO_PROOF;
+  let rejectionLedger: GateRejectionRecord[] | undefined;
+  const rejectedAt = async (stage: PipelineStage, gate: string): Promise<GateRejectionRecord[]> => {
+    rejectionLedger ??= (await port.readRejections?.(spec.name)) ?? [];
+    const identity = await input.identityOf(gate);
+    const found = gateRejections(rejectionLedger, {
+      gate,
+      planDigest: digest,
+      environment: stage.name,
+      ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
+      mode: stage.gate?.approval ?? "ledger",
+      ...(stage.gate?.quorum ? { quorum: stage.gate.quorum } : {}),
+      signers: proof.signers,
+      roles: proof.roles,
+      identity: identity ? (identity.refusesRejection ?? (() => `the workspace's rule for gate ${gate} judges no rejection here`)) : null,
+    });
+    for (const { rejection, why } of found.ignored) lines.push(`${spec.name} ${gate}: the rejection by ${rejection.rejectedBy} does not count: ${why}`);
+    return found.standing;
+  };
+  return async (stage, gates) => {
+    for (const gate of gates) {
+      const standing = await rejectedAt(stage, gate);
+      if (standing.length === 0) continue;
+      const what = input.releaseDigest !== undefined ? `release ${input.releaseDigest}` : `the promotion ${digest}`;
+      return {
+        passed: false,
+        exitCode: 8,
+        code: "pipeline-release-rejected",
+        message: `${what} was rejected at ${spec.name} ${gate}, so it does not enter stage ${stage.name}: ${standing.map(rejectionLine).join("; ")}`,
+        hint: "A rejection stands for this release, and more approvals do not clear it. Cut a new release with the change it asks for, and promote that one.",
+        lines: [...lines],
+      };
+    }
+    return undefined;
+  };
+}
+
+/**
+ * The rejections a promote reads before the soak (#5326, #5354): those at
+ * each skipped stage's gate and skip gate, then at the target stage's gate
+ * (and its urgent gate under `--urgent`). A rejection stops the promote
+ * with exit 8 before any soak is read or recorded, so a rejected release
+ * never leaves a soak's pending fact. {@link pipelinePromoteGates} reads them
+ * again, with the same answer, before its approvals.
+ */
+export async function pipelinePromoteRejected(input: {
+  spec: PipelineSpec;
+  to: string;
+  skipped: readonly PipelineStage[];
+  digest: string;
+  releaseDigest?: string;
+  port: GateLedgerPort;
+  proof?: PipelineGateProof;
+  urgent?: boolean;
+}): Promise<({ passed: false } & PipelinePromoteStop) | undefined> {
+  const rules: Record<string, GateApprovalRule | null> = {};
+  const identityOf = async (gate: string): Promise<GateApprovalRule | null> => (gate in rules ? rules[gate]! : (rules[gate] = (await input.port.approvalRule?.(gate)) ?? null));
+  const rejected = rejectionReader({ ...input, identityOf, lines: [] });
+  for (const stage of input.skipped) {
+    const stop = await rejected(stage, [stage.name, `${stage.name}-skip`]);
+    if (stop) return stop;
+  }
+  const stage = input.spec.stages.find((s) => s.name === input.to);
+  if (!stage) return undefined;
+  return rejected(stage, input.urgent ? [stage.name, urgentGateName(stage.name)] : [stage.name]);
+}
+
+/**
  * The gates part, once the promote knows what it deploys: each skipped
  * stage's skip gate, then the target stage's gate. `digest` is the release's
  * digest, or {@link promotedDigest}. Records each skip it passes.
@@ -228,40 +319,7 @@ export async function pipelinePromoteGates(input: {
     return own ? { requirement: own.requirement, refuses: (a) => own.refuses(a) ?? sealed.refuses(a) } : sealed;
   };
   // #5354: the rejections of the pipeline's gates, read once.
-  let rejectionLedger: GateRejectionRecord[] | undefined;
-  const rejectedAt = async (stage: PipelineStage, gate: string): Promise<GateRejectionRecord[]> => {
-    rejectionLedger ??= (await port.readRejections?.(spec.name)) ?? [];
-    const identity = await identityOf(gate);
-    const found = gateRejections(rejectionLedger, {
-      gate,
-      planDigest: digest,
-      environment: stage.name,
-      ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
-      mode: stage.gate?.approval ?? "ledger",
-      ...(stage.gate?.quorum ? { quorum: stage.gate.quorum } : {}),
-      signers: proof.signers,
-      roles: proof.roles,
-      identity: identity ? (identity.refusesRejection ?? (() => `the workspace's rule for gate ${gate} judges no rejection here`)) : null,
-    });
-    for (const { rejection, why } of found.ignored) lines.push(`${spec.name} ${gate}: the rejection by ${rejection.rejectedBy} does not count: ${why}`);
-    return found.standing;
-  };
-  const rejected = async (stage: PipelineStage, gates: readonly string[]): Promise<PipelineGatesOutcome | undefined> => {
-    for (const gate of gates) {
-      const standing = await rejectedAt(stage, gate);
-      if (standing.length === 0) continue;
-      const what = input.releaseDigest !== undefined ? `release ${input.releaseDigest}` : `the promotion ${digest}`;
-      return {
-        passed: false,
-        exitCode: 8,
-        code: "pipeline-release-rejected",
-        message: `${what} was rejected at ${spec.name} ${gate}, so it does not enter stage ${stage.name}: ${standing.map(rejectionLine).join("; ")}`,
-        hint: "A rejection stands for this release, and more approvals do not clear it. Cut a new release with the change it asks for, and promote that one.",
-        lines: [...lines],
-      };
-    }
-    return undefined;
-  };
+  const rejected = rejectionReader({ ...input, identityOf, lines });
   // #5387: each stage's reading of the release's risk, once, its line printed whatever the gate does.
   const reads = new Map<string, ReturnType<typeof stageRiskRead>>();
   const riskOf = (stage: PipelineStage) => {
@@ -625,4 +683,43 @@ export async function pipelineUrgentGate(input: {
   const approval = got.resolution;
   await port.appendApplied?.({ version: 1, kind: "applied", op: spec.name, gate, planDigest: digest, approvedAt: approval.timestamp, approvedBy: approval.resolvedBy, timestamp: now, ...(input.gitSha ? { commit: input.gitSha } : {}) });
   return { passed: true, approval, role: rule.role, lines: [`stage ${stage.name}: urgent, ${spec.name} ${gate} approved by ${approval.resolvedBy} (${rule.role})`] };
+}
+
+/**
+ * The soak of stage `from` in front of a promotion into `to` (#5326): each
+ * promoted component is a member that applied in `from` at its source
+ * record's time. Passed when `from` declares no soak or is no stage of the
+ * pipeline.
+ */
+export async function pipelinePromoteSoak(input: {
+  spec: PipelineSpec;
+  from: string;
+  to: string;
+  items: readonly { component: string; source: { timestamp: string } }[];
+  digest: string;
+  releaseDigest?: string;
+  port: GateLedgerPort;
+  read: SoakCheckReader;
+  now: Date;
+  gitSha?: string;
+  notify?: SoakGateInput["notify"];
+}): Promise<SoakGateOutcome> {
+  const stage = input.spec.stages.find((s) => s.name === input.from);
+  return soakAtGate({
+    op: input.spec.name,
+    gate: stageSoakGate(input.from),
+    soak: stage?.soak,
+    stage: input.from,
+    holds: `stage ${input.to}`,
+    to: input.to,
+    digest: input.digest,
+    ...(input.releaseDigest ? { releaseDigest: input.releaseDigest } : {}),
+    subjects: input.items.map((i) => ({ member: i.component, targets: [i.component], appliedAt: i.source.timestamp })),
+    ...(stage?.gate?.quorum ? { quorum: stage.gate.quorum } : {}),
+    port: input.port,
+    read: input.read,
+    now: input.now,
+    ...(input.gitSha ? { gitSha: input.gitSha } : {}),
+    ...(input.notify ? { notify: input.notify } : {}),
+  });
 }

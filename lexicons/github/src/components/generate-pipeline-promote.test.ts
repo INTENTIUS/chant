@@ -46,6 +46,16 @@ describe("github pipeline promote", () => {
     expect(() => yaml({ ...input, stages: [{ name: "Prod" }] })).toThrow(/not a valid name/);
   });
 
+  test("recheck (#5326): a schedule and a recheck job per stage, golden", async () => {
+    const out = yaml({ ...input, recheck: { schedule: "0 * * * *" } });
+    await expect(out).toMatchFileSnapshot("./__golden__/pipeline-promote-recheck.github.yml");
+    expect(out).toContain("cron: '0 * * * *'");
+    expect(out).toContain("recheck-staging:");
+    expect(out).toContain("npx --no-install plywood components promote --to prod --pending");
+    expect(yaml(input)).not.toContain("schedule");
+    expect(yaml(input)).not.toContain("recheck-");
+  });
+
   test("the plugin exposes it", () => {
     expect(githubPlugin.generatePipelinePromote!(input)).toHaveLength(1);
   });

@@ -22,7 +22,8 @@ import type { GateQuorumNode, GateQuorumRule } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
 import { foldPipelineSource, pipelineFindingLine, PIPELINE_MODULE } from "./fold";
 import { lineDiff } from "./diff";
-import { asPipelineSpec, PIPELINE_FILE, type PipelineDeclaration, type PipelineDefaults, type PipelineFailureTolerance, type PipelineFreezeWindow, type PipelineGate, type PipelineHold, type PipelineRelease, type PipelineStage, type PipelineWave } from "./spec";
+import { asPipelineSpec, PIPELINE_FILE, type PipelineDeclaration, type PipelineDefaults, type PipelineFailureTolerance, type PipelineFreezeWindow, type PipelineGate, type PipelineHold, type PipelineRecheck, type PipelineRelease, type PipelineStage, type PipelineWave } from "./spec";
+import type { Soak, SoakCheck } from "./soak";
 
 /** One environment's settings, as a product's config spells them under `environments.<name>`, snake_case or camelCase. */
 export interface PipelineEnvironmentConfig {
@@ -51,7 +52,32 @@ export interface PipelineEnvironmentConfig {
   /** `pause_after_rollback` (#5355): a rollback of the stage pauses it. */
   pause_after_rollback?: boolean;
   pauseAfterRollback?: boolean;
+  /** `soak`: `{ duration, checks, overrides }`; a check's `on_fail` and `timeout_seconds` in snake_case or camelCase (#5326). */
+  soak?: SoakConfig;
   [key: string]: unknown;
+}
+
+/** A soak as a product's config spells it (#5326): the keys of {@link Soak}, snake_case or camelCase. */
+export interface SoakConfig {
+  duration: string;
+  checks?: Record<string, unknown>[];
+  overrides?: { members: string[]; duration?: string; checks?: Record<string, unknown>[] }[];
+}
+
+const SOAK_CHECK_WORDS: Record<string, string> = { on_fail: "onFail", timeout_seconds: "timeoutSeconds" };
+
+function soakChecksOf(checks: Record<string, unknown>[]): SoakCheck[] {
+  return checks.map((c) => Object.fromEntries(Object.entries(c).map(([k, v]) => [SOAK_CHECK_WORDS[k] ?? k, structuredClone(v)])) as unknown as SoakCheck);
+}
+
+/** A stage's `soak` from `environments.<name>.soak` (#5326). */
+function soakOf(soak: SoakConfig | undefined): Soak | undefined {
+  if (!soak) return undefined;
+  return {
+    duration: soak.duration,
+    ...(soak.checks ? { checks: soakChecksOf(soak.checks) } : {}),
+    ...(soak.overrides ? { overrides: soak.overrides.map((o) => ({ members: [...o.members], ...(o.duration !== undefined ? { duration: o.duration } : {}), ...(o.checks ? { checks: soakChecksOf(o.checks) } : {}) })) } : {}),
+  };
 }
 
 /** One approval rule as a config spells it: `count`, `roles`, `not_author`, `targets`, `proven`, `name`. */
@@ -94,6 +120,8 @@ export interface PipelineConfigInput {
   release?: PipelineRelease;
   /** `control`: the control repo told after the first stage. */
   control?: PipelineDeclaration["control"];
+  /** `recheck`: `{ schedule }`, the cron line pending promotions are tried again on (#5326). */
+  recheck?: PipelineRecheck;
 }
 
 function rulesOf(config: ApprovalRulesConfig | undefined): GateQuorumNode[] | undefined {
@@ -172,6 +200,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(env.after && env.after.length > 0 ? { after: [...env.after] } : {}),
       ...(env.queue !== undefined ? { queue: env.queue } : {}),
       ...(pauseAfterRollback ? { pauseAfterRollback: true } : {}),
+      ...(env.soak ? { soak: soakOf(env.soak)! } : {}),
     };
   });
   const declaration: PipelineDeclaration = {
@@ -180,6 +209,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     ...(input.defaults ? { defaults: structuredClone(input.defaults) } : {}),
     ...(input.release ? { release: { ...input.release } } : {}),
     ...(input.control ? { control: structuredClone(input.control) } : {}),
+    ...(input.recheck ? { recheck: { schedule: input.recheck.schedule } } : {}),
   };
   asPipelineSpec(declaration);
   return declaration;

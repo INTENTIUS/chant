@@ -46,6 +46,15 @@ describe("gitlab pipeline promote", () => {
     expect(() => yaml({ ...input, stages: [{ name: "Prod" }] })).toThrow(/not a valid name/);
   });
 
+  test("recheck (#5326): a recheck job per stage on scheduled pipelines, golden", async () => {
+    const out = yaml({ ...input, recheck: { schedule: "0 * * * *" } });
+    await expect(out).toMatchFileSnapshot("./__golden__/pipeline-promote-recheck.gitlab.yml");
+    expect(out).toContain("recheck-staging:");
+    expect(out).toContain('$CI_PIPELINE_SOURCE == "schedule"');
+    expect(out).toContain("components promote --to prod --pending");
+    expect(yaml(input)).not.toContain("recheck-");
+  });
+
   test("the plugin exposes it", () => {
     expect(gitlabPlugin.generatePipelinePromote!(input)).toHaveLength(1);
   });

@@ -12,6 +12,11 @@
  * job's OIDC token for it before the checkout, and the stage's config and
  * secret set reaches the promote's step as variables, with the lines that
  * read the stage's store secrets before the command. The forgejo generator reuses {@link buildGithubPromoteDoc}.
+ *
+ * With `recheck` (#5326) the workflow also runs on that schedule, and each
+ * stage gets a `recheck-<stage>` job, with the same identity, set and
+ * environment, that runs `<bin> components promote --to <stage> --pending`:
+ * the promotion a soak holds, tried again.
  */
 
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
@@ -51,10 +56,8 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, _dialect: { f
     if (stage.environment) assertEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
     // #5348: the stage's own identity, traded for before the checkout, and its config and secret set.
     const cloud = stage.cloud;
-    const promote = `${bin} components promote --to ${stage.name} --release "$${PROMOTE_RELEASE_ENV}"`;
-    const run = [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), promote].join("\n");
-    jobsDoc[`promote-${stage.name}`] = {
-      if: `\${{ inputs.stage == '${stage.name}' }}`,
+    const job = (condition: string, step: string, command: string, env: Record<string, string>) => ({
+      if: condition,
       "runs-on": githubRunsOn(input.runner),
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
       ...(cloud ? { permissions: { contents: "write", "id-token": "write" } } : {}),
@@ -64,17 +67,24 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, _dialect: { f
       steps: [
         ...(cloud ? [{ name: "Trade the job's OIDC token for the stage's cloud identity", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : []),
         checkoutStep(true),
-        {
-          name: `Promote the release into ${stage.name}`,
-          env: { ...(stage.variables ?? {}), [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
-          run,
-        },
+        { name: step, ...(Object.keys({ ...stage.variables, ...env }).length > 0 ? { env: { ...(stage.variables ?? {}), ...env } } : {}), run: [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
       ],
-    };
+    });
+    jobsDoc[`promote-${stage.name}`] = job(
+      `\${{ inputs.stage == '${stage.name}' }}`,
+      `Promote the release into ${stage.name}`,
+      `${bin} components promote --to ${stage.name} --release "$${PROMOTE_RELEASE_ENV}"`,
+      { [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
+    );
+    // #5326: the promotion a soak holds, tried again on the schedule. It shares the stage's concurrency group, so it never runs beside a promote.
+    if (input.recheck) {
+      jobsDoc[`recheck-${stage.name}`] = job("${{ github.event_name == 'schedule' }}", `Promote the release a soak holds into ${stage.name}`, `${bin} components promote --to ${stage.name} --pending`, {});
+    }
   }
   return {
     name: `${input.pipeline} promote`,
     on: {
+      ...(input.recheck ? { schedule: [{ cron: input.recheck.schedule }] } : {}),
       workflow_dispatch: {
         inputs: {
           stage: { description: "The stage the release is promoted into", required: true, type: "choice", options: input.stages.map((s) => s.name) },

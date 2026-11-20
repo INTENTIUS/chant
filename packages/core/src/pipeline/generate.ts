@@ -125,6 +125,8 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
           ...(bin ? { bin } : {}),
           ...(spec.defaults?.runner ? { runner: spec.defaults.runner } : {}),
           ...(options.jobTimeoutMinutes ? { jobTimeoutMinutes: options.jobTimeoutMinutes } : {}),
+          // #5326: the scheduled re-run of the promotions a soak holds.
+          ...(spec.recheck ? { recheck: { schedule: spec.recheck.schedule } } : {}),
         });
     return { success: true, files: [...waves.files, ...promote], jobs: waves.jobs };
   } catch (err) {

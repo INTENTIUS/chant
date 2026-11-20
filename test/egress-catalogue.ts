@@ -752,6 +752,20 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. `reconcilePr`'s `comment` and `issue` finding modes post through the GitHub and Forgejo clients too (#3757). terragucci and SQL Yodeler import it from `@intentius/chant/pr-forge` for their own notes, statuses and tracking issues (#3759). On a Forgejo or GitLab job, `reconcilePr`'s `pull-request` mode, `lexiconUpgrade`, rollback and `proposeWorkspaceUpgrade` find, open, edit and label their pull request through it, since `gh pr` speaks a GraphQL API Forgejo does not serve (#3798). `chant ci serve` polls the open pull requests into the target branch and the branch's head through the GitHub and Forgejo clients (#4095). `chant ci run` and `chant ci serve` set a `chant/pr-plan` or `chant/pr-apply` commit status for each job through `setCommitStatus`, `POST /repos/{owner}/{repo}/statuses/{sha}`, when the environment holds a forge token, and `--no-status` turns it off (#4097). `chant release candidates --forge-issues` and `chant workspace graph --intent --forge-issues` ask it which issues each pull request closes, once per pull request, through `packages/core/src/workspace/forge-work.ts` (#4649). Only those paths reach it, and each client takes an injected `fetch`, so no test opens a socket.",
   },
   {
+    file: "packages/core/src/pipeline/soak-checks.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the URLs a pipeline's soak checks name: an `http` check's URL, and a `prometheus` check's server at `/api/v1/query`",
+    why: "The soak's check readers (#5326) call the `fetch` their caller hands them, `soak-sources.ts`'s in a job and a fake in every test, for `http` and `prometheus` checks.",
+  },
+  {
+    file: "packages/core/src/pipeline/soak-sources.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the URLs a pipeline's soak checks name: an `http` check's URL, and a `prometheus` check's server at `/api/v1/query`",
+    why: "A soak (#5326) reads its `http` and `prometheus` checks when `chant components promote` promotes out of a stage that soaks, and when a wave's job follows a wave that soaks. Only a pipeline that declares such a check reaches it, and the readers in `soak-checks.ts` take an injected `fetch`, so no test opens a socket.",
+  },
+  {
     file: "packages/core/src/workspace/forge-work.ts",
     primitives: ["fetch"],
     phase: "apply",
