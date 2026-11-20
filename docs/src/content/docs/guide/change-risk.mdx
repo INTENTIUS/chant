@@ -106,7 +106,7 @@ A later stage takes a release through `chant components promote --release`, whic
 
 Here dev rates each merge and asks for nothing more, staging waits for one approval above 0.6, and prod takes two `sre` approvers above 0.3. A gate that read a rating counts people's approvals only, and a permit that reads it counts only from a person `.chant/trust.json` at base proves.
 
-A release with no record has no rating, and each stage's gate works as before. That covers a release cut from a commit no wave rated, such as one from a first stage with no `holds.risk`.
+The first stage must rate with `holds.risk`, of its own or from `defaults`, for a release to carry a rating. A pipeline where a later stage reads `holds.risk` and the first stage rates nothing does not fold: the build names the later stage. A release with no record has no rating, and each stage's gate works as before. That covers a release cut before chant carried the rating.
 
 The pull request's plan note shows how each later stage reads the plan's rating: the stage, its `approveAbove`, and what the gate asks for there. `chant workspace status` shows each cut's rating, and `--json` gives it as `risk` on each entry of `releaseCuts`, with each later stage's reading under `stages`.
 

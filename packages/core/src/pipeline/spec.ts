@@ -409,6 +409,26 @@ function graphProblems(stages: unknown[]): string[] {
 }
 
 /**
+ * A later stage's `holds.risk` reads the score its release carries (#5387),
+ * and a release carries one only when the first stage's waves score it. A
+ * later stage that sets `holds.risk` while the first stage has none, of its
+ * own or from `defaults`, would never read a score, so it is refused.
+ */
+function laterRiskProblems(stages: unknown[], defaults: unknown): string[] {
+  const holdsOf = (s: unknown): unknown => (isMap(s) && isMap(s.gate) ? s.gate.holds : undefined);
+  const riskIn = (holds: unknown): boolean => isMap(holds) && holds.risk !== undefined;
+  const first = stages[0];
+  const own = holdsOf(first);
+  const firstScores = own !== undefined ? riskIn(own) : isMap(defaults) && riskIn(defaults.holds);
+  if (firstScores) return [];
+  const firstName = isMap(first) && typeof first.name === "string" ? first.name : "the first stage";
+  return stages
+    .slice(1)
+    .filter((s) => riskIn(holdsOf(s) ?? (isMap(defaults) ? defaults.holds : undefined)))
+    .map((s) => `stage "${(s as { name: string }).name}" reads holds.risk at its gate, and the first stage "${firstName}" sets no holds.risk, of its own or from defaults; the first stage must score with holds.risk for a release to carry a score that a later stage reads`);
+}
+
+/**
  * Everything wrong with a folded pipeline, one line each; empty when it
  * reads. The stage-level checks are here; each stage's op-waves spec is
  * checked again by `assertOpWavesSpec` when it is derived (`./stages.ts`).
@@ -423,6 +443,7 @@ export function pipelineSpecProblems(value: unknown): string[] {
     const seen = new Set<string>();
     value.stages.forEach((s, i) => out.push(...stageProblems(s, i, seen)));
     if (out.length === 0) out.push(...graphProblems(value.stages));
+    if (out.length === 0) out.push(...laterRiskProblems(value.stages, value.defaults));
     out.push(...stageArtifactsSpecProblems(value));
   }
   if (value.defaults !== undefined) {

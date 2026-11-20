@@ -53,7 +53,8 @@ function shop(prod: { policy?: Policy; risk?: Record<string, unknown>; quorum?: 
     name: "shop",
     defaults: { op: "shop", step: { kind: "pulumi-up", stack: "{target}" } },
     stages: [
-      { name: "dev", waves: [{ name: "dev", runs: [{ target: "dev" }] }], gate: { policy: "never" } },
+      // The first stage scores each merge, so a release carries a score.
+      { name: "dev", waves: [{ name: "dev", runs: [{ target: "dev" }] }], gate: { policy: "never", holds: { risk: {} } } },
       { name: "staging", waves: [{ name: "staging", runs: [{ target: "staging" }] }], gate: { policy: "never" } },
       {
         name: "prod",
@@ -198,6 +199,32 @@ describe("the rules a reading keeps, on the promote path", () => {
     await promote(spec, port, LOW);
     const { gatePermitReadsRisk } = await import("../op/gate-approval");
     expect(gatePermitReadsRisk((port as ReturnType<typeof memoryGateLedgerPort>).appended[0]!.approval!)).toBe(true);
+  });
+});
+
+describe("a later stage's holds.risk needs a first stage that scores", () => {
+  const stages = (dev: Record<string, unknown>, prod: Record<string, unknown>) => [
+    { name: "dev", waves: [{ name: "dev" }], ...dev },
+    { name: "staging", waves: [{ name: "staging" }] },
+    { name: "prod", waves: [{ name: "prod" }], ...prod },
+  ];
+  const riskGate = { gate: { holds: { risk: { approveAbove: 0.5 } } } };
+
+  test("is refused at fold when the first stage scores nothing, naming the later stage", () => {
+    const problems = pipelineSpecProblems({ name: "shop", stages: stages({ gate: { policy: "never" } }, riskGate) });
+    expect(problems).toEqual([expect.stringContaining('stage "prod" reads holds.risk at its gate')]);
+    expect(problems[0]).toContain("the first stage must score with holds.risk for a release to carry a score");
+    // A first stage with holds of its own but no risk does not take the defaults' risk, while a later stage
+    // with no holds of its own does, so staging (from defaults) and prod (its own) are both refused.
+    const overridden = pipelineSpecProblems({ name: "shop", defaults: { holds: { risk: {} } }, stages: stages({ gate: { holds: { policy: true } } }, riskGate) });
+    expect(overridden.map((p) => /stage "(\w+)"/.exec(p)?.[1])).toEqual(["staging", "prod"]);
+  });
+
+  test("folds when the first stage scores, of its own or from defaults", () => {
+    expect(pipelineSpecProblems({ name: "shop", stages: stages({ gate: { holds: { risk: {} } } }, riskGate) })).toEqual([]);
+    expect(pipelineSpecProblems({ name: "shop", defaults: { holds: { risk: {} } }, stages: stages({}, riskGate) })).toEqual([]);
+    // No later stage reads a score: nothing to refuse.
+    expect(pipelineSpecProblems({ name: "shop", stages: stages({}, {}) })).toEqual([]);
   });
 });
 

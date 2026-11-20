@@ -121,7 +121,7 @@ A stage with `after`, and a stage with `queue`, add these cases. A pipeline wher
 | a queued stage with another release in it | the gate is read, then exit 3 (`pipeline-stage-busy`) until that release's deploy finishes |
 | the release already in a queued stage | its deploy carries on without its gate read again |
 
-A promote under `--release` reads the change risk the release's cut carries at each gate whose stage sets `holds.risk`, the skip gates included:
+A promote under `--release` reads the change risk the release's cut carries at each gate whose stage sets `holds.risk`, the skip gates included. The first stage's waves make that score, so a pipeline where a later stage reads `holds.risk` and the first stage has none, of its own or from `defaults`, is refused at fold, naming the later stage.
 
 | Case | Result |
 |---|---|
