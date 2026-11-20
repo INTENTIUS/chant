@@ -38,7 +38,10 @@
  *   a `Pulumi.yaml`, and three `chant init` templates (`./init-templates.ts`);
  * - review stacks in a pull request's environment (#4609): `prEnvTemplate`
  *   takes a `<project>/<stack>` template, and `prEnvTeardown` removes the
- *   environment's `pr-<n>` stacks (`./review-stack.ts`).
+ *   environment's `pr-<n>` stacks (`./review-stack.ts`);
+ * - `classifyDisruption` from a preview's steps (`./disruption.ts`) and
+ *   `healthTargets`, health through the provider lexicons with ids from the
+ *   stack's export (`./health-targets.ts`), #5338.
  */
 import { pulumiCheckSteps } from "./check-step";
 import { pulumiCiSetup } from "./ci-setup";
@@ -177,6 +180,26 @@ export const pulumiPlugin: LexiconPlugin = {
    * refresh --preview-only --target` per resource, or `plunge drift
    * --resource --stream` for a member on plunge. See `./drift-read.ts`.
    */
+  /**
+   * What applying a planned update costs, from a preview's steps (#5338). A
+   * query carries the steps as `previewSteps`; `pulumiDisruptionQueries`
+   * builds them from `pulumi preview --json`. See `./disruption.ts`.
+   */
+  async classifyDisruption(options) {
+    const { classifyPulumiDisruption } = await import("./disruption");
+    return classifyPulumiDisruption(options);
+  },
+
+  /**
+   * Health for a stack's resources through the provider lexicons (#5338):
+   * each covered type mapped to its provider's health type, with the id from
+   * the stack's export. See `./health-targets.ts`.
+   */
+  async healthTargets(options) {
+    const { pulumiHealthTargets } = await import("./health-targets");
+    return pulumiHealthTargets(options);
+  },
+
   async readDrift(options) {
     const { readPulumiDrift } = await import("./drift-read");
     return readPulumiDrift(options);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { backendServiceEntry, cloudRunEntry, GCP_HEALTH_TYPES, observeHealthGcp } from "./health";
+import { backendServiceEntry, cloudRunEntry, GCP_HEALTH_TYPES, gcpTargetFromId, observeHealthGcp } from "./health";
 import { gcpPlugin } from "./plugin";
 import type { GcpReadHttp } from "./api/read-client";
 
@@ -119,5 +119,56 @@ describe("gcp health (#4177)", () => {
 
   test("the plugin's healthTypes match the reader's", () => {
     expect([...(gcpPlugin.healthTypes ?? [])]).toEqual([...GCP_HEALTH_TYPES]);
+  });
+
+  test("an engine's recorded ids name the project, location and name of each type (#5338)", () => {
+    expect(gcpTargetFromId("GCP::Run::Service", "projects/demo/locations/europe-west1/services/api")).toEqual({
+      project: "demo",
+      name: "api",
+      props: { spec: { location: "europe-west1" } },
+    });
+    expect(gcpTargetFromId("GCP::Run::Service", "locations/us-east1/namespaces/demo/services/api")).toMatchObject({ project: "demo", name: "api", props: { spec: { location: "us-east1" } } });
+    expect(gcpTargetFromId("GCP::Compute::BackendService", "projects/demo/global/backendServices/web")).toMatchObject({ name: "web", props: { spec: { location: "global" } } });
+    expect(gcpTargetFromId("GCP::Compute::BackendService", "https://www.googleapis.com/compute/v1/projects/demo/regions/us-east1/backendServices/web")).toMatchObject({
+      name: "web",
+      props: { spec: { location: "us-east1" } },
+    });
+    expect(gcpTargetFromId("GCP::Iam::PolicyMember", "demo/roles/run.invoker/serviceAccount:ci@demo.iam.gserviceaccount.com")).toMatchObject({
+      project: "demo",
+      props: { spec: { role: "roles/run.invoker", member: "serviceAccount:ci@demo.iam.gserviceaccount.com", resourceRef: { kind: "Project", external: "projects/demo" } } },
+    });
+    expect(gcpTargetFromId("GCP::Iam::PolicyMember", "demo/projects/demo/roles/custom/user:a@b.c")).toMatchObject({ props: { spec: { role: "projects/demo/roles/custom", member: "user:a@b.c" } } });
+    expect(gcpTargetFromId("GCP::Run::Service", "api")).toBeUndefined();
+  });
+
+  test("with recorded ids the reads go where the ids say; an entity with none is absent (#5338)", async () => {
+    const urls: string[] = [];
+    const http: GcpReadHttp = async (method, url) => {
+      urls.push(`${method} ${url}`);
+      if (url.includes(":getIamPolicy")) return { status: 200, text: JSON.stringify({ bindings: [{ role: "roles/viewer", members: ["user:a@b.c"] }] }) };
+      return { status: 200, text: JSON.stringify({ terminalCondition: { type: "Ready", state: "CONDITION_FAILED", message: "image not found" } }) };
+    };
+    const r = await observeHealthGcp({
+      environment: "dev",
+      buildOutput: "",
+      entities: new Map([
+        ["app/google_cloud_run_v2_service.api", { entityType: "GCP::Run::Service", props: {} }],
+        ["app/google_project_iam_member.viewer", { entityType: "GCP::Iam::PolicyMember", props: {} }],
+        ["app/google_cloud_run_v2_service.gone", { entityType: "GCP::Run::Service", props: {} }],
+        ["app/google_cloud_run_v2_service.odd", { entityType: "GCP::Run::Service", props: {} }],
+      ]),
+      physicalIds: {
+        "app/google_cloud_run_v2_service.api": "projects/other/locations/europe-west1/services/api",
+        "app/google_project_iam_member.viewer": "other/roles/viewer/user:a@b.c",
+        "app/google_cloud_run_v2_service.odd": "not-an-id",
+      },
+      http,
+      now,
+    });
+    expect(r.entities["app/google_cloud_run_v2_service.api"]).toMatchObject({ state: "unhealthy" });
+    expect(r.entities["app/google_project_iam_member.viewer"]).toMatchObject({ state: "healthy" });
+    expect(r.absent).toEqual(["app/google_cloud_run_v2_service.gone"]);
+    expect(r.unobserved["app/google_cloud_run_v2_service.odd"]).toMatchObject({ reason: "read-failed" });
+    expect(urls).toContain("GET http://localhost:4588/v2/projects/other/locations/europe-west1/services/api");
   });
 });

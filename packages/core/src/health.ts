@@ -22,6 +22,7 @@
 
 import type { UnobservedEntity, UnobservedReason } from "./observation";
 import { unobservedAll } from "./observation";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The versioned shape `chant lifecycle health --json` prints. The JSON Schema is `./health.schema.json`. */
 export const HEALTH_SCHEMA = "chant-health/v1";
@@ -66,6 +67,15 @@ export interface HealthReadOptions {
   entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
   stack?: string;
   region?: string;
+  /**
+   * Each entity's id as an engine recorded it (#5338): a terraform root's
+   * state, a pulumi stack's export. Set when core reads health for an
+   * engine's resources through the provider lexicon that knows the type. A
+   * reader then takes the id from here in place of its own deploy records
+   * (aws's CloudFormation stack, azure's resource group), and an entity with
+   * no id here is absent.
+   */
+  physicalIds?: Readonly<Record<string, string>>;
 }
 
 /** The two plugin members a lexicon implements to answer a health read. */
@@ -175,4 +185,103 @@ export function healthEntry(
 /** A hole, for a reader building its result. */
 export function healthHole(type: string, reason: UnobservedReason, detail: string): UnobservedEntity {
   return { type, reason, detail };
+}
+
+/**
+ * One engine resource a provider lexicon reads health for (#5338): a
+ * terraform `aws_ecs_service` is the aws lexicon's `AWS::ECS::Service`.
+ */
+export interface HealthTarget {
+  /** The provider lexicon whose `observeHealth` reads it, e.g. `aws`. */
+  lexicon: string;
+  /** That lexicon's health type, one of its `healthTypes`. */
+  type: string;
+  /** The engine's own resource type, e.g. `aws_ecs_service` or `aws:ecs/service:Service`. */
+  engineType: string;
+  /** The id the engine recorded for it. */
+  physicalId: string;
+}
+
+/**
+ * What an engine lexicon's {@link EngineHealthLexicon.healthTargets} returns:
+ * each entity of a covered type in exactly one of `targets`, `unobserved` or
+ * `absent`. Entities of other types are left out, as a provider lexicon
+ * leaves out the types missing from its `healthTypes`.
+ */
+export interface HealthTargetsResult {
+  targets: Record<string, HealthTarget>;
+  unobserved: Record<string, UnobservedEntity>;
+  absent: string[];
+}
+
+/**
+ * An engine lexicon (terraform, pulumi) answers health through the provider
+ * lexicons (#5338). It maps its resource types onto their health types and
+ * reads each resource's id from its own records; core hands the ids to the
+ * provider's `observeHealth`.
+ */
+export interface EngineHealthLexicon {
+  name: string;
+  healthTargets?(options: HealthReadOptions): Promise<HealthTargetsResult>;
+}
+
+/** The first chant whose `lifecycle health` reads a terraform root's or pulumi stack's resources through the provider lexicons, with `healthTargets` and `HealthReadOptions.physicalIds` (#5338). */
+export const ENGINE_HEALTH_FLOOR = NEXT_RELEASE;
+
+/**
+ * Health for an engine lexicon's entities (#5338): its `healthTargets`, then
+ * each target read by its provider lexicon with the engine's id. Never
+ * throws. A provider that is not installed, or whose health read does not
+ * cover the type, leaves the target `unsupported-kind`. A thrown
+ * `healthTargets` comes back as `error`, with no entries.
+ */
+export async function observeEngineHealth(
+  engine: EngineHealthLexicon,
+  options: HealthReadOptions,
+  provider: (lexicon: string) => Promise<HealthLexicon | undefined>,
+): Promise<{ result: HealthReadResult; error?: string }> {
+  const empty: HealthReadResult = { entities: {}, unobserved: {}, absent: [] };
+  if (!engine.healthTargets || options.entities.size === 0) return { result: empty };
+  let found: HealthTargetsResult;
+  try {
+    found = await engine.healthTargets(options);
+  } catch (err) {
+    return { result: empty, error: err instanceof Error ? err.message : String(err) };
+  }
+  const entities: Record<string, HealthEntry> = {};
+  const unobserved: Record<string, UnobservedEntity> = { ...(found.unobserved ?? {}) };
+  const absent: string[] = [...(found.absent ?? [])];
+
+  const byLexicon = new Map<string, Array<[string, HealthTarget]>>();
+  for (const [name, target] of Object.entries(found.targets ?? {})) {
+    const list = byLexicon.get(target.lexicon) ?? [];
+    list.push([name, target]);
+    byLexicon.set(target.lexicon, list);
+  }
+  for (const [lexicon, list] of byLexicon) {
+    const reader = await provider(lexicon).catch(() => undefined);
+    const covered = new Set(reader?.healthTypes ?? []);
+    const read = new Map<string, { entityType: string; props: Record<string, unknown> }>();
+    const physicalIds: Record<string, string> = {};
+    for (const [name, target] of list) {
+      if (!reader?.observeHealth || !covered.has(target.type)) {
+        unobserved[name] = {
+          type: target.type,
+          reason: "unsupported-kind",
+          detail: reader
+            ? `the ${lexicon} lexicon has no health read for ${target.type}`
+            : `${target.engineType} is read by the ${lexicon} lexicon, which is not installed`,
+        };
+        continue;
+      }
+      read.set(name, { entityType: target.type, props: {} });
+      physicalIds[name] = target.physicalId;
+    }
+    if (read.size === 0 || !reader) continue;
+    const r = await observeHealthFor(reader, { ...options, buildOutput: "", entities: read, physicalIds });
+    Object.assign(entities, r.entities);
+    Object.assign(unobserved, r.unobserved);
+    absent.push(...r.absent);
+  }
+  return { result: { entities, unobserved, absent } };
 }

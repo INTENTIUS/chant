@@ -346,6 +346,16 @@ The action says what changes. It does not say what applying it costs, and an `up
 
 The verdict comes from the lexicon, never from core. Replacement semantics come from the spec (CloudFormation's registry schema declares `createOnlyProperties` per type, Kubernetes' SSA schema knows which field changes roll a workload), and a lexicon publishes them through `classifyDisruption`, the same way it publishes `postSynthChecks`. A replacement table in core would have to be kept in step by hand with providers chant does not generate from.
 
+The terraform and pulumi lexicons classify from the engine's own plan. On a terraform root read at the plan depth (`terraform.observe: "plan"`), each block carries its planned `actions` and `replace_paths`; on a pulumi stack the preview's steps say the same:
+
+| Plan | terraform `actions` | pulumi steps |
+|---|---|---|
+| **in-place** | `update` | `update` |
+| **replace** | `create`, `delete` | `create-replacement` before `delete-replaced` |
+| **destroy** | `delete`, `create`, or `delete` alone | `delete-replaced` before `create-replacement` (`deleteBeforeReplace`), or `delete` |
+
+`replace_paths` and `replaceReasons` become the verdict's reasons. A terraform root read from state has no plan to read, so its updates stay `unknown`. Code that already holds a plan or a preview builds the queries with `terraformDisruptionQueries(plan)` or `pulumiDisruptionQueries(preview)` and passes them to `classifyDisruption`.
+
 `unknown` is the default and the only fallback. A lexicon that ships no classifier, a classifier that says nothing about an entry, one that throws, one that returns a level outside the vocabulary — all of them land on `unknown`. **There is no path by which a change accidentally reads as `in-place`**: that claim is only ever a lexicon's deliberate one, which is what makes it worth gating on. Read `unknown` as "nobody looked at the spec", in the same spirit as [`unobserved`](#lifecycle-plan-env), not as "probably fine".
 
 The plan says it three ways. A count on the header, the verdict and its reason on the row, and a `!` on the specific delta the verdict rests on:
@@ -646,6 +656,21 @@ With `--json` the output is a `chant-health/v1` document. Its JSON Schema ships 
   "summary": { "healthy": 1, "unhealthy": 0, "unknown": 0, "unobserved": 0, "absent": 0 }
 }
 ```
+
+#### Terraform roots and Pulumi stacks
+
+The aws, azure and gcp lexicons also read the matching resources of a terraform root or a pulumi stack. The id comes from the engine: the root's state (the `terraform show -json` read `diff --live` makes) or the stack's export (the index store's copy, else the checked-in `stack-export.json`). Rows appear under `terraform` or `pulumi` and carry the provider's type.
+
+| Health type | terraform | pulumi | Recorded id |
+|---|---|---|---|
+| `AWS::Route53::HealthCheck` | `aws_route53_health_check` | `aws:route53/healthCheck:HealthCheck` | the health check id |
+| `AWS::ECS::Service` | `aws_ecs_service` | `aws:ecs/service:Service` | the service ARN; the service is described in the ARN's region |
+| `Microsoft.App/containerApps` | `azurerm_container_app` | `azure-native:app:ContainerApp`, `azure:containerapp/app:App` | the ARM id; the app is read in its subscription and resource group |
+| `GCP::Run::Service` | `google_cloud_run_v2_service`, `google_cloud_run_service` | `gcp:cloudrunv2/service:Service`, `gcp:cloudrun/service:Service` | `projects/<p>/locations/<l>/services/<n>`, or v1's `locations/<l>/namespaces/<p>/services/<n>` |
+| `GCP::Compute::BackendService` | `google_compute_backend_service`, `google_compute_region_backend_service` | `gcp:compute/backendService:BackendService`, `gcp:compute/regionBackendService:RegionBackendService` | `projects/<p>/global/backendServices/<n>` or `projects/<p>/regions/<r>/backendServices/<n>` |
+| `GCP::Iam::PolicyMember` | `google_project_iam_member` | `gcp:projects/iAMMember:IAMMember` | `<p>/<role>/<member>` |
+
+The output lists these types only. A covered resource the state or export does not hold is `absent`, and one whose id could not be read is `unobserved` with the read's reason. Each instance of a `count` or `for_each` block is its own row (`app/aws_ecs_service.api[0]`). chant uses the provider lexicon in the project's `lexicons` when it is there and the installed package when it is not. If the package is missing too, the row is `unobserved` with `unsupported-kind`.
 
 Entity names are the graph's node ids. A multi-stack project nests the lexicons under `stacks.<name>`. Routing is not modelled. A consumer that wants rotation reads the graph's edges, for example a record whose `HealthCheckId` names an unhealthy check. The command exits 0 whatever the states are, and 1 only when the build fails.
 

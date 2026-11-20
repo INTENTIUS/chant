@@ -1,0 +1,42 @@
+{
+  "steps": [
+    {
+      "op": "delete-replaced",
+      "urn": "urn:pulumi:dev::app::aws:rds/instance:Instance::db",
+      "oldState": { "urn": "urn:pulumi:dev::app::aws:rds/instance:Instance::db", "type": "aws:rds/instance:Instance", "id": "db-1" },
+      "replaceReasons": ["engine"]
+    },
+    {
+      "op": "create-replacement",
+      "urn": "urn:pulumi:dev::app::aws:rds/instance:Instance::db",
+      "newState": { "urn": "urn:pulumi:dev::app::aws:rds/instance:Instance::db", "type": "aws:rds/instance:Instance" },
+      "replaceReasons": ["engine"]
+    },
+    {
+      "op": "replace",
+      "urn": "urn:pulumi:dev::app::aws:rds/instance:Instance::db",
+      "replaceReasons": ["engine"]
+    },
+    {
+      "op": "create-replacement",
+      "urn": "urn:pulumi:dev::app::aws:lb/targetGroup:TargetGroup::api",
+      "newState": { "urn": "urn:pulumi:dev::app::aws:lb/targetGroup:TargetGroup::api", "type": "aws:lb/targetGroup:TargetGroup" },
+      "detailedDiff": { "port": { "kind": "update-replace", "inputDiff": true } }
+    },
+    {
+      "op": "replace",
+      "urn": "urn:pulumi:dev::app::aws:lb/targetGroup:TargetGroup::api",
+      "detailedDiff": { "port": { "kind": "update-replace", "inputDiff": true } }
+    },
+    {
+      "op": "delete-replaced",
+      "urn": "urn:pulumi:dev::app::aws:lb/targetGroup:TargetGroup::api",
+      "oldState": { "urn": "urn:pulumi:dev::app::aws:lb/targetGroup:TargetGroup::api", "type": "aws:lb/targetGroup:TargetGroup", "id": "tg-1" }
+    },
+    {
+      "op": "create",
+      "urn": "urn:pulumi:dev::app::aws:sqs/queue:Queue::new",
+      "newState": { "urn": "urn:pulumi:dev::app::aws:sqs/queue:Queue::new", "type": "aws:sqs/queue:Queue" }
+    }
+  ]
+}

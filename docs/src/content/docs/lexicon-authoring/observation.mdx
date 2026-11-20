@@ -275,11 +275,11 @@ Reference implementation: `lexicons/aws/src/disruption.ts`. `lexicons/fountain/s
 ```typescript
 classifyDisruption?(options: {
   environment: string;
-  changes: DisruptionQuery[];          // { name, type?, deltas }
+  changes: DisruptionQuery[];          // { name, type?, deltas, attributes? }
 }): Record<string, DisruptionVerdict>; // { disruption, because?, detail? }
 ```
 
-Called once per lexicon with that lexicon's `update` entries, before the plan merges the change sets. Expect a table lookup over compiled spec data, with no live API call and no mutation. A `Promise` is allowed for a lexicon whose answer needs an await.
+Called once per lexicon with that lexicon's `update` entries, before the plan merges the change sets. Each query also carries the entry's observed `attributes` from your own read, for a lexicon whose read holds the engine's plan: `lexicons/terraform/src/disruption.ts` reads the `planActions` its plan depth puts on each block, and `lexicons/pulumi/src/disruption.ts` reads a preview's steps. Expect a table lookup over compiled spec data, with no live API call and no mutation. A `Promise` is allowed for a lexicon whose answer needs an await.
 
 The vocabulary is `in-place` / `rolling` / `replace` / `destroy` / `unknown`, described in [`lifecycle plan`](/chant/cli/lifecycle/#disruption-how-much-an-update-costs).
 

@@ -12,9 +12,10 @@
  * ./registry/targets/nexus.ts is a Nexus version). The entries that serve a
  * part re-export its floor by name, so the table names those subpaths too.
  *
- * This file imports nothing, so an entry that must stay light (./module-catalog)
- * can re-export from it.
+ * This file imports only NEXT_RELEASE, so an entry that must stay light
+ * (./module-catalog) can re-export from it.
  */
+import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 
 /**
  * The first terraform lexicon release that has `moduleConsumers`, the scan of
@@ -32,3 +33,12 @@ export const USED_SOURCES_FLOOR = "0.124.55";
 
 /** The first terraform lexicon release that has `./module-catalog`, the known-module catalog TF047 reads (#4560). */
 export const MODULE_CATALOG_FLOOR = "0.124.55";
+
+/**
+ * The first terraform lexicon release whose `classifyDisruption` classifies a
+ * planned update from the plan's actions (in place, replace, destroy), with
+ * `terraformDisruptionQueries` for a plan in hand, and whose `healthTargets`
+ * reads a root's covered resources through the aws, azure and gcp health
+ * reads with ids from its state (#5338).
+ */
+export const TERRAFORM_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;

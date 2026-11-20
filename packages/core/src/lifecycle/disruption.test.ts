@@ -44,6 +44,17 @@ describe("annotateDisruption (#1665)", () => {
     });
   });
 
+  test("each query carries the entry's observed attributes when the caller has them (#5338)", async () => {
+    let asked: Parameters<DisruptionClassifier>[0] | undefined;
+    const classify: DisruptionClassifier = (o) => {
+      asked = o;
+      return {};
+    };
+    await annotateDisruption(set([entry(), entry({ name: "other" })]), "prod", classify, { db: { attributes: { planActions: { db: ["update"] } } } });
+    expect(asked?.changes[0]?.attributes).toEqual({ planActions: { db: ["update"] } });
+    expect(asked?.changes[1]).not.toHaveProperty("attributes");
+  });
+
   test("a name the classifier said nothing about is unknown", async () => {
     const classify: DisruptionClassifier = () => ({});
     const out = await annotateDisruption(set([entry()]), "prod", classify);

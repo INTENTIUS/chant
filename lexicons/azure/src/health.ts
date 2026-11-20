@@ -6,6 +6,11 @@
  * health state. Same transport and endpoint rule as `describe-resources.ts`, so
  * `AZURE_ENDPOINT_URL` (floci-az) answers.
  *
+ * A terraform root's or pulumi stack's container app comes with its ARM id
+ * in `options.physicalIds` (#5338), and the app is read in the subscription,
+ * resource group and name that id holds, in place of the environment's
+ * resource group and the declared name.
+ *
  * When the revisions list cannot be read but the app carries a
  * `runningStatus` (newer API versions do), that answers instead, and the detail
  * says so.
@@ -92,6 +97,16 @@ function hole(err: unknown): UnobservedEntity {
   return { type: "Microsoft.App/containerApps", reason, detail };
 }
 
+/**
+ * The subscription, resource group and name an ARM resource id holds:
+ * `/subscriptions/<s>/resourceGroups/<rg>/providers/<namespace>/<type>/<name>`.
+ * Undefined for anything else.
+ */
+export function parseArmId(id: string): { subscriptionId: string; resourceGroup: string; name: string } | undefined {
+  const m = /^\/subscriptions\/([^/]+)\/resourceGroups\/([^/]+)\/providers\/[^/]+\/[^/]+\/([^/]+)$/i.exec(id.trim());
+  return m ? { subscriptionId: m[1]!, resourceGroup: m[2]!, name: m[3]! } : undefined;
+}
+
 async function listRevisions(client: AzureReadClientOptions, name: string): Promise<RevisionState[]> {
   const http = client.http!;
   const url = armResourceReadUrl(client, "Microsoft.App/containerApps", `${name}/revisions`, CONTAINER_APPS_API_VERSION);
@@ -120,7 +135,7 @@ const defaultHttp: AzHttp = async (method, url, body, signal) => {
 
 export async function observeHealthAzure(options: AzureHealthOptions): Promise<HealthReadResult> {
   const observedAt = (options.now?.() ?? new Date()).toISOString();
-  const client: AzureReadClientOptions = {
+  const base: AzureReadClientOptions = {
     resourceGroup: options.environment,
     ...(process.env.AZURE_ENDPOINT_URL ? { endpoint: process.env.AZURE_ENDPOINT_URL } : {}),
     ...(process.env.AZURE_SUBSCRIPTION_ID ? { subscriptionId: process.env.AZURE_SUBSCRIPTION_ID } : {}),
@@ -132,7 +147,22 @@ export async function observeHealthAzure(options: AzureHealthOptions): Promise<H
 
   await Promise.all(
     [...options.entities].map(async ([entityName, { entityType, props }]) => {
-      const name = props.name as string | undefined;
+      let client = base;
+      let name = props.name as string | undefined;
+      if (options.physicalIds) {
+        const id = options.physicalIds[entityName];
+        if (!id) {
+          absent.push(entityName);
+          return;
+        }
+        const arm = parseArmId(id);
+        if (!arm) {
+          unobserved[entityName] = { type: entityType, reason: "read-failed", detail: `recorded id ${id} is not an ARM resource id` };
+          return;
+        }
+        client = { ...base, resourceGroup: arm.resourceGroup, subscriptionId: arm.subscriptionId };
+        name = arm.name;
+      }
       if (!name) {
         unobserved[entityName] = { type: entityType, reason: "read-failed", detail: "declared entity has no name to query by" };
         return;

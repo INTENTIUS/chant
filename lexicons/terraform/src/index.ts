@@ -216,3 +216,13 @@ export {
 } from "./behaviour";
 // terraform, tofu and choudoufu exit statuses on chant's exit-code table (#4553).
 export { terraformExitOf, terraformPlanMoved, type TerraformExitSource } from "./exit-codes";
+
+// Disruption from a plan's actions and health through the provider lexicons (#5338).
+export {
+  classifyTerraformDisruption,
+  terraformActionsDisruption,
+  terraformDisruptionQueries,
+  terraformQueryVerdict,
+} from "./disruption";
+export { TERRAFORM_HEALTH_TYPES, terraformHealthTargets } from "./health-targets";
+export { TERRAFORM_HEALTH_DISRUPTION_FLOOR } from "./chant-floors";

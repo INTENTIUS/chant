@@ -1,6 +1,6 @@
 ---
 title: Checking Whether Services Are Up
-description: Read the runtime health of declared ECS services, Route 53 health checks, Container Apps, Cloud Run services, GCP backend services and IAM bindings with chant lifecycle health
+description: Read the runtime health of declared ECS services, Route 53 health checks, Container Apps, Cloud Run services, GCP backend services and IAM bindings, in chant, terraform and pulumi projects, with chant lifecycle health
 diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/checking-health/.
@@ -26,6 +26,8 @@ prompt: |
      not read  api (GCP::Run::Service): no-binding, no GCP project resolved
    1 healthy, 1 unhealthy, 0 unknown, 1 not observed
    ```
+
+   The same command reads a terraform root or a pulumi stack. Install the aws, azure or gcp lexicon for the resources it holds; the [reference](/chant/cli/lifecycle/#terraform-roots-and-pulumi-stacks) lists the covered types.
 
 3. Fix what keeps a row from being read before you trust the rest. A `not read` row is a read that failed, so chant does not know whether that service is up. It is never counted as unhealthy.
 

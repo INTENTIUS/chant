@@ -9,6 +9,17 @@
  * `status: "True" | "False" | "Unknown"`; both are read. Same transport,
  * project resolution and endpoint rule as `describe-resources.ts`, so
  * `GCP_ENDPOINT_URL` (floci-gcp) answers.
+ *
+ * A terraform root's or pulumi stack's resources come with
+ * `options.physicalIds` (#5338), the ids the google provider records, and
+ * {@link gcpTargetFromId} reads the project, location and name out of each
+ * in place of the declared spec:
+ *
+ * | type | recorded id |
+ * |---|---|
+ * | `GCP::Run::Service` | `projects/<p>/locations/<l>/services/<n>` (v2), `locations/<l>/namespaces/<p>/services/<n>` (v1) |
+ * | `GCP::Compute::BackendService` | `projects/<p>/global/backendServices/<n>`, `projects/<p>/regions/<r>/backendServices/<n>` |
+ * | `GCP::Iam::PolicyMember` | `<p>/<role>/<member>`, a project IAM member |
  */
 
 import type { HealthEntry, HealthReadOptions, HealthReadResult, UnobservedEntity } from "@intentius/chant/lexicon";
@@ -114,6 +125,60 @@ export function policyMemberEntry(binding: { role?: string; member?: string; res
   };
 }
 
+/** What a read needs of one resource: its name, project and a declared spec the REST mapper builds the URL from. */
+export interface GcpIdTarget {
+  name: string;
+  project: string;
+  props: Record<string, unknown>;
+}
+
+/**
+ * The read target an engine's recorded id names (#5338), or undefined when
+ * the id has none of the shapes in the module doc. A full `selfLink` URL is
+ * read as its path.
+ */
+export function gcpTargetFromId(entityType: string, id: string): GcpIdTarget | undefined {
+  const path = id.trim().replace(/^https:\/\/[^/]+\/(?:compute\/v1\/|v[12]\/)?/, "");
+  let m: RegExpExecArray | null;
+  switch (entityType) {
+    case "GCP::Run::Service":
+      if ((m = /^projects\/([^/]+)\/locations\/([^/]+)\/services\/([^/]+)$/.exec(path))) {
+        return { project: m[1]!, name: m[3]!, props: { spec: { location: m[2]! } } };
+      }
+      if ((m = /^locations\/([^/]+)\/namespaces\/([^/]+)\/services\/([^/]+)$/.exec(path))) {
+        return { project: m[2]!, name: m[3]!, props: { spec: { location: m[1]! } } };
+      }
+      return undefined;
+    case "GCP::Compute::BackendService":
+      if ((m = /^projects\/([^/]+)\/global\/backendServices\/([^/]+)$/.exec(path))) {
+        return { project: m[1]!, name: m[2]!, props: { spec: { location: "global" } } };
+      }
+      if ((m = /^projects\/([^/]+)\/regions\/([^/]+)\/backendServices\/([^/]+)$/.exec(path))) {
+        return { project: m[1]!, name: m[3]!, props: { spec: { location: m[2]! } } };
+      }
+      return undefined;
+    case "GCP::Iam::PolicyMember": {
+      // `<project>/<role>/<member>`. A role is `roles/<r>` or
+      // `projects/<p>/roles/<r>`; the member is the first segment after it
+      // that carries a `type:` prefix, to the end.
+      const parts = path.split("/");
+      const at = parts.findIndex((seg, i) => i >= 2 && /^[a-zA-Z]+:/.test(seg));
+      if (parts.length < 3 || at === -1) return undefined;
+      const project = parts[0]!;
+      const role = parts.slice(1, at).join("/");
+      const member = parts.slice(at).join("/");
+      if (!/^(?:roles|projects\/[^/]+\/roles|organizations\/[^/]+\/roles)\/[^/]+$/.test(role)) return undefined;
+      return {
+        project,
+        name: `${role}/${member}`,
+        props: { spec: { member, role, resourceRef: { kind: "Project", external: `projects/${project}` } } },
+      };
+    }
+    default:
+      return undefined;
+  }
+}
+
 const defaultReadHttp: GcpReadHttp = async (method, url, body) => {
   const res = await fetch(url, {
     method,
@@ -148,24 +213,41 @@ export async function observeHealthGcp(options: GcpHealthOptions): Promise<Healt
   const entities: Record<string, HealthEntry> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const absent: string[] = [];
-  const targets = readTargets(options.entities);
-  const manifest = readManifest(options.entities, targets);
+  const recorded = options.physicalIds;
+  const targets = recorded ? new Map<string, { name: string; props: Record<string, unknown> }>() : readTargets(options.entities);
+  const manifest = recorded ? [] : readManifest(options.entities, targets);
 
   await Promise.all(
     [...options.entities].map(async ([entityName, { entityType }]) => {
       const gvk = deriveGVK(entityType);
-      const { name, props } = targets.get(entityName)!;
-      const metadata = props.metadata as { annotations?: Record<string, string> } | undefined;
       if (!gvk) {
         unobserved[entityName] = { type: entityType, reason: "read-failed", detail: `cannot derive a GCP kind from ${entityType}` };
         return;
       }
+      let name: string;
+      let props: Record<string, unknown>;
       let project: string;
-      try {
-        project = resolveReadProject(gvk.kind, name, metadata, manifestProjects, props);
-      } catch (err) {
-        unobserved[entityName] = { type: entityType, reason: "no-binding", detail: err instanceof Error ? err.message : String(err) };
-        return;
+      if (recorded) {
+        const id = recorded[entityName];
+        if (!id) {
+          absent.push(entityName);
+          return;
+        }
+        const target = gcpTargetFromId(entityType, id);
+        if (!target) {
+          unobserved[entityName] = { type: entityType, reason: "read-failed", detail: `recorded id ${id} names no ${entityType} chant can read` };
+          return;
+        }
+        ({ name, props, project } = target);
+      } else {
+        ({ name, props } = targets.get(entityName)!);
+        const metadata = props.metadata as { annotations?: Record<string, string> } | undefined;
+        try {
+          project = resolveReadProject(gvk.kind, name, metadata, manifestProjects, props);
+        } catch (err) {
+          unobserved[entityName] = { type: entityType, reason: "no-binding", detail: err instanceof Error ? err.message : String(err) };
+          return;
+        }
       }
       try {
         const client = { project, ...(endpoint ? { endpoint } : {}), ...(options.http ? { http: options.http } : {}), manifest };

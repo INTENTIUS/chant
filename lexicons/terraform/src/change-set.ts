@@ -74,13 +74,24 @@ export function actionFor(actions: unknown): ChangeSetAction {
   throw new Error(`a plan entry has actions ${JSON.stringify(actions)}, which the change set has no action for`);
 }
 
-function disruptionFor(actions: unknown, action: ChangeSetAction): ChangeSetDisruption | undefined {
-  switch (action) {
-    case "update": return "in-place";
-    case "delete": return "destroy";
-    case "replace": return (actions as string[])[0] === "create" ? "replace" : "destroy";
-    default: return undefined;
-  }
+/**
+ * The disruption one `resource_changes[]` entry's `actions` mean (#5338):
+ * `update` is in place, `create, delete` a replacement made first, `delete,
+ * create` and `delete` destroy. Undefined for a create, a read, a no-op or a
+ * forget, which change nothing that exists. `classifyDisruption`
+ * (`./disruption.ts`) reads the same table, so the change set and the
+ * lifecycle plan agree.
+ */
+export function terraformActionsDisruption(actions: unknown): "in-place" | "replace" | "destroy" | undefined {
+  const a = Array.isArray(actions) ? actions.map(String) : [];
+  if (a.length === 1 && a[0] === "update") return "in-place";
+  if (a.length === 1 && a[0] === "delete") return "destroy";
+  if (a.length === 2 && a.includes("create") && a.includes("delete")) return a[0] === "create" ? "replace" : "destroy";
+  return undefined;
+}
+
+function disruptionFor(actions: unknown, _action: ChangeSetAction): ChangeSetDisruption | undefined {
+  return terraformActionsDisruption(actions);
 }
 
 /** A resource address's module path, name and index, read off the address when the entry does not carry them. */
