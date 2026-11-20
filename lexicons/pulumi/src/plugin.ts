@@ -188,7 +188,7 @@ export const pulumiPlugin: LexiconPlugin = {
    */
   /**
    * What applying a planned update costs, from a preview's steps (#5338). A
-   * query carries the steps as `previewSteps`; `pulumiDisruptionQueries`
+   * query carries the steps as `previewSteps` or a preview node's `planActions`; `pulumiDisruptionQueries`
    * builds them from `pulumi preview --json`. See `./disruption.ts`.
    */
   async classifyDisruption(options) {

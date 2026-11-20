@@ -20,10 +20,18 @@
  *
  * The table is the change set adapter's, `pulumiStepsAction` in
  * `./change-set.ts`, so the two agree. The classifier answers through core's
- * contract from a query's `previewSteps` attribute (each step's `op`,
- * `replaceReasons` and `detailedDiff`); {@link pulumiDisruptionQueries}
- * builds those queries from a `pulumi preview --json` document, one per URN.
- * A query with no steps gets no verdict, which core reads as `unknown`.
+ * contract from one of two attribute shapes:
+ *
+ * - `previewSteps` (each step's `op`, `replaceReasons` and `detailedDiff`),
+ *   which {@link pulumiDisruptionQueries} builds from a `pulumi preview
+ *   --json` document, one query per URN.
+ * - `planActions` and `planReplacePaths`, the attributes the preview depth of
+ *   `describeResources` writes on a node (`./preview-observation.ts`). The
+ *   ops of `planActions[urn]` keep the preview's order, so they run through
+ *   the same table; `planReplacePaths` names what forced a replacement.
+ *
+ * `previewSteps` wins when a query carries both. A query with neither gets no
+ * verdict, which core reads as `unknown`.
  */
 import type { DisruptionQuery, DisruptionVerdict } from "@intentius/chant/lexicon";
 import { pulumiSteps, pulumiStepsAction, type PulumiStep } from "./change-set";
@@ -61,13 +69,37 @@ export function pulumiStepsVerdict(steps: PulumiStep[]): DisruptionVerdict | und
   };
 }
 
+const RANK: Record<string, number> = { "in-place": 0, replace: 1, destroy: 2 };
+
+/** One attribute off the query: its observed value, else the new value of a delta on it. */
+function attribute(query: DisruptionQuery, key: string): unknown {
+  if (query.attributes && key in query.attributes) return query.attributes[key];
+  return query.deltas.find((d) => d.path === `attributes.${key}`)?.newValue;
+}
+
+/** The verdict a preview node's `planActions` and `planReplacePaths` mean, or undefined when it carries no plan. */
+function planVerdict(query: DisruptionQuery): DisruptionVerdict | undefined {
+  const planActions = attribute(query, "planActions");
+  if (!isRecord(planActions)) return undefined;
+  let worst: DisruptionVerdict | undefined;
+  for (const ops of Object.values(planActions)) {
+    if (!Array.isArray(ops)) continue;
+    const verdict = pulumiStepsVerdict(ops.filter((op): op is string => typeof op === "string").map((op) => ({ op }) as PulumiStep));
+    if (verdict && (!worst || RANK[verdict.disruption]! > RANK[worst.disruption]!)) worst = verdict;
+  }
+  if (!worst) return undefined;
+  const paths = attribute(query, "planReplacePaths");
+  const because = worst.disruption !== "in-place" && Array.isArray(paths) ? paths.filter((p): p is string => typeof p === "string") : [];
+  if (because.length === 0) return worst;
+  return { disruption: worst.disruption, because, detail: `${DETAIL[worst.disruption]}; ${because.join(", ")} forced it` };
+}
+
 /** `LexiconPlugin.classifyDisruption` for pulumi. */
 export function classifyPulumiDisruption(options: { environment: string; changes: DisruptionQuery[] }): Record<string, DisruptionVerdict> {
   const out: Record<string, DisruptionVerdict> = {};
   for (const query of options.changes) {
     const raw = query.attributes?.previewSteps;
-    if (!Array.isArray(raw)) continue;
-    const verdict = pulumiStepsVerdict(raw.filter(isRecord) as PulumiStep[]);
+    const verdict = Array.isArray(raw) ? pulumiStepsVerdict(raw.filter(isRecord) as PulumiStep[]) : planVerdict(query);
     if (verdict) out[query.name] = verdict;
   }
   return out;
