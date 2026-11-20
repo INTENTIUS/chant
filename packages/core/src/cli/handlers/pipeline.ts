@@ -108,6 +108,6 @@ async function memberName(cwd: string): Promise<string | undefined> {
 }
 
 export async function runPipelineUnknown(): Promise<number> {
-  console.error(formatError({ message: "chant pipeline takes spec or generate", hint: USAGE }));
+  console.error(formatError({ message: "chant pipeline takes spec, generate, artifacts or release-of", hint: USAGE }));
   return 1;
 }

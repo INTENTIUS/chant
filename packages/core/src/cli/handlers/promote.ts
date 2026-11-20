@@ -1117,6 +1117,20 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     under = found;
   }
 
+  // #5356: the artifacts of earlier stages the stage reads, of this same
+  // release, refused before any gate or deploy when one was not published.
+  let readVariables: Record<string, string> = {};
+  if (pipeline) {
+    const { gitStageArtifactPort, resolveStageReads } = await import("../../pipeline/artifacts");
+    const reads = await resolveStageReads(pipeline, to, under?.release.releaseDigest, gitStageArtifactPort());
+    if (reads.status === "refused") {
+      console.error(formatError({ message: `nothing was promoted into "${to}": ${reads.problems.join("; ")}` }));
+      return 1;
+    }
+    readVariables = reads.variables;
+    for (const r of reads.reads) console.error(formatInfo(`${r.variable}: artifact "${r.artifact}" of stage "${r.stage}"${r.kind === "secret" ? ", a secret's reference" : ""}`));
+  }
+
   const plan = planPromotion({
     from,
     to,
@@ -1149,7 +1163,33 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     }
     for (const line of gates.lines) console.error(formatInfo(line));
   }
-  return deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under);
+  const { withStageReadVariables } = await import("../../pipeline/artifacts");
+  const code = await withStageReadVariables(readVariables, () => deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under));
+  if (code !== 0 || !pipeline || args.dryRun || args.planOnly) return code;
+  return publishAfterPromote(project.projectPath, pipeline, to, under);
+}
+
+/**
+ * #5356: once a promote under a release deployed, the stage publishes the
+ * artifacts it declares for that release. A promote of digests alone names
+ * no release, so it publishes none and says so. A refused publish fails the
+ * promote after the deploy (exit 1), naming the artifacts and never a value.
+ */
+async function publishAfterPromote(projectPath: string, pipeline: import("../../pipeline/spec").PipelineSpec, to: string, under: UnderRelease | undefined): Promise<number> {
+  const declared = pipeline.stages.find((s) => s.name === to)?.publish;
+  if (!declared || Object.keys(declared).length === 0) return 0;
+  if (!under) {
+    console.error(formatWarning({ message: `stage "${to}" publishes artifacts for the release it takes, and this promote named none, so none were published` }));
+    return 0;
+  }
+  const { publishStageFrom, publishRefusedMessage } = await import("./pipeline-artifacts");
+  const result = await publishStageFrom({ cwd: projectPath, spec: pipeline, stage: to, release: { digest: under.release.releaseDigest, label: under.label, gitSha: under.release.commit } });
+  if (result.status === "refused") {
+    console.error(formatError({ message: `${publishRefusedMessage(result)}; the release was deployed` }));
+    return 1;
+  }
+  if (result.status === "published") console.error(formatInfo(`stage "${to}" published ${Object.keys(result.record.artifacts).sort().join(", ")} for release ${under.label ?? under.release.releaseDigest}`));
+  return 0;
 }
 
 /**

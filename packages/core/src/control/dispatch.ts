@@ -186,6 +186,13 @@ export interface ControlSettingsInput {
   ref?: string;
   /** The REST base, when the host's usual one is not it (a loopback forge in a test). */
   apiBase?: string;
+  /**
+   * Carry the release digest the applied commit was cut into (#5356), so a
+   * downstream run pins to that release's artifacts. The dispatch step looks
+   * it up with `chant pipeline release-of <sha>`; a commit with no release
+   * sends none. Default off.
+   */
+  release?: boolean;
 }
 
 /** The control settings with the defaults filled in and the forge settled. */
@@ -200,6 +207,8 @@ export interface ControlTarget {
   ref: string;
   tokenSecret: string;
   readTokenSecret: string;
+  /** `control.release` (#5356): the dispatch carries the release digest of the applied commit. Absent when off. */
+  release?: true;
 }
 
 const FORGES: readonly ForgeKind[] = ["github", "gitlab", "forgejo"];
@@ -229,6 +238,7 @@ export function controlSettingsProblems(input: unknown, where = "control"): stri
   }
   if (v.ref !== undefined && !(typeof v.ref === "string" && CONTROL_REF.test(v.ref))) out.push(`${where}.ref must be a branch name`);
   if (v.apiBase !== undefined && !(typeof v.apiBase === "string" && /^https?:\/\/[^\s'"]+$/.test(v.apiBase))) out.push(`${where}.apiBase must be an http(s) URL`);
+  if (v.release !== undefined && typeof v.release !== "boolean") out.push(`${where}.release must be true or false`);
   return out;
 }
 
@@ -251,6 +261,7 @@ export function resolveControlTarget(input: ControlSettingsInput, fallbackMember
     ref: input.ref ?? CONTROL_REF_DEFAULT,
     tokenSecret: input.tokenSecret ?? CONTROL_TOKEN_SECRET,
     readTokenSecret: input.readTokenSecret ?? CONTROL_READ_TOKEN_SECRET,
+    ...(input.release === true ? { release: true as const } : {}),
   };
 }
 
@@ -285,6 +296,12 @@ export interface ControlDispatch {
   outcome?: ControlApplyOutcome;
   /** The train the apply answers (#5119), when the member ran for one. */
   train?: ControlTrainAnswer;
+  /**
+   * The release digest the applied commit was cut into (#5356), sent as
+   * `release` (`CHANT_CONTROL_RELEASE`) so a downstream run reads that
+   * release's artifacts. A train's answer carries its own.
+   */
+  releaseDigest?: string;
 }
 
 /** Where the token goes in a {@link ControlDispatchRequest}. */
@@ -308,6 +325,8 @@ function checkDispatch(d: ControlDispatch): void {
   if (!CONTROL_NAME.test(d.op)) throw new ControlConfigError(`the dispatch's op "${d.op}" is not an Op name`);
   if (!SHA.test(d.sha)) throw new ControlConfigError(`the dispatch names no commit sha ("${d.sha}")`);
   if (d.outcome !== undefined && !CONTROL_APPLY_OUTCOMES.includes(d.outcome)) throw new ControlConfigError(`the dispatch's outcome "${d.outcome}" is not one of ${CONTROL_APPLY_OUTCOMES.join(", ")}`);
+  if (d.releaseDigest !== undefined && !CONTROL_RELEASE_DIGEST.test(d.releaseDigest)) throw new ControlConfigError(`the dispatch's release "${d.releaseDigest}" is not a release digest`);
+  if (d.releaseDigest !== undefined && d.train !== undefined && d.train.releaseDigest !== d.releaseDigest) throw new ControlConfigError("the dispatch names two releases: the train's and its own");
   if (d.train !== undefined) {
     if (d.outcome === undefined) throw new ControlConfigError("a train's answer carries the outcome of the member's run");
     const problems = controlTrainProblems(d.train);
@@ -317,7 +336,8 @@ function checkDispatch(d: ControlDispatch): void {
 
 /** A train's answer as payload fields (#5119): the same names in a GitHub `client_payload` and Forgejo `inputs`. */
 function trainFields(d: ControlDispatch): Record<string, string> {
-  return d.train ? { train: d.train.train, run: d.train.run, env: d.train.env, release: d.train.releaseDigest } : {};
+  if (d.train) return { train: d.train.train, run: d.train.run, env: d.train.env, release: d.train.releaseDigest };
+  return d.releaseDigest ? { release: d.releaseDigest } : {};
 }
 
 /**
@@ -357,7 +377,9 @@ export function controlDispatchRequest(target: ControlTarget, d: ControlDispatch
                 [`variables[${CONTROL_ENV_VAR}]`, d.train.env],
                 [`variables[${CONTROL_RELEASE_VAR}]`, d.train.releaseDigest],
               ] as Array<[string, string]>)
-            : []),
+            : d.releaseDigest
+              ? ([[`variables[${CONTROL_RELEASE_VAR}]`, d.releaseDigest]] as Array<[string, string]>)
+              : []),
         ],
       },
       token: { in: "form", field: "token" },
@@ -495,6 +517,8 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
   const label = words.product;
   const req = controlDispatchRequest(target, { member: target.member, op: target.op, sha: "0000000" }, words);
   const tok = CONTROL_TOKEN_ENV;
+  // A train's answer carries its release already.
+  const carryRelease = target.release === true && !opts.train;
   const lines = [
     "set -u",
     `member=${sq(target.member, CONTROL_NAME)}`,
@@ -518,6 +542,15 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
           `[[ $train =~ $train_re && $run =~ $run_re && $tenv =~ $name_re && $release =~ $release_re ]] || { echo "${label}: the train's fields are not usable (train=\\"$train\\", run=\\"$run\\", env=\\"$tenv\\", release=\\"$release\\"), so ${target.repo} was not told" >&2; exit 1; }`,
         ]
       : []),
+    // #5356: the release the applied commit was cut into, looked up on the ledger; none is sent when no release names it.
+    ...(carryRelease
+      ? [
+          `release="$(${CONTROL_CHANT_COMMAND} pipeline release-of "$sha" 2>/dev/null)" || release=""`,
+          ...shellPatterns({ release: CONTROL_RELEASE_DIGEST }),
+          '[[ $release =~ $release_re ]] || release=""',
+          `rfield=""; [ -z "$release" ] || rfield=',"release":"'"$release"'"'`,
+        ]
+      : []),
     `[ -n "\${${tok}:-}" ] || { echo "${label}: ${tok} is empty; map the ${target.tokenSecret} secret into it, so ${target.repo} can be told" >&2; exit 1; }`,
     ...(opts.sentCheck ? [`if [ "$(${opts.sentCheck} 2>/dev/null)" = 1 ]; then echo "${label}: ${target.repo} was told about \${sha:0:8} already"; exit 0; fi`] : []),
     'answer="$(mktemp)"',
@@ -525,7 +558,7 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
   let send: string;
   if (opts.train && !opts.outcome) throw new ControlConfigError("a train's answer carries the outcome of the member's run; set outcome too");
   if ("json" in req.body) {
-    const carried = `${opts.outcome ? `,"outcome":"'"$outcome"'"` : ""}${opts.train ? `,"train":"'"$train"'","run":"'"$run"'","env":"'"$tenv"'","release":"'"$release"'"` : ""}`;
+    const carried = `${opts.outcome ? `,"outcome":"'"$outcome"'"` : ""}${opts.train ? `,"train":"'"$train"'","run":"'"$run"'","env":"'"$tenv"'","release":"'"$release"'"` : ""}${carryRelease ? `'"$rfield"'` : ""}`;
     const json =
       target.forge === "github"
         ? `{"event_type":"${controlDispatchEvent(words)}","client_payload":{"member":"'"$member"'","op":"'"$op"'","sha":"'"$sha"'"${carried}}}`
@@ -548,7 +581,9 @@ export function controlDispatchScript(target: ControlTarget, opts: ControlDispat
             `--form "variables[${CONTROL_ENV_VAR}]=$tenv"`,
             `--form "variables[${CONTROL_RELEASE_VAR}]=$release"`,
           ]
-        : []),
+        : carryRelease
+          ? [`--form "variables[${CONTROL_RELEASE_VAR}]=$release"`]
+          : []),
     ];
     send = `code="$(printf '%s' "$${tok}" | curl -sS -o "$answer" -w '%{http_code}' -X POST --form 'token=<-' ${fields.join(" ")} ${sqUrl(req.url)})"`;
   }

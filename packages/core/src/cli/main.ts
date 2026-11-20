@@ -496,6 +496,16 @@ Pipeline:
   pipeline generate <github|gitlab|forgejo> [--output <dir>] [--format json]
                         Write the merge's waves workflow and the promote
                         workflow for each stage after the first
+  pipeline artifacts publish --stage <stage> [--release <label|digest>]
+                        Publish the release artifacts the stage declares,
+                        for the release named or the one cut from HEAD
+  pipeline artifacts read --stage <stage> [--release <label|digest>]
+                        [--name <artifact>] [--from <dir>] [--json]
+                        Print the artifacts a stage published for a release
+                        (default $CHANT_CONTROL_RELEASE, else its latest);
+                        --from reads another repository's chant/lifecycle
+  pipeline release-of <commit>
+                        Print the digest of the release cut from a commit
 
 Releases:
 ${releaseHelp()}
@@ -2251,6 +2261,9 @@ export const commandRegistry: CommandDef[] = [
   // #5324: the member's folded pipeline.
   { name: "pipeline spec", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline")).runPipelineSpec(ctx) },
   { name: "pipeline generate", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline")).runPipelineGenerate(ctx) },
+  // #5356: release artifacts a stage publishes, and the release cut from a commit.
+  { name: "pipeline artifacts", handler: async (ctx) => (await import("./handlers/pipeline-artifacts")).runPipelineArtifacts(ctx) },
+  { name: "pipeline release-of", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline-artifacts")).runPipelineReleaseOf(ctx) },
   { name: "pipeline", runsNoConfig: true, handler: async () => (await import("./handlers/pipeline")).runPipelineUnknown() },
   { name: "workspace", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceUnknown(ctx) },
 ];

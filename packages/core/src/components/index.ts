@@ -176,6 +176,7 @@ export {
   type EnvironmentSetJobInputs,
   EnvironmentSetError,
   environmentSetsProblems,
+  environmentSecretSource,
   resolveEnvironmentSet,
   environmentSetRecord,
   environmentSetSecretNames,
