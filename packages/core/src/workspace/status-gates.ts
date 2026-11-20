@@ -387,15 +387,22 @@ export const defaultStageLogReader: StageLogReader = async (gatesDir, commit, cw
   return out;
 };
 
-/** Every stage the logs under `gatesDir` name, by pipeline then in the order first logged. Empty when none is kept. */
-export async function readMemberStageQueues(gatesDir: string, commit: string | null, cwd: string, read: StageLogReader = defaultStageLogReader): Promise<StatusStageQueue[]> {
+/**
+ * Every stage the logs under `gatesDir` name, by pipeline then in the order first logged. Empty when none is kept.
+ *
+ * With `own` (the member's pipeline, #5419), only that pipeline's log is read, so a ledger several members share
+ * gives each its own queues, and each of the pipeline's stages is listed in pipeline order, an empty queue for a
+ * stage the log has not met. A pipeline with no log lists nothing.
+ */
+export async function readMemberStageQueues(gatesDir: string, commit: string | null, cwd: string, read: StageLogReader = defaultStageLogReader, own?: { name: string; stages: readonly string[] }): Promise<StatusStageQueue[]> {
   if (commit === null) return [];
   const { parseStageLines, stageQueueOf, stagesInLog } = await import("../lifecycle/stage-log");
   const files = await read(gatesDir, commit, cwd).catch(() => new Map<string, string>());
   const out: StatusStageQueue[] = [];
   for (const pipeline of [...files.keys()].sort()) {
+    if (own && pipeline !== own.name) continue;
     const lines = parseStageLines(files.get(pipeline)!);
-    for (const stage of stagesInLog(lines)) {
+    for (const stage of own ? own.stages : stagesInLog(lines)) {
       const q = stageQueueOf(lines, stage);
       const view = (l: { digest: string; label?: string; timestamp: string }): StatusStageRelease => ({ digest: l.digest, label: l.label ?? null, at: l.timestamp });
       out.push({

@@ -46,6 +46,11 @@ export const PIPELINE_FLOOR = NEXT_RELEASE;
 export const STAGE_GRAPH_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose `workspace status --json` lists `stageQueues` for every stage of each member's pipeline in one read (#5419), each queue on the member whose pipeline it belongs to, also when members share a ledger. A product reads every stage's queue from one status call on this name.
+ */
+export const STATUS_STAGE_QUEUES_FLOOR = NEXT_RELEASE;
+
+/**
  * The first chant that pauses and resumes a pipeline stage and has its urgent path (#5355): `chant stage pause` and `resume` on the stage's ledger, a paused stage refusing promotion with exit 3, a stage's `pauseAfterRollback`, and a gate's `urgent` rule that `chant components promote --urgent` passes on one proven approval from its role, with the `urgent` notify event.
  */
 export const STAGE_PAUSE_URGENT_FLOOR = NEXT_RELEASE;

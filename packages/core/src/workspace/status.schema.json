@@ -310,7 +310,7 @@
           "items": { "$ref": "#/$defs/featureFlag" }
         },
         "stageQueues": {
-          "description": "Added in contract 1 by #5353. The stages of the member's pipeline that keep a stage log (_gates/<pipeline>/stages.jsonl on chant/lifecycle), for the environments asked for: the release in each, the releases waiting for it, and the waiting releases a newer one replaced. A pipeline keeps the log when a stage declares after or queue. Absent when no stage log names those environments.",
+          "description": "Added in contract 1 by #5353. The stage queues of the member's pipeline (_gates/<pipeline>/stages.jsonl on chant/lifecycle): the release in each stage, the releases waiting for it, and the waiting releases a newer one replaced. From the chant that exports STATUS_STAGE_QUEUES_FLOOR (#5419) one entry per stage of the pipeline, in pipeline order, whatever environment was asked for, and only from the member's own pipeline's log, also when several members share one ledger. A member with no pipeline lists the stages of its own ledger's logs for the environments asked for. A pipeline keeps the log when a stage declares after or queue. Absent when no stage log applies.",
           "type": "array",
           "items": { "$ref": "#/$defs/stageQueue" }
         },
