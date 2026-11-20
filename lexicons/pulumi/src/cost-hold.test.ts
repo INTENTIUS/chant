@@ -25,6 +25,18 @@ describe("pulumiCostHold", () => {
     });
   });
 
+  test("carries redactEnv and dropEnv as names, and leaves them out when unset", () => {
+    const hold = pulumiCostHold({ approveAbove: 1, command: ["price", "{planJson}"], redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(hold).toEqual({ command: ["price", "{planJson}"], approveAbove: 1, format: "chant", redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(opWaveHoldsProblems({ cost: hold })).toEqual([]);
+    expect(Object.keys(pulumiCostHold({ approveAbove: 1, command: ["price", "{planJson}"] }))).toEqual(["command", "approveAbove", "format"]);
+  });
+
+  test("refuses a value where a variable name belongs", () => {
+    expect(() => pulumiCostHold({ approveAbove: 1, command: ["price", "{planJson}"], redactEnv: ["p@ss word"] })).toThrow(/redactEnv.*names/);
+    expect(() => pulumiCostHold({ approveAbove: 1, command: ["price", "{planJson}"], dropEnv: ["a=b"] })).toThrow(/dropEnv.*names/);
+  });
+
   test("refuses a command that does not name {planJson}, and has no default command", () => {
     expect(() => pulumiCostHold({ approveAbove: 1, command: ["price"] })).toThrow(/\{planJson\}/);
     expect(() => pulumiCostHold({ approveAbove: 1, command: [] })).toThrow(/command/);

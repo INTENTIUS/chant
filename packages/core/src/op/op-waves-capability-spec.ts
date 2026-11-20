@@ -37,6 +37,12 @@ export interface OpWaveCostHold {
   format?: OpWaveCostFormat;
   /** The currency `approveAbove` is in, for the log and the digest. Default the estimate's, else `USD`. */
   currency?: string;
+  /**
+   * Names of environment variables whose values are secret and that the plan does not mark sensitive, such as the secrets a product's store holds. A job gets each value through its environment set's `secrets` (#5348) or a variable it reads, so the spec carries the name only. The estimate runs when the variable is set: its value is replaced by `[redacted]` in the plan copy, and the variable is left out of the command's environment.
+   */
+  redactEnv?: string[];
+  /** Names of environment variables to leave out of the command's environment, beside the forge tokens, such as a product's own token variables. A value they hold is replaced by `[redacted]` in the plan copy too. */
+  dropEnv?: string[];
 }
 
 /** Holds a wave runs over its plans (#4545), read at base. */
@@ -143,14 +149,20 @@ function riskHoldProblems(value: unknown): string[] {
 }
 
 function costHoldProblems(value: unknown): string[] {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return ["`holds.cost` must be { \"command\": [...], \"approveAbove\": <number>, \"format\"?, \"currency\"? }"];
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return ["`holds.cost` must be { \"command\": [...], \"approveAbove\": <number>, \"format\"?, \"currency\"?, \"redactEnv\"?, \"dropEnv\"? }"];
   const c = value as Record<string, unknown>;
   const problems: string[] = [];
   if (!Array.isArray(c.command) || c.command.length === 0 || !c.command.every((a) => typeof a === "string" && a !== "")) problems.push("`holds.cost.command` must be argv, a non-empty list of strings");
   if (typeof c.approveAbove !== "number" || !Number.isFinite(c.approveAbove) || c.approveAbove < 0) problems.push("`holds.cost.approveAbove` must be a monthly amount of 0 or more");
   if (c.format !== undefined && !(OP_WAVE_COST_FORMATS as readonly unknown[]).includes(c.format)) problems.push(`\`holds.cost.format\` must be ${OP_WAVE_COST_FORMATS.join(" or ")}`);
   if (c.currency !== undefined && (typeof c.currency !== "string" || !/^[A-Z]{3}$/.test(c.currency))) problems.push("`holds.cost.currency` must be a three-letter currency code, such as \"USD\"");
-  for (const key of Object.keys(c)) if (!["command", "approveAbove", "format", "currency"].includes(key)) problems.push(`\`holds.cost.${key}\` is not a setting`);
+  for (const key of ["redactEnv", "dropEnv"] as const) {
+    const names = c[key];
+    if (names !== undefined && (!Array.isArray(names) || !names.every((n) => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)))) {
+      problems.push(`\`holds.cost.${key}\` must be a list of environment variable names, never their values`);
+    }
+  }
+  for (const key of Object.keys(c)) if (!["command", "approveAbove", "format", "currency", "redactEnv", "dropEnv"].includes(key)) problems.push(`\`holds.cost.${key}\` is not a setting`);
   return problems;
 }
 

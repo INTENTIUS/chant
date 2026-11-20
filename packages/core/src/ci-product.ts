@@ -121,7 +121,9 @@ export const COST_ESTIMATE_FLOOR = NEXT_RELEASE;
  * `priceRuns`, and so `estimateCosts`, the plan note's `ci.cost`, an op wave's `holds.cost` and the
  * pulumi cost hold, hand the command a copy of the plan document with its sensitive values replaced
  * (`redactPlanJson`) and run it with the forge tokens left out of its environment (`costEnv`). A
- * product's `run wave` job uses `holds.cost` and needs no after-plan hook of its own.
+ * product's `run wave` job uses `holds.cost` and needs no after-plan hook of its own. `redactEnv` and
+ * `dropEnv` on a wave's `holds.cost` (and the terraform and pulumi presets) name more variables to
+ * redact and to drop; they hold names, never values.
  */
 export const COST_REDACTED_FLOOR = NEXT_RELEASE;
 export {
@@ -141,6 +143,7 @@ export {
   type CostEstimate,
   type CostEstimateExec,
   type CostEstimateFormat,
+  type CostEnvOptions,
   type CostEstimateSettings,
   type CostFigures,
   type CostRun,

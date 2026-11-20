@@ -21,6 +21,15 @@ describe("terraformCostHold", () => {
     expect(() => terraformCostHold({ approveAbove: 1, command: ["infracost"] })).toThrow(/\{planJson\}/);
   });
 
+  test("carries redactEnv and dropEnv as names, and leaves them out when unset", () => {
+    const hold = terraformCostHold({ approveAbove: 1, redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(hold).toEqual({ command: [...INFRACOST_ARGV], approveAbove: 1, format: "infracost", redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(opWaveHoldsProblems({ cost: hold })).toEqual([]);
+    expect(Object.keys(terraformCostHold({ approveAbove: 1 }))).toEqual(["command", "approveAbove", "format"]);
+    expect(() => terraformCostHold({ approveAbove: 1, redactEnv: ["p@ss word"] })).toThrow(/redactEnv.*names/);
+    expect(() => terraformCostHold({ approveAbove: 1, dropEnv: ["a=b"] })).toThrow(/dropEnv.*names/);
+  });
+
   test("the plan note's estimate and the wave's hold read the same command over a root's plan document", () => {
     const dir = mkdtempSync(join(tmpdir(), "tf-cost-"));
     const planJson = join(dir, "tfplan.json");

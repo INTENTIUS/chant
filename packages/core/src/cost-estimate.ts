@@ -24,7 +24,10 @@
  * document is copied with its sensitive values replaced (`redactPlanJson`),
  * and `{planJson}` names the copy, which keeps the original's file name. The
  * command runs with the forge tokens left out of its environment
- * (`costEnv`), by name and by value. Both hold for every caller: the plan
+ * (`costEnv`), by name and by value. A product names more to remove with
+ * `redactEnv` (variables whose values are secret) and `dropEnv` (variables to
+ * leave out), on an op wave's `holds.cost` and the pulumi and terraform
+ * presets: names only, so a secret's value never sits in the spec. Both hold for every caller: the plan
  * note, a policy's `input.cost`, an op wave's `holds.cost` and the pulumi
  * cost hold, so a product's `run wave` job needs no hook of its own.
  *
@@ -153,26 +156,41 @@ function planFileOf(artifact: unknown, cwd: string): string {
 }
 
 /** How the estimate command ran. `status` is null when it did not start. */
-export type CostEstimateExec = (argv: string[], cwd: string) => { status: number | null; stdout: string; stderr: string };
+export type CostEstimateExec = (argv: string[], cwd: string, env?: NodeJS.ProcessEnv) => { status: number | null; stdout: string; stderr: string };
+
+/**
+ * What a product names for the cost command to lose, as names only: a
+ * secret's value reaches the job through a variable (the environment set's
+ * `secrets`, #5348, or a variable the job reads), so the spec holds the
+ * variable's name and the value is read from the job's environment when the
+ * estimate runs.
+ */
+export interface CostEnvOptions {
+  /** Variables whose values are secret: each value is replaced by `[redacted]` in the plan copy, and the variable is left out of the command's environment, by name and by value. */
+  redactEnv?: readonly string[];
+  /** Variables left out of the command's environment, by name and by value, beside the forge tokens. A value they hold is replaced by `[redacted]` in the plan copy too. */
+  dropEnv?: readonly string[];
+}
 
 /**
  * `env` as the estimate command gets it (#5416): less every forge token, by
  * name (`FORGE_TOKEN_VARS`) and by value, so a variable another name holds a
  * token in goes too. Any other variable is kept.
  */
-export function costEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const held = new Set(FORGE_TOKEN_VARS.map((name) => env[name] ?? "").filter((v) => v !== ""));
+export function costEnv(env: NodeJS.ProcessEnv, extra: CostEnvOptions = {}): NodeJS.ProcessEnv {
+  const names = new Set<string>([...FORGE_TOKEN_VARS, ...(extra.redactEnv ?? []), ...(extra.dropEnv ?? [])]);
+  const held = new Set([...names].map((name) => env[name] ?? "").filter((v) => v !== ""));
   const out: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(env)) {
-    if ((FORGE_TOKEN_VARS as readonly string[]).includes(name)) continue;
+    if (names.has(name)) continue;
     if (value !== undefined && held.has(value)) continue;
     out[name] = value;
   }
   return out;
 }
 
-const defaultExec: CostEstimateExec = (argv, cwd) => {
-  const r = spawnSync(argv[0]!, argv.slice(1), { cwd, env: costEnv(process.env), encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
+const defaultExec: CostEstimateExec = (argv, cwd, env = costEnv(process.env)) => {
+  const r = spawnSync(argv[0]!, argv.slice(1), { cwd, env, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, timeout: 300_000 });
   return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: `${r.stderr ?? ""}${r.error ? r.error.message : ""}` };
 };
 
@@ -258,9 +276,9 @@ export function redactPlanJson(plan: unknown, extra: readonly string[] = []): un
   return secrets.length === 0 ? marked : scrub(marked, secrets);
 }
 
-/** The values of the forge tokens `env` holds. */
-function tokenValues(env: NodeJS.ProcessEnv): string[] {
-  return FORGE_TOKEN_VARS.map((name) => env[name] ?? "").filter((v) => v !== "");
+/** The values of the forge tokens `env` holds, and of the variables `extra` names. */
+function tokenValues(env: NodeJS.ProcessEnv, extra: CostEnvOptions = {}): string[] {
+  return [...FORGE_TOKEN_VARS, ...(extra.redactEnv ?? []), ...(extra.dropEnv ?? [])].map((name) => env[name] ?? "").filter((v) => v !== "");
 }
 
 /** A member to price: its capability's artifact, and whether its plan changes nothing. `plan` fills `{plan}` when given, else the artifact's `planFile`. */
@@ -274,9 +292,10 @@ export interface CostRun {
 /**
  * Run `settings.command` over each run that changes something (#4545, #5334).
  * The command reads a redacted copy of the plan document and runs without
- * the forge tokens (#5416). A run with no estimate says why.
+ * the forge tokens (#5416), and with `redactEnv` and `dropEnv` also the
+ * values and variables a product names. A run with no estimate says why.
  */
-export function priceRuns(settings: Pick<CostEstimateSettings, "command" | "format">, runs: readonly CostRun[], cwd: string, exec: CostEstimateExec = defaultExec): MemberCost[] {
+export function priceRuns(settings: Pick<CostEstimateSettings, "command" | "format"> & CostEnvOptions, runs: readonly CostRun[], cwd: string, exec: CostEstimateExec = defaultExec): MemberCost[] {
   const format = settings.format ?? "infracost";
   const out: MemberCost[] = [];
   let work: string | undefined;
@@ -291,7 +310,7 @@ export function priceRuns(settings: Pick<CostEstimateSettings, "command" | "form
       let planJson = original;
       if (original) {
         try {
-          const redacted = JSON.stringify(redactPlanJson(JSON.parse(readFileSync(original, "utf-8")) as unknown, tokenValues(process.env)));
+          const redacted = JSON.stringify(redactPlanJson(JSON.parse(readFileSync(original, "utf-8")) as unknown, tokenValues(process.env, settings)));
           // One directory per member, so two members' documents of one name never meet, and the copy keeps the name the estimator knows it by.
           work ??= mkdtempSync(join(tmpdir(), "chant-cost-"));
           const dir = mkdtempSync(join(work, "m-"));
@@ -304,7 +323,7 @@ export function priceRuns(settings: Pick<CostEstimateSettings, "command" | "form
       }
       const plan = run.plan ?? planFileOf(run.artifact, cwd);
       const argv = settings.command.map((a) => a.replaceAll("{target}", run.member).replaceAll("{plan}", plan).replaceAll("{planJson}", planJson ?? ""));
-      const r = exec(argv, cwd);
+      const r = exec(argv, cwd, costEnv(process.env, settings));
       if (r.status !== 0) {
         out.push({ member: run.member, error: `${argv[0]} ${r.status === null ? "did not run" : `exited ${r.status}`}: ${(r.stderr || r.stdout).trim().split("\n").slice(-2).join(" ")}` });
         continue;

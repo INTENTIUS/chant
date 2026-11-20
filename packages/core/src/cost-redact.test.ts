@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { COST_REDACTED, costEnv, estimateCosts, priceRuns, redactPlanJson } from "./cost-estimate";
 import { opWaveCostVerdict, opWaveCosts } from "./op/op-waves-capability";
+import { opWaveHoldsProblems } from "./op/op-waves-capability-spec";
 import { COST_REDACTED_FLOOR } from "./ci-product";
 import { FORGE_TOKEN_VARS } from "./ci-handover";
 
@@ -166,6 +167,88 @@ describe("the estimator a cost hold runs, with a real shell (#5416)", () => {
       throw new Error("not run");
     });
     expect(priced).toEqual([{ member: "a", error: expect.stringMatching(/^the plan document could not be read to redact it: /) }]);
+  });
+
+  describe("redactEnv and dropEnv", () => {
+    const STORE = "store-secret-value-not-in-any-mark";
+    const OWN_TOKEN = "own-product-token-0123456789";
+    beforeEach(() => {
+      saved.TG_STORE_KEY = process.env.TG_STORE_KEY;
+      saved.TG_TOKEN = process.env.TG_TOKEN;
+      saved.TG_MERGE_TOKEN = process.env.TG_MERGE_TOKEN;
+      process.env.TG_STORE_KEY = STORE;
+      process.env.TG_TOKEN = OWN_TOKEN;
+      process.env.TG_MERGE_TOKEN = OWN_TOKEN;
+    });
+
+    const unmarked = () => ({ resource_changes: [{ address: "x", change: { actions: ["create"], after: { dsn: `db://${STORE}@h`, owner: OWN_TOKEN, size: "small" } } }] });
+    const SEES_STORE = `
+      doc="$(cat "$1")"
+      seen=""
+      case "$doc" in *${STORE}*) seen="$seen store-in-plan";; esac
+      case "$doc" in *${OWN_TOKEN}*) seen="$seen token-in-plan";; esac
+      env | grep -q "${STORE}" && seen="$seen store-in-env"
+      env | grep -q "${OWN_TOKEN}" && seen="$seen token-in-env"
+      printf '{"monthlyDelta": 1, "currency": "%s"}' "$(echo "$seen" | tr ' ' '_')"
+    `;
+
+    test("without either option the values stay where they were, as before", () => {
+      const { dir, artifact } = planned(unmarked());
+      const costs = opWaveCosts({ command: ["sh", "-c", SEES_STORE, "e", "{planJson}"], approveAbove: 1, format: "chant" }, [{ target: "a", plan: "p", artifact, empty: false }], dir);
+      expect(costs).toEqual([{ target: "a", monthlyDelta: 1, currency: "_store-in-plan_token-in-plan_store-in-env_token-in-env" }]);
+    });
+
+    test("redactEnv replaces a value the plan does not mark, and leaves the variable out of the command's environment", () => {
+      const { dir, artifact } = planned(unmarked());
+      const hold = { command: ["sh", "-c", SEES_STORE, "e", "{planJson}"], approveAbove: 1, format: "chant" as const, redactEnv: ["TG_STORE_KEY"] };
+      const costs = opWaveCosts(hold, [{ target: "a", plan: "p", artifact, empty: false }], dir);
+      expect(costs).toEqual([{ target: "a", monthlyDelta: 1, currency: "_token-in-plan_token-in-env" }]);
+    });
+
+    test("dropEnv leaves the named variables out by name and by value, and redacts their value in the plan copy", () => {
+      const { dir, artifact } = planned(unmarked());
+      const hold = { command: ["sh", "-c", SEES_STORE, "e", "{planJson}"], approveAbove: 1, format: "chant" as const, dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] };
+      const costs = opWaveCosts(hold, [{ target: "a", plan: "p", artifact, empty: false }], dir);
+      expect(costs).toEqual([{ target: "a", monthlyDelta: 1, currency: "_store-in-plan_store-in-env" }]);
+    });
+
+    test("a variable that is not set is not an error", () => {
+      delete process.env.TG_STORE_KEY;
+      const { dir, artifact } = planned(unmarked());
+      const costs = opWaveCosts({ command: ["sh", "-c", SEES_STORE, "e", "{planJson}"], approveAbove: 1, format: "chant", redactEnv: ["TG_STORE_KEY"], dropEnv: ["NOT_SET_ANYWHERE"] }, [{ target: "a", plan: "p", artifact, empty: false }], dir);
+      expect(costs).toHaveLength(1);
+      expect(costs[0]).toMatchObject({ monthlyDelta: 1 });
+    });
+
+    test("priceRuns hands the command's environment to the exec, and the settings' names shape it", () => {
+      const { dir, artifact } = planned(unmarked());
+      let env: NodeJS.ProcessEnv | undefined;
+      priceRuns({ command: ["price", "{planJson}"], format: "chant", redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN"] }, [{ member: "a", artifact, empty: false }], dir, (_argv, _cwd, e) => {
+        env = e;
+        return { status: 0, stdout: '{"monthlyDelta": 2}', stderr: "" };
+      });
+      expect(env).toBeDefined();
+      expect(env).not.toHaveProperty("TG_STORE_KEY");
+      expect(env).not.toHaveProperty("TG_TOKEN");
+      expect(env).not.toHaveProperty("TG_MERGE_TOKEN");
+    });
+
+    test("costEnv with names drops them and any variable holding their value, and keeps the rest", () => {
+      const clean = costEnv({ PATH: "/bin", A: "secret-a-value", B: "secret-a-value", C: "c", D: "d" }, { redactEnv: ["A"], dropEnv: ["D"] });
+      expect(clean).toEqual({ PATH: "/bin", C: "c" });
+    });
+
+    test("redactPlanJson takes the values of extra the plan does not mark", () => {
+      const text = JSON.stringify(redactPlanJson(unmarked(), [STORE]));
+      expect(text).not.toContain(STORE);
+      expect(text).toContain(OWN_TOKEN);
+    });
+
+    test("the spec checks that the options are names", () => {
+      expect(opWaveHoldsProblems({ cost: { command: ["x"], approveAbove: 1, redactEnv: ["TG_STORE_KEY"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] } })).toEqual([]);
+      expect(opWaveHoldsProblems({ cost: { command: ["x"], approveAbove: 1, redactEnv: ["hunter2 is a value"] } })).toEqual(["`holds.cost.redactEnv` must be a list of environment variable names, never their values"]);
+      expect(opWaveHoldsProblems({ cost: { command: ["x"], approveAbove: 1, dropEnv: "TG_TOKEN" } })).toEqual(["`holds.cost.dropEnv` must be a list of environment variable names, never their values"]);
+    });
   });
 
   test("the floor is exported", () => {
