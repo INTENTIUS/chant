@@ -152,6 +152,7 @@
 import { opWavesWithEnvironmentSets } from "@intentius/chant/op/op-waves-environment-sets";
 import {
   notifyVariables,
+  opWavesSummaryEnv,
   opWaveChecksDir,
   opWaveGroupOf,
   opWaveJobs,
@@ -388,7 +389,8 @@ export function buildGithubOpWavesDoc(
 
   const jobsDoc: Record<string, unknown> = {};
   // #3761: the notify variables come from the secrets of the same name. #4987: before merge, on the jobs that run the default branch's code alone.
-  const notifyEnv = githubSecretEnv(notifyVariables(spec.notify));
+  // #5335: with wave-refused: summary, the summary's settings and its model key from the secret of its name, beside the notify secrets.
+  const notifyEnv = { ...githubSecretEnv(notifyVariables(spec.notify)), ...opWavesSummaryEnv(spec, forge) };
   if (split) Object.assign(jobsDoc, githubSplitJobsDoc({ spec, options, forge, product, image, byReview, timeout, inputs, renderEnv, bmEnv, notifyEnv, split, names, ...(restWave !== undefined ? { restWave } : {}), ...(firstNeeds.length > 0 ? { firstNeeds } : {}), ...(commandToken ? { commandToken } : {}) }));
   for (const job of split ? [] : jobs) {
     const wave = spec.waves[job.wave - 1]!;

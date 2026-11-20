@@ -36,6 +36,8 @@ describe("the gate-decision bundle", () => {
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual([
       // The product's words (#4550): gate and status names, no imports.
       "packages/core/src/ci-product-words.ts",
+      // The refused wave summary's settings check and job variables (#5335), which the spec checks; no imports.
+      "packages/core/src/ci-respond-summary-env.ts",
       "packages/core/src/content-digest.ts",
       // The control repo's settings check (#4568, #4617), which the spec checks.
       "packages/core/src/control/dispatch.ts",

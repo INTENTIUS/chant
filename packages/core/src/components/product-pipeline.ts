@@ -636,6 +636,8 @@ export function productPipelineJobs(forge: ForgeKind, env: string, options: Prod
           words,
         ),
         ...(Object.keys(wavesRespond).length > 0 ? { respond: { ...(spec.respond ?? {}), ...wavesRespond } } : {}),
+        // #5335: the summary's settings go with the responses to the wave jobs.
+        ...(options.waveSummary ? { waveSummary: { ...(spec.waveSummary ?? {}), ...options.waveSummary } } : {}),
       }
     : undefined;
   const specFile = named ? (wavesSpecFile ?? productWavesSpecFile(named.name)) : undefined;

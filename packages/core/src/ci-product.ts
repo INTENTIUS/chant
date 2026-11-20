@@ -503,7 +503,24 @@ export {
   type FailedApply,
   type RefusedDiff,
 } from "./ci-respond";
-export { respondDescription, respondOpWave, respondPrApply, triageOfOpWave, triageOfPrReport, refusedOfOpWave, refusedOfPrReport } from "./ci-respond-run";
+export { refusedNote, respondDescription, respondOpWave, respondPrApply, triageOfOpWave, triageOfPrReport, refusedOfOpWave, refusedOfPrReport } from "./ci-respond-run";
+export {
+  WAVE_REFUSED_SUMMARY_FLOOR,
+  WAVE_SUMMARY_COMMAND,
+  WAVE_SUMMARY_ENV,
+  WAVE_SUMMARY_TIMEOUT_MINUTES,
+  WAVE_SUMMARY_TRIGGER,
+  renderRefusedSummary,
+  resolveWaveSummarySpec,
+  summarizeRefusedWave,
+  waveSummaryEnv,
+  waveSummaryPrompt,
+  waveSummarySettingsFromEnv,
+  type WaveSummaryDeps,
+  type WaveSummaryOutcome,
+  type WaveSummarySettings,
+  type WaveSummarySpec,
+} from "./ci-respond-summary";
 
 /**
  * Run one chant command line in this process with the product's words

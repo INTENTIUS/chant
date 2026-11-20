@@ -101,6 +101,7 @@ import { commandWord, commentLine, PRODUCT_ACTION_ENV, PRODUCT_ACTION_EVENT_FLAG
 import { CHANT_EXIT } from "../exit-codes";
 import type { ControlTarget } from "../control/dispatch";
 import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
+import { waveSummaryJobEnv, type WaveSummarySpec } from "../ci-respond-summary-env";
 import type { PipelineEvidence } from "../ci-evidence-jobs";
 import type { PrCheckJobOptions } from "./pr-checks";
 import { environmentSetJobInputs, resolveEnvironmentSet, type EnvironmentSets } from "./environment-sets";
@@ -400,6 +401,13 @@ export interface PrLoopPipelineOptions {
    * at its default: neither job sets it.
    */
   respond?: CiResponses;
+  /**
+   * The model run of `wave-refused: summary` (#5335): with that response the
+   * apply job carries these settings as `CHANT_WAVE_SUMMARY_*` and the
+   * model's key (on GitHub and Forgejo from the secret of its name). Read
+   * only with `respond["wave-refused"]: "summary"`.
+   */
+  waveSummary?: WaveSummarySpec;
   /**
    * The decide service the description check asks (#4629), from
    * `--decide-backend` and `--decide-model`: the plan-note job passes both
@@ -979,7 +987,8 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   };
   const bin = options.words?.bin;
   // #4629: the apply posts a failed apply's triage and a refused one's diff as CHANT_RESPOND says.
-  const respondEnv = prLoopRespondEnv(options);
+  // #5335: with wave-refused: summary, the model's settings and key too.
+  const respondEnv = { ...prLoopRespondEnv(options), ...waveSummaryJobEnv(forge, options.respond?.["wave-refused"], options.waveSummary) };
   const withRespond = (job: PrLoopJob): PrLoopJob => (Object.keys(respondEnv).length > 0 ? { ...job, env: { ...job.env, ...respondEnv }, run: { ...job.run, env: { ...job.run.env, ...respondEnv } } } : job);
   return [
     {

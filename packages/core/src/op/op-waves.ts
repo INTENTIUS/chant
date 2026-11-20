@@ -97,6 +97,7 @@ import { quorumProblems, type GateQuorumRule } from "./gate-quorum";
 import { notifyConfigProblem, type NotifyConfig } from "../notify";
 // Types only: the small bundles that carry this module stay without ../ci-respond.ts (#4629).
 import type { CiResponses } from "../ci-respond";
+import { waveSummaryJobEnv, waveSummarySpecProblem, type WaveSummarySpec } from "../ci-respond-summary-env";
 import { WAVE_GATE_NAME_PATTERN, waveGateNameFrom, waveShare } from "../wave-layout";
 import { waveOutcomeFileName } from "../wave-blocked";
 import { opWavesEvidenceProblems, type OpWavesEvidence } from "./op-waves-evidence-spec";
@@ -114,6 +115,16 @@ export type { OpWaveCostFormat, OpWaveCostHold, OpWaveHolds, OpWaveStep } from "
  * `dist/notify.js` (#3803), which only a packed release carries.
  */
 export { notifyVariables } from "../notify";
+
+/**
+ * The variables a wave job carries for `wave-refused: summary` (#5335): the
+ * spec's `waveSummary` as `CHANT_WAVE_SUMMARY_*` and, on GitHub and Forgejo,
+ * the model's key from the secret of its name. Empty unless the spec's
+ * `respond` sets `"wave-refused": "summary"`, so other specs render as before.
+ */
+export function opWavesSummaryEnv(spec: Pick<OpWavesSpec, "respond" | "waveSummary">, forge: "github" | "gitlab" | "forgejo"): Record<string, string> {
+  return waveSummaryJobEnv(forge, spec.respond?.["wave-refused"], spec.waveSummary);
+}
 
 /** When a wave waits for an approval. */
 export type OpWaveGatePolicy =
@@ -628,7 +639,8 @@ export interface OpWavesSpec {
   notify?: NotifyConfig;
   /**
    * The responses a wave job posts (#4629, `../ci-respond.ts`): a refused
-   * wave's diff (`wave-refused: diff`, on by default) and a failed apply's
+   * wave's diff (`wave-refused: diff`, on by default, or `summary` with a
+   * model's summary above it, #5335) and a failed apply's
    * triage (`apply-failed: triage`, on by default), on the pull request the
    * wave applies or a tracking issue. `off` turns one off. A job's
    * `CHANT_RESPOND` sits under these.
@@ -642,6 +654,12 @@ export interface OpWavesSpec {
    * plans: the plan waits at its gate. Absent: none.
    */
   replanDependents?: string[];
+  /**
+   * The model run of `wave-refused: summary` (#5335, `../ci-respond-summary.ts`):
+   * its command, key variable, timeout and daily limits. Read only with that
+   * mode; the generated wave jobs carry it ({@link opWavesSummaryEnv}).
+   */
+  waveSummary?: WaveSummarySpec;
   /**
    * The control repo (#4617, `@intentius/chant/ci-control`): once the last
    * wave ran, a `control-dispatch` job tells the control repo how the waves
@@ -1176,13 +1194,17 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     const respond = spec.respond as unknown;
     if (respond === null || typeof respond !== "object" || Array.isArray(respond)) throw new Error(`${where}: respond must be an object of event to mode, such as { "wave-refused": "off" }.`);
     // The wave events and their modes, as ../ci-respond.ts's CI_RESPONSES has them.
-    const modes: Record<string, readonly string[]> = { "wave-refused": ["diff", "off"], "apply-failed": ["triage", "off"] };
+    const modes: Record<string, readonly string[]> = { "wave-refused": ["diff", "summary", "off"], "apply-failed": ["triage", "off"] };
     for (const [event, mode] of Object.entries(respond as Record<string, unknown>)) {
       if (event === "description") throw new Error(`${where}: respond: the description check runs in the plan-note job, so an op waves spec takes only wave-refused and apply-failed.`);
       const allowed = modes[event];
       if (!allowed) throw new Error(`${where}: respond names no event ${JSON.stringify(event)}; the events are wave-refused and apply-failed.`);
       if (typeof mode !== "string" || !allowed.includes(mode)) throw new Error(`${where}: respond: ${event} takes ${allowed.join(" or ")}, not ${JSON.stringify(mode)}.`);
     }
+  }
+  if (spec.waveSummary !== undefined) {
+    const problem = waveSummarySpecProblem(spec.waveSummary);
+    if (problem) throw new Error(`${where}: waveSummary: ${problem}.`);
   }
   const names = new Set<string>();
   for (const wave of spec.waves) {

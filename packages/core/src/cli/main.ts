@@ -1429,8 +1429,9 @@ Component release ledger + status:
                             the applied head checked again (#4636);
                             --respond <list> turns the failed apply's
                             triage and the refused apply's diff on or off
-                            (wave-refused=diff|off,apply-failed=triage|off,
-                            #4629);
+                            (wave-refused=diff|summary|off,
+                            apply-failed=triage|off, #4629; summary adds
+                            a model's summary above the diff, #5335);
                             --events-json, both commands: the run-event
                             stream on stdout; --report-url <s3 or file URL>,
                             both commands: copy the report, the change set

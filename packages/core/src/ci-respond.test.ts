@@ -87,7 +87,7 @@ describe("the responses list (#4629)", () => {
     const ok = { ...SPEC, respond: { "apply-failed": "off" } };
     expect(() => assertOpWavesSpec(ok as OpWavesSpec)).not.toThrow(/respond/);
     expect(() => assertOpWavesSpec({ ...SPEC, respond: { description: "check" } } as unknown as OpWavesSpec)).toThrow(/plan-note job/);
-    expect(() => assertOpWavesSpec({ ...SPEC, respond: { "wave-refused": "loud" } } as unknown as OpWavesSpec)).toThrow(/diff or off/);
+    expect(() => assertOpWavesSpec({ ...SPEC, respond: { "wave-refused": "loud" } } as unknown as OpWavesSpec)).toThrow(/diff or summary or off/);
     expect(parseOpWavesSpec(JSON.stringify(ok), "spec").respond).toEqual({ "apply-failed": "off" });
   });
 });
