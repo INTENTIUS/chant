@@ -30,6 +30,7 @@ import type { OtlpFetch } from "./otlp";
 import { buildDelivery, deliveryGauges, type Dora } from "./ci-estate/delivery";
 import { ledgerOverdue, type DriftSchedule, type LedgerOverdue } from "./ci-estate/overdue";
 import { buildEstate, ESTATE_FILES, renderEstateHtml, type Estate, type EstateSections } from "./ci-estate/page";
+import type { ReportSchemaIds } from "./report-store";
 import { estateRows, type EstateRowOptions, type EstateRows, type EstateTables } from "./ci-estate/rows";
 
 /** The first chant with `@intentius/chant/ci-estate` (#4612). */
@@ -38,7 +39,7 @@ export const CI_ESTATE_FLOOR = "0.124.55";
 /** The first chant with `buildRecordDelivery`: delivery metrics from a product's report index and audit trail (#4612). Products feature-detect on it. */
 export const CI_ESTATE_RECORDS_FLOOR = "0.124.72";
 
-export { estateRows, type ApprovedApply, type DriftRun, type EstateRowOptions, type EstateRows, type EstateTables, type GateLine, type PrEnvLine, type WaveJob } from "./ci-estate/rows";
+export { estateRows, type ApprovedApply, type ReleaseDeploy, type DriftRun, type EstateRowOptions, type EstateRows, type EstateTables, type GateLine, type PrEnvLine, type WaveJob } from "./ci-estate/rows";
 export {
   appliesOf,
   buildDelivery,
@@ -57,6 +58,7 @@ export {
   DORA_WEEKS,
   DRIFT_WINDOW_SECONDS,
   type DeliveryAuditEntry,
+  type DoraReleases,
   type DeliveryGauge,
   type DeliveryIndexRow,
   type DeliveryOptions,
@@ -93,6 +95,8 @@ export interface LedgerEstateInput extends EstateRowOptions {
   /** The tables, as `loadQueryData` returned them (a `QueryLoad`), or the tables alone. */
   load: QueryLoad | EstateTables;
   words?: Pick<CiProductWords, "product" | "stages" | "noun">;
+  /** `neutral` writes `chant.estate/v1` and `chant.dora/v1`, each with `product` (#5336). Default `product`, the product-named ids. */
+  schemas?: ReportSchemaIds;
   now?: Date;
   /** The members, in order. Default every member the ledger names. */
   members?: readonly string[];
@@ -122,8 +126,9 @@ export function buildLedgerEstate(input: LedgerEstateInput): LedgerEstate {
   const rows = estateRows(tables, { ...(input.project ? { project: input.project } : {}), ...(input.driftOps ? { driftOps: input.driftOps } : {}), ...(input.deployOps ? { deployOps: input.deployOps } : {}) });
   const members = input.members ?? rows.members;
   const overdue = ledgerOverdue(rows, input.schedules ?? [], { words, now, ...(input.added ? { added: input.added } : {}) });
-  const dora = buildDelivery(rows, { words, now, members, ...(input.commitTime ? { commitTime: input.commitTime } : {}) });
-  const estate = buildEstate(rows, dora, { words, now, members, overdue, ...(malformed ? { malformed } : {}) });
+  const schemas = input.schemas ? { schemas: input.schemas } : {};
+  const dora = buildDelivery(rows, { words, now, members, ...schemas, ...(input.commitTime ? { commitTime: input.commitTime } : {}) });
+  const estate = buildEstate(rows, dora, { words, now, members, overdue, ...schemas, ...(malformed ? { malformed } : {}) });
   return { rows, estate, dora, overdue };
 }
 

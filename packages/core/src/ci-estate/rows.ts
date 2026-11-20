@@ -14,8 +14,8 @@
 import type { QueryData, QueryRow } from "../lifecycle/query";
 import { opRunWaveOf, type OpRunWave } from "../op/runtime";
 
-/** The tables the estate reads. A full `QueryData` is one. */
-export type EstateTables = Pick<QueryData, "runs" | "gates" | "applies" | "pr_envs">;
+/** The tables the estate reads. A full `QueryData` is one. `deploys` (the release ledger) is read when given, for the promotes and rollbacks (#5336). */
+export type EstateTables = Pick<QueryData, "runs" | "gates" | "applies" | "pr_envs"> & Partial<Pick<QueryData, "deploys">>;
 
 /** How the rows are read. */
 export interface EstateRowOptions {
@@ -112,6 +112,17 @@ export interface PrEnvLine {
   runUrl?: string;
 }
 
+/** One deploy record of the release ledger (`<env>/releases.jsonl`), and the verb that wrote it (#5336). */
+export interface ReleaseDeploy {
+  member: string;
+  env: string;
+  component: string;
+  timestamp: string;
+  /** `promote` names the environment it came from, `rollback` the deploy it restores, `redeploy` the running release it put back; `deploy` is any other. */
+  verb: "deploy" | "promote" | "rollback" | "redeploy";
+  runId?: string;
+}
+
 /** The rows, read. */
 export interface EstateRows {
   members: string[];
@@ -120,6 +131,8 @@ export interface EstateRows {
   gates: GateLine[];
   approved: ApprovedApply[];
   prEnvs: PrEnvLine[];
+  /** The release ledger's deploy records, when the tables hold `deploys`. */
+  releases?: ReleaseDeploy[];
 }
 
 const str = (v: QueryRow[string] | undefined): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
@@ -246,6 +259,14 @@ export function estateRows(tables: EstateTables, options: EstateRowOptions = {})
       ...(str(p.expires_at) ? { expiresAt: str(p.expires_at)! } : {}),
       ...(str(p.run_url) ? { runUrl: str(p.run_url)! } : {}),
     }));
+  const releases: ReleaseDeploy[] = (tables.deploys ?? []).map((d) => ({
+    member: memberOf(d, project),
+    env: String(d.env),
+    component: String(d.component),
+    timestamp: str(d.timestamp) ?? "",
+    verb: parsed(d.promoted_from) ? "promote" : parsed(d.restores) ? "rollback" : parsed(d.redeploys) ? "redeploy" : "deploy",
+    ...(str(d.run_id) ? { runId: str(d.run_id)! } : {}),
+  }));
   const members = [...new Set([...waves, ...drift, ...gates, ...approved, ...prEnvs].map((x) => x.member))].sort();
-  return { members, waves, drift, gates, approved, prEnvs };
+  return { members, waves, drift, gates, approved, prEnvs, ...(tables.deploys ? { releases } : {}) };
 }

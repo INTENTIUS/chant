@@ -18,10 +18,11 @@ import { samePlanDigest } from "../lifecycle/plan-digest";
 import { CHANT_WORDS, type CiProductWords } from "../ci-product-words";
 import { duration, spanLabel, DORA_FILE, type Dora, type DoraMetrics } from "./delivery";
 import type { LedgerOverdue } from "./overdue";
+import { REPORT_SCHEMAS, type ReportSchemaIds } from "../report-store";
 import type { DriftRun, EstateRows, PrEnvLine, WaveJob } from "./rows";
 
-/** `<product>.estate/v1`. */
-export const estateSchema = (words: Pick<CiProductWords, "product"> = CHANT_WORDS): string => `${words.product}.estate/v1`;
+/** `<product>.estate/v1`, or `chant.estate/v1`, the neutral id, under `schemas: "neutral"` (#5336). */
+export const estateSchema = (words: Pick<CiProductWords, "product"> = CHANT_WORDS, schemas: ReportSchemaIds = "product"): string => (schemas === "neutral" ? REPORT_SCHEMAS.estate : `${words.product}.estate/v1`);
 
 /** How many of the newest runs the page lists. */
 export const RECENT_RUNS = 20;
@@ -97,6 +98,8 @@ export interface EstateProject {
 export interface Estate {
   /** {@link estateSchema}. */
   schema: string;
+  /** The product, under the neutral id `chant.estate/v1`. */
+  product?: string;
   generated: string;
   source: "ledger";
   totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overdue: number; ephemeral?: number };
@@ -109,6 +112,8 @@ export interface Estate {
 
 export interface EstateOptions {
   words?: Pick<CiProductWords, "product">;
+  /** `neutral` writes `chant.estate/v1` with `product`. Default `product`, `<product>.estate/v1`. */
+  schemas?: ReportSchemaIds;
   now?: Date;
   /** The members, in order. Default every member the rows name. */
   members?: readonly string[];
@@ -225,7 +230,8 @@ export function buildEstate(rows: EstateRows, dora: Dora | undefined, options: E
     .slice(0, RECENT_RUNS);
   const ephemeral = projects.reduce((n, p) => n + (p.ephemeral?.length ?? 0), 0);
   return {
-    schema: estateSchema(options.words),
+    schema: estateSchema(options.words, options.schemas),
+    ...(estateSchema(options.words, options.schemas) === REPORT_SCHEMAS.estate ? { product: (options.words ?? CHANT_WORDS).product } : {}),
     generated: now.toISOString(),
     source: "ledger",
     totals: {
@@ -260,6 +266,19 @@ function doraRow(name: string, m: DoraMetrics): string {
 }
 
 /** The delivery section: the definitions, each member's numbers and the estate's, and a row per week. terragucci's renderDoraSection. */
+/** The release ledger's promotes and rollbacks per member (#5336), when the metrics count them. */
+function renderReleases(dora: Dora): string {
+  const r = dora.estate.releases;
+  if (!r) return "";
+  const row = (name: string, x: DoraMetrics["releases"]): string => `<tr><td>${name}</td><td>${x?.promotes ?? 0}</td><td>${x?.rollbacks ?? 0}</td><td>${x?.redeploys ?? 0}</td><td>${x?.deploys ?? 0}</td></tr>`;
+  return `<h3>Releases</h3>
+<p>Deploy records on the release ledger in the window, by the command that wrote them.</p>
+<div class="scroll"><table id="dora-releases"><tr><th>Member</th><th>Promotes</th><th>Rollbacks</th><th>Redeploys</th><th>Other deploys</th></tr>
+${[row("<b>Estate</b>", r), ...dora.projects.map((p) => row(esc(p.project), p.releases))].join("\n")}
+</table></div>
+`;
+}
+
 export function renderDeliverySection(dora: Dora, link: (project: string) => string = esc): string {
   const weeks = dora.estate.trend.map(
     (w) => `<tr><td>${esc(w.week)}</td><td>${w.deployments}</td><td>${w.applies}</td><td>${w.failures}</td><td>${duration(w.lead_time_seconds)}</td><td>${duration(w.restore_seconds)}</td></tr>`,
@@ -274,7 +293,7 @@ export function renderDeliverySection(dora: Dora, link: (project: string) => str
 <div class="scroll"><table id="dora"><tr><th>Member</th><th>Deployments per week</th><th>Lead time</th><th>Change failure rate</th><th>Time to restore</th></tr>
 ${[doraRow("<b>Estate</b>", dora.estate), ...dora.projects.map((p) => doraRow(link(p.project), p))].join("\n")}
 </table></div>
-<h3>By week</h3>
+${renderReleases(dora)}<h3>By week</h3>
 <div class="scroll"><table id="dora-weeks"><tr><th>Week of</th><th>Deployments</th><th>Applies</th><th>Failed changes</th><th>Lead time</th><th>Time to restore</th></tr>
 ${weeks.join("\n")}
 </table></div>`;

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/report-store/v1/audit.schema.json",
+  "title": "chant.audit/v1",
+  "description": "One line of audit.jsonl in a CI product's report store: an event on the gate ledger, or one a product records from its own records. A product's own line (terragucci.audit/v1, sql-yodeler's audit.jsonl) maps onto it with readAuditLine in @intentius/chant/report-store. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "product", "id", "kind", "project", "at", "who", "what", "digest", "result", "evidence"],
+  "properties": {
+    "schema": { "const": "chant.audit/v1" },
+    "product": { "type": "string", "description": "The product that recorded it." },
+    "id": { "type": "string", "description": "Over where the line came from; the same records give the same id." },
+    "kind": {
+      "enum": ["approval-requested", "approved", "revoked", "override-requested", "override-recorded", "override-spent", "applied", "refused", "hook", "recorded"],
+      "description": "The event, from the vocabulary's PRODUCT_AUDIT_KINDS."
+    },
+    "product_kind": { "type": "string", "description": "The product's own word for the kind, when it is not kind: approval, apply, migration, silenced, ..." },
+    "project": { "type": "string", "description": "The repository or member." },
+    "environment": { "type": "string", "description": "The environment, when the product records one per line." },
+    "at": { "type": "string", "description": "When it happened, ISO 8601." },
+    "who": { "type": ["string", "null"], "description": "The approver, the overrider, whoever removed the line, or whoever ran it. Null when nobody did." },
+    "what": { "type": "string", "description": "The gate, the root, or the migration." },
+    "digest": { "type": ["string", "null"], "description": "The plan digest it binds. Null when it has none." },
+    "result": { "type": "string", "description": "How it came out: waiting, applied, failed, denied, the seal of an approval, ..." },
+    "evidence": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": { "enum": ["ledger", "report", "state", "history", "run"] },
+        "branch": { "type": "string" },
+        "path": { "type": "string" },
+        "op": { "type": "string" },
+        "gate": { "type": "string" },
+        "line": { "type": "integer" },
+        "commit": { "type": "string" },
+        "bucket": { "type": "string" },
+        "key": { "type": "string" },
+        "url": { "type": "string" },
+        "job_url": { "type": "string" },
+        "deleted": { "type": "boolean" },
+        "location": { "type": "string" },
+        "version_id": { "type": "string" },
+        "table": { "type": "string", "description": "History: the table the row is in." },
+        "seq": { "type": "integer" },
+        "run": { "type": "string" }
+      }
+    },
+    "detail": { "type": "object", "description": "What else the source says, by kind." },
+    "product_fields": { "type": "object", "description": "Fields of a product's line that this schema does not name." }
+  }
+}

@@ -177,8 +177,18 @@ An audit line names the event that happened, in the past tense. `PRODUCT_AUDIT_K
 
 | Kind | Records | Also read |
 |---|---|---|
+| `approval-requested` | a plan that reached its gate and waits for an approval | |
 | `approved` | an approval of a plan's digest | `approval` (terragucci) |
-| `applied` | a wave's apply | `apply` (terragucci) |
+| `revoked` | an approval or an override a commit removed from the ledger | `approval-revoked`, `override-revoked` (terragucci) |
+| `override-requested` | a policy denial that waits for an override | |
+| `override-recorded` | an override of a denial | `override` (terragucci, sql-yodeler) |
+| `override-spent` | an override an apply cited | |
+| `applied` | a wave's apply, whichever way it ended; `result` says how | `apply` (terragucci) |
+| `refused` | an apply the gate or a check refused | |
+| `hook` | a hook's outcome at a wave | |
+| `recorded` | any other event a product records, named in `product_kind` | |
+
+The report store's audit line, `chant.audit/v1`, takes its kind from this table; see [the report store's schemas](/chant/concepts/ci-products/#the-report-stores-schemas).
 
 ## Spellings each product accepts
 

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/report-store/v1/run.schema.json",
+  "title": "chant.run/v1",
+  "description": "The head every run report in a CI product's report store shares: a stage's report or a commit's run view. The body is the product's own. A product-named id (terragucci.report/v1, terragucci.run/v1) is read as the same kind, its product named by the id. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema"],
+  "properties": {
+    "schema": { "type": "string", "pattern": "^(chant\\.run|[a-z][a-z0-9-]*\\.(run|report))/v1$" },
+    "product": { "type": "string", "description": "The product that wrote it. Required under chant.run/v1." }
+  },
+  "if": { "properties": { "schema": { "const": "chant.run/v1" } } },
+  "then": { "required": ["schema", "product"] }
+}

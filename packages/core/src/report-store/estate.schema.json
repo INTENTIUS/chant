@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/report-store/v1/estate.schema.json",
+  "title": "chant.estate/v1",
+  "description": "estate.json in a CI product's report store, beside estate.html and dora.json: a section per member (project) with its waves, what waits at a gate, its newest drift check and its live pull request environments, and the newest runs across the estate. buildEstate in @intentius/chant/ci-estate writes it from the workspace ledger; a product adds its own fields to the same objects. A product-named id (terragucci.estate/v1) is the same document, its product named by the id. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "generated", "totals", "projects", "recent"],
+  "properties": {
+    "schema": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\.estate/v1$", "description": "chant.estate/v1, or the product-named id <product>.estate/v1." },
+    "product": { "type": "string", "description": "The product that wrote it. Required under chant.estate/v1." },
+    "generated": { "type": "string", "description": "When it was built, ISO 8601." },
+    "source": { "const": "ledger", "description": "Present when it was read from the workspace ledger." },
+    "totals": {
+      "type": "object",
+      "required": ["projects", "waiting", "drifted_projects", "drifted_roots", "failed_roots", "unreadable"],
+      "properties": {
+        "projects": { "type": "integer" },
+        "waiting": { "type": "integer", "description": "Waves waiting at a gate." },
+        "drifted_projects": { "type": "integer" },
+        "drifted_roots": { "type": "integer" },
+        "failed_roots": { "type": "integer" },
+        "unreadable": { "type": "integer", "description": "Records that could not be read." },
+        "overdue": { "type": "integer", "description": "Scheduled drift checks whose window passed." },
+        "ephemeral": { "type": "integer", "description": "Live pull request environments." }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project", "status", "waiting", "drifted", "failed"],
+        "properties": {
+          "project": { "type": "string", "description": "The member." },
+          "status": { "type": "string", "description": "ok, or why nothing could be read for it." },
+          "drift": { "$ref": "#/$defs/run" },
+          "apply": {
+            "type": "object",
+            "required": ["commit", "waves"],
+            "properties": { "commit": { "type": "string" }, "waves": { "type": "array", "items": { "$ref": "#/$defs/run" } } }
+          },
+          "waiting": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["project", "wave", "commit", "since", "age_seconds"],
+              "properties": {
+                "project": { "type": "string" },
+                "wave": { "type": "integer" },
+                "commit": { "type": "string" },
+                "since": { "type": "string" },
+                "age_seconds": { "type": "integer" },
+                "gate": { "type": "string" }
+              }
+            }
+          },
+          "drifted": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "overdue": { "type": "array" },
+          "ephemeral": { "type": "array" }
+        }
+      }
+    },
+    "recent": { "type": "array", "description": "The newest runs across every member, newest first.", "items": { "$ref": "#/$defs/run" } },
+    "dora": {
+      "type": "object",
+      "required": ["file", "generated", "deployments"],
+      "properties": { "file": { "type": "string" }, "generated": { "type": "string" }, "deployments": { "type": "integer" } }
+    }
+  },
+  "if": { "properties": { "schema": { "const": "chant.estate/v1" } } },
+  "then": { "required": ["product"] },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": ["project", "commit", "stage", "finished", "roots"],
+      "properties": {
+        "project": { "type": "string" },
+        "commit": { "type": "string" },
+        "stage": { "type": "string", "description": "The Op, spec or stage that ran." },
+        "wave": { "type": "integer" },
+        "share": { "type": "integer" },
+        "finished": { "type": "string" },
+        "roots": { "type": "integer" },
+        "changed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "refused": { "type": "integer" },
+        "approval": { "type": "string" },
+        "waiting_since": { "type": "string" },
+        "applied": { "type": "string" },
+        "job_url": { "type": "string" },
+        "status": { "type": "string" },
+        "run": { "type": "string" }
+      }
+    }
+  }
+}
