@@ -28,7 +28,7 @@
  * note, a policy's `input.cost`, an op wave's `holds.cost` and the pulumi
  * cost hold, so a product's `run wave` job needs no hook of its own.
  *
- * The module imports only node built-ins and `./ci-handover`'s token names,
+ * The module imports only node built-ins and `./forge-token-vars`'s token names,
  * so the pull-request loop's bundle carries it (`pr-loop-bundle.test.ts`).
  */
 
@@ -36,7 +36,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { FORGE_TOKEN_VARS } from "./ci-handover";
+import { FORGE_TOKEN_VARS } from "./forge-token-vars";
 
 /** The estimate shapes the command may print. */
 export const COST_ESTIMATE_FORMATS = ["infracost", "chant"] as const;
