@@ -194,6 +194,14 @@ export interface ReleaseRecord {
    * written before 0.124.28, whose gate cannot be recovered from the record.
    */
   admission?: ReleaseAdmission;
+  /**
+   * Optional: the gate steps of the component that did not apply in this
+   * environment (#5401), because their `environments` name others, sorted
+   * and distinct. Written from chant `GATE_ENVIRONMENTS_FLOOR`
+   * (../components/step-environments.ts); absent when every gate applied
+   * and on every record written before.
+   */
+  gatesSkipped?: string[];
   /** Optional: the archive's own manifest digest (../components/verbs/build-archive.ts's `manifestDigest`), when the caller has it — lets a reader recover full build contents/provenance, not just the promoted image digest. */
   manifestDigest?: string;
   /**

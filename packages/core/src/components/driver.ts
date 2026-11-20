@@ -64,7 +64,7 @@ import { isPromotedArtifact } from "./auto-release";
 import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent } from "./run-progress";
 import type { RunEventSettleStatus } from "../run-event";
-import { componentsForEnvironment, stepInputForEnvironment } from "./step-environments";
+import { componentsForEnvironment, stepInputForEnvironment, type SkippedGate } from "./step-environments";
 import { gateEventsOf, joinRunEventSinks, progressSinkOf, type RunEventSink } from "../run-event-stream";
 
 export type { RunProgressEvent } from "./run-progress";
@@ -95,6 +95,8 @@ export interface DriverGate {
   signalName?: string;
   timeout?: string;
   description?: string;
+  /** The environments the gate applies in (#5401); resolved away before the driver decides it. See ./step-environments.ts. */
+  environments?: string[] | Record<string, { gate?: string; description?: string; timeout?: string }>;
 }
 
 /** One named phase of a deploy composition (schema `Phase`). A step may itself be a nested `Phase` (fan-out). */
@@ -103,6 +105,8 @@ export interface DriverPhase {
   steps: Array<DriverStep | DriverGate | DriverPhase>;
   parallel?: boolean;
   onFailure?: DriverPhase[];
+  /** The gates taken out of this phase because they apply in other environments (#5401), which the driver records as skipped. */
+  skippedGates?: SkippedGate[];
 }
 
 /** The subset of the Component contract the driver needs to run a deploy (schema-shaped; see component.schema.json). */
@@ -176,6 +180,8 @@ export interface DriverStepRecord {
     /** Set when the gate passed over an empty change set (#4045) rather than on a person's approval. */
     empty?: true;
   };
+  /** Set on a `gate` step skipped because it applies only in other environments (#5401): the environments it names. */
+  gateSkipped?: { environments: string[] };
 }
 
 export interface DriverComponentResult {
@@ -682,6 +688,21 @@ async function runPhase(
   /** Decide this phase's gates against the ledger, in authored order, before any of its work starts. Throws `GateStop` at the first one nobody has approved. */
   const decideGates = async (): Promise<DriverStepRecord[]> => {
     const gateRecords: DriverStepRecord[] = [];
+    // #5401: a gate that applies only in other environments was taken out of the phase; its skip is recorded first.
+    for (const skipped of phaseDef.skippedGates ?? []) {
+      const kind = `gate:${skipped.gate}`;
+      gateRecords.push({ component: ctx.component, phase: phaseDef.phase, kind, status: "skipped", durationMs: 0, gateSkipped: { environments: [...skipped.environments] } });
+      emit?.({
+        type: "step-settle",
+        component: ctx.component,
+        phase: phaseDef.phase,
+        step: kind,
+        status: "skipped",
+        skip: "environment",
+        durationMs: 0,
+        message: `gate "${skipped.gate}" applies in ${skipped.environments.join(", ")}, not ${ctx.env}`,
+      });
+    }
     for (const gate of phaseDef.steps.filter(isGateStep)) {
       const start = Date.now();
       const base = { component: ctx.component, phase: phaseDef.phase, kind: `gate:${gateName(gate)}` };

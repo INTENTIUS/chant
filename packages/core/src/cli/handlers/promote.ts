@@ -57,6 +57,7 @@ import {
   rollbackRecord,
   redeployRecord,
   gateApprover,
+  gatesSkipped,
   gateAdmission,
   type DeployRunInfo,
   type PromotionItem,
@@ -474,6 +475,12 @@ async function deployPlanIn(
   const prepared: DriverComponent[] = [];
   const removed = new Map<string, string[]>();
   const refusals: string[] = plan.items.flatMap((item) => (resolvedFor.get(item.component)?.refusals ?? []).map((r) => r.message));
+  // #5401: the gates that name other environments, which this run skips; the plan lists them.
+  const skippedGates = plan.items.flatMap((item) => resolvedFor.get(item.component)?.skippedGates ?? []);
+  const skippedJson = skippedGates.length > 0 ? { gatesSkipped: skippedGates.map((g) => ({ component: g.component, phase: g.phase, gate: g.gate, environments: g.environments })) } : {};
+  const skippedLines = (): void => {
+    for (const g of skippedGates) console.error(formatInfo(`${g.component}: gate "${g.gate}" is skipped in "${plan.to}"; it applies in ${g.environments.join(", ")}`));
+  };
   if (refusals.length > 0) {
     for (const message of refusals) console.error(formatError({ message }));
     console.error(formatError({ message: `nothing was deployed` }));
@@ -555,14 +562,18 @@ async function deployPlanIn(
     ? { release: { releaseDigest: under.release.releaseDigest, label: under.label, templates: under.target.templates } }
     : {};
   if (args.dryRun) {
-    if (args.json) console.log(JSON.stringify({ ...planJson(plan, removed), ...releaseJson }, null, 2));
+    if (args.json) console.log(JSON.stringify({ ...planJson(plan, removed), ...releaseJson, ...skippedJson }, null, 2));
     else {
       renderPlan(verb, plan, removed);
+      skippedLines();
       if (under) console.error(`  under release ${under.label ?? under.release.releaseDigest}: ${under.target.templates.length} template(s) from its "${plan.to}" target`);
     }
     return 0;
   }
-  if (!args.json) renderPlan(verb, plan, removed);
+  if (!args.json) {
+    renderPlan(verb, plan, removed);
+    skippedLines();
+  }
   // #4045: the pinned templates are written for this run and removed after it.
   const { writePinnedTemplates, removePinnedTemplates } = await import("../../components/release-promote");
   const tidy = () => {
@@ -687,9 +698,10 @@ async function deployPlanIn(
       changeSet: bound?.doc.digest ?? null,
       empty: bound?.empty ?? null,
       components: plan.items.map((i) => i.component),
+      ...skippedJson,
     };
     if (args.json) console.log(JSON.stringify(planned, null, 2));
-    else if (!bound) console.error(formatInfo(`release ${under.label ?? under.release.releaseDigest} for "${plan.to}": no promoted composition declares a gate, so there is no change set to approve; nothing was deployed`));
+    else if (!bound) console.error(formatInfo(`release ${under.label ?? under.release.releaseDigest} for "${plan.to}": no promoted composition declares a gate${skippedGates.length > 0 ? ` that applies in "${plan.to}"` : ""}, so there is no change set to approve; nothing was deployed`));
     else console.error(formatInfo(`release ${under.label ?? under.release.releaseDigest} for "${plan.to}": change set ${planned.changeSet}${planned.empty ? ", empty" : ""}, gates ${planned.gates.join(", ")}; nothing was deployed`));
     return 0;
   }
@@ -825,7 +837,8 @@ async function deployPlanIn(
         const result = run.results.find((r) => r.component === item.component);
         const approver = gateApprover(result);
         const admission = gateAdmission(result);
-        const input = record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}) });
+        const skipped = gatesSkipped(result);
+        const input = record(item, plan.to, { runId, ...(runOrigin ? { runOrigin } : {}), actor: actor!, timestamp, ...(approver ? { approver } : {}), ...(admission ? { admission } : {}), ...(skipped ? { gatesSkipped: skipped } : {}) });
         const templates = templateDigests.get(item.component);
         const { record: written } = await appendReleaseRecord(under ? { ...input, ...(templates ? { digest: templates, digestKind: "templates" as const } : {}), releaseDigest: under.release.releaseDigest } : input);
         recorded.push(written);
@@ -841,7 +854,7 @@ async function deployPlanIn(
     const withChangeSet = under && changeSetJson ? { release: { ...releaseJson.release!, ...changeSetJson } } : releaseJson;
     const stagedJson = staged ? { stages: staged.stages, ...(bound?.plannedOutputs ? { plannedOutputs: bound.plannedOutputs } : {}), ...(bound?.unknownInputs ? { unknownInputs: bound.unknownInputs } : {}) } : {};
     const prJson = pullRequests.length > 0 ? { pullRequests: pullRequests.map((r) => ({ commit: r.commit, source: r.source, plan: r.plan, digest: r.digest, approvedBy: r.approvedBy, ...(r.authorApproved ? { authorApproved: r.authorApproved } : {}) })) } : {};
-    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, ...stagedJson, ...prJson, ...groupsReport, run, recorded, ...(outcome ? { outcome } : {}) }, null, 2));
+    console.log(JSON.stringify({ ...planJson(plan, removed), ...withChangeSet, ...skippedJson, ...stagedJson, ...prJson, ...groupsReport, run, recorded, ...(outcome ? { outcome } : {}) }, null, 2));
   } else {
     for (const r of recorded) {
       console.error(formatSuccess(

@@ -93,6 +93,15 @@ export interface GateBase {
   timeout?: string;
   /** Human-readable description of the action required to unblock this gate. */
   description?: string;
+  /**
+   * The environments the gate applies in (#5401): a list of names, or a map
+   * whose entries may set `gate`, `description` and `timeout` there, such as
+   * `["staging", "prod"]`. In any other environment the run skips the gate
+   * and records the skip. Omitted, the gate applies in every environment.
+   * `chant build` refuses a name the member does not declare. See
+   * ./step-environments.ts.
+   */
+  environments?: string[] | Record<string, { gate?: string; description?: string; timeout?: string }>;
 }
 
 /**
@@ -266,7 +275,7 @@ export function phase(name: string, steps: Array<Step | Gate | Phase>, opts?: { 
 }
 
 /** Author a gate step — a human approval the driver decides against the gate ledger, stopping the run `gated` when nothing has answered it. */
-export function gate(name: string, opts?: { timeout?: string; description?: string }): Gate {
+export function gate(name: string, opts?: Pick<GateBase, "timeout" | "description" | "environments">): Gate {
   return { kind: "gate", gate: name, ...opts };
 }
 

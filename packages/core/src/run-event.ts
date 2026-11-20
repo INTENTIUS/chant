@@ -54,8 +54,13 @@ export type RunEventSettleStatus = "ok" | "failed" | "gated" | "waiting";
  */
 export type RunEventStepStatus = "ok" | "failed" | "skipped" | "cached" | "gated" | "waiting";
 
-/** Why a step was skipped. */
-export type RunEventSkipReason = "receipt" | "resumed" | "refused" | "not-run";
+/**
+ * Why a step was skipped. `environment` (#5401) is a gate step whose
+ * `environments` names other environments than the run's; chant
+ * `GATE_ENVIRONMENTS_FLOOR` (./components/step-environments.ts) and newer
+ * write it.
+ */
+export type RunEventSkipReason = "receipt" | "resumed" | "refused" | "not-run" | "environment";
 
 /** How a gate's approval passed, when it was more than one person's approval of that gate. */
 export type RunEventGateVia = "quorum" | "policy" | "point" | "alias" | "empty" | "workspace";

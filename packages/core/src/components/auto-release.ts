@@ -126,6 +126,8 @@ export interface AutoReleaseRunInfo {
   /** Who approved the deploy at its gate (#1035) and the gate resolution that admitted it (#4020), when it passed one. `recordAutoReleasesForRun` reads both off the component's gate step records. */
   approver?: string;
   admission?: ReleaseAdmission;
+  /** The gates the run skipped because they apply in other environments (#5401). */
+  gatesSkipped?: string[];
   /** The bypassed capability-profile divergences, when the caller deliberately overrode a deploy-time profile assertion (chant #1244) — recorded verbatim as the release record's `profileOverride`. */
   profileOverride?: string;
   /** The deploy's input-side digest, when `digest` is a rendered-content identity (a pinned helm deploy, chant #1242) — recorded as the release record's `inputDigest` so ledger queries can still join on inputs across clusters whose bytes legitimately differ. */
@@ -246,6 +248,7 @@ export async function maybeRecordAutoRelease(
         actor,
         ...(run.approver ? { approver: run.approver } : {}),
         ...(run.admission ? { admission: run.admission } : {}),
+        ...(run.gatesSkipped ? { gatesSkipped: run.gatesSkipped } : {}),
         ...(run.profileOverride ? { profileOverride: run.profileOverride } : {}),
         ...(run.inputDigest ? { inputDigest: run.inputDigest } : {}),
         ...(run.releaseDigest ? { releaseDigest: run.releaseDigest } : {}),

@@ -614,6 +614,45 @@ export async function verifyRollbackBuildProblems(dir: string, spec: import("../
 }
 
 /**
+ * The build's refusals of gate steps that name an environment the member
+ * does not declare (#5401). The member declares the `environments` of its
+ * `chant.config.ts`, its pipeline's stages, and each component's own
+ * `environments`. Components are loaded only when a component file mentions
+ * `environments`, so a member whose gates name none builds as before; a
+ * component that fails to load is left to `chant lint` and the run.
+ */
+export async function gateEnvironmentBuildProblems(path: string): Promise<string[]> {
+  const loaded = await loadChantConfigUpward(resolve(path)).catch(() => undefined);
+  const dir = loaded?.configPath ? dirname(loaded.configPath) : resolve(path);
+  const { findComponentFiles, discoverComponents } = await import("../../components/discover");
+  const { readFileSync } = await import("node:fs");
+  const files = await findComponentFiles(dir).catch(() => [] as string[]);
+  const mentions = files.some((file) => {
+    try {
+      return readFileSync(file, "utf8").includes("environments");
+    } catch {
+      return false;
+    }
+  });
+  if (!mentions) return [];
+  const discovered = await discoverComponents(dir).catch(() => undefined);
+  if (!discovered) return [];
+  const components = [...discovered.components.values()].map((d) => d.component);
+  const { environmentName, isEnvironmentPattern } = await import("../../config");
+  const declared = new Set<string>();
+  for (const entry of loaded?.config.environments ?? []) {
+    const name = environmentName(entry);
+    if (!isEnvironmentPattern(name)) declared.add(name);
+  }
+  const { readMemberPipeline } = await import("../../pipeline/read");
+  const pipeline = readMemberPipeline(dir);
+  if (pipeline.status === "folded") for (const stage of pipeline.spec.stages) declared.add(stage.name);
+  for (const c of components) for (const e of c.environments ?? []) declared.add(e.name);
+  const { unknownGateEnvironments } = await import("../../components/step-environments");
+  return unknownGateEnvironments(components as never, declared).map((p) => p.message);
+}
+
+/**
  * Fold the member's `.chant/pipeline.ts` (#5324) and write the spec to
  * `.chant/pipeline.json`. The member is the project the build path belongs
  * to. A file outside the subset fails the build with its finding; it is
@@ -659,6 +698,12 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
   // #5324: the member's pipeline folds first; one outside the subset stops the build.
   const pipelineRefused = await foldMemberPipeline(args.path);
   if (pipelineRefused !== undefined) return pipelineRefused;
+  // #5401: a gate that names an environment the member does not declare would be skipped where it was meant to apply.
+  const gateProblems = await gateEnvironmentBuildProblems(args.path);
+  if (gateProblems.length > 0) {
+    for (const message of gateProblems) console.error(formatError({ message }));
+    return 1;
+  }
 
   // Filter to a single lexicon when --lexicon is specified
   if (args.lexicon) {

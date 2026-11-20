@@ -61,17 +61,22 @@ export function overriddenFlagParams(provenance: readonly BuildParamProvenance[]
  * The gates the member's components declare in the environment the process
  * builds for (`CHANT_ENV`), with the parameters as resolved, or why the
  * components can't be read. Only components enabled under those parameters
- * count.
+ * count, and, given `env`, only gates that apply there (#5401).
  */
-export async function environmentGates(projectDir: string, provenance: BuildParamProvenance[]): Promise<{ gates: string[] } | { error: string }> {
+export async function environmentGates(projectDir: string, provenance: BuildParamProvenance[], env?: string): Promise<{ gates: string[] } | { error: string }> {
   const { discoverComponents } = await import("./components/discover");
   const { withoutDisabled } = await import("./components/cli-support");
   const { gateNamesOf } = await import("./components/release-gate");
+  const { componentForEnvironment } = await import("./components/step-environments");
   try {
     const discovered = await discoverComponents(projectDir, { buildParams: provenance });
     if (discovered.errors.length > 0) return { error: discovered.errors.map((e) => e.message).join("; ") };
     const all = [...discovered.components.values()].map((d) => d.component);
-    const plain = all.map((c) => ({ name: c.name, dependsOn: c.dependsOn, deploy: c.deploy as never }));
+    // #5401: a gate that names other environments does not gate this one.
+    const plain = all.map((c) => {
+      const shaped = { name: c.name, dependsOn: c.dependsOn, deploy: c.deploy as never };
+      return env === undefined ? shaped : componentForEnvironment(shaped, env).component;
+    });
     return { gates: gateNamesOf(withoutDisabled(all, plain)) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
@@ -103,7 +108,7 @@ export async function resolveFlaggedBuildParams(
   }
   const overridden = overriddenFlagParams(resolution.provenance, flags);
   if (overridden.length > 0) {
-    const found = await environmentGates(projectDir, resolution.provenance);
+    const found = await environmentGates(projectDir, resolution.provenance, flags.env);
     if ("error" in found) {
       return {
         success: false,

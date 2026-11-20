@@ -38,7 +38,7 @@ import { isComponentList, type ComponentRunPlan, type RunComponentsResult } from
 import { parseComponentTargets } from "../../components/capability";
 import { adoptionReview, loadDeployAdoption, type DeployAdoption } from "../../components/adoption";
 import { isApplyRecord, resolveCiRun, type ReleaseRecord, type RunOrigin } from "../../lifecycle/release-ledger";
-import { gateAdmission, gateApprover } from "../../components/promote";
+import { gateAdmission, gateApprover, gatesSkipped } from "../../components/promote";
 import { runOpGenerate } from "./run-generate";
 import { actorFromEnv } from "../../actor";
 
@@ -960,6 +960,8 @@ export async function recordAutoReleasesForRun(
         // #1035, #4020: who approved at the gate and which resolution admitted the deploy.
         ...(gateApprover(componentResult) ? { approver: gateApprover(componentResult) } : {}),
         ...(gateAdmission(componentResult) ? { admission: gateAdmission(componentResult) } : {}),
+        // #5401: the gates that apply in other environments, skipped here.
+        ...(gatesSkipped(componentResult) ? { gatesSkipped: gatesSkipped(componentResult) } : {}),
         // #4043: the release the deploy was made under, when `--release` named one.
         ...(releaseDigest !== undefined ? { releaseDigest } : {}),
         ...(releaseDigest !== undefined && templatesDigestOf?.(componentResult.component) ? { templatesDigest: templatesDigestOf(componentResult.component)! } : {}),

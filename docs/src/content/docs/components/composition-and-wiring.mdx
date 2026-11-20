@@ -35,6 +35,23 @@ phase("Apply", [
 
 An environment the map does not name is refused before anything runs, and the refusal lists the environments it names. A pull request's environment `pr-<n>` takes the entry of its template environment (`ci.prEnvironment`), and a `pulumi-up` step then derives its review stack from that entry's stack. A step without `environments` runs as written in every environment.
 
+## A gate per environment
+
+A gate step takes `environments` too, naming the environments it applies in. One component then deploys to dev with no gate and waits for an approval in staging and prod:
+
+```ts
+phase("Apply", [
+  { kind: "gate", gate: "release", environments: ["staging", "prod"] },
+  { kind: "terraform-apply", environments: {
+    dev:     { root: "envs/dev/network" },
+    staging: { root: "envs/staging/network" },
+    prod:    { root: "envs/prod/network" },
+  } },
+])
+```
+
+In place of a list, a map may set the gate's `gate`, `description` or `timeout` per environment, as in `environments: { staging: { description: "QA signs off" }, prod: { timeout: "72h" } }`. Where the gate applies, it binds as any gate does: under `--release`, an approval counts only for that release, that environment and its change set. Elsewhere the run skips it and records the skip: the step record carries `gateSkipped`, the run event a `step-settle` with `skip: "environment"`, the deploy record and `chant workspace status --json` list it under `gatesSkipped`, and `promote --dry-run` and `--plan-only` print it. A pull request's environment follows its template environment. `chant build` refuses a gate that names an environment the member does not declare in `chant.config.ts`, its pipeline's stages or the component's own `environments`. A gate without `environments` applies in every environment.
+
 ## Fan-out is composition, not orchestrator knowledge
 
 A single component can expand to many units — one CloudFormation stack per instance in a cluster, one host in a fleet. The fan-out is authored in the composition, never known by the driver.

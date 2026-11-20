@@ -756,6 +756,13 @@ export function gateAdmission(result: DriverComponentResult | undefined): Releas
   return admission;
 }
 
+/** The gates a component skipped in this run because they apply in other environments (#5401), sorted and distinct; undefined when none. */
+export function gatesSkipped(result: DriverComponentResult | undefined): string[] | undefined {
+  const names = new Set<string>();
+  for (const record of result?.records ?? []) if (record.gateSkipped) names.add(record.kind.replace(/^gate:/, ""));
+  return names.size > 0 ? [...names].sort() : undefined;
+}
+
 /** What a promote, rollback or redeploy knows about its own run, for the records it writes. */
 export interface DeployRunInfo {
   runId: string;
@@ -765,6 +772,8 @@ export interface DeployRunInfo {
   approver?: string;
   /** The gate resolution that admitted the deploy (#4020), from {@link gateAdmission}. */
   admission?: ReleaseAdmission;
+  /** The gates the run skipped because they apply in other environments (#5401), from {@link gatesSkipped}. */
+  gatesSkipped?: string[];
 }
 
 /** The fields a promote, a rollback and a redeploy record share: the artifact is the earlier release's own. */
@@ -781,6 +790,7 @@ function sharedRecord(item: PromotionItem, env: string, run: DeployRunInfo): Rel
     actor: run.actor,
     ...(run.approver ? { approver: run.approver } : {}),
     ...(run.admission ? { admission: run.admission } : {}),
+    ...(run.gatesSkipped ? { gatesSkipped: run.gatesSkipped } : {}),
     ...(source.manifestDigest ? { manifestDigest: source.manifestDigest } : {}),
     ...(source.inputDigest ? { inputDigest: source.inputDigest } : {}),
     // #4274: a release's templates digest stays one when it is deployed again.

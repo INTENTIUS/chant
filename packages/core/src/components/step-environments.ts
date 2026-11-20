@@ -52,6 +52,26 @@
  * An environment's config and secret set (./environment-sets.ts, #5348)
  * picks its entry with {@link environmentEntryName}, the same lookup.
  *
+ * ## Gate steps (#5401)
+ *
+ * A gate step takes `environments` too, naming the environments it applies
+ * in: a list of names, or a map whose entries may set the gate's `gate`,
+ * `description` and `timeout` there.
+ *
+ *     { kind: "gate", gate: "release", environments: ["staging", "prod"] }
+ *
+ * The same resolution reads it, with the same lookup (a pull request's
+ * environment takes its template's entry). In an environment the gate
+ * names, the gate stays, its entry merged over it and `environments`
+ * removed. In any other, the gate is taken out of its phase and listed on
+ * the phase's `skippedGates`, so every reader past this point (the release
+ * gate's plan and binding, the gate names a promote prints, the driver)
+ * sees only the gates that apply, and the driver records each skip
+ * (`gateSkipped` on its step record, a `step-settle` with
+ * `skip: "environment"`). A gate step with no `environments` applies in
+ * every environment, as before. `chant build` refuses a gate that names an
+ * environment the member does not declare ({@link unknownGateEnvironments}).
+ *
  * This module imports only the release floors at run time.
  */
 
@@ -68,6 +88,33 @@ export const STEP_ENVIRONMENTS_KEY = "environments";
  * release cut, and a pull request's plan, its declared reads and its groups.
  */
 export const STEP_ENVIRONMENTS_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first chant that applies a gate step only in the environments its
+ * `environments` names (#5401): in any other the gate is skipped and the
+ * skip recorded on the run's step records, its run events, the release
+ * records and `chant workspace status`, and a promote's plan lists it; a
+ * gate naming an environment the member does not declare fails `chant
+ * build`.
+ */
+export const GATE_ENVIRONMENTS_FLOOR = NEXT_RELEASE;
+
+/** The keys a gate step's `environments` entry may set (#5401). */
+export const GATE_ENVIRONMENT_KEYS: readonly string[] = ["gate", "description", "timeout"];
+
+/** A gate step that does not apply in the run's environment, as its phase lists it (#5401). */
+export interface SkippedGate {
+  /** The gate's name, as the step names it. */
+  gate: string;
+  /** The environments the gate applies in, in the order it names them. */
+  environments: string[];
+}
+
+/** A skipped gate with the component and phase it sits in. */
+export interface SkippedGateAt extends SkippedGate {
+  component: string;
+  phase: string;
+}
 
 /** The variable `pr-env up` sets to the pull request environment's template (`PR_ENV_TEMPLATE_VAR` in ./pr-environment.ts). */
 const TEMPLATE_VAR = "CHANT_ENV_TEMPLATE";
@@ -172,6 +219,60 @@ export function stepForEnvironment<T extends Record<string, unknown>>(
   return { step: { ...rest, ...((map as Record<string, Record<string, unknown>>)[name]) } as T };
 }
 
+/** A gate's name, from `gate` or the deprecated `signalName` (`gateName` in ../op/gate-name.ts). */
+const gateNameOf = (step: Record<string, unknown>): string =>
+  typeof step.gate === "string" ? step.gate : typeof step.signalName === "string" ? step.signalName : "";
+
+/** A gate's `environments` as a map, or why it cannot be read. A list names environments with empty entries. */
+function gateEnvironmentMap(value: unknown): { map: Record<string, Record<string, unknown>> } | { error: string } {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return { error: "takes a list of environment names, or a map from environment name to the gate's keys there" };
+    const seen = new Set<string>();
+    for (const name of value) {
+      if (typeof name !== "string" || name === "") return { error: `lists ${JSON.stringify(name)}, where it takes environment names` };
+      if (seen.has(name)) return { error: `lists ${name} twice` };
+      seen.add(name);
+    }
+    return { map: Object.fromEntries(value.map((name: string) => [name, {}])) };
+  }
+  if (!isMap(value) || Object.keys(value).length === 0) {
+    return { error: "takes a list of environment names, or a map from environment name to the gate's keys there" };
+  }
+  for (const [env, entry] of Object.entries(value)) {
+    if (!isMap(entry)) return { error: `names ${env} with ${Array.isArray(entry) ? "a list" : typeof entry}, where it takes a map of the gate's keys` };
+    const other = Object.keys(entry).find((k) => !GATE_ENVIRONMENT_KEYS.includes(k));
+    if (other !== undefined) return { error: `sets \`${other}\` under ${env}, where a gate's entry sets ${GATE_ENVIRONMENT_KEYS.map((k) => `\`${k}\``).join(", ")}` };
+  }
+  return { map: value as Record<string, Record<string, unknown>> };
+}
+
+/** The environments a gate step names, in the order it names them; empty for a gate with none or a malformed one. */
+export function gateEnvironmentNames(step: Record<string, unknown>): string[] {
+  if (!hasStepEnvironments(step)) return [];
+  const read = gateEnvironmentMap(step[STEP_ENVIRONMENTS_KEY]);
+  return "map" in read ? Object.keys(read.map) : [];
+}
+
+/**
+ * A gate step resolved for `env` (#5401): the gate with its entry merged and
+ * `environments` removed when it applies there, the skip when it does not,
+ * or why its `environments` cannot be read. A gate with no `environments`
+ * comes back as it is.
+ */
+export function gateForEnvironment<T extends Record<string, unknown>>(
+  step: T,
+  env: string,
+  options: StepEnvironmentOptions = {},
+): { step: T } | { skipped: SkippedGate } | { error: string; named: string[] } {
+  if (!hasStepEnvironments(step)) return { step };
+  const read = gateEnvironmentMap(step[STEP_ENVIRONMENTS_KEY]);
+  if ("error" in read) return { error: `its \`${STEP_ENVIRONMENTS_KEY}\` ${read.error}`, named: [] };
+  const name = environmentEntryName(read.map, env, options);
+  if (name === undefined) return { skipped: { gate: gateNameOf(step), environments: Object.keys(read.map) } };
+  const { [STEP_ENVIRONMENTS_KEY]: _map, ...rest } = step;
+  return { step: { ...rest, ...read.map[name] } as T };
+}
+
 /**
  * A step's input with its `environments` resolved for `env`. Throws a
  * {@link StepEnvironmentRefusedError} when the step does not name it. For
@@ -202,6 +303,8 @@ interface PhaseShape {
   phase: string;
   steps: unknown[];
   onFailure?: PhaseShape[];
+  /** The gates taken out of this phase for the run's environment (#5401). */
+  skippedGates?: SkippedGate[];
 }
 
 interface ComponentShape {
@@ -217,48 +320,131 @@ const isPhase = (s: unknown): s is PhaseShape => isMap(s) && typeof s.phase === 
  * `component` with every step's `environments` resolved for `env`, through
  * `deploy`, `verify`, `rollback`, nested phases and `onFailure`, and the
  * steps that cannot run there. A step that cannot is left as it is, so a
- * caller that does not run the component can still read it. A component
+ * caller that does not run the component can still read it. A gate step
+ * that does not apply in `env` is taken out of its phase and listed on the
+ * phase's `skippedGates` and in `skippedGates` here (#5401). A component
  * with no such step comes back as the same object.
  */
 export function componentForEnvironment<C extends ComponentShape>(
   component: C,
   env: string,
   options: StepEnvironmentOptions = {},
-): { component: C; refusals: StepEnvironmentRefusal[] } {
+): { component: C; refusals: StepEnvironmentRefusal[]; skippedGates: SkippedGateAt[] } {
   const refusals: StepEnvironmentRefusal[] = [];
+  const skippedGates: SkippedGateAt[] = [];
   let changed = false;
   const walkPhase = (phase: PhaseShape): PhaseShape => {
     let touched = false;
-    const steps = phase.steps.map((step) => {
+    const skippedHere: SkippedGate[] = [];
+    const steps = phase.steps.flatMap((step) => {
       if (isPhase(step)) {
         const next = walkPhase(step);
         if (next !== step) touched = true;
-        return next;
+        return [next];
       }
-      if (!isMap(step) || step.kind === "gate" || !hasStepEnvironments(step)) return step;
+      if (!isMap(step) || !hasStepEnvironments(step)) return [step];
+      const at = { component: component.name, phase: phase.phase, kind: String(step.kind) };
+      if (step.kind === "gate") {
+        const gate = gateForEnvironment(step, env, options);
+        if ("error" in gate) {
+          refusals.push(refusalOf({ ...at, kind: `gate "${gateNameOf(step)}"` }, env, gate));
+          return [step];
+        }
+        touched = true;
+        if ("step" in gate) return [gate.step];
+        skippedHere.push(gate.skipped);
+        skippedGates.push({ component: component.name, phase: phase.phase, ...gate.skipped });
+        return [];
+      }
       const resolved = stepForEnvironment(step, env, options);
       if ("error" in resolved) {
-        refusals.push(refusalOf({ component: component.name, phase: phase.phase, kind: String(step.kind) }, env, resolved));
-        return step;
+        refusals.push(refusalOf(at, env, resolved));
+        return [step];
       }
       touched = true;
-      return resolved.step;
+      return [resolved.step];
     });
     const onFailure = phase.onFailure?.map(walkPhase);
     if (onFailure?.some((p, i) => p !== phase.onFailure![i])) touched = true;
     if (!touched) return phase;
     changed = true;
-    return { ...phase, steps, ...(onFailure ? { onFailure } : {}) };
+    return {
+      ...phase,
+      steps,
+      ...(onFailure ? { onFailure } : {}),
+      ...(skippedHere.length > 0 ? { skippedGates: [...(phase.skippedGates ?? []), ...skippedHere] } : {}),
+    };
   };
   const walk = (phases: PhaseShape[] | undefined): PhaseShape[] | undefined => phases?.map(walkPhase);
   const deploy = walk(component.deploy)!;
   const verify = walk(component.verify);
   const rollback = walk(component.rollback);
-  if (!changed) return { component, refusals };
+  if (!changed) return { component, refusals, skippedGates };
   return {
     component: { ...component, deploy, ...(verify ? { verify } : {}), ...(rollback ? { rollback } : {}) },
     refusals,
+    skippedGates,
   };
+}
+
+/** The gate steps a component skips, read off its resolved phases' `skippedGates`, nested phases and `onFailure` included (#5401). */
+export function skippedGatesOf(component: ComponentShape): SkippedGateAt[] {
+  const out: SkippedGateAt[] = [];
+  const walk = (phase: PhaseShape): void => {
+    for (const s of phase.skippedGates ?? []) out.push({ component: component.name, phase: phase.phase, ...s });
+    for (const step of phase.steps) if (isPhase(step)) walk(step);
+    phase.onFailure?.forEach(walk);
+  };
+  for (const phases of [component.deploy, component.verify, component.rollback]) phases?.forEach(walk);
+  return out;
+}
+
+/** One gate that names an environment the member does not declare (#5401). */
+export interface UnknownGateEnvironment {
+  component: string;
+  phase: string;
+  gate: string;
+  /** The names it gives that are not declared. */
+  unknown: string[];
+  message: string;
+}
+
+/**
+ * Every gate step whose `environments` names an environment outside
+ * `declared`, or cannot be read, for `chant build` to refuse (#5401). A gate
+ * that names a misspelt environment would otherwise be skipped in the one it
+ * was meant for. `declared` holds the member's `environments`, its
+ * pipeline's stages and each component's own `environments`.
+ */
+export function unknownGateEnvironments(components: readonly ComponentShape[], declared: ReadonlySet<string>): UnknownGateEnvironment[] {
+  const out: UnknownGateEnvironment[] = [];
+  const known = [...declared].sort();
+  const knownText = known.length > 0 ? `the member declares ${known.join(", ")}` : "the member declares no environments";
+  for (const component of components) {
+    const walk = (phase: PhaseShape): void => {
+      for (const step of phase.steps) {
+        if (isPhase(step)) {
+          walk(step);
+          continue;
+        }
+        if (!isMap(step) || step.kind !== "gate" || !hasStepEnvironments(step)) continue;
+        const gate = gateNameOf(step);
+        const where = `component "${component.name}": gate "${gate}" in phase "${phase.phase}"`;
+        const read = gateEnvironmentMap(step[STEP_ENVIRONMENTS_KEY]);
+        if ("error" in read) {
+          out.push({ component: component.name, phase: phase.phase, gate, unknown: [], message: `${where}: its \`${STEP_ENVIRONMENTS_KEY}\` ${read.error}` });
+          continue;
+        }
+        const unknown = Object.keys(read.map).filter((name) => !declared.has(name));
+        if (unknown.length > 0) {
+          out.push({ component: component.name, phase: phase.phase, gate, unknown, message: `${where} names ${unknown.join(", ")} in \`${STEP_ENVIRONMENTS_KEY}\`, and ${knownText}` });
+        }
+      }
+      phase.onFailure?.forEach(walk);
+    };
+    for (const phases of [component.deploy, component.verify, component.rollback]) phases?.forEach(walk);
+  }
+  return out;
 }
 
 /**

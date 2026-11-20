@@ -5,6 +5,10 @@ import { memoryGateLedgerPort } from "../op/gate";
 import { PR_ENV_TEMPLATE_VAR, isPrEnvironmentName } from "./pr-environment";
 import { NEXT_RELEASE } from "../release-floors";
 import {
+  GATE_ENVIRONMENTS_FLOOR,
+  gateForEnvironment,
+  skippedGatesOf,
+  unknownGateEnvironments,
   STEP_ENVIRONMENTS_FLOOR,
   StepEnvironmentRefusedError,
   componentForEnvironment,
@@ -49,7 +53,7 @@ describe("a step's inputs per environment (#5360)", () => {
     expect(stepForEnvironment(fixed, "prod")).toEqual({ step: fixed });
     expect((stepForEnvironment(fixed, "prod") as { step: unknown }).step).toBe(fixed);
     const plain: DriverComponent = { name: "plain", deploy: [{ phase: "Apply", steps: [fixed] }] };
-    expect(componentForEnvironment(plain, "prod")).toEqual({ component: plain, refusals: [] });
+    expect(componentForEnvironment(plain, "prod")).toEqual({ component: plain, refusals: [], skippedGates: [] });
     expect(componentForEnvironment(plain, "prod").component).toBe(plain);
   });
 
@@ -123,5 +127,88 @@ describe("a step's inputs per environment (#5360)", () => {
 
   test("the floor names the next release", () => {
     expect(STEP_ENVIRONMENTS_FLOOR).toBe(NEXT_RELEASE);
+  });
+});
+
+describe("a gate step applies only in the environments it names (#5401)", () => {
+  const listed = { kind: "gate", gate: "release", environments: ["staging", "prod"] };
+  const mapped = { kind: "gate", gate: "release", timeout: "48h", environments: { staging: { description: "staging sign-off" }, prod: { gate: "prod-release", timeout: "72h" } } };
+  const network = (gate: Record<string, unknown>): DriverComponent => ({
+    name: "network",
+    deploy: [{ phase: "Apply", steps: [gate as never, terraform] }],
+  });
+
+  test("a list or a map applies the gate where it names, merging the entry, and skips it elsewhere", () => {
+    expect(gateForEnvironment(listed, "staging")).toEqual({ step: { kind: "gate", gate: "release" } });
+    expect(gateForEnvironment(listed, "dev")).toEqual({ skipped: { gate: "release", environments: ["staging", "prod"] } });
+    expect(gateForEnvironment(mapped, "staging")).toEqual({ step: { kind: "gate", gate: "release", timeout: "48h", description: "staging sign-off" } });
+    expect(gateForEnvironment(mapped, "prod")).toEqual({ step: { kind: "gate", gate: "prod-release", timeout: "72h" } });
+    expect(gateForEnvironment(mapped, "dev")).toEqual({ skipped: { gate: "release", environments: ["staging", "prod"] } });
+    // A pull request's environment takes its template's answer, as an engine step's entry does.
+    expect(gateForEnvironment(listed, "pr-4", { template: "staging" })).toEqual({ step: { kind: "gate", gate: "release" } });
+    expect(gateForEnvironment(listed, "pr-4", { template: "dev" })).toMatchObject({ skipped: { gate: "release" } });
+  });
+
+  test("a gate with no environments applies everywhere, and its component comes back as the same object", () => {
+    const always = network({ kind: "gate", gate: "release" });
+    const out = componentForEnvironment({ ...always, deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "release" }] }] }, "dev");
+    expect(out.skippedGates).toEqual([]);
+    expect(out.component.deploy[0].steps).toEqual([{ kind: "gate", gate: "release" }]);
+    const plain: DriverComponent = { name: "p", deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "release" }] }] };
+    expect(componentForEnvironment(plain, "dev").component).toBe(plain);
+  });
+
+  test("a skipped gate leaves its phase and is listed on it, and resolving again changes nothing", () => {
+    const { component, skippedGates, refusals } = componentForEnvironment(network(listed), "staging");
+    expect(refusals).toEqual([]);
+    expect(skippedGates).toEqual([]);
+    expect(component.deploy[0].steps[0]).toEqual({ kind: "gate", gate: "release" });
+
+    const dev = componentForEnvironment<DriverComponent>({ ...network(listed), deploy: [{ phase: "Apply", steps: [listed as never, { kind: "apply" }] }] }, "dev");
+    expect(dev.component.deploy[0].steps).toEqual([{ kind: "apply" }]);
+    expect(dev.component.deploy[0].skippedGates).toEqual([{ gate: "release", environments: ["staging", "prod"] }]);
+    expect(dev.skippedGates).toEqual([{ component: "network", phase: "Apply", gate: "release", environments: ["staging", "prod"] }]);
+    expect(skippedGatesOf(dev.component)).toEqual(dev.skippedGates);
+    expect(componentForEnvironment(dev.component, "dev").component).toBe(dev.component);
+  });
+
+  test("a malformed gate map is refused before anything runs", () => {
+    expect(gateForEnvironment({ kind: "gate", gate: "g", environments: [] }, "dev")).toMatchObject({ error: expect.stringMatching(/takes a list of environment names/) });
+    expect(gateForEnvironment({ kind: "gate", gate: "g", environments: ["prod", "prod"] }, "dev")).toMatchObject({ error: expect.stringMatching(/lists prod twice/) });
+    expect(gateForEnvironment({ kind: "gate", gate: "g", environments: { prod: { root: "x" } } }, "dev")).toMatchObject({ error: expect.stringMatching(/sets `root` under prod/) });
+    expect(() => componentsForEnvironment([network({ kind: "gate", gate: "g", environments: [""] })], "staging")).toThrow(/gate "g" step in phase "Apply" can't run in staging/);
+  });
+
+  test("the driver skips the gate where it does not apply and records the skip, and stops at it where it does", async () => {
+    const registry = new CapabilityRegistry();
+    registry.register({ kind: "terraform-apply", async run() { return {}; } } as never);
+    const events: unknown[] = [];
+    const staged = await runInterpretDriver([network(listed)], registry, {
+      env: "staging",
+      gates: memoryGateLedgerPort(),
+    }).catch((e) => e.result);
+    expect(staged.results[0].status).toBe("gated");
+
+    const port = memoryGateLedgerPort();
+    const component: DriverComponent = { name: "network", deploy: [{ phase: "Apply", steps: [listed as never, { kind: "terraform-apply" }] }] };
+    const run = await runInterpretDriver([component], registry, { env: "dev", gates: port, onRunEvent: (e: unknown) => events.push(e) } as never);
+    expect(run.results[0].status).toBe("ok");
+    expect(port.appended).toEqual([]);
+    expect(run.results[0].records[0]).toEqual({ component: "network", phase: "Apply", kind: "gate:release", status: "skipped", durationMs: 0, gateSkipped: { environments: ["staging", "prod"] } });
+    expect(events).toContainEqual(expect.objectContaining({ type: "step-settle", step: "gate:release", status: "skipped", skip: "environment" }));
+  });
+
+  test("a gate that names an environment the member does not declare is reported for the build", () => {
+    const declared = new Set(["dev", "staging", "prod"]);
+    expect(unknownGateEnvironments([network(listed), network(mapped)], declared)).toEqual([]);
+    expect(unknownGateEnvironments([network({ kind: "gate", gate: "release", environments: ["staging", "prdo"] })], declared)).toEqual([
+      expect.objectContaining({ component: "network", gate: "release", unknown: ["prdo"], message: 'component "network": gate "release" in phase "Apply" names prdo in `environments`, and the member declares dev, prod, staging' }),
+    ]);
+    expect(unknownGateEnvironments([network(listed)], new Set())[0].message).toMatch(/the member declares no environments/);
+    expect(unknownGateEnvironments([network({ kind: "gate", gate: "g", environments: {} })], declared)[0].message).toMatch(/takes a list of environment names/);
+  });
+
+  test("the floor names the next release", () => {
+    expect(GATE_ENVIRONMENTS_FLOOR).toBe(NEXT_RELEASE);
   });
 });
