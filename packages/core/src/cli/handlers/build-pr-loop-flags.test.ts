@@ -4,7 +4,8 @@
  * and refuses a value the jobs would refuse on their own line.
  */
 import { describe, expect, test } from "vitest";
-import { prLoopFlagsProblem } from "./build";
+import { prLoopFlagsProblem, prLoopOption, waveSummaryFromFlags } from "./build";
+import { parseArgs } from "../parse-args";
 import { prLoopJobs, prLoopPostJob, prCommentPreviewJob } from "../../components/pr-pipeline";
 import { productPipelineJobs } from "../../components/product-pipeline";
 
@@ -94,5 +95,57 @@ describe("the responses and the decide service in the pull request jobs", () => 
     const [, apply] = prLoopJobs("github", "prod", { applyBeforeMerge: true, applyMerge: { tokenEnv: "CHANT_MERGE_TOKEN", method: "squash" } });
     expect(apply!.command).toMatch(/pr-apply --before-merge --merge auto --merge-token-env CHANT_MERGE_TOKEN --merge-method squash/);
     expect(apply!.run.command).toMatch(/--apply-before-merge --merge auto --merge-token-env CHANT_MERGE_TOKEN --merge-method squash/);
+  });
+
+  test("--wave-summary reaches the apply job with wave-refused=summary, and is refused by name otherwise (#5399)", () => {
+    const flags = { keyEnv: "MODEL_KEY", maxRuns: "5", maxCostUsd: "2.5" };
+    expect(waveSummaryFromFlags(flags)).toEqual({ spec: { keyEnv: "MODEL_KEY", maxRuns: 5, maxCostUsd: 2.5 } });
+    expect(prLoopFlagsProblem({ prLoop: true, respond: ["wave-refused=summary"], waveSummary: flags })).toBeUndefined();
+    expect(prLoopFlagsProblem({ prLoop: true, waveSummary: flags })).toMatch(/goes with --respond wave-refused=summary/);
+    expect(prLoopFlagsProblem({ waveSummary: flags })).toMatch(/--wave-summary .*needs --pr-loop/);
+    expect(prLoopFlagsProblem({ prLoop: true, respond: ["wave-refused=summary"], waveSummary: { keyEnv: "not a var" } })).toMatch(/key variable/);
+    expect(prLoopFlagsProblem({ prLoop: true, respond: ["wave-refused=summary"], waveSummary: { maxRuns: "many" } })).toMatch(/maxRuns/);
+    expect(prLoopFlagsProblem({ prLoop: true, respond: ["wave-refused=summary"], waveSummary: { model: "x" } })).toMatch(/no field "model"/);
+  });
+
+  test("--wave-summary parses as field=value, repeatable", () => {
+    const parsed = parseArgs(["build", "--pr-loop", "--wave-summary", "keyEnv=MODEL_KEY", "--wave-summary", "timeout=15"]);
+    expect(parsed.waveSummary).toEqual({ keyEnv: "MODEL_KEY", timeout: "15" });
+    expect(() => parseArgs(["build", "--pr-loop", "--wave-summary", "keyEnv"])).toThrow(/<field>=<value>/);
+  });
+
+  test("the build's loop option gives the apply job the summary's variables and key, on each forge (#5399)", () => {
+    const args = (...a: string[]) => parseArgs(["build", "--pr-loop", "--apply-before-merge", ...a]);
+    const summary = ["--respond", "wave-refused=summary", "--wave-summary", "keyEnv=MODEL_KEY", "--wave-summary", "maxRuns=5"];
+    for (const forge of ["github", "gitlab", "forgejo"] as const) {
+      const [, apply] = prLoopJobs(forge, "prod", prLoopOption(args(...summary), undefined));
+      expect(apply!.env.CHANT_WAVE_SUMMARY_KEY_ENV).toBe("MODEL_KEY");
+      expect(apply!.env.CHANT_WAVE_SUMMARY_MAX_RUNS).toBe("5");
+      expect(apply!.run.env.CHANT_WAVE_SUMMARY_KEY_ENV).toBe("MODEL_KEY");
+      if (forge !== "gitlab") expect(apply!.env.MODEL_KEY).toBe("${{ secrets.MODEL_KEY }}");
+      // Without the summary response, or without settings, the jobs are as they were.
+      const plain = prLoopJobs(forge, "prod", prLoopOption(args("--respond", "wave-refused=diff"), undefined));
+      expect(prLoopJobs(forge, "prod", prLoopOption(args("--respond", "wave-refused=diff", "--wave-summary", "keyEnv=MODEL_KEY"), undefined))).toEqual(plain);
+      expect(prLoopJobs(forge, "prod", prLoopOption(args(), undefined))).toEqual(prLoopJobs(forge, "prod", { applyBeforeMerge: true }));
+    }
+  });
+
+  test("--agent-facts reaches the apply job with CHANT_AGENT_FACTS and the relay key, on each forge (#5399)", () => {
+    const args = (...a: string[]) => parseArgs(["build", "--pr-loop", "--apply-before-merge", ...a]);
+    for (const forge of ["github", "gitlab", "forgejo"] as const) {
+      const [, apply] = prLoopJobs(forge, "prod", prLoopOption(args("--agent-facts", "apply-failed", "--agent-facts-key-env", "OPS_RELAY"), undefined));
+      expect(apply!.env.CHANT_AGENT_FACTS).toBe("apply-failed");
+      expect(apply!.run.env.CHANT_AGENT_FACTS).toBe("apply-failed");
+      expect(apply!.env.CHANT_RELAY_KEY).toBe(forge === "gitlab" ? "$OPS_RELAY" : "${{ secrets.OPS_RELAY }}");
+      const [plan] = prLoopJobs(forge, "prod", prLoopOption(args("--agent-facts", "apply-failed"), undefined));
+      expect(plan!.env.CHANT_AGENT_FACTS).toBeUndefined();
+      // Neither the summary nor the facts set: the jobs are as they were.
+      expect(prLoopJobs(forge, "prod", prLoopOption(args(), undefined))).toEqual(prLoopJobs(forge, "prod", { applyBeforeMerge: true }));
+    }
+    expect(prLoopFlagsProblem({ prLoop: true, agentFactsTriggers: ["apply-failed"], agentFactsKeyEnv: "OPS_RELAY" })).toBeUndefined();
+    expect(prLoopFlagsProblem({ prLoop: true, agentFactsTriggers: ["alert"] })).toMatch(/--agent-facts takes apply-failed or verify-failed, not alert/);
+    expect(prLoopFlagsProblem({ prLoop: true, agentFactsKeyEnv: "OPS_RELAY" })).toMatch(/goes with --agent-facts/);
+    expect(prLoopFlagsProblem({ prLoop: true, agentFactsTriggers: ["apply-failed"], agentFactsKeyEnv: "no good" })).toMatch(/variable name/);
+    expect(prLoopFlagsProblem({ agentFactsTriggers: ["apply-failed"] })).toMatch(/--agent-facts .*needs --pr-loop/);
   });
 });
