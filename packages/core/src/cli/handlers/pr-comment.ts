@@ -184,7 +184,11 @@ export async function runComponentsPrComment(ctx: CommandContext): Promise<numbe
   if (!base) return fail("pr-comment needs the default branch: --branch <name>, or repository.default_branch in the event");
   // INTENTIUS/terragucci#1461: teams are read with the pipeline's team token when it has one.
   const teamToken = env[COMMENT_ALLOW_TOKEN_ENV];
+  // #5354: a reject comment is recorded when the product's words map a command onto reject.
+  const { commentRejectFromEnv } = await import("../../ci-comment-reject");
+  const reject = await commentRejectFromEnv(activeProductWords(), env);
   const outcome = await answerProductComment({
+    ...(reject ? { reject } : {}),
     forge: kind,
     event,
     repo: target.repo,

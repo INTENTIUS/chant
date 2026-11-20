@@ -40,7 +40,8 @@ import type { GateApprovalSource } from "./op-waves";
  * proof rules the gate's approvals count by, and with approval rules that
  * combine in `all` and `any` groups, nested up to three deep, each rule and
  * group with a `name` the progress lines, the plan note and the ledger
- * show, and a stage hold's `description`.
+ * show, a stage hold's `description`, and a `reject` comment command a
+ * comment job records under the author's forge identity (`../ci-comment-reject.ts`).
  */
 export const GATE_REJECTION_FLOOR = NEXT_RELEASE;
 

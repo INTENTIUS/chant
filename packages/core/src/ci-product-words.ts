@@ -36,9 +36,9 @@ export const CI_PRODUCT_STAGES: readonly CiProductStage[] = ["plan", "apply", "r
  * answers it. `action` (#4653) asks for a day-2 action on one member, which
  * runs under a gated request.
  */
-export type CiProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action" | "commit";
+export type CiProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action" | "commit" | "reject";
 
-export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply", "lock", "unlock", "agent", "action", "commit"];
+export const CI_PRODUCT_COMMANDS: readonly CiProductCommand[] = ["plan", "apply", "lock", "unlock", "agent", "action", "commit", "reject"];
 
 /**
  * What an approval of a product's waves binds to (ruling B, 2026-10-27).
@@ -139,9 +139,8 @@ export interface CiProductWordsInput {
   /**
    * The reject line (#5354), the same kind of template over `{op}`,
    * `{gate}`, `{digest}`, `{reason}`, `{sign}` and `{target}`: what a
-   * reviewer runs to turn a release down at a stage's gate. A comment that
-   * types the product's `reject` is answered with it, since a comment
-   * never records a rejection, as it never records an approval.
+   * reviewer runs to turn a release down at a stage's gate. A comment job
+   * answers with it where a comment cannot record the rejection itself.
    */
   reject?: string;
   /** The op the waves record under. Default: the spec's own. */
@@ -568,6 +567,12 @@ export type ParsedProductComment =
   | { kind: "action"; member: string; address: string }
   /** A commit job's command (#4722), by the word typed: `/terragucci fmt`. Several words may each map onto `commit`. */
   | { kind: "commit"; word: string; arg?: string }
+  /**
+   * A rejection of the release a stage waits on (#5354): `/<product>
+   * reject [--stage <stage>] <reason>`. The comment job records it when the
+   * stage's approval mode takes the comment author's forge identity.
+   */
+  | { kind: "reject"; stage?: string; reason: string }
   | { kind: "refused"; reason: string };
 
 /** A member as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
@@ -682,8 +687,8 @@ export function parseProductComment(
       kind: "refused",
       reason:
         typed === "reject"
-          ? // #5354: a rejection takes the proof rules an approval takes, so it is recorded with the reject line, as an approval is with the approve line.
-            `a comment never records a rejection, as it never records an approval: run \`${rejectLine(words, { op: words.op ?? "<op>", gate: "<gate>", digest: "<digest>" })}\``
+          ? // #5354: words that map no comment command onto reject leave rejections to the reject line.
+            `${words.product}'s comments take no reject command: run \`${rejectLine(words, { op: words.op ?? "<op>", gate: "<gate>", digest: "<digest>" })}\``
           : NEVER.has(typed)
             ? `a comment never runs \`${typed}\`: ${words.product} re-plans, and runs what an approval covers, on request and nothing more`
             : `the commands are ${known}`,
@@ -721,6 +726,21 @@ export function parseProductComment(
       if (!MEMBER.test(member) || member.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: `the ${words.noun[0]} is a name or a path from the repository root` };
       if (!ACTION.test(address)) return { kind: "refused", reason: "an action is an action address or name, with no spaces or shell characters" };
       return { kind: "action", member, address };
+    }
+    case "reject": {
+      // #5354: the reason is the rest of the line; `--stage <stage>` first names the stage when several wait.
+      let rest = text.slice(`${prefix} ${typed}`.length).trim();
+      let stage: string | undefined;
+      const flag = /^--stage[ \t]+(\S+)[ \t]*/.exec(rest);
+      if (flag) {
+        if (!NAME.test(flag[1]!)) return { kind: "refused", reason: "a stage is a name of lowercase letters, digits, - and _" };
+        stage = flag[1]!;
+        rest = rest.slice(flag[0].length).trim();
+      } else if (rest.startsWith("-")) return { kind: "refused", reason: `${line} takes \`--stage <stage>\` and a reason, and no other flag` };
+      if (rest === "") return { kind: "refused", reason: `${line} needs a reason after it, on the same line: \`${prefix} ${typed} [--stage <stage>] <reason>\`` };
+      if (rest.length > PRODUCT_COMMENT_ASK_MAX) return { kind: "refused", reason: `a reason is at most ${PRODUCT_COMMENT_ASK_MAX} characters` };
+      if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(rest)) return { kind: "refused", reason: "a reason is plain text on one line" };
+      return { kind: "reject", ...(stage !== undefined ? { stage } : {}), reason: rest };
     }
     case "apply": {
       if (parts.length === 2) return { kind: "apply" };

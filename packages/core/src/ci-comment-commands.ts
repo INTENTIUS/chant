@@ -41,6 +41,11 @@
  *   takes the locks of what the reach line prints at stage apply without
  *   applying, and the unlock releases the pull request's locks.
  *
+ * - with `reject` (#5354), `/<product> reject [--stage <stage>] <reason>`:
+ *   a rejection of the release a stage waits on, recorded under the
+ *   author's forge identity when the stage's approval mode takes it
+ *   (./ci-comment-reject.ts); otherwise the reply names the reject line.
+ *
  * - with `allow` (INTENTIUS/terragucci#1461, ./ci-comment-allow.ts), a commenter
  *   a `plan`, `apply`, `lock`, `unlock` or `agent` list leaves out gets a
  *   reply that names the list, whichever job runs the command. The jobs that
@@ -62,7 +67,8 @@
  */
 
 import { decideCommentAllow, COMMENT_ALLOW_COMMANDS, type CommentAllow, type CommentAllowCommand, type CommentAllowReads } from "./ci-comment-allow";
-import { commentTerms, forkReply, memberReply, notRunReply } from "./ci-comment-replies";
+import { commentTerms, forkReply, memberReply, notRunReply, rejectNotRecorded } from "./ci-comment-replies";
+import { decideCommentReject, type CommentReject } from "./ci-comment-reject";
 import { retryApply, type ApplyRerun, type ApplyRetried, type ChantNoteJobs, type StartedRun } from "./ci-note-commands";
 import { parseProductComment, type CiProductWords, type ParsedProductComment } from "./ci-product-words";
 import { ForgeApiError, type ForgeFetch, type PrForge } from "./pr-forge";
@@ -207,6 +213,8 @@ export interface AnswerCommentOptions {
   allow?: CommentAllow;
   /** What team membership is read with when `allow` names a team: the reads of a token that can read teams. Default `reads`. */
   teams?: CommentAllowReads;
+  /** What a reject comment is recorded with (#5354). Absent: a reject comment is answered with the reject line, and nothing is recorded. */
+  reject?: CommentReject;
 }
 
 /** What the comment job did. */
@@ -253,6 +261,8 @@ export function answeredElsewhere(parsed: Exclude<ParsedProductComment, { kind: 
       return Boolean(jobs.agent);
     case "commit":
       return true;
+    case "reject":
+      return false;
     case "apply":
       // The apply before merge answers an open pull request's apply comment; a merged one's is this job's.
       return Boolean(jobs.applyBeforeMerge) && open !== false;
@@ -360,6 +370,13 @@ export async function answerProductComment(o: AnswerCommentOptions): Promise<Com
       return reply(notRunReply(o.words, parsed.kind, o.forge));
     case "commit":
       return silent("the commit job answers this comment", command);
+    case "reject": {
+      // #5354: after the write-access check above; the stage's approval mode decides whether a comment's identity counts.
+      if (!o.reject) return reply(rejectNotRecorded(o.words, o.forge));
+      const url = typeof comment.html_url === "string" ? comment.html_url : undefined;
+      const done = await decideCommentReject({ reject: o.reject, words: o.words, user, reason: parsed.reason, ...(parsed.stage !== undefined ? { stage: parsed.stage } : {}), ...(url ? { url } : {}) });
+      return done.kind === "fail" ? broke(done.reason, command) : reply(done.text, done.kind === "recorded");
+    }
     case "apply":
       break;
   }

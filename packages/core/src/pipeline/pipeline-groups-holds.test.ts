@@ -108,11 +108,11 @@ describe("the products' words for a rejection", () => {
     expect(productWordsProblems(resolveProductWords({ product: "plywood", reject: "plywood reject {op} {who}" }))).toContain("reject names {who}, which chant does not fill");
   });
 
-  test("a comment that types reject is answered with the reject line, and records nothing", () => {
+  test("words that map no comment command onto reject answer a reject comment with the reject line", () => {
     const words = resolveProductWords({ product: "terragucci", op: "infra" });
     expect(parseProductComment(words, "/terragucci reject")).toEqual({
       kind: "refused",
-      reason: "a comment never records a rejection, as it never records an approval: run `terragucci reject infra <gate> --plan <digest> --reason <why> --sign`",
+      reason: "terragucci's comments take no reject command: run `terragucci reject infra <gate> --plan <digest> --reason <why> --sign`",
     });
   });
 

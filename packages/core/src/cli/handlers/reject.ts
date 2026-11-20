@@ -78,7 +78,7 @@ export type GateRejectionOutcome = { ok: true; record: GateRejectionRecord; push
 /** How far in the future `--at` may be, for a clock a little ahead of this one. */
 const AT_SKEW_MS = 5 * 60 * 1000;
 
-async function scopeAt(cwd: string, gate: string): Promise<NonNullable<GateRejectionOptions["scope"]>> {
+export async function scopeAt(cwd: string, gate: string): Promise<NonNullable<GateRejectionOptions["scope"]>> {
   const { scopeSource } = await import("../../workspace/write-scope");
   const { gateAdmissionFrom } = await import("../../workspace/identity");
   const scope = scopeSource(cwd);

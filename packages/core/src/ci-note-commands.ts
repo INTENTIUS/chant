@@ -30,7 +30,7 @@
 import { GITLAB_AGENT_ASK_VAR, GITLAB_AGENT_PR_VAR } from "./ci-agent";
 import { GITLAB_COMMIT_ARG_VAR, GITLAB_COMMIT_PR_VAR, GITLAB_COMMIT_WORD_VAR } from "./ci-commit";
 import { parseProductComment, productStatusContext, type CiProductCommand, type CiProductWords, type ParsedProductComment } from "./ci-product-words";
-import { commandLine, commentTerms, forkReply, memberReply, notRunReply } from "./ci-comment-replies";
+import { commandLine, commentTerms, forkReply, memberReply, notRunReply, rejectNotRecorded } from "./ci-comment-replies";
 import { GITLAB_APPLY_PR_VAR, GITLAB_LOCK_PR_VAR, GITLAB_PREVIEW_PR_VAR, GITLAB_UNLOCK_PR_VAR, PREVIEW_COMMENT_ENV } from "./components/pr-pipeline";
 import { ForgeApiError, type ForgeFetch, type ForgeKind, type GitlabForgeOptions, type PrForge } from "./pr-forge";
 import type { ForgeReads, PullRequestDetail, PullRequestNote, RunJob, WorkflowRun } from "./pr-forge-reads";
@@ -499,6 +499,8 @@ export interface ChantNoteJobs {
 export interface ChantNoteRunsOptions {
   /** With `jobs.wavesBeforeMerge`: what the decision before merge reads and writes with. */
   beforeMerge?: Pick<DecideBeforeMergeInput, "requires" | "statuses" | "git" | "cwd" | "lock" | "unlock" | "record" | "stop" | "now">;
+  /** What a reject note is recorded with (#5354), under the note author's GitLab identity. Absent: the reply names the reject line. */
+  reject?: import("./ci-comment-reject").CommentReject;
 }
 
 /**
@@ -566,6 +568,16 @@ export function chantNoteRuns(jobs: ChantNoteJobs, opts: ChantNoteRunsOptions = 
         if (!jobs.commits) return { kind: "reply", text: `\`/${words.product} ${parsed.word}\` does not run here` };
         if (!open) return { kind: "reply", text: `${at} is not open, so \`/${words.product} ${parsed.word}\` does not run` };
         return { kind: "pipeline", ref: base, variables: { [GITLAB_COMMIT_PR_VAR]: iid, [GITLAB_COMMIT_WORD_VAR]: parsed.word, ...(parsed.arg !== undefined ? { [GITLAB_COMMIT_ARG_VAR]: parsed.arg } : {}) }, doing: `run \`${parsed.word}\` on ${at}` };
+      case "reject": {
+        // #5354: the poll checked the author's role before this; the stage's approval mode decides whether a note's identity counts.
+        const reject = opts.reject;
+        if (!reject) return { kind: "reply", text: rejectNotRecorded(words, "gitlab") };
+        const { reason, stage } = parsed;
+        return import("./ci-comment-reject").then(async ({ decideCommentReject }) => {
+          const done = await decideCommentReject({ reject, words, user: note.author ?? "", reason, ...(stage !== undefined ? { stage } : {}) });
+          return done.kind === "fail" ? { kind: "fail" as const, reason: done.reason } : { kind: "reply" as const, text: done.text };
+        });
+      }
       case "action":
         return { kind: "reply", text: `${line("action")} does not run from a merge request note on GitLab: run \`${words.bin ?? words.product} action ${parsed.member} ${parsed.address}\` from a checkout of the default branch` };
     }

@@ -96,6 +96,8 @@ chant reject shop staging --reason "the migration locks the orders table"
 
 A rejection counts by the rules an approval of the same gate counts by. A gate whose `approval` is `sealed`, or that the workspace's `identity.gates` names, counts only a signed rejection: `--sign [<key file>]`, or `--statement` and then `--signature <file> --at <time>` for a signature made with a passkey or elsewhere. A gate whose rules count only proven approvers, or approvers with a role, counts only a rejection from someone they would count. An agent's rejection counts for nothing, as an agent's approval does. A rejection that does not count is printed with the reason, and the gate is decided as if it were not there.
 
+A product whose words map a comment command onto `reject` takes the same from a pull request comment, `/<product> reject <reason>`, recorded under the author's forge identity where the stage's mode takes it. A `sealed` stage, or one whose rules need a proven approver, answers with the `chant reject ... --sign` line instead ([product config](/chant/reference/ci-product-config/#promote-roll-back-and-redeploy)).
+
 Approvals never clear a rejection, and nothing withdraws it. The way on is a new release with the change the reason asks for, which has a new digest and goes through the gate again.
 
 `chant workspace train promote` reads the same holds for each member before any member deploys.
