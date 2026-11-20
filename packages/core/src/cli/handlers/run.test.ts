@@ -1370,7 +1370,7 @@ describe("runOp --components gate hints (#3521)", () => {
     try {
       const out = await runGatedComponent();
       expect(out).toContain("approve : chant approve svc approve-prod --env prod --sign");
-      expect(out).toContain("needs a fresh one: chant approve svc approve-prod --env prod --sign");
+      expect(out).toContain("needs a fresh one: chant approve svc approve-prod --env prod --plan sha256:bbb --sign");
     } finally {
       sealedGates.clear();
     }

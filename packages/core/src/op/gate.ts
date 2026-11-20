@@ -601,7 +601,7 @@ export function describeGateMismatch(op: string, gate: string, mismatch: GateDig
     `Gate "${gate}" is approved, but not for this plan. ` +
     `approved: ${describePlanDigest(mismatch.approved)} (by ${mismatch.resolvedBy} at ${mismatch.timestamp}); ` +
     `planned: ${mismatch.planned}. ` +
-    `${why} ${approveCommand(op, gate, mismatch.environment, undefined, sealed)}`
+    `${why} ${approveCommand(op, gate, mismatch.environment, mismatch.planned, sealed)}`
   );
 }
 

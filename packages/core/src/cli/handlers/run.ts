@@ -1408,7 +1408,7 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
     if (result.gated.mismatch) {
       console.error(formatWarning({ message: describeGateMismatch(gate.op, gate.gate, result.gated.mismatch, sealed) }));
     }
-    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate, gate.environment, undefined, sealed)}`));
+    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate, gate.environment, gate.planDigest, sealed)}`));
     if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
     console.error(formatInfo(`expires : ${gate.expiresAt}`));
     // #2310: this run's own append reached only the local chant/lifecycle

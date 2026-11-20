@@ -104,7 +104,7 @@ export function gatedRunSummaryMarkdown(summary: GatedRunSummary): string {
     "Approve it, then re-run this workflow:",
     "",
     "```",
-    `${approveCommand(summary.op, summary.gate, summary.environment, undefined, summary.sealed === true)} --approver <you>`,
+    `${approveCommand(summary.op, summary.gate, summary.environment, summary.planDigest, summary.sealed === true)} --approver <you>`,
     "```",
     "",
     `Ledger: \`${gateLedgerPath(summary.op, summary.ledgerPrefix)}\` on the \`chant/lifecycle\` branch.`,

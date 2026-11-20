@@ -323,7 +323,8 @@ describe("chant workspace upgrade", () => {
       try {
         const out = await gatedOutput();
         expect(out).toContain("then run `chant approve workspace-upgrade . --sign`");
-        expect(out).toContain("needs a fresh one: chant approve workspace-upgrade . --sign");
+        // #5407: the mismatch line binds the pending patch's digest before --sign.
+        expect(out).toMatch(/needs a fresh one: chant approve workspace-upgrade \. --plan jcs1-sha256:[0-9a-f]{64} --sign/);
       } finally {
         sealedGates.clear();
       }

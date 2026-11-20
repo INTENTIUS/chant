@@ -881,7 +881,7 @@ async function deployPlanIn(
     if (run.gateMismatch) {
       console.error(formatWarning({ message: describeGateMismatch(pending.op, pending.gate, run.gateMismatch, sealed) }));
     }
-    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate, pending.environment, undefined, sealed)}`));
+    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate, pending.environment, pending.planDigest, sealed)}`));
     console.error(formatInfo(`then run the same ${verb} again`));
     writeGatedRunSummary({
       sealed,
