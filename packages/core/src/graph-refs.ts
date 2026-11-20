@@ -18,6 +18,7 @@
  * cluttering line. Deterministic given a fixed node set.
  */
 import type { IRNode, IREdge } from "./graph-ir";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** Which attribute paths identify a resource kind (its id / ARN / name / DNS). */
 export interface IdentityRule {
@@ -591,6 +592,37 @@ export function containmentGroups(pairs: ContainmentPair[]): Record<string, stri
 export interface NamedCatalog {
   lexicon: string;
   catalog: ReferenceCatalog;
+  /**
+   * Other lexicon names whose nodes this catalog also reads (#5340). A
+   * choudoufu roster node carries `lexicon: "choudoufu"` and the provider
+   * type as its `kind`, so `{ lexicon: "terraform", catalog, aliases: ["choudoufu"] }`
+   * applies the terraform catalog to it. A derived edge keeps the catalog's
+   * own lexicon in its `rule` (`terraform:aws_db_instance:db_subnet_group_name`).
+   */
+  aliases?: readonly string[];
+}
+
+/**
+ * The first chant whose reference passes take a lexicon alias (#5340):
+ * `NamedCatalog.aliases` and `IdentityOwners.aliases` read nodes of another
+ * lexicon name with one lexicon's catalog, so `runCatalogPass`
+ * (`@intentius/chant/workspace/catalog-edges`), `reconstructIndexedEdges` and
+ * `reconstructIdentityEdges` apply the terraform catalog to choudoufu roster
+ * nodes.
+ */
+export const GRAPH_REFS_LEXICON_ALIAS_FLOOR = NEXT_RELEASE;
+
+/** True when a catalog (or identity owner) reads nodes of `lexicon`: its own name or an alias. */
+export function readsLexicon(c: { lexicon: string; aliases?: readonly string[] }, lexicon: string): boolean {
+  return c.lexicon === lexicon || (c.aliases?.includes(lexicon) ?? false);
+}
+
+/** Catalogs by every lexicon name they read; an own name wins over another catalog's alias. */
+export function catalogsByLexicon(catalogs: readonly NamedCatalog[]): Map<string, ReferenceCatalog> {
+  const out = new Map<string, ReferenceCatalog>();
+  for (const c of catalogs) for (const a of c.aliases ?? []) if (!out.has(a)) out.set(a, c.catalog);
+  for (const c of catalogs) out.set(c.lexicon, c.catalog);
+  return out;
 }
 
 /**
@@ -782,8 +814,9 @@ export function reconstructIndexedEdges(
   };
 
   for (const node of sorted) {
-    for (const { lexicon, catalog } of catalogs) {
-      if (node.lexicon !== lexicon) continue;
+    for (const nc of catalogs) {
+      const { lexicon, catalog } = nc;
+      if (!readsLexicon(nc, node.lexicon)) continue;
       for (const rule of catalog.refs) {
         // `from: "*"` is a rule that reads every node of the lexicon (#5286); its `join` picks the nodes.
         if (rule.from !== node.kind && !(rule.from === "*" && rule.join)) continue;
@@ -861,6 +894,8 @@ export interface NodeIdentityValue {
 /** The lexicon whose nodes can be identity-matched, and the values that name each one. */
 export interface IdentityOwners {
   lexicon: string;
+  /** Other lexicon names whose nodes this owner also names (#5340). */
+  aliases?: readonly string[];
   /** The values that name a node of this lexicon. Absent: its native id and its ARN cloud ids. */
   identities?(node: IRNode): NodeIdentityValue[];
 }
@@ -953,7 +988,9 @@ export function reconstructIdentityEdges(
   existing: readonly IREdge[] = [],
 ): IdentityEdges {
   const sorted = [...nodes].sort((a, b) => byString(a.id, b.id));
-  const ownerBy = new Map(owners.map((o) => [o.lexicon, o]));
+  const ownerBy = new Map<string, IdentityOwners>();
+  for (const o of owners) for (const a of o.aliases ?? []) if (!ownerBy.has(a)) ownerBy.set(a, o);
+  for (const o of owners) ownerBy.set(o.lexicon, o);
   const keyOf = (scope: IndexedNodeScope, value: string) => `${scope.account}\u0000${scope.region ?? ""}\u0000${scope.foldCase ? value.toLowerCase() : value}`;
   // key -> node id -> the rule that names it, and the paths it names the node at
   const index = new Map<string, Map<string, { rule: string; paths?: readonly string[] }>>();

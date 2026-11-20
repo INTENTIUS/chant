@@ -94,6 +94,7 @@
  */
 
 import {
+  catalogsByLexicon,
   containmentGroups,
   memberRegion,
   reconstructIndexedEdges,
@@ -188,7 +189,7 @@ export function catalogRules(catalogs: readonly NamedCatalog[]): Record<string, 
  * it no such file is read.
  */
 export function runCatalogPass(nodes: readonly ComposedNode[], catalogs: readonly NamedCatalog[], members?: readonly string[], lookPath?: LookPath, readFile?: ReadFile): CatalogPass {
-  const byLexicon = new Map(catalogs.map((c) => [c.lexicon, c.catalog]));
+  const byLexicon = catalogsByLexicon(catalogs);
   const nonLiteral: Record<string, number> = {};
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const read: ComposedNode[] = nodes.map((n) => {
@@ -503,7 +504,7 @@ export interface RunsOnEdges {
  */
 export function runsOnEdges(nodes: readonly ComposedNode[], runsOn: ReadonlyMap<string, string>, catalogs: readonly NamedCatalog[]): RunsOnEdges {
   const out: RunsOnEdges = { edges: [], joined: new Set(), problems: [] };
-  const registers = new Map(catalogs.map((c) => [c.lexicon, c.catalog.registersCluster]));
+  const registers = new Map([...catalogsByLexicon(catalogs)].map(([l, c]) => [l, c.registersCluster]));
   for (const [member, target] of [...runsOn].sort((a, b) => byString(a[0], b[0]))) {
     const slash = target.indexOf("/");
     const targetMember = target.slice(0, slash);

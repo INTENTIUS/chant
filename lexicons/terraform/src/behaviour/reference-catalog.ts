@@ -243,6 +243,12 @@ export const TERRAFORM_REFERENCE_CATALOG: ReferenceCatalog = {
     // and project, or the ARN's role name, so these only make them findable.
     { kind: "google_service_account", ids: ["account_id"] },
     { kind: "aws_iam_role", ids: ["name"] },
+    // Named by a literal in the block that uses them (#5340): the value a
+    // roster node's `db_subnet_group_name`, `subnet_group_name` or
+    // `function_name` carries.
+    { kind: "aws_db_subnet_group", ids: ["name"] },
+    { kind: "aws_elasticache_subnet_group", ids: ["name"] },
+    { kind: "aws_lambda_function", ids: ["function_name"] },
   ],
   refs: [
     // ── containment (→ boundary pairs, and containment edges) ──
