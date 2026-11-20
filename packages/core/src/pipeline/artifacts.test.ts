@@ -110,6 +110,38 @@ describe("the declaration (#5356)", () => {
     expect("finding" in folded).toBe(true);
   });
 
+  test("with after, a read must come from an ancestor: a sibling is refused, a join reads both branches (#5385)", () => {
+    const stage = (name: string, extra: Record<string, unknown> = {}) => ({ name, waves: [{ name }], ...extra });
+    const publish = { publish: { v: { member: "m", output: "o" } } };
+    const fan = (join: Record<string, unknown>) => ({
+      name: "shop",
+      stages: [stage("dev", publish), stage("us", { after: ["dev"], ...publish }), stage("eu", { after: ["dev"], ...publish }), stage("all", join)],
+    });
+    const sibling = pipelineSpecProblems({ name: "shop", stages: [stage("dev", publish), stage("us", { after: ["dev"], ...publish }), stage("eu", { after: ["dev"], reads: { X: { stage: "us", artifact: "v" } } })] });
+    expect(sibling).toHaveLength(1);
+    expect(sibling[0]).toContain('stage "eu" reads X from stage "us"');
+    expect(sibling[0]).toContain('"eu" does not follow through after');
+    // An ancestor further up is read through after, and a join reads both branches.
+    const ok = pipelineSpecProblems(
+      fan({ after: ["us", "eu"], reads: { A: { stage: "us", artifact: "v" }, B: { stage: "eu", artifact: "v" }, C: { stage: "dev", artifact: "v" } } }),
+    );
+    expect(ok).toEqual([]);
+    // A branch reading the other branch's upstream is fine; a join branch reading a later stage is not.
+    const later = pipelineSpecProblems({
+      name: "shop",
+      stages: [stage("dev", publish), stage("us", { after: ["dev"], reads: { X: { stage: "all", artifact: "v" } } }), stage("all", { after: ["us"], ...publish })],
+    });
+    expect(later.join("\n")).toContain('stage "us" reads X from stage "all", which "us" does not follow through after');
+  });
+
+  test("without after, the list order still decides (#5385)", () => {
+    const stage = (name: string, extra: Record<string, unknown> = {}) => ({ name, waves: [{ name }], ...extra });
+    const publish = { publish: { v: { member: "m", output: "o" } } };
+    expect(pipelineSpecProblems({ name: "shop", stages: [stage("dev", publish), stage("qa", publish), stage("prod", { reads: { A: { stage: "dev", artifact: "v" }, B: { stage: "qa", artifact: "v" } } })] })).toEqual([]);
+    const text = pipelineSpecProblems({ name: "shop", stages: [stage("dev", publish), stage("qa", { reads: { A: { stage: "prod", artifact: "v" } } }), stage("prod", publish)] }).join("\n");
+    expect(text).toContain("which comes after it in promotion order");
+  });
+
   test("bad shapes, reserved variables, a secret no store holds, and a publish with no release cut are refused", () => {
     const problems = pipelineSpecProblems({
       ...declaration({
