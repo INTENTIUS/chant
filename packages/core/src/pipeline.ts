@@ -327,6 +327,7 @@ export {
   checkPipelineFile,
   pipelineFromConfig,
   pipelineSource,
+  STAGE_HOOKS_KEY_FLOOR,
   writePipelineFile,
   type AgentStepConfig,
   type ApprovalRuleConfig,
@@ -335,4 +336,5 @@ export {
   type PipelineEnvironmentConfig,
   type PipelineFileCheck,
   type PipelineSourceOptions,
+  type StageHookConfig,
 } from "./pipeline/product";
