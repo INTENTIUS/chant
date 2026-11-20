@@ -571,7 +571,7 @@ async function deployPlanIn(
   // an importer deploys after the exporter it reads. Read once the release's
   // templates are written, so they are the files read; a read of a component
   // this promote does not deploy is left out.
-  prepared.splice(0, prepared.length, ...(await withDeclaredReads(prepared, registry, project.projectPath)));
+  prepared.splice(0, prepared.length, ...(await withDeclaredReads(prepared, registry, project.projectPath, { env: plan.to })));
   const port = gitGateLedgerPort();
   // #4045: under a release, every gate binds the release's change set for this environment.
   let releaseGate: ReleaseGateBinding | undefined;

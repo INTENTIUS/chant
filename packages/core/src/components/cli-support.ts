@@ -755,11 +755,11 @@ export async function runComponents(
   // #5360: each step's inputs for this environment, before the reads, the plan or the run read them.
   const forEnv = (component: DriverComponent): DriverComponent => componentForEnvironment(applyConfigDefaults(component, config), env).component;
   if (resolved.list) {
-    const enabled = await withDeclaredReads(resolved.list.enabled.map(forEnv), registry, path);
+    const enabled = await withDeclaredReads(resolved.list.enabled.map(forEnv), registry, path, { env });
     ({ targets: resolvedTargets, added } = dependencyClosure(resolved.list.named, enabled));
   } else {
     const defaulted = resolved.targets.map(forEnv);
-    resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path) : defaulted;
+    resolvedTargets = selector === "all" ? await withDeclaredReads(defaulted, registry, path, { env }) : defaulted;
   }
   const unnamed = resolvedTargets.flatMap((component) => componentForEnvironment(component, env).refusals);
   if (unnamed.length > 0) return { success: false, selected: [], error: unnamed.map((r) => r.message).join("\n") };

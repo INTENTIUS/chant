@@ -421,6 +421,25 @@ describe("through core's group calls (#4447, ws-107)", () => {
       });
     });
 
+    test("form the same group when each root sits only in the step's environments, for the run's environment and a pull request's template (#5360)", async () => {
+      const dir = project({ "roots/b/main.tf": REMOTE_B });
+      const perEnv: DriverComponent[] = ["a", "b"].map((name) => ({
+        name,
+        deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", environments: { test: { root: name }, prod: { root: `prod-${name}` } } }] }],
+      }));
+      const plan = planFanOut({ components: perEnv, changed: ["a", "b"] });
+      const group = { groups: [{ capability: "terraform-apply", components: ["a", "b"], reads: [{ reader: "b", upstream: "a", ref: "a.id", output: "id" }] }], fallbacks: [] };
+      expect(await findComponentGroups({ components: perEnv, plan, registry: registry(dir), env: "test" })).toEqual(group);
+      const before = process.env.CHANT_ENV_TEMPLATE;
+      process.env.CHANT_ENV_TEMPLATE = "test";
+      try {
+        expect(await findComponentGroups({ components: perEnv, plan, registry: registry(dir), env: "pr-7" })).toEqual(group);
+      } finally {
+        if (before === undefined) delete process.env.CHANT_ENV_TEMPLATE;
+        else process.env.CHANT_ENV_TEMPLATE = before;
+      }
+    });
+
     test("report nothing while terraform.compose is unset, so no group forms", async () => {
       const dir = project({ "roots/b/main.tf": REMOTE_B });
       const plan = planFanOut({ components: wired, changed: ["a", "b"] });

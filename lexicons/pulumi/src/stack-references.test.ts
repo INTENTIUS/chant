@@ -89,6 +89,25 @@ describe("pulumi-up's declaredReads", () => {
     expect(layerWaves(placed.map((c) => ({ name: c.name, dependsOn: c.dependsOn ?? [] })))).toEqual([["network"], ["app"]]);
   });
 
+  test("with each stack only in the step's environments, core reads the run's environment's stack, and a pull request's through its template (#5360)", async () => {
+    const network = project("network", exportOf([]));
+    const app = project("app", exportOf([ref("prod", "acme/network/prod", { vpcId: "vpc-1" })]));
+    const { CapabilityRegistry } = await import("@intentius/chant/components/capability");
+    const { declaredReadsOf } = await import("@intentius/chant/components/declared-reads");
+    const { createPulumiUpCapability } = await import("./pulumi-up");
+    const registry = new CapabilityRegistry().register(createPulumiUpCapability({ snapshots: null }) as never);
+    const perEnv = (dir: string) => ({ kind: "pulumi-up", dir, environments: { staging: { stack: "staging" }, prod: { stack: "prod" } } });
+    const components = [
+      { name: "app", deploy: [{ phase: "deploy", steps: [perEnv(app)] }] },
+      { name: "network", deploy: [{ phase: "deploy", steps: [perEnv(network)] }] },
+    ];
+    const expected = [{ reader: "app", index: 0, upstream: "network", output: "vpcId", at: "/stackReferences/acme~1network~1prod/vpcId", kind: "pulumi-up" }];
+    expect(await declaredReadsOf(components, registry, "/", { env: "prod" })).toEqual(expected);
+    expect(await declaredReadsOf(components, registry, "/", { env: "pr-7", template: "prod" })).toEqual(expected);
+    // Read as declared, the steps name no stack, and no owner is found.
+    expect(await declaredReadsOf(components, registry, "/")).toEqual([]);
+  });
+
   test("a reference to a stack outside the project adds no read", async () => {
     const app = project("app", exportOf([ref("prod", "acme/billing/prod", { invoiceQueue: "q" })]));
     expect(await pulumiDeclaredReads({ root: "/" }, [{ component: "app", index: 0, step: { dir: app, stack: "prod" } }], { exportStore: null })).toEqual([]);

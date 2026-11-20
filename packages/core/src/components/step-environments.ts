@@ -38,8 +38,13 @@
  * The callers resolve early, where the environment is known and before a
  * plan, a release pin or a run reads the steps: `chant run --components`
  * (./cli-support.ts), promote, rollback and redeploy
- * (../cli/handlers/promote.ts), and a release cut's compile
- * (./release-compile.ts). The driver refuses a component still carrying a
+ * (../cli/handlers/promote.ts), a release cut's compile
+ * (./release-compile.ts), and the fan-out a pull request's plan and `chant
+ * components fan-out` derive (./fan-out-support.ts), whose declared reads
+ * (./declared-reads.ts) a capability such as `pulumi-up` answers from the
+ * resolved stack. A group's members reach `planGroup`, `groupReads` and
+ * `groupFallback` resolved (./groups.ts), so terraform's composition reads
+ * each member's resolved root. The driver refuses a component still carrying a
  * map that does not name its environment before its first wave
  * (`runInterpretDriver`), and each place that hands a capability its input
  * resolves the step again, which is a no-op on a resolved one.
@@ -56,8 +61,8 @@ export const STEP_ENVIRONMENTS_KEY = "environments";
  * The first chant that resolves a component step's `environments` for the
  * run's environment before its capability sees the input (#5360), for
  * `pulumi-up`'s stack, `terraform-apply`'s root and vars and every other
- * engine step, in `run --components`, promote, rollback, redeploy and a
- * release cut.
+ * engine step, in `run --components`, promote, rollback, redeploy, a
+ * release cut, and a pull request's plan, its declared reads and its groups.
  */
 export const STEP_ENVIRONMENTS_FLOOR = NEXT_RELEASE;
 
