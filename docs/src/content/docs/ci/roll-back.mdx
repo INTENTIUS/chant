@@ -43,7 +43,7 @@ By default a stage holds after a failed verify: it stays as applied, and `chant 
 
 A product sets the same thing with `environments.<name>.on_verify_fail: rollback`.
 
-Two failures count. The first is a failed verify step in a promote into the stage: a step in a phase named `Verify`, or a step of kind `health-gate`, `wait-endpoint`, `wait-cluster-healthy` or `http-check`. The [agent jobs](/chant/guide/agent-jobs/) read a failed verify the same way. The second is a check of the stage's soak that fails while a promote out of it reads the soak. A failed apply holds as before and requests nothing. On either failure chant writes three things and exits 3:
+Two failures count. The first is a failed verify step in a promote into the stage: a step in a phase named `Verify`, or a step of kind `health-gate`, `wait-endpoint`, `wait-cluster-healthy` or `http-check`. The [agent jobs](/chant/guide/agent-jobs/) read a failed verify the same way. The second is a check of the stage's soak that fails while a promote out of it reads the soak. A canary stage's soak is read by every later promote too, and its failure rolls back the canary stage. A failed apply holds as before and requests nothing. On either failure chant writes three things and exits 3:
 
 - a `failed` line on the stage's ledger (`<stage>/stage.jsonl` on `chant/lifecycle`), with each member's state;
 - a `rollback-requested` line bound to the stage's previous release, linked to the failure;

@@ -16,8 +16,10 @@ import {
   memoryStageLedgerPort,
   parseStagePauseLines,
   pipelineFromConfig,
+  pipelinePromoteSoaks,
   pipelineSpecProblems,
   requestedRollbackGate,
+  soakFailureOf,
   requestStageRollback,
   rolledBackLine,
   stageFailures,
@@ -225,6 +227,46 @@ describe("a failed verify requests the rollback", () => {
     expect(out).toMatchObject({ status: "requested" });
     expect(i.stagesPort.lines[0]).toMatchObject({ kind: "failed", failure: "soak", stage: "staging" });
     expect(i.sent[0]!.rollback).toMatchObject({ failure: "soak", to: v1 });
+  });
+});
+
+describe("a failed canary soak, read by a later promote", () => {
+  const canarySpec = asPipelineSpec({
+    name: "shop",
+    stages: [
+      { name: "dev", waves: [wave("dev")] },
+      { name: "canary", canary: true, waves: [wave("canary")], soak: { duration: "1h", checks: [{ kind: "http", name: "up", url: "https://canary.example/healthz" }] }, onVerifyFail: "rollback" },
+      { name: "prod-a", waves: [wave("prod-a")], onVerifyFail: "rollback" },
+      { name: "prod-b", waves: [wave("prod-b")], onVerifyFail: "rollback" },
+    ],
+  });
+
+  test("requests the rollback of the canary, whose soak failed, and not of the stage promoted from or into", async () => {
+    const soak = await pipelinePromoteSoaks({
+      spec: canarySpec,
+      from: "prod-a",
+      to: "prod-b",
+      items: async (stage) => (stage === "canary" || stage === "prod-a" ? [{ component: "api", source: { timestamp: at(0).toISOString() } }] : []),
+      digest: v2.digest,
+      releaseDigest: v2.digest,
+      port: memoryGateLedgerPort(),
+      read: () => async () => ({ status: "failed", detail: "up failed: 503" }),
+      now: at(120),
+    });
+    expect(soak).toMatchObject({ passed: false, heldBy: { stage: "canary", members: ["api"] } });
+    const failed = soakFailureOf(soak);
+    expect(failed).toEqual({ stage: "canary", members: ["api"] });
+
+    const i = input({ stage: failed!.stage, failure: "soak", spec: canarySpec, members: failed!.members.map((member) => ({ member, state: "applied" as const })), records: [record("api", "canary", v1, 1), record("api", "canary", v2, 10)] });
+    expect(await requestStageRollback(i)).toMatchObject({ status: "requested" });
+    expect(i.stagesPort.lines.map((l) => [l.stage, l.kind])).toEqual([["canary", "failed"], ["canary", "rollback-requested"]]);
+    expect(i.gatesPort.appended[0]).toMatchObject({ gate: "canary-rollback", environment: "canary" });
+  });
+
+  test("a soak that holds for its clock, or a check that could not be read, rolls nothing back", async () => {
+    const base = { spec: canarySpec, from: "prod-a", to: "prod-b", items: async () => [{ component: "api", source: { timestamp: at(0).toISOString() } }], digest: v2.digest, port: memoryGateLedgerPort() };
+    expect(soakFailureOf(await pipelinePromoteSoaks({ ...base, read: () => async () => ({ status: "passed", detail: "ok" }), now: at(10) }))).toBeUndefined();
+    expect(soakFailureOf(await pipelinePromoteSoaks({ ...base, port: memoryGateLedgerPort(), read: () => async () => ({ status: "unknown", detail: "no answer" }), now: at(120) }))).toBeUndefined();
   });
 });
 

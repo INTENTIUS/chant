@@ -163,7 +163,7 @@ export {
 } from "./pipeline/soak";
 export { driftNamedTargets, healthVerdict, runRecordSoakSources, soakCheckReader, type SoakApplyState, type SoakDenial, type SoakExecResult, type SoakSources } from "./pipeline/soak-checks";
 export { soakAtGate, stageSoakGate, waveSoakGate, SOAK_FACT_EXPIRY, type SoakGateInput, type SoakGateOutcome } from "./pipeline/soak-gate";
-export { pipelinePromoteSoak, pipelinePromoteSoaks } from "./pipeline/promote";
+export { pipelinePromoteSoak, pipelinePromoteSoaks, type SoakHeldBy } from "./pipeline/promote";
 export { opWavesCanaryWarnings } from "./op/op-waves";
 export {
   gitStageArtifactPort,
@@ -294,6 +294,7 @@ export {
   requestedRollbackGate,
   requestStageRollback,
   rollbackMembers,
+  soakFailureOf,
   rolledBackLine,
   stageFailures,
   stageOnVerifyFail,
