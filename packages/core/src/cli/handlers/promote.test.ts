@@ -647,6 +647,21 @@ describe("chant components promote --release binds its gate (#4045)", () => {
     expect(removedTemplates).toHaveLength(1);
   });
 
+  test("the printed approve line names the pending fact's digest, and approving with it as printed passes the gate", async () => {
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
+    const pending = releaseGatePort!.appended[0];
+    const printed = errors.join("\n").replace(/\u001b\[[0-9;]*m/g, "").match(/approve : (chant approve .*)/)![1].trim();
+    expect(printed).toBe(`chant approve release prod-release --env prod --plan ${pending.planDigest}`);
+    // Take the flags from the line, as a person copying it would.
+    const flag = (name: string) => printed.split(" ")[printed.split(" ").indexOf(name) + 1];
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "prod-release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: flag("--plan"), environment: flag("--env"), releaseDigest: r1.releaseDigest,
+    });
+    expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(0);
+    expect(ran).toContain("prod:apply");
+  });
+
   test("an approval of that release passes the gate, and the deploy record names the release and the gate's resolution", async () => {
     expect(await runComponentsPromote(ctx({ release: "v1.0.0" }))).toBe(3);
     const pending = releaseGatePort!.appended[0];

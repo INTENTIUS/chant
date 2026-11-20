@@ -654,7 +654,8 @@ describe("op/gate — the approve hint on a sealed gate (#3521)", () => {
 
   test("describeGateMismatch names --sign when sealed, and not when unsealed", () => {
     const mismatch = { approved: "sha256:old", planned: "sha256:new", resolvedBy: "alex", timestamp: "2026-09-08T00:00:00Z" } as GateDigestMismatch;
-    expect(describeGateMismatch("app", "ship", mismatch, true)).toMatch(/chant approve app ship --sign$/);
+    expect(describeGateMismatch("app", "ship", mismatch, true)).toMatch(/chant approve app ship --plan sha256:new --sign$/);
     expect(describeGateMismatch("app", "ship", mismatch)).not.toContain("--sign");
+    expect(describeGateMismatch("app", "ship", mismatch)).toMatch(/chant approve app ship --plan sha256:new$/);
   });
 });
