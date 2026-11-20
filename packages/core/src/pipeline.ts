@@ -310,6 +310,7 @@ export {
   type StageRollbackInput,
   type StageRollbackOutcome,
 } from "./pipeline/verify-rollback";
+export { failedVerify, isVerifyStep, VERIFY_STEP_KINDS } from "./components/verify-step";
 export {
   checkPipelineFile,
   pipelineFromConfig,

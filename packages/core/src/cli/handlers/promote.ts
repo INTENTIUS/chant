@@ -83,6 +83,7 @@ import { canaryStagesBefore } from "../../pipeline/spec";
 import { soakCheckReader } from "../../pipeline/soak-checks";
 import { jobSoakSources } from "../../pipeline/soak-sources";
 import { isPendingGateExpired } from "../../lifecycle/gate-ledger-select";
+import { failedVerify } from "../../components/verify-step";
 import { failureDetail, memberStatesOf, soakFailureOf, requestedRollbackGate, requestStageRollback, rolledBackLine, stageOnVerifyFail, stageRollbackGate, standingRollbackRequest } from "../../pipeline/verify-rollback";
 import { activeProductWords } from "../../ci-product-words";
 
@@ -1320,9 +1321,10 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       return code === 0 ? 1 : code;
     }
   }
-  // #5328: a deploy that failed in a stage whose onVerifyFail is rollback requests the rollback to the stage's previous release, and exits 3.
+  // #5328: a failed verify step in a stage whose onVerifyFail is rollback requests the rollback to the stage's previous release, and exits 3.
+  // A failed verify is what #5339's agent trigger counts (`failedVerify`); a failed apply holds as before.
   const failedRun = ran as DriverRunResult | undefined;
-  if (pipeline && !args.dryRun && failedRun?.status === "fail") {
+  if (pipeline && !args.dryRun && failedRun?.status === "fail" && failedVerify(failedRun.results.flatMap((r) => r.records))) {
     const requested = await requestRollbackAfterFailure({
       pipeline,
       stage: to,

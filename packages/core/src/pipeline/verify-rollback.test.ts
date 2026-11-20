@@ -9,6 +9,8 @@ import type { DriverComponentResult } from "../components/driver";
 import { planReleaseRollback } from "../components/promote";
 import {
   asPipelineSpec,
+  failedVerify,
+  isVerifyStep,
   memberStateOf,
   memberStatesOf,
   memoryStageLedgerPort,
@@ -86,6 +88,17 @@ describe("onVerifyFail on a stage", () => {
     expect(PRODUCT_CONFIG_WORDS.find((w) => w.key === "environments.<name>.on_verify_fail")).toMatchObject({ section: "stage", values: ["hold", "rollback"] });
     expect(VERIFY_ROLLBACK_FLOOR).toBe(NEXT_RELEASE);
     expect(NOTIFY_EVENTS).toContain("rollback-requested");
+  });
+});
+
+describe("one definition of a failed verify", () => {
+  test("the rollback and the verify-failed agent read the same function", async () => {
+    const agent = await import("../ci-agent-verify-failed");
+    expect(agent.isVerifyStep).toBe(isVerifyStep);
+    expect(failedVerify([{ phase: "Verify", kind: "shell", status: "fail" }])).toBe(true);
+    expect(failedVerify([{ phase: "Apply", kind: "health-gate", status: "fail" }])).toBe(true);
+    // A failed apply is no failed verify, and a verify step that passed is none either.
+    expect(failedVerify([{ phase: "Apply", kind: "terraform-apply", status: "fail" }, { phase: "Verify", kind: "http-check", status: "skipped" }])).toBe(false);
   });
 });
 
