@@ -18,6 +18,17 @@
  *   waiting release is the one that enters.
  * - `urgent`: a promote that passed the stage's gate on its urgent rule, with
  *   who approved it, who promoted it, and why.
+ * - `failed` (#5328): a verify after a promote, or a check of the stage's
+ *   soak, failed, with each member's state. Written by a stage whose
+ *   `onVerifyFail` is `rollback`; a separate reader (an agent trigger) can
+ *   read it on its own, since nothing about it names the rollback.
+ * - `rollback-requested` (#5328): the rollback to the stage's previous
+ *   release that a `failed` line asks for, and the members it restores. It
+ *   waits at gate `<stage>-rollback` until a person approves it.
+ * - `rollback-held` (#5328): a `failed` line for which no rollback could be
+ *   requested, and why: no earlier release, or one that is revoked.
+ * - `rolled-back` (#5328): the requested rollback ran, linked to its request
+ *   and its failure, with who approved it.
  *
  * Every line records who wrote it (`by`) and, where one was given, why
  * (`reason`).
@@ -36,10 +47,33 @@ export interface StageRelease {
   label: string | null;
 }
 
+/** The kinds of line a stage's ledger holds. */
+export const STAGE_LINE_KINDS = ["pause", "resume", "waiting", "urgent", "failed", "rollback-requested", "rollback-held", "rolled-back"] as const;
+export type StageLineKind = (typeof STAGE_LINE_KINDS)[number];
+
+/**
+ * What a run left one member (a component) of a stage in (#5328):
+ *
+ * - `applied`: it deployed, and the release ledger records it;
+ * - `left-applied`: it failed after a step changed something that its
+ *   capability does not undo (`rollback-opted-out`), so the change stays;
+ * - `rolled-back`: it failed, and each step that ran was undone;
+ * - `not-applied`: nothing of it ran, or it stopped at a gate.
+ */
+export type StageMemberStateName = "applied" | "left-applied" | "rolled-back" | "not-applied";
+
+/** One member's state on a `failed` line, and on a rollback request whether it is rolled back. */
+export interface StageMemberState {
+  member: string;
+  state: StageMemberStateName;
+  /** On a request: whether the rollback restores it, and why not when it does not. */
+  rollback?: "requested" | string;
+}
+
 /** One line of a stage's ledger. */
 export interface StagePauseLine {
   version: 1;
-  kind: "pause" | "resume" | "waiting" | "urgent";
+  kind: StageLineKind;
   pipeline: string;
   stage: string;
   /** Who wrote it: the person who paused or resumed, or the promote's actor. */
@@ -55,8 +89,26 @@ export interface StagePauseLine {
   admits?: StageRelease;
   /** On `resume`: the digests of the older releases that waited, which no longer enter. */
   superseded?: string[];
-  /** On `urgent`: the approval the urgent rule passed on. */
-  approval?: { by: string; at: string; role: string; note?: string };
+  /** On `urgent`: the approval the urgent rule passed on. On `rolled-back` (#5328): the approval of the rollback gate, with no role. */
+  approval?: { by: string; at: string; role?: string; note?: string };
+  /** On `failed` and `rollback-requested` (#5328): the line's own id, which later lines link to. */
+  id?: string;
+  /** On `failed` (#5328): what failed, a verify after a promote or a check of the stage's soak. */
+  failure?: "verify" | "soak";
+  /** On `failed` (#5328): the release that failed in the stage, or the promotion's digest when it named none. */
+  failed?: StageRelease;
+  /** On `failed`: each member's state. On `rollback-requested`: each member, and whether the rollback restores it. On `rolled-back`: the members restored. */
+  members?: StageMemberState[];
+  /** On `failed` (#5328): what the failure said, one line each. */
+  detail?: string[];
+  /** On `rollback-requested`, `rollback-held` and `rolled-back` (#5328): the id of the `failed` line it answers. */
+  failureId?: string;
+  /** On `rolled-back` (#5328): the id of the request it carried out. */
+  requestId?: string;
+  /** On `rollback-requested` and `rolled-back` (#5328): the gate the rollback passes, under the pipeline's op. */
+  gate?: string;
+  /** On `rollback-held` (#5328): why no rollback was requested. */
+  held?: string;
 }
 
 /** Reads and appends a stage's lines. */
@@ -74,7 +126,7 @@ export function parseStagePauseLines(text: string | null): { lines: StagePauseLi
     if (raw.trim() === "") continue;
     try {
       const v = JSON.parse(raw) as StagePauseLine;
-      if (v && v.version === 1 && typeof v.pipeline === "string" && typeof v.stage === "string" && typeof v.by === "string" && typeof v.timestamp === "string" && ["pause", "resume", "waiting", "urgent"].includes(v.kind)) lines.push(v);
+      if (v && v.version === 1 && typeof v.pipeline === "string" && typeof v.stage === "string" && typeof v.by === "string" && typeof v.timestamp === "string" && (STAGE_LINE_KINDS as readonly string[]).includes(v.kind)) lines.push(v);
       else malformed++;
     } catch {
       malformed++;

@@ -6,7 +6,7 @@
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
  * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `.after`, `.queue`,
- * `.urgent`, `.pause_after_rollback`, `.agent_steps`,
+ * `.urgent`, `.pause_after_rollback`, `.agent_steps`, `.on_verify_fail`,
  * `approval_rules`, `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
  * {@link checkPipelineFile} is what `<product> ci --check` runs: it fails
@@ -57,6 +57,9 @@ export interface PipelineEnvironmentConfig {
   /** `agent_steps.<step>`: `prompt`, `reads`, `schema`, `command`, `key_secret`, `timeout`, `max_runs`, `max_cost_usd` (#5358), snake_case or camelCase. */
   agent_steps?: Record<string, AgentStepConfig>;
   agentSteps?: Record<string, AgentStepConfig>;
+  /** `on_verify_fail` (#5328): `hold`, or `rollback` to request the rollback to the stage's previous release when its verify or soak fails. */
+  on_verify_fail?: PipelineStage["onVerifyFail"];
+  onVerifyFail?: PipelineStage["onVerifyFail"];
   [key: string]: unknown;
 }
 
@@ -225,6 +228,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     const quorum = rulesOf(env.approval_rules ?? env.approvalRules ?? input.approvalRules);
     const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}), ...(env.urgent ? { urgent: { role: env.urgent.role } } : {}) };
     const pauseAfterRollback = env.pause_after_rollback ?? env.pauseAfterRollback;
+    const onVerifyFail = env.on_verify_fail ?? env.onVerifyFail;
     const hold = holdOf(env.hold);
     const tolerance = env.failure_tolerance ?? env.failureTolerance;
     const forgeRaw = env.forge_environment ?? env.forgeEnvironment;
@@ -245,6 +249,8 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(env.queue !== undefined ? { queue: env.queue } : {}),
       ...(pauseAfterRollback ? { pauseAfterRollback: true } : {}),
       ...(env.soak ? { soak: soakOf(env.soak)! } : {}),
+      // #5328: `hold` is the default, so it is left out; any other value is written, and the check refuses one it does not know.
+      ...(onVerifyFail !== undefined && onVerifyFail !== "hold" ? { onVerifyFail } : {}),
     };
   });
   const declaration: PipelineDeclaration = {

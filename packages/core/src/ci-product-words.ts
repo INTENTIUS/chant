@@ -968,6 +968,15 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "a stage's `pauseAfterRollback` in `.chant/pipeline.ts`",
     products: [],
   },
+  // #5328: what a stage does when its verify or soak fails.
+  {
+    key: "environments.<name>.on_verify_fail",
+    concept: "a stage's answer to a failed verify after a promote or a failed check of its soak: hold as applied, or request the rollback to its previous release, which waits for an approval",
+    section: "stage",
+    values: ["hold", "rollback"],
+    chant: "a stage's `onVerifyFail` in `.chant/pipeline.ts`; `hold` when unset",
+    products: [],
+  },
   {
     key: "environments.<name>.failure_tolerance",
     concept: "the failed runs a wave of many targets lets through before the stage stops",

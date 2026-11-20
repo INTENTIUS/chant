@@ -195,7 +195,20 @@ export interface PipelineStage {
    * applies. Refused on the first stage. Absent: none.
    */
   agentSteps?: Record<string, PipelineAgentStep>;
+  /**
+   * What a failed verify after a promote into the stage, or a failed check
+   * of its soak, does (#5328). `"hold"`: the stage stays as applied and
+   * `workspace status` prints the rollback line for a person to run.
+   * `"rollback"`: chant records the failure and a rollback request bound to
+   * the stage's previous release, which waits at the stage's rollback gate
+   * for an approval (`./verify-rollback.ts`). Default `"hold"`.
+   */
+  onVerifyFail?: PipelineOnVerifyFail;
 }
+
+/** The values a stage's `onVerifyFail` takes (#5328). */
+export const PIPELINE_ON_VERIFY_FAIL = ["hold", "rollback"] as const;
+export type PipelineOnVerifyFail = (typeof PIPELINE_ON_VERIFY_FAIL)[number];
 
 /** The values a stage's `queue` takes (#5353). */
 export const PIPELINE_STAGE_QUEUES = ["replace"] as const;
@@ -246,7 +259,7 @@ const CRON = /^\S+(\s+\S+){4}$/;
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
 export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control", "recheck"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback", "soak", "agentSteps"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback", "soak", "agentSteps", "onVerifyFail"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds", "urgent"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
@@ -387,6 +400,7 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   }
   if (stage.queue !== undefined && !(PIPELINE_STAGE_QUEUES as readonly unknown[]).includes(stage.queue)) out.push(`${at}.queue is ${PIPELINE_STAGE_QUEUES.join(", ")}`);
   out.push(...soakProblems(stage.soak, at));
+  if (stage.onVerifyFail !== undefined && !(PIPELINE_ON_VERIFY_FAIL as readonly unknown[]).includes(stage.onVerifyFail)) out.push(`${at}.onVerifyFail is ${PIPELINE_ON_VERIFY_FAIL.join(" or ")}`);
   return out;
 }
 
@@ -661,6 +675,7 @@ export const PIPELINE_SPEC_SCHEMA = {
               },
             },
           },
+          onVerifyFail: { enum: [...PIPELINE_ON_VERIFY_FAIL] },
         },
       },
     },

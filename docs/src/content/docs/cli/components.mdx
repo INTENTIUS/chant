@@ -51,7 +51,7 @@ chant components promote --to <env> [--from <env>] [--allow-skip]
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>] [--events-json]
 chant components rollback <env> (--component <name> [--digest <sha256:...>]
-                                 | --release <label|digest>)
+                                 | --release <label|digest> | --requested)
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>] [--events-json]
 chant components redeploy <env> --component <name> [--digest <sha256:...>]
@@ -770,6 +770,7 @@ A promote, rollback or redeploy that deploys some components and not others, or 
 | `--component <name>` | The component to roll back. Required unless `--release` is given. |
 | `--digest <sha256:...>` | Restore the release that recorded this digest, rather than the one before the current release. Needs `--component`. |
 | `--release <label\|digest>` | Restore every component of that release through the release gate. See [Rolling back a release](#rolling-back-a-release). |
+| `--requested` | Carry out the rollback a pipeline stage requested after a failed verify or soak, once gate `<stage>-rollback` is approved. It restores the members the request names to the release it names. See [Roll back](/chant/ci/roll-back/#when-a-verify-or-soak-fails). |
 | `--dry-run` | Print the release that would be restored and the steps that will not run, and deploy nothing. |
 | `--json` | Emit the plan, the run result and the record written as one JSON document on stdout. |
 | `--seed-outputs <file>` | Load outputs from dependencies. Repeatable. |

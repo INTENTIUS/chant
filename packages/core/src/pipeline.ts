@@ -90,6 +90,18 @@ export const SOAK_FLOOR = NEXT_RELEASE;
 export const CANARY_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose stage can request its rollback when its verify or
+ * soak fails (#5328): a stage's `onVerifyFail: "hold" | "rollback"` in
+ * `.chant/pipeline.ts`, the build's refusal of `rollback` on a stage with a
+ * `sql-migrate` step or a step whose kind answers no `releaseInputs`, the
+ * `failed`, `rollback-requested`, `rollback-held` and `rolled-back` lines
+ * on the stage's ledger, gate `<stage>-rollback`, the `rollback-requested`
+ * notify event, and `chant components rollback <stage> --requested`. A
+ * product feature-detects the key on this name before it writes it.
+ */
+export const VERIFY_ROLLBACK_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */
@@ -151,7 +163,7 @@ export {
 } from "./pipeline/soak";
 export { driftNamedTargets, healthVerdict, runRecordSoakSources, soakCheckReader, type SoakApplyState, type SoakDenial, type SoakExecResult, type SoakSources } from "./pipeline/soak-checks";
 export { soakAtGate, stageSoakGate, waveSoakGate, SOAK_FACT_EXPIRY, type SoakGateInput, type SoakGateOutcome } from "./pipeline/soak-gate";
-export { pipelinePromoteSoak, pipelinePromoteSoaks } from "./pipeline/promote";
+export { pipelinePromoteSoak, pipelinePromoteSoaks, type SoakHeldBy } from "./pipeline/promote";
 export { opWavesCanaryWarnings } from "./op/op-waves";
 export {
   gitStageArtifactPort,
@@ -231,7 +243,11 @@ export {
   waitingLine,
   waitingReleases,
   STAGE_LEDGER_FILE,
+  STAGE_LINE_KINDS,
   type StageLedgerPort,
+  type StageLineKind,
+  type StageMemberState,
+  type StageMemberStateName,
   type StagePauseLine,
   type StageRelease,
 } from "./pipeline/stage-ledger";
@@ -267,6 +283,35 @@ export {
   type StageAgentAnswerPort,
   type StageAgentAnswerRecord,
 } from "./pipeline/agent-steps";
+export {
+  failureDetail,
+  heldReason,
+  memberLines,
+  memberStateOf,
+  memberStatesOf,
+  previousRelease,
+  requestedRollbackCommand,
+  requestedRollbackGate,
+  requestStageRollback,
+  rollbackMembers,
+  soakFailureOf,
+  rolledBackLine,
+  stageFailures,
+  stageOnVerifyFail,
+  stageRollbackGate,
+  standingRollbackRequest,
+  verifyRollbackProblems,
+  MIGRATION_STEP_KIND,
+  ROLLBACK_REQUEST_EXPIRY,
+  type PreviousRelease,
+  type ReleaseCheck,
+  type RequestedRollbackGate,
+  type RollbackCapabilityView,
+  type RollbackStepView,
+  type StageRollbackInput,
+  type StageRollbackOutcome,
+} from "./pipeline/verify-rollback";
+export { failedVerify, isVerifyStep, VERIFY_STEP_KINDS } from "./components/verify-step";
 export {
   checkPipelineFile,
   pipelineFromConfig,

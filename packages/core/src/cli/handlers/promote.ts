@@ -62,7 +62,7 @@ import {
   type PromotionItem,
   type PromotionPlan,
 } from "../../components/promote";
-import { failedRunExitCode, type DriverComponent } from "../../components/driver";
+import { failedRunExitCode, type DriverComponent, type DriverRunResult } from "../../components/driver";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
 import { approveCommand, describeGateMismatch, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../../op/gate";
 import type { ReleaseGateBinding } from "../../components/driver";
@@ -83,12 +83,14 @@ import { canaryStagesBefore } from "../../pipeline/spec";
 import { soakCheckReader } from "../../pipeline/soak-checks";
 import { jobSoakSources } from "../../pipeline/soak-sources";
 import { isPendingGateExpired } from "../../lifecycle/gate-ledger-select";
+import { failedVerify } from "../../components/verify-step";
+import { failureDetail, memberStatesOf, soakFailureOf, requestedRollbackGate, requestStageRollback, rolledBackLine, stageOnVerifyFail, stageRollbackGate, standingRollbackRequest } from "../../pipeline/verify-rollback";
 import { activeProductWords } from "../../ci-product-words";
 
 const PROMOTE_USAGE =
   "chant components promote --to <env> [--from <env>] [--allow-skip] [--pending] [--release <label|digest> [--plan-only]] [--urgent --reason <text>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
-  "chant components rollback <env> (--component <name> [--digest <sha256:...>] | --release <label|digest>) [--dry-run] [--json]";
+  "chant components rollback <env> (--component <name> [--digest <sha256:...>] | --release <label|digest> | --requested) [--dry-run] [--json]";
 const REDEPLOY_USAGE =
   "chant components redeploy <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 
@@ -448,8 +450,9 @@ function deployPlan(
   actor: string | undefined,
   record: (item: PromotionItem, env: string, run: DeployRunInfo) => ReleaseRecordInput,
   under?: UnderRelease,
+  observe?: (run: DriverRunResult) => void,
 ): Promise<number> {
-  return withComponentEndpoint(ctx, () => deployPlanIn(ctx, verb, plan, project, actor, record, under), { config: project.config, environment: plan.to });
+  return withComponentEndpoint(ctx, () => deployPlanIn(ctx, verb, plan, project, actor, record, under, observe), { config: project.config, environment: plan.to });
 }
 
 async function deployPlanIn(
@@ -460,6 +463,8 @@ async function deployPlanIn(
   actor: string | undefined,
   record: (item: PromotionItem, env: string, run: DeployRunInfo) => ReleaseRecordInput,
   under?: UnderRelease,
+  /** Handed the run once it ended (#5328), so a promote can read each member's state. */
+  observe?: (run: DriverRunResult) => void,
 ): Promise<number> {
   const { args } = ctx;
   if (refusesBothStreams(args)) return 1;
@@ -801,6 +806,7 @@ async function deployPlanIn(
   // The driver settles the stream; this only ends one it left open.
   events?.settle(run.status === "fail" ? "failed" : run.status);
   if (!args.json) renderDriverHuman(run);
+  observe?.(run);
 
   // Record every component that deployed, whatever happened to the rest: a
   // component that reached the environment and is missing from its ledger
@@ -1234,6 +1240,22 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     for (const line of soak.notes) console.error(formatInfo(line));
     if (!soak.passed) {
       console.error(formatError({ message: `${soak.message} [${soak.code}]`, hint: soak.hint }));
+      // #5328: a failed check of a soak requests the rollback of the stage whose soak it is (a canary upstream, or the stage promoted from),
+      // when that stage's onVerifyFail is rollback. A check that could not be read holds the soak, and is no failure to roll back for.
+      const failedSoak = soakFailureOf(soak);
+      if (failedSoak) {
+        const current = latestPerComponent((await readLedger(failedSoak.stage)).filter((r) => r.env === failedSoak.stage && failedSoak.members.includes(r.component)));
+        await requestRollbackAfterFailure({
+          pipeline,
+          stage: failedSoak.stage,
+          failure: "soak",
+          failed: { digest, label: under?.label ?? null },
+          members: failedSoak.members.map((member) => ({ member, state: "applied" as const })),
+          detail: soak.lines,
+          exclude: new Set([...(under ? [under.release.releaseDigest] : []), ...[...current.values()].map((r) => r.releaseDigest).filter((d): d is string => d !== undefined)]),
+          actor: who.actor ?? "unknown",
+        });
+      }
       return soak.exitCode;
     }
     for (const line of soak.lines) console.error(formatInfo(line));
@@ -1288,7 +1310,8 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     if (gates.urgent && under) await recordUrgent({ spec: pipeline, to, port: stagePort, by: who.actor ?? "unknown", reason: args.reason!, release: { digest: under.release.releaseDigest, label: under.label }, approval: gates.urgent.approval, role: gates.urgent.role });
   }
   const { withStageReadVariables } = await import("../../pipeline/artifacts");
-  const code = await withStageReadVariables(readVariables, () => deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under));
+  let ran: DriverRunResult | undefined;
+  const code = await withStageReadVariables(readVariables, () => deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under, (run) => (ran = run)));
   // #5353: a deploy still waiting at a component's gate stays in the stage; any other end is written.
   if (entered && code !== GATED_EXIT_CODE) {
     try {
@@ -1297,6 +1320,22 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       console.error(formatError({ message: `the deploy ended, but the stage log was not written: ${err instanceof Error ? err.message : String(err)}`, hint: "Run the same promote again: the release in the stage carries on and the line is written then." }));
       return code === 0 ? 1 : code;
     }
+  }
+  // #5328: a failed verify step in a stage whose onVerifyFail is rollback requests the rollback to the stage's previous release, and exits 3.
+  // A failed verify is what #5339's agent trigger counts (`failedVerify`); a failed apply holds as before.
+  const failedRun = ran as DriverRunResult | undefined;
+  if (pipeline && !args.dryRun && failedRun?.status === "fail" && failedVerify(failedRun.results.flatMap((r) => r.records))) {
+    const requested = await requestRollbackAfterFailure({
+      pipeline,
+      stage: to,
+      failure: "verify",
+      failed: { digest: stageDigest, label: under?.label ?? null },
+      members: memberStatesOf(plan.items.map((i) => i.component), failedRun.results),
+      detail: failureDetail(failedRun.results),
+      exclude: new Set(under ? [under.release.releaseDigest] : []),
+      actor: who.actor ?? "unknown",
+    });
+    if (requested !== undefined) return requested;
   }
   // #5356: the stage publishes its artifacts once the deploy applied, after the stage log says so.
   if (code !== 0 || !pipeline || args.dryRun || args.planOnly) return code;
@@ -1357,6 +1396,70 @@ async function publishAfterPromote(projectPath: string, pipeline: import("../../
   }
   if (result.status === "published") console.error(formatInfo(`stage "${to}" published ${Object.keys(result.record.artifacts).sort().join(", ")} for release ${under.label ?? under.release.releaseDigest}`));
   return 0;
+}
+
+/**
+ * #5328: after a failed verify or soak in `stage`, the rollback request its
+ * `onVerifyFail: "rollback"` asks for (`../../pipeline/verify-rollback.ts`).
+ * Returns 3 when a request was written or one stands already, and undefined
+ * when the stage holds (its `onVerifyFail` is `hold`, or no rollback could
+ * be requested, which it says), so the caller keeps its own exit code.
+ */
+async function requestRollbackAfterFailure(input: {
+  pipeline: import("../../pipeline/spec").PipelineSpec;
+  stage: string;
+  failure: "verify" | "soak";
+  failed: { digest: string; label: string | null };
+  members: import("../../pipeline/stage-ledger").StageMemberState[];
+  detail: string[];
+  exclude: ReadonlySet<string>;
+  actor: string;
+}): Promise<number | undefined> {
+  const { pipeline, stage } = input;
+  if (stageOnVerifyFail(pipeline.stages.find((s) => s.name === stage)) !== "rollback") return undefined;
+  const { readRelease, readCuts, labelsByDigest } = await import("../../lifecycle/release-store");
+  const { readRevokedCommits, revocationOf, describeRevocation } = await import("../../lifecycle/release-revocation");
+  const labels = await readCuts().then((c) => labelsByDigest(c.cuts), () => new Map<string, string>());
+  let revoked: Map<string, import("../../lifecycle/release-revocation").ReleaseRevocation> | string;
+  try {
+    revoked = await readRevokedCommits(process.cwd());
+  } catch (err) {
+    revoked = `the ci tags can't be judged: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  const head = await getHeadCommit().catch(() => undefined);
+  const outcome = await requestStageRollback({
+    spec: pipeline,
+    stage,
+    failure: input.failure,
+    failed: input.failed,
+    members: input.members,
+    detail: input.detail,
+    records: (await readLedger(stage)).filter((r) => r.env === stage),
+    exclude: input.exclude,
+    check: async (digest) => {
+      const release = await readRelease(digest).catch(() => null);
+      if (!release) return { kept: false, revoked: null };
+      // A release whose revocation can't be read is not restored on trust.
+      if (typeof revoked === "string") return { kept: true, revoked };
+      const revocation = revocationOf(release, revoked);
+      return { kept: true, revoked: revocation ? describeRevocation(revocation) : null };
+    },
+    label: (digest) => labels.get(digest) ?? null,
+    stages: gitStageLedgerPort(),
+    gates: gitGateLedgerPort(),
+    by: input.actor,
+    now: new Date(),
+    ...(head ? { gitSha: head } : {}),
+    ...(pipeline.defaults?.notify ? { notify: { config: pipeline.defaults.notify, source: activeProductWords().notify.source } } : {}),
+  });
+  if (outcome.status === "hold") return undefined;
+  for (const line of outcome.lines) console.error(formatInfo(line));
+  if (outcome.status === "held") {
+    console.error(formatWarning({ message: `stage ${stage} holds: ${outcome.reason}` }));
+    return undefined;
+  }
+  console.error(formatError({ message: `stage ${stage} requested its rollback, which waits for an approval [pipeline-rollback-requested]`, hint: outcome.hint }));
+  return outcome.exitCode;
 }
 
 /**
@@ -1511,8 +1614,13 @@ function readPromotePipeline(projectPath: string, to: string): import("../../pip
 export async function runComponentsRollback(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const env = args.extraPositional;
+  if (env && args.rollbackRequested) {
+    const who = actorOrRefuse(ctx);
+    if (typeof who === "number") return who;
+    return runRequestedRollback(ctx, env, who.actor);
+  }
   if (!env || (!args.component && !args.release)) {
-    console.error(formatError({ message: "an environment and --component <name> or --release <label|digest> are required", hint: ROLLBACK_USAGE }));
+    console.error(formatError({ message: "an environment and --component <name>, --release <label|digest> or --requested are required", hint: ROLLBACK_USAGE }));
     return 1;
   }
   if (args.component && args.release) {
@@ -1587,6 +1695,59 @@ async function afterRollback(ctx: CommandContext, projectPath: string, env: stri
 }
 
 /**
+ * `chant components rollback <stage> --requested` (#5328): carry out the
+ * rollback a stage requested when its verify or soak failed. The newest
+ * request on the stage's ledger names the release and the members; its gate
+ * (`<stage>-rollback` under the pipeline's op) must pass first, on a
+ * person's approval given since the request, whatever the stage's gate
+ * policy. Then the members roll back as `--release` rolls them back, the
+ * approval is spent, and a `rolled-back` line links the rollback to its
+ * request and its failure. A dry run reads no gate and applies nothing.
+ */
+async function runRequestedRollback(ctx: CommandContext, env: string, actor: string | undefined): Promise<number> {
+  const { args } = ctx;
+  if (args.component || args.release || args.digest) {
+    console.error(formatError({ message: "--requested reads the release and the members from the stage's request, so it takes only the stage", hint: ROLLBACK_USAGE }));
+    return 1;
+  }
+  const projectPath = resolve(".");
+  const pipeline = readPromotePipeline(projectPath, env);
+  if (typeof pipeline === "number") return pipeline;
+  if (!pipeline) {
+    console.error(formatError({ message: `--requested carries out a rollback a pipeline stage requested, and this member's pipeline has no stage "${env}"`, hint: ROLLBACK_USAGE }));
+    return 1;
+  }
+  await fetchLifecycle().catch(() => false);
+  const stagePort = gitStageLedgerPort();
+  const request = standingRollbackRequest(await stagePort.read(pipeline.name, env));
+  if (!request?.release) {
+    console.error(formatInfo(`no rollback of stage ${env} is requested`));
+    return 0;
+  }
+  const to = request.release;
+  const members = (request.members ?? []).filter((m) => m.rollback === "requested").map((m) => m.member);
+  console.error(formatInfo(`stage ${env} requested its rollback to release ${to.label ?? to.digest} at ${request.timestamp}, for ${members.join(", ")}`));
+  if (args.dryRun) return runReleaseRollback(ctx, env, to.digest, actor, new Set(members));
+  const port = gitGateLedgerPort();
+  const head = await getHeadCommit().catch(() => undefined);
+  const proof = await promoteProof(projectPath);
+  const gate = await requestedRollbackGate({ spec: pipeline, stage: env, request, port, ...(proof ? { proof } : {}), now: new Date(), ...(head ? { gitSha: head } : {}) });
+  if (!gate.passed) {
+    console.error(formatError({ message: `${gate.message} [${gate.code}]`, hint: gate.hint }));
+    return gate.exitCode;
+  }
+  for (const line of gate.lines) console.error(formatInfo(line));
+  const code = await runReleaseRollback(ctx, env, to.digest, actor, new Set(members));
+  if (code !== 0) return code;
+  const now = new Date();
+  await port.appendApplied?.({ version: 1, kind: "applied", op: pipeline.name, gate: stageRollbackGate(env), planDigest: to.digest, approvedAt: gate.approval.timestamp, approvedBy: gate.approval.resolvedBy, timestamp: now.toISOString(), ...(head ? { commit: head } : {}) });
+  const pushed = await stagePort.append(rolledBackLine({ request, by: actor ?? "unknown", approval: gate.approval, now }));
+  console.error(formatSuccess(`stage ${env} rolled back to release ${to.label ?? to.digest}, as requested at ${request.timestamp} and approved by ${gate.approval.resolvedBy}`));
+  if (!pushed.pushed) console.error(formatWarning({ message: `the rollback is recorded locally and did not reach the remote${pushed.pushWarning ? `: ${pushed.pushWarning}` : ""}` }));
+  return 0;
+}
+
+/**
  * `chant components rollback <env> --release <label|digest>` (#4035): a
  * gated promote of an earlier release into `env`. Every component of the
  * release is restored at the digest `env` recorded running it from that
@@ -1594,7 +1755,7 @@ async function afterRollback(ctx: CommandContext, projectPath: string, env: stri
  * and its gates bind the release's change set planned against what `env`
  * runs now, as `promote --release` binds them (#4045).
  */
-async function runReleaseRollback(ctx: CommandContext, env: string, ref: string, actor: string | undefined): Promise<number> {
+async function runReleaseRollback(ctx: CommandContext, env: string, ref: string, actor: string | undefined, only?: ReadonlySet<string>): Promise<number> {
   const project = await loadProject(ctx, "all", env);
   if (typeof project === "number") return project;
   await fetchLifecycle().catch(() => false);
@@ -1614,6 +1775,7 @@ async function runReleaseRollback(ctx: CommandContext, env: string, ref: string,
     release: under.release,
     label: under.label,
     unsettled: new Set(unsettledComponents(records, outcomes).keys()),
+    ...(only ? { only } : {}),
   });
   if ("error" in plan) {
     console.error(formatError({ message: plan.error, hint: ROLLBACK_USAGE }));

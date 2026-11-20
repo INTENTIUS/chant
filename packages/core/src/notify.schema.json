@@ -8,7 +8,7 @@
   "properties": {
     "schema": { "const": "chant.notify/v1" },
     "id": { "type": "string", "minLength": 1, "description": "The same for every send of one event about one digest (else drift fingerprint, else commit), so a receiver can drop a repeat; random when there is none. The delivery header carries it too." },
-    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent", "soak"], "description": "The ci. events come from chant ci tick (#4645, ci.stale #4678), and ci.quarantine-passed from chant ci quarantine report (#4677), and carry ci. urgent (#5355): a promote passed a stage's gate on its urgent rule. soak (#5326) comes from a soak whose check failed, and carries soak." },
+    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent", "soak", "rollback-requested"], "description": "The ci. events come from chant ci tick (#4645, ci.stale #4678), and ci.quarantine-passed from chant ci quarantine report (#4677), and carry ci. urgent (#5355): a promote passed a stage's gate on its urgent rule. soak (#5326) comes from a soak whose check failed, and carries soak. rollback-requested (#5328) comes from a stage whose verify or soak failed and which requested its rollback, and carries rollback." },
     "at": { "type": "string", "description": "When it was sent, ISO 8601 UTC." },
     "source": { "type": "string", "minLength": 1, "description": "The product that sent it: chant, terragucci, sql-yodeler." },
     "project": { "type": "string", "description": "What the run belongs to: the repository, or a name the product gives." },
@@ -116,12 +116,41 @@
         }
       }
     },
+    "rollback": {
+      "type": "object",
+      "description": "On rollback-requested (#5328): the stage, whether its verify or a soak check failed, the release that failed and the release the stage goes back to, the gate the rollback waits at, and each member's state with whether the rollback restores it (requested) or why not.",
+      "required": ["stage", "failure", "failed", "to", "gate", "members"],
+      "properties": {
+        "stage": { "type": "string" },
+        "failure": { "enum": ["verify", "soak"] },
+        "failed": { "$ref": "#/$defs/stageRelease" },
+        "to": { "$ref": "#/$defs/stageRelease" },
+        "gate": { "type": "string" },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["member", "state"],
+            "properties": {
+              "member": { "type": "string" },
+              "state": { "enum": ["applied", "left-applied", "rolled-back", "not-applied"] },
+              "rollback": { "type": "string" }
+            }
+          }
+        },
+        "detail": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "reportUrl": { "type": "string" },
     "rerunUrl": { "type": "string", "description": "On drift (#4818): the page where a person runs the check again, which the Slack and Teams messages open from a button." },
     "detail": { "type": "object", "description": "The product's own record of the outcome, carried whole (terragucci.outcome/v1)." }
   },
   "allOf": [
     { "if": { "required": ["event"], "properties": { "event": { "const": "drift" } } }, "then": { "required": ["drift"], "properties": { "drift": { "type": "object" } } } },
-    { "if": { "required": ["event"], "properties": { "event": { "const": "soak" } } }, "then": { "required": ["soak"], "properties": { "soak": { "type": "object" } } } }
-  ]
+    { "if": { "required": ["event"], "properties": { "event": { "const": "soak" } } }, "then": { "required": ["soak"], "properties": { "soak": { "type": "object" } } } },
+    { "if": { "required": ["event"], "properties": { "event": { "const": "rollback-requested" } } }, "then": { "required": ["rollback"], "properties": { "rollback": { "type": "object" } } } }
+  ],
+  "$defs": {
+    "stageRelease": { "type": "object", "required": ["digest", "label"], "properties": { "digest": { "type": "string" }, "label": { "type": ["string", "null"] } } }
+  }
 }

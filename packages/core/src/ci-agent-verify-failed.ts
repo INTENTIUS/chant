@@ -15,7 +15,8 @@
  *   records the fact, so a check that keeps failing records it once;
  * - a promote or redeploy whose verify step failed
  *   (`cli/handlers/promote.ts`): a step in a phase named `Verify`, or a step
- *   of a wait-and-verify kind ({@link VERIFY_STEP_KINDS}).
+ *   of a wait-and-verify kind (`isVerifyStep` in `./components/verify-step.ts`,
+ *   which a stage's requested rollback reads too, #5328).
  *
  * Recording reads the failure and changes nothing else: the soak still
  * holds, the promote still exits as it did, and a rollback the stage
@@ -30,6 +31,7 @@ import { signAgentFact } from "./agent-facts";
 import { AGENT_FACTS_ENV, agentFactsOn } from "./ci-agent-triggers";
 import { quoted } from "./op/activities/review-agent";
 import { NEXT_RELEASE } from "./release-floors";
+import { isVerifyStep } from "./components/verify-step";
 
 /**
  * The first chant whose agent jobs start from a failed verify or soak
@@ -45,12 +47,8 @@ export const VERIFY_FAILED_OUTPUT_MAX = 8_000;
 /** The longest failed-verify text the prompt carries. */
 export const AGENT_VERIFY_FAILED_MAX = 20_000;
 
-/**
- * The step kinds a failed promote counts as a failed verify wherever their
- * phase is: core's wait-and-verify verbs (`STARTER_VERB_FAMILIES.waitVerify`
- * in `./components/starter-plugin.ts`) and the HTTP check.
- */
-export const VERIFY_STEP_KINDS: readonly string[] = ["wait-cluster-healthy", "wait-endpoint", "health-gate", "http-check"];
+// #5328: what counts as a failed verify lives in one place, which a stage's requested rollback reads too.
+export { VERIFY_STEP_KINDS, isVerifyStep } from "./components/verify-step";
 
 /** One failed verify step or failing soak check, as a fact keeps it. */
 export interface VerifyFailedRecord {
@@ -114,11 +112,6 @@ export function soakFailedRecords(o: { stage: string; holds: string; wave?: numb
     ...(o.sha ? { sha: o.sha } : {}),
     ...(o.runUrl ? { runUrl: o.runUrl } : {}),
   }));
-}
-
-/** Whether a failed step is a verify step: in a phase named `Verify`, or of a kind in {@link VERIFY_STEP_KINDS}. */
-export function isVerifyStep(step: { phase: string; kind: string }): boolean {
-  return /^verify$/i.test(step.phase.trim()) || VERIFY_STEP_KINDS.includes(step.kind);
 }
 
 /** One step a promote ran, as its run result keeps it. */

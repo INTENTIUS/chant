@@ -527,6 +527,49 @@ export async function buildPathOf(args: Pick<CommandContext["args"], "path" | "p
 }
 
 /**
+ * The build's refusals of `onVerifyFail: "rollback"` (#5328): each step the
+ * member's stages apply (its components' deploy steps, build and publish
+ * steps left out, and the pipeline's `defaults.step`) read against its
+ * capability by `verifyRollbackProblems`. Empty when no stage sets it, and
+ * then nothing is loaded.
+ */
+export async function verifyRollbackBuildProblems(dir: string, spec: import("../../pipeline/spec").PipelineSpec): Promise<string[]> {
+  if (!spec.stages.some((s) => s.onVerifyFail === "rollback")) return [];
+  const { verifyRollbackProblems } = await import("../../pipeline/verify-rollback");
+  const { loadChantConfig } = await import("../../config");
+  const { discoverComponents } = await import("../../components/discover");
+  const { fanOutRegistry } = await import("../../components/fan-out-support");
+  const { BUILD_STEP_KINDS, PUBLISH_STEP_KINDS } = await import("../../components/promote");
+  const { config } = await loadChantConfig(dir).catch(() => ({ config: {} as import("../../config").ChantConfig }));
+  const steps: { where: string; kind: string }[] = [];
+  if (spec.defaults?.step) steps.push({ where: "defaults.step", kind: spec.defaults.step.kind });
+  const discovered = await discoverComponents(dir);
+  if (discovered.errors.length > 0) return discovered.errors.map((e) => `onVerifyFail: "rollback" reads the member's components, and they did not load: ${e.message}`);
+  type Entry = { kind?: unknown; phase?: unknown; steps?: unknown[] };
+  for (const { component } of [...discovered.components.values()].sort((a, b) => a.component.name.localeCompare(b.component.name))) {
+    const walk = (phase: Entry): void => {
+      for (const step of (phase.steps ?? []) as Entry[]) {
+        if (typeof step.phase === "string" && Array.isArray(step.steps)) walk(step);
+        else if (typeof step.kind === "string" && step.kind !== "gate" && !BUILD_STEP_KINDS.includes(step.kind) && !PUBLISH_STEP_KINDS.includes(step.kind)) {
+          steps.push({ where: `component "${component.name}" step ${String(phase.phase)}/${step.kind}`, kind: step.kind });
+        }
+      }
+    };
+    for (const phase of component.deploy as Entry[]) walk(phase);
+  }
+  const registry = await fanOutRegistry(dir, config);
+  return verifyRollbackProblems({
+    spec,
+    steps,
+    capability: (kind) => {
+      if (!registry.has(kind)) return undefined;
+      const c = registry.resolve(kind);
+      return { releaseInputs: typeof c.releaseInputs === "function", rollbackPolicy: c.rollbackPolicy ?? (c.rollback ? "native" : "none-by-design") };
+    },
+  });
+}
+
+/**
  * Fold the member's `.chant/pipeline.ts` (#5324) and write the spec to
  * `.chant/pipeline.json`. The member is the project the build path belongs
  * to. A file outside the subset fails the build with its finding; it is
@@ -541,6 +584,12 @@ export async function foldMemberPipeline(path: string): Promise<number | undefin
   if (read.status === "absent") return undefined;
   if (read.status === "refused") {
     console.error(formatError({ message: `the pipeline does not fold: ${read.line}`, hint: "A pipeline file stays inside the TypeScript-as-data subset: it is folded, never run." }));
+    return 1;
+  }
+  // #5328: a stage that rolls back on a failed verify or soak applies only steps an earlier release restores.
+  const refusals = await verifyRollbackBuildProblems(dir, read.spec);
+  if (refusals.length > 0) {
+    for (const message of refusals) console.error(formatError({ message }));
     return 1;
   }
   const { PIPELINE_SPEC_FILE } = await import("../../pipeline/spec");

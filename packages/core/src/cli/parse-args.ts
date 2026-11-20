@@ -106,6 +106,7 @@ const BOOLEAN_FLAGS = new Set([
   "--allow-skip",
   "--urgent",
   "--pending",
+  "--requested",
   "--allow-unsigned",
   "--override-green",
   "--require-provenance",
@@ -1366,6 +1367,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--pending") {
       // #5326 — `chant components promote --to <stage> --pending` runs again the promotion a soak holds.
       result.pendingPromotion = true;
+    } else if (arg === "--requested") {
+      // #5328 — `chant components rollback <stage> --requested` carries out the rollback the stage requested.
+      result.rollbackRequested = true;
     } else if (arg === "--source") {
       // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
       result.source = args[++i];

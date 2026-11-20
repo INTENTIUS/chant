@@ -712,6 +712,16 @@ export async function pipelineUrgentGate(input: {
 }
 
 /**
+ * The soak that held a promotion (#5328): the stage whose soak it is, which
+ * is the stage a failed check of it rolls back, and the members that stage
+ * applied of what is promoted.
+ */
+export interface SoakHeldBy {
+  stage: string;
+  members: string[];
+}
+
+/**
  * Every soak in front of a promotion into `to`, in order (#5326, #5327):
  * the soak of each stage promoted from (`upstreams` on a join, else
  * `from`), then the soak of each canary stage `to` follows and is not one
@@ -720,6 +730,7 @@ export async function pipelineUrgentGate(input: {
  * `items` gives what a stage applied of what is promoted, and `read` its
  * check reader. A canary with nothing applied says so in `notes` and
  * holds, since its clock cannot start. `lines` are the passed soaks' lines.
+ * On a hold, `heldBy` names the stage whose soak held ({@link SoakHeldBy}).
  */
 export async function pipelinePromoteSoaks(input: {
   spec: PipelineSpec;
@@ -734,7 +745,7 @@ export async function pipelinePromoteSoaks(input: {
   now: Date;
   gitSha?: string;
   notify?: SoakGateInput["notify"];
-}): Promise<SoakGateOutcome & { notes: string[] }> {
+}): Promise<SoakGateOutcome & { notes: string[]; heldBy?: SoakHeldBy }> {
   const sources = input.upstreams ? [...input.upstreams] : [input.from];
   const canaries = canaryStagesBefore(input.spec, input.to).map((s) => s.name).filter((name) => !sources.includes(name));
   const notes: string[] = [];
@@ -758,7 +769,8 @@ export async function pipelinePromoteSoaks(input: {
       ...(input.gitSha ? { gitSha: input.gitSha } : {}),
       ...(input.notify ? { notify: input.notify } : {}),
     });
-    if (!soak.passed) return { ...soak, notes };
+    // #5328: the stage whose soak held, which may be a canary upstream and not the stage promoted from.
+    if (!soak.passed) return { ...soak, notes, heldBy: { stage: source, members: items.map((i) => i.component) } };
     lines.push(...soak.lines);
     last = soak;
   }

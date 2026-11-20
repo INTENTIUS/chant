@@ -297,6 +297,8 @@ export function planReleaseRollback(input: {
   label: string | null;
   /** Components a run left failed or gated in `env` (../lifecycle/mixed-environment.ts). */
   unsettled?: ReadonlySet<string>;
+  /** Restore only these components of the release (#5328): the members a stage's rollback request names. */
+  only?: ReadonlySet<string>;
 }): PromotionPlan | { error: string } {
   const { env, records, declared, release } = input;
   const name = input.label ?? release.releaseDigest;
@@ -304,6 +306,7 @@ export function planReleaseRollback(input: {
   const inRelease = new Set<string>();
   for (const t of target?.templates ?? []) if (t.component !== null) inRelease.add(t.component);
   for (const a of release.artifactDigests) inRelease.add(a.component);
+  if (input.only) for (const c of [...inRelease]) if (!input.only.has(c)) inRelease.delete(c);
   const items: PromotionItem[] = [];
   const notPromoted: PromotionPlan["notPromoted"] = [];
   const neverRan: string[] = [];
