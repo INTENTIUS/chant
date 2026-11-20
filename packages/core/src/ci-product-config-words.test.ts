@@ -45,6 +45,15 @@ describe("the vocabulary (#5343)", () => {
     expect(PRODUCT_RELEASE_WORDS).toMatchObject({ promote: "promote", rollback: "rollback", to: "--to", release: "--release", allowSkip: "--allow-skip" });
   });
 
+  test("an environment's config and secret set: a forge secret's name is checked, a store map is read as the product's (#5348)", () => {
+    const config = {
+      config_sets: { common: { secrets: { SENTRY_DSN: "SENTRY_DSN", BAD: { forge_secret: "not a name" } } } },
+      environments: { staging: { imports: ["common"], config: { REGION: "us-east-2" }, secrets: { DB: "STAGING DB", API: { aws_secrets_manager: "arn:x" } } } },
+    };
+    expect(paths(productConfigProblems(config, { product: "terragucci" }))).toEqual(["config_sets.common.secrets.BAD.forge_secret", "environments.staging.secrets.DB"]);
+    expect(productConfigWord("config_sets.<set>")?.section).toBe("stage");
+  });
+
   test("the floor names the next release", () => {
     expect(PRODUCT_CONFIG_WORDS_FLOOR).toBe(NEXT_RELEASE);
   });

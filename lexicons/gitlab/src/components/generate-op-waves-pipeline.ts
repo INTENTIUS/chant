@@ -128,6 +128,7 @@
  * trade, the evidence jobs and the gates are the ones `spec` gives.
  */
 
+import { opWavesWithEnvironmentSets } from "@intentius/chant/op/op-waves-environment-sets";
 import {
   assertGitlabBranch,
   assertGitlabEnvironment,
@@ -234,6 +235,8 @@ export const OP_WAVE_ALLOWED_EXIT = CHANT_EXIT.failed;
 
 /** Render an Op waves spec as one GitLab CI file, `<name>.gitlab-ci.yml` unless `opsFileName` names another. */
 export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWavesPipelineOptions): OpWavesPipelineResult {
+  // #5348: each wave's environment set on its jobs; without environmentSets both come back as given.
+  ({ spec, options } = opWavesWithEnvironmentSets(spec, options, "gitlab"));
   // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
   const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
   // #4984: the before-merge mode, a pipeline of the default branch the note poll starts for a merge request's decided head.

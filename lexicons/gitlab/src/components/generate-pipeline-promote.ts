@@ -13,6 +13,7 @@ import { assertGitlabEnvironment, assertRunnerLabels, CI_IMAGE, environmentDoc, 
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
 import { emitGitlabFile } from "./ci-jobs";
+import { gitlabTradeIdTokens, gitlabTradeLines, TRADE_SPEC_ENV } from "@intentius/chant/ci-identity";
 
 const STAGE_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -39,9 +40,11 @@ export function generateGitlabPipelinePromote(input: PipelinePromoteInput): Arra
       timeout: `${timeout.minutes} minutes`,
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
       resource_group: `${input.pipeline}-promote-${stage.name}`,
-      variables: { ...GITLAB_FULL_HISTORY },
+      // #5348: the stage's own identity and its config and secret set.
+      ...(stage.cloud ? { id_tokens: gitlabTradeIdTokens(stage.cloud) } : {}),
+      variables: { ...GITLAB_FULL_HISTORY, ...(stage.variables ?? {}), ...(stage.cloud ? { [TRADE_SPEC_ENV]: JSON.stringify(stage.cloud) } : {}) },
       rules: [{ if: `$CI_PIPELINE_SOURCE == "web" && $CHANT_PROMOTE_STAGE == "${stage.name}"` }],
-      script: [`${bin} components promote --to ${stage.name} --release "$CHANT_PROMOTE_RELEASE"`],
+      script: [...(stage.cloud ? gitlabTradeLines() : []), ...(stage.setup ?? []), `${bin} components promote --to ${stage.name} --release "$CHANT_PROMOTE_RELEASE"`],
     },
   ]);
   const header = [

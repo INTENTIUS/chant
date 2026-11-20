@@ -30,6 +30,7 @@ import { prEnvJobs, prLoopJobs, PR_LOOP_SETUP } from "../components/pr-pipeline"
 import { parseArgs } from "../cli/parse-args";
 import { ciSecretsFor, readCiSecrets } from "./ci-secrets";
 import { runEventFileName, runEventsDir } from "../run-event-store";
+import { environmentSetJobInputs, resolveEnvironmentSet } from "../components/environment-sets";
 
 afterAll(cleanScratch);
 
@@ -905,6 +906,55 @@ describe("a generated forge job runs ci run --in-place (#4156)", () => {
     await expect(ciRun({ cwd: app, job: "plan", env: "prod", forge: "github", base, pr: 1, chant: fakeChant(), hostEnv: HOST, inPlace: true, push: false, wave: 2 })).rejects.toThrow(/--wave names the one wave an apply runs/);
     // In place runs HEAD only.
     await expect(ciRun({ cwd: app, job: "apply", env: "prod", forge: "github", base, commit: base, chant: fakeChant(), hostEnv: HOST, inPlace: true, push: false })).rejects.toThrow(/--in-place runs the checkout's HEAD/);
+  });
+
+  test("a secret of the environment's set, whatever its name or length, is *** in the plan's report, the ledger's record, the events and the output (#5348)", async () => {
+    const { app, base } = workspace();
+    // DB_URL and PIN do not look secret by name, and PIN is shorter than the forge variables ci run keeps.
+    const DB_URL = "postgres://app:pw-77@db.staging";
+    const PIN = "9137";
+    const set = environmentSetJobInputs(resolveEnvironmentSet({ environments: { prod: { config: { REGION: "us-east-1" }, secrets: { DB_URL: "PROD_DB_URL", PIN: "PROD_PIN" } } } }, "prod"), "github");
+    const leaky = join(scratchDir("chant-ci-run-bin-"), "chant");
+    writeFileSync(
+      leaky,
+      [
+        "#!/bin/sh",
+        'stage="$2"',
+        "mkdir -p .chant/pr",
+        'printf \'{"stage":"%s","status":"refused","refusal":"not-approved","message":"cannot reach %s with pin %s"}\' "$stage" "$DB_URL" "$PIN" > ".chant/pr/$stage.json"',
+        'echo "connecting to $DB_URL with $PIN in $REGION"',
+        'echo "refused by $DB_URL" >&2',
+        "exit 3",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(leaky, 0o755);
+    const leaks = (text: string): boolean => text.includes(DB_URL) || text.includes(PIN);
+    // A GitLab job holds every CI/CD variable, so the plan's environment can carry the set's secrets too.
+    for (const job of ["plan", "apply"] as const) {
+      const events: string[] = [];
+      const lines: string[] = [];
+      const r = await ciRun({
+        cwd: app, job, env: "prod", forge: "github", base, ...(job === "plan" ? { pr: 7 } : {}), chant: leaky,
+        hostEnv: { ...HOST, ...FORGE, GITHUB_JOB: job, ...set.variables, DB_URL, PIN },
+        runnerKey: BOT.pem, runnerKeyFromEnv: true, inPlace: true, push: false, runId: `set-${job}-1`,
+        runEvents: (line) => events.push(line), stepOutput: (line) => lines.push(line),
+      });
+      expect(r.status).toBe("fail");
+      // The report the plan note is rendered from.
+      const report = readFileSync(join(app, ".chant/pr", `pr-${job}.json`), "utf-8");
+      expect(leaks(report), job).toBe(false);
+      expect(JSON.parse(report)).toMatchObject({ message: "cannot reach *** with pin ***" });
+      // The record on the ledger.
+      const stored = (await readRunLedger("prod", `pr-${job}`, { cwd: app })).records.at(-1)!;
+      expect(leaks(JSON.stringify(stored)), job).toBe(false);
+      expect(leaks(JSON.stringify(r.record)), job).toBe(false);
+      // The events and the step's lines.
+      expect(events.some(leaks), job).toBe(false);
+      expect(lines.some(leaks), job).toBe(false);
+      expect(lines.some((l) => l.endsWith("connecting to *** with *** in us-east-1")), job).toBe(true);
+      expect(leaks(formatCiRun(r)), job).toBe(false);
+    }
   });
 });
 

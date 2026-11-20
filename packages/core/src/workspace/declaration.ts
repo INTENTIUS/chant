@@ -24,6 +24,7 @@ import { notifyConfigProblem, type NotifyConfig } from "../notify";
 import schema from "./declaration.schema.json" with { type: "json" };
 import { routeConflicts } from "./ci-branches";
 import { cloudIdentityProblems, IDENTITY_CLOUDS, type CloudIdentityDeclaration } from "../ci-identity";
+import { environmentSetsProblems, type EnvironmentSets } from "../components/environment-sets";
 import { expandGlob } from "./glob";
 import { EXAMPLES_KIND, holdsChantProject, REPO_KIND } from "./kinds";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
@@ -476,6 +477,13 @@ export interface CiDeclaration {
    * (../components/pr-environment.ts). Absent when unset.
    */
   prEnvironment?: CiPrEnvironment;
+  /**
+   * `ci.environmentSets` (#5348): the config and secret set of each
+   * environment (../components/environment-sets.ts), which `chant build
+   * --pr-loop` and `chant pipeline generate` hand that environment's jobs.
+   * Absent when unset.
+   */
+  environmentSets?: EnvironmentSets;
 }
 
 /** The `ci.prEnvironment` block (#4298), with its default TTL. */
@@ -1479,9 +1487,17 @@ function cloudIdentityOf(raw: CloudIdentityDeclaration, at: (pointer: string, ke
   return out;
 }
 
+/** `ci.environmentSets` (#5348), without its `x-` keys, refused with its first problem. */
+function environmentSetsOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): EnvironmentSets {
+  const block = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([k]) => !k.startsWith("x-"))) as unknown as EnvironmentSets;
+  const [problem] = environmentSetsProblems(block);
+  if (problem) throw new WorkspaceReadError("declaration-invalid", `ci.environmentSets: ${problem}`, at("/ci/environmentSets"));
+  return block;
+}
+
 function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocation): CiDeclaration | null {
   if (raw === undefined) return null;
-  const block = raw as { forge?: ForgeKind; system?: CiSystem; reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
+  const block = raw as { forge?: ForgeKind; system?: CiSystem; reportUrl?: string; workflow?: CiWorkflow; hooks?: unknown; identity?: { cloud?: CloudIdentityDeclaration }; environmentSets?: unknown; branches?: Record<string, string[]>; labels?: Record<string, string[]>; locks?: CiLocks; lockGrain?: CiLockGrain; policy?: unknown; prEnvironment?: { template: string; ttl?: string; teardown?: { name?: string; command: string[]; lexicons?: string[] } }; green?: { branch: string | string[]; window?: string; phases: Record<string, string[] | { runs: string[]; skipped?: CiSkipped; build?: CiBuild }>; require: string[]; preMerge?: string[]; signedSince?: string; source?: CiSource; lanes?: Record<string, { require: string[] }>; notify?: CiNotify; mergeQueue?: boolean | { retries?: unknown }; quarantine?: { maxDays?: number; phases: Record<string, { test: string; file?: string; issue: string; until: string; why: string }[]> } } };
   const hooks = ciHooksOf(block.hooks, "/ci/hooks", at);
   const policy = ciPolicyOf(block.policy, at);
   // #5170: the forge and its CI system, each defaulting from the other.
@@ -1503,6 +1519,7 @@ function ciOf(raw: unknown, at: (pointer: string, key?: boolean) => ErrorLocatio
     ...(block.lockGrain !== undefined ? { lockGrain: block.lockGrain } : {}),
     ...(policy ? { policy } : {}),
     ...(block.identity?.cloud !== undefined ? { identity: { cloud: cloudIdentityOf(block.identity.cloud, at) } } : {}),
+    ...(block.environmentSets !== undefined ? { environmentSets: environmentSetsOf(block.environmentSets, at) } : {}),
     ...(block.prEnvironment !== undefined
       ? {
           prEnvironment: {

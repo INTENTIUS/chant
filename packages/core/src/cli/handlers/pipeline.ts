@@ -63,7 +63,18 @@ export async function runPipelineGenerate(ctx: CommandContext): Promise<number> 
   }
   if (read.status === "refused") return refused(read);
   const { generatePipeline } = await import("../../pipeline/generate");
-  const result = await generatePipeline(read.spec, provider);
+  // #5348: each stage's identity and its config and secret set, from the workspace declaration.
+  let declared: { identity?: import("../../ci-identity").CloudIdentityDeclaration; environmentSets?: import("../../components/environment-sets").EnvironmentSets; member?: string } = {};
+  try {
+    const { declaredCloudIdentityDeclaration, declaredEnvironmentSets } = await import("../../workspace/ci-cloud-identity");
+    const [identity, environmentSets] = await Promise.all([declaredCloudIdentityDeclaration(process.cwd()), declaredEnvironmentSets(process.cwd())]);
+    const member = await memberName(process.cwd());
+    declared = { ...(identity ? { identity } : {}), ...(environmentSets ? { environmentSets } : {}), ...(member ? { member } : {}) };
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+  const result = await generatePipeline(read.spec, provider, declared);
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "Failed to generate the pipeline" }));
     return 1;
@@ -82,6 +93,18 @@ export async function runPipelineGenerate(ctx: CommandContext): Promise<number> 
     console.error(formatSuccess(`wrote ${formatBold(file.path)}`));
   }
   return 0;
+}
+
+/** The workspace member whose directory holds `cwd`, or undefined. */
+async function memberName(cwd: string): Promise<string | undefined> {
+  const { findWorkspaceRoot } = await import("../../project-root");
+  const found = findWorkspaceRoot(cwd);
+  if (!found) return undefined;
+  const [{ readDeclaration }, { workingTree }, { memberHolding }, { relative, sep }] = await Promise.all([import("../../workspace/declaration"), import("../../workspace/tree"), import("../../workspace/record-assets"), import("node:path")]);
+  const rel = relative(found.dir, resolve(cwd));
+  if (rel.startsWith("..")) return undefined;
+  const posix = sep === "/" ? rel : rel.split(sep).join("/");
+  return memberHolding(posix === "" ? "." : posix, readDeclaration(workingTree(found.dir)).members ?? []) ?? undefined;
 }
 
 export async function runPipelineUnknown(): Promise<number> {

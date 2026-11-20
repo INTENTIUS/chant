@@ -103,6 +103,7 @@ import type { ControlTarget } from "../control/dispatch";
 import { CI_RESPOND_ENV, respondList, type CiResponses } from "../ci-respond";
 import type { PipelineEvidence } from "../ci-evidence-jobs";
 import type { PrCheckJobOptions } from "./pr-checks";
+import { environmentSetJobInputs, resolveEnvironmentSet, type EnvironmentSets } from "./environment-sets";
 
 /** The variable `chant ci run` reads its runner key from (`RUNNER_KEY_ENV` in ../workspace/ci-green.ts). */
 const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
@@ -343,6 +344,18 @@ export interface PrLoopPipelineOptions {
    * of a forge token is refused.
    */
   secrets?: Record<string, string>;
+  /**
+   * The config and secret sets per environment (#5348,
+   * ./environment-sets.ts), resolved for the pipeline's environment. The
+   * plan job gets the set's config and its record, and no secret, since it
+   * runs the pull request's code. The apply and record jobs get the config,
+   * the forge secrets as passed secrets, and the store secrets read after
+   * the job's login, with the identity `identity` gives this environment.
+   * A set's value replaces a `variables` or `secrets` entry of the same
+   * name. An environment the sets do not name is refused. Absent: the jobs
+   * get no set.
+   */
+  environmentSets?: EnvironmentSets;
   /**
    * How many members of a wave the plan job plans at once (#4625): `pr-plan
    * --parallelism <n>`, on the plan and the comment preview. Absent: all of
@@ -875,9 +888,21 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const github = forge !== "gitlab";
   const buildLines = prLoopBuildLines(env, options);
   const build = buildLines.length > 0 ? { build: buildLines } : {};
+  // #5348: the environment's config and secret set; the plan job gets its config and record alone.
+  const set = options.environmentSets ? resolveEnvironmentSet(options.environmentSets, env) : undefined;
+  const setInputs = set ? environmentSetJobInputs(set, forge) : undefined;
+  // A name the set gives, a secret included, replaces the pipeline's entry in every job, the plan's too.
+  const mine = new Set(set ? [...set.config, ...set.secrets].map((v) => v.name) : []);
+  const passed = (inputs: { variables: Record<string, string>; secrets: Record<string, string> } | undefined): Record<string, string> => {
+    if (!inputs) return prLoopPassedEnv(forge, options);
+    const keep = (map: Record<string, string> | undefined): Record<string, string> => Object.fromEntries(Object.entries(map ?? {}).filter(([k]) => !mine.has(k)));
+    return prLoopPassedEnv(forge, { variables: { ...keep(options.variables), ...inputs.variables }, secrets: { ...keep(options.secrets), ...inputs.secrets } });
+  };
+  const setFetch = setInputs && setInputs.setup.length > 0 ? setInputs.setup : [];
+  const withFetch = (setup: string[] | undefined): { setup?: string[] } => (setup || setFetch.length > 0 ? { setup: [...(setup ?? []), ...setFetch] } : {});
   // #4625: the caller's variables and passed secrets, in every job that plans or applies.
   const jobEnv: Record<string, string> = {
-    ...prLoopPassedEnv(forge, options),
+    ...passed(setInputs),
     ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}),
     ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}),
   };
@@ -907,9 +932,13 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   const runEnv = (env: Record<string, string>): Record<string, string> => (github ? { ...env, [RUNNER_KEY_ENV]: `\${{ secrets.${RUNNER_KEY_ENV} }}` } : env);
   // #4295: the plan runs the pull request's code, so it gets no forge token. It writes the note and the
   // status into its report (--no-status), and the plan-note job posts them (prLoopPostJob).
+  // #5348: the plan's variables carry the set's config and record, never its secrets.
+  const planJobEnv: Record<string, string> = set
+    ? { ...passed(environmentSetJobInputs(set, forge, { secrets: false })), ...(github ? { GITHUB_TOKEN: GITHUB_JOB_TOKEN } : {}), ...(options.events ? { CHANT_RUN_EVENTS_DIR: PR_LOOP_EVENTS_DIR } : {}) }
+    : jobEnv;
   const planEnv = github
-    ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...withoutForgeTokens(jobEnv) }
-    : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...withoutForgeTokens(jobEnv) };
+    ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...withoutForgeTokens(planJobEnv) }
+    : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID", ...withoutForgeTokens(planJobEnv) };
   const greenBranch = github ? JSON.stringify(options.branch ?? "main") : options.branch ? JSON.stringify(options.branch) : "$CI_DEFAULT_BRANCH";
   const applyEnv = github ? { BASE_SHA: "${{ github.event.before }}", ...jobEnv } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA", ...jobEnv };
   // #4301: the apply before merge runs in a job of the target branch, whose commit is the base, at the pull request's head.
@@ -929,6 +958,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     env: jobEnv,
     checkout: [greenCheckout(greenBranch)],
     greenBranch,
+    ...withFetch(undefined),
     ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
     ...build,
     run: { command: ciRun("apply").join(" "), env: runEnv(jobEnv) },
@@ -943,6 +973,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
     ].join(" "),
     env: earlyEnv,
     checkout: [pullRequestCheckout(forge)],
+    ...withFetch(undefined),
     ...(applyRunner !== undefined ? { runner: applyRunner } : {}),
     run: { command: ciRun("apply").join(" "), env: runEnv(earlyEnv) },
   };
@@ -966,7 +997,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       jobName: "record",
       command: ["chant", "components", "pr-record", "--base", '"$BASE_SHA"', ...common].join(" "),
       env: applyEnv,
-      setup: [github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)],
+      ...withFetch([github ? githubBaseFallback(options.branch) : gitlabBaseFallback(options.branch)]),
       ...build,
       // The record runs on merge, where the apply would.
       ...(applyRunner !== undefined ? { runner: applyRunner } : {}),

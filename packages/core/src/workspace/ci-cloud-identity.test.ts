@@ -71,3 +71,30 @@ describe("declaredCloudIdentity (#4296)", () => {
     await expect(declaredCloudIdentity(empty, "production")).rejects.toThrow(/\[declaration-invalid\]/);
   });
 });
+
+describe("declaredEnvironmentSets (#5348)", () => {
+  const SETS = {
+    configSets: { common: { config: { LOG_LEVEL: "info" } } },
+    environments: { staging: { imports: ["common"], secrets: { DB_PASSWORD: "STAGING_DB_PASSWORD" } }, prod: { imports: ["common"], secrets: { DB_PASSWORD: { forgeSecret: "PROD_DB_PASSWORD" } } } },
+  };
+
+  test("chant build --pr-loop reads ci.environmentSets, and the loop hands the pipeline's environment its set", async () => {
+    const { declaredEnvironmentSets, declaredCloudIdentityDeclaration } = await import("./ci-cloud-identity");
+    const { prLoopJobs } = await import("../components/pr-pipeline");
+    const root = workspace({ environmentSets: SETS, identity: { cloud: { aws: { rules: [{ plan: "arn:aws:iam::1:role/plan", apply: "arn:aws:iam::1:role/apply" }] } } } });
+    const sets = (await declaredEnvironmentSets(join(root, "app")))!;
+    expect(sets).toEqual(SETS);
+    expect((await declaredCloudIdentityDeclaration(root))!.aws!.rules).toHaveLength(1);
+    const [, apply] = prLoopJobs("github", "staging", { environmentSets: sets });
+    expect(apply!.env).toMatchObject({ LOG_LEVEL: "info", DB_PASSWORD: "${{ secrets.STAGING_DB_PASSWORD }}" });
+    expect(JSON.stringify(apply)).not.toContain("PROD_DB_PASSWORD");
+    expect(await declaredEnvironmentSets(scratchDir("chant-no-workspace-"))).toBeUndefined();
+    expect(await declaredEnvironmentSets(workspace())).toBeUndefined();
+  });
+
+  test("a set that imports another environment's set is declaration-invalid", async () => {
+    const { declaredEnvironmentSets } = await import("./ci-cloud-identity");
+    const root = workspace({ environmentSets: { environments: { staging: { imports: ["prod"] }, prod: {} } } });
+    await expect(declaredEnvironmentSets(root)).rejects.toThrow(/ci.environmentSets: the set of staging imports prod, an environment's set/);
+  });
+});

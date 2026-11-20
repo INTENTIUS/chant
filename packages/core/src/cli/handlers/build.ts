@@ -363,6 +363,16 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       return 1;
     }
   }
+  // #5348: the declaration's config and secret sets; the loop hands the pipeline's environment its own.
+  let environmentSets: import("../../components/environment-sets").EnvironmentSets | undefined;
+  if (found && args.prLoop) {
+    try {
+      environmentSets = await (await import("../../workspace/ci-cloud-identity")).declaredEnvironmentSets(resolve(args.path));
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+      return 1;
+    }
+  }
   // #4330: the identity a pull request environment's jobs trade for, from a rule that names those environments.
   let prEnvIdentity: import("../../ci-identity").CloudTradeSpec | undefined;
   if (found && args.prLoop && args.prEnv) {
@@ -432,7 +442,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         : {}),
       // #3183: a plan job per pull request and an apply job per merge.
       // #4292: on the branch ci.branches routes the member to, when it routes it.
-      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}), ...(engineSetup.length > 0 ? { engineSetup } : {}), ...(lockGrain ? { lockGrain } : {}), ...(control ? { control } : {}) } } : {}),
+      ...(args.prLoop ? { prLoop: { ...prLoopOption(args, reportUrl, reviewRules, isolatedRunners), ...(plan?.branch ? { branch: plan.branch } : {}), ...(identity ? { identity } : {}), ...(environmentSets ? { environmentSets } : {}), ...(prEnvIdentity ? { prEnvIdentity } : {}), ...(locks ? { locks } : {}), ...(engineSetup.length > 0 ? { engineSetup } : {}), ...(lockGrain ? { lockGrain } : {}), ...(control ? { control } : {}) } } : {}),
       // #4002: the job image and the lines that install what it lacks, chant itself included.
       ...(args.image ? { image: args.image } : {}),
       ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
