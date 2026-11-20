@@ -968,6 +968,15 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "a stage's `pauseAfterRollback` in `.chant/pipeline.ts`",
     products: [],
   },
+  // #5421: the commands a stage runs around its waves.
+  {
+    key: "environments.<name>.hooks.<when>",
+    concept: "the commands a stage runs around its waves at one moment: before anything reads live state, before or after the plan, after the gate decides, before or after the apply",
+    section: "stage",
+    value: "a list of hooks, each a map with `command` (a list of arguments), `name`, `on_failure` (`fail` or `approve`), `per_run` and `targets`; `<when>` is `before-observe`, `before-plan`, `after-plan`, `after-gate`, `before-apply` or `after-apply`",
+    chant: "a stage's `hooks` in `.chant/pipeline.ts`: `before.observe`, `before.plan`, `after.plan`, `after.gate`, `before.apply` and `after.apply`, run after the pipeline's own hooks",
+    products: [],
+  },
   // #5328: what a stage does when its verify or soak fails.
   {
     key: "environments.<name>.on_verify_fail",

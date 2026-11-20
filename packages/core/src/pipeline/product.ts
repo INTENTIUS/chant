@@ -6,7 +6,7 @@
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
  * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `.after`, `.queue`,
- * `.urgent`, `.pause_after_rollback`, `.agent_steps`, `.on_verify_fail`,
+ * `.urgent`, `.pause_after_rollback`, `.hooks.<when>`, `.agent_steps`, `.on_verify_fail`,
  * `approval_rules`, `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
  * {@link checkPipelineFile} is what `<product> ci --check` runs: it fails
@@ -19,11 +19,34 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { GateQuorumNode, GateQuorumRule } from "../op/gate-quorum";
+import { OP_WAVE_HOOK_MOMENTS, type OpWaveHook, type OpWaveHooks } from "../op/op-waves";
+import { NEXT_RELEASE } from "../release-floors";
 import type { OpEnvironment } from "../lexicon";
 import { foldPipelineSource, pipelineFindingLine, PIPELINE_MODULE } from "./fold";
 import { lineDiff } from "./diff";
 import { asPipelineSpec, PIPELINE_FILE, type PipelineDeclaration, type PipelineDefaults, type PipelineFailureTolerance, type PipelineFreezeWindow, type PipelineGate, type PipelineHold, type PipelineRecheck, type PipelineRelease, type PipelineStage, type PipelineWave } from "./spec";
 import type { Soak, SoakCheck } from "./soak";
+
+/**
+ * The first chant whose `pipelineFromConfig` maps a stage's hooks (#5421):
+ * `environments.<name>.hooks.<when>` in a product's config onto a stage's
+ * `hooks` in `.chant/pipeline.ts`, with `<when>` one of `before-observe`,
+ * `before-plan`, `after-plan`, `after-gate`, `before-apply` and
+ * `after-apply`. A product feature-detects the key on this name before it
+ * writes it.
+ */
+export const STAGE_HOOKS_KEY_FLOOR = NEXT_RELEASE;
+
+/** One stage hook as a product's config spells it: the keys of {@link OpWaveHook}, snake_case or camelCase. */
+export interface StageHookConfig {
+  name?: string;
+  command: string[];
+  on_failure?: OpWaveHook["onFailure"];
+  onFailure?: OpWaveHook["onFailure"];
+  per_run?: boolean;
+  perRun?: boolean;
+  targets?: string[];
+}
 
 /** One environment's settings, as a product's config spells them under `environments.<name>`, snake_case or camelCase. */
 export interface PipelineEnvironmentConfig {
@@ -54,6 +77,8 @@ export interface PipelineEnvironmentConfig {
   pauseAfterRollback?: boolean;
   /** `soak`: `{ duration, checks, overrides }`; a check's `on_fail` and `timeout_seconds` in snake_case or camelCase (#5326). */
   soak?: SoakConfig;
+  /** `hooks.<when>` (#5421): the commands a stage runs at `before-observe`, `before-plan`, `after-plan`, `after-gate`, `before-apply` or `after-apply`, each a list of hooks. */
+  hooks?: Partial<Record<(typeof OP_WAVE_HOOK_MOMENTS)[number], StageHookConfig[]>>;
   /** `agent_steps.<step>`: `prompt`, `reads`, `schema`, `command`, `key_secret`, `timeout`, `max_runs`, `max_cost_usd` (#5358), snake_case or camelCase. */
   agent_steps?: Record<string, AgentStepConfig>;
   agentSteps?: Record<string, AgentStepConfig>;
@@ -206,6 +231,31 @@ function publishOf(publish: PipelineEnvironmentConfig["publish"]): PipelineStage
   );
 }
 
+/** A stage's `hooks` from `environments.<name>.hooks.<when>` (#5421). Throws on a `<when>` that is not a moment. */
+function hooksOf(hooks: PipelineEnvironmentConfig["hooks"], stage: string): OpWaveHooks | undefined {
+  if (!hooks) return undefined;
+  const out: OpWaveHooks = {};
+  for (const [when, list] of Object.entries(hooks)) {
+    if (!(OP_WAVE_HOOK_MOMENTS as readonly string[]).includes(when)) throw new Error(`environments.${stage}.hooks.${when}: <when> is one of ${OP_WAVE_HOOK_MOMENTS.join(", ")}`);
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const mapped: OpWaveHook[] = list.map((h) => {
+      const onFailure = h.on_failure ?? h.onFailure;
+      const perRun = h.per_run ?? h.perRun;
+      return {
+        ...(h.name !== undefined ? { name: h.name } : {}),
+        command: [...h.command],
+        ...(onFailure !== undefined ? { onFailure } : {}),
+        ...(perRun ? { perRun: true } : {}),
+        ...(h.targets && h.targets.length > 0 ? { targets: [...h.targets] } : {}),
+      };
+    });
+    const [side, step] = when.split("-") as ["before" | "after", string];
+    const group = (out[side] ??= {}) as Record<string, OpWaveHook[]>;
+    group[step] = mapped;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function holdOf(hold: PipelineEnvironmentConfig["hold"]): PipelineHold | undefined {
   if (hold === undefined || hold === false) return undefined;
   if (hold === true) return true;
@@ -230,6 +280,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     const pauseAfterRollback = env.pause_after_rollback ?? env.pauseAfterRollback;
     const onVerifyFail = env.on_verify_fail ?? env.onVerifyFail;
     const hold = holdOf(env.hold);
+    const hooks = hooksOf(env.hooks, name);
     const tolerance = env.failure_tolerance ?? env.failureTolerance;
     const forgeRaw = env.forge_environment ?? env.forgeEnvironment;
     const forge = typeof forgeRaw === "string" ? { name: forgeRaw } : forgeRaw;
@@ -238,6 +289,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(env.canary ? { canary: true } : {}),
       waves: waves.map((w) => structuredClone(w)),
       ...(Object.keys(gate).length > 0 ? { gate } : {}),
+      ...(hooks ? { hooks } : {}),
       ...(hold ? { hold } : {}),
       ...(env.freeze && env.freeze.length > 0 ? { freeze: env.freeze.map((w) => ({ ...w })) } : {}),
       ...(tolerance !== undefined ? { failureTolerance: tolerance } : {}),
