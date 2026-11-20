@@ -45,7 +45,7 @@ stack's secrets provider.
 | `deployment.pending_operations` | PUL002 |
 | the root stack's `outputs` | applied outputs, with `CHANT_PULUMI_APPLIED_OUTPUTS=export` |
 
-Inputs and outputs are never copied into the graph.
+A node carries the inputs and string outputs the reference catalog reads, without secrets (see the member page). The rest of the inputs and outputs is not copied into the graph.
 
 ## The checks
 

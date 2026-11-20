@@ -94,7 +94,8 @@ describe("readPulumiMember with engine-graph.json (#4529)", () => {
     const ir = buildGraphIr(entities);
     const node = ir.nodes.find((n) => n.id === ASSETS)!;
     expect(node.facts).toEqual(factsOf("urn:pulumi:dev::app::aws:s3/bucketV2:BucketV2::assets"));
-    expect(node.attrs).toEqual({});
+    // The export records no inputs for it; the node holds its id, for the reference catalog (#5330).
+    expect(node.attrs).toEqual({ outputs: { id: "assets-4f1c2e9" } });
     expect(ir.edges.map((e) => [e.from, e.to, e.viaAttr, e.grain])).toEqual([
       [POLICY, ASSETS, "bucket", "property"],
       [POLICY, ASSETS, "dependencies", "instance"],

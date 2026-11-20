@@ -29,8 +29,10 @@
  * resources that name them are not edged to them. Edges come from each
  * resource's `dependencies` and `parent`, kept only when the target is a node,
  * each with `grain: "instance"` (#4529): it joins two resources, not two
- * blocks of source. Inputs and outputs are not copied into the node, since an
- * export can hold secrets.
+ * blocks of source. A node carries the values its resource is named by and
+ * names others by (`./reference-props.ts`, #5330): inputs and the top-level
+ * string outputs, minus secrets and credential-like keys, for the lexicon's
+ * `referenceCatalog` to read. Nothing else of the inputs and outputs is copied.
  *
  * A member on plunge may also check in {@link PULUMI_ENGINE_GRAPH_FILE}
  * beside the export: what `plunge graph --json --stack <stack>` printed
@@ -51,6 +53,7 @@ import type { EngineFacts } from "@intentius/chant/engine-facts";
 import { isPulumiNodeless, pulumiNodeKey } from "@intentius/chant/pulumi-urn";
 import { PULUMI_ENGINE_GRAPH_FILE, readPlungeEngineGraph } from "./engine-graph";
 import { pulumiMemberEngine } from "./member-engine";
+import { referenceProps } from "./reference-props";
 
 import { PULUMI_EXPORT_FILE } from "./member-report";
 
@@ -111,6 +114,9 @@ export interface PulumiMemberEngineGraphReport {
 
 interface ExportedResource {
   urn?: unknown;
+  id?: unknown;
+  inputs?: unknown;
+  outputs?: unknown;
   type?: unknown;
   parent?: unknown;
   dependencies?: unknown;
@@ -195,7 +201,7 @@ export function readPulumiMember(opts: { member: PulumiMemberConfig; stored?: Pu
       lexicon: "pulumi",
       entityType: r.type as string,
       kind: "resource",
-      props: {},
+      props: referenceProps(r),
       references: [...references.values()],
       [DECLARABLE_MARKER]: true,
     } as unknown as Declarable;
