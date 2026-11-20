@@ -97,6 +97,13 @@ export {
 export const PRODUCT_CONFIG_WORDS_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant where `productConfigProblems` reads an alias inside a scope
+ * the caller passes: sql-yodeler's `ci.login` set beside `ci.identity` is an
+ * error naming both, as `oidc` beside `identity` is at the top level.
+ */
+export const PRODUCT_CONFIG_SCOPED_ALIASES_FLOOR = NEXT_RELEASE;
+
+/**
  * The first chant with the plan's cost estimate (#5334): `ci.cost` in the
  * workspace declaration, read at base, which `pr-plan` and `pr-apply` run
  * over each member's plan document (`artifact.planJson` of `terraform-apply`
