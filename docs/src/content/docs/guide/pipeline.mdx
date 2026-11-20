@@ -93,7 +93,7 @@ A stage publishes named values for the release it applied, and a later stage rea
 { name: "staging", waves: [...], reads: { TF_VAR_dev_endpoint: { stage: "dev", artifact: "endpoint" } } },
 ```
 
-The merge publishes `dev`'s artifacts right after it cuts the release. `promote --to staging --release v1.4.0` reads `endpoint` from `dev`'s record of v1.4.0 into `TF_VAR_dev_endpoint` before it deploys, and refuses when `dev` has not published it for that release. `chant build` refuses a read that no earlier stage publishes. A secret is published as where it is kept (`{ secret: { awsSecretsManager: "..." } }`), and an output the engine marks sensitive is refused. Another repository reads them with `chant pipeline artifacts read --stage dev --from <dir>`. The [reference](/chant/reference/pipeline/#release-artifacts) has the rules.
+The merge publishes `dev`'s artifacts right after it cuts the release. `promote --to staging --release v1.4.0` reads `endpoint` from `dev`'s record of v1.4.0 into `TF_VAR_dev_endpoint` before it deploys, and refuses when `dev` has not published it for that release. `chant build` refuses a read of a stage that is not upstream of the reading stage, or that does not publish the artifact. Upstream means an ancestor through `after`, or an earlier stage when no stage names `after`, so a stage cannot read from a sibling that fans out from the same stage. A secret is published as where it is kept (`{ secret: { awsSecretsManager: "..." } }`), and an output the engine marks sensitive is refused. Another repository reads them with `chant pipeline artifacts read --stage dev --from <dir>`. The [reference](/chant/reference/pipeline/#release-artifacts) has the rules.
 
 ## Fan out to regions and join before production
 

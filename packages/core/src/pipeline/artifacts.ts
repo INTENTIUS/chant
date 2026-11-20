@@ -40,8 +40,9 @@
  *
  *     { name: "staging", waves: [...], reads: { TF_VAR_dev_endpoint: { stage: "dev", artifact: "endpoint" } } }
  *
- * `chant build` refuses a read of a stage that does not come earlier in the
- * promotion order, or of an artifact that stage does not publish
+ * `chant build` refuses a read of a stage that is not upstream of the reading
+ * stage (#5385): earlier in the list when no stage declares `after`, else an
+ * ancestor through `after`, so a sibling is refused. It also refuses a read of an artifact that stage does not publish
  * ({@link stageArtifactsSpecProblems}). The promote refuses before anything
  * deploys when the upstream has not published the artifact for the release
  * being promoted ({@link resolveStageReads}). A string reaches the variable
@@ -178,6 +179,27 @@ export function stageReadsProblems(reads: unknown, at: string): string[] {
 }
 
 /**
+ * The indexes of every stage upstream of stage `index`, through `after`
+ * (#5353): a stage follows its `after`, else the stage before it. Mirrors
+ * `stageUpstreams` in ./spec, which this module cannot import at load. A
+ * cycle or an unknown name ends that path.
+ */
+function ancestorsOf(stages: Array<Partial<PipelineStage>>, index: number): Set<number> {
+  const found = new Set<number>();
+  const visit = (i: number): void => {
+    const stage = stages[i]!;
+    const ups = Array.isArray(stage.after) ? stage.after.map((n) => stages.findIndex((s) => s.name === n)) : i === 0 ? [] : [i - 1];
+    for (const up of ups) {
+      if (up < 0 || found.has(up)) continue;
+      found.add(up);
+      visit(up);
+    }
+  };
+  visit(index);
+  return found;
+}
+
+/**
  * The reads no upstream publishes (#5356), one line each: a read of a stage
  * that is not before the reading stage in promotion order, or of an
  * artifact that stage's `publish` does not name, and a first stage that
@@ -192,13 +214,17 @@ export function stageArtifactsSpecProblems(spec: { stages?: unknown; release?: u
   if (first && isMap(first.publish) && Object.keys(first.publish).length > 0 && !cut) {
     out.push(`stage "${first.name}" publishes artifacts, which are kept for the release the merge cuts, and release.cut is false`);
   }
+  const graph = stages.some((s) => s.after !== undefined);
   stages.forEach((stage, i) => {
     if (!isMap(stage.reads)) return;
+    const upstream = graph ? ancestorsOf(stages, i) : undefined;
     for (const [name, read] of Object.entries(stage.reads)) {
       if (!isMap(read) || typeof read.stage !== "string" || typeof read.artifact !== "string") continue;
       const at = stages.findIndex((s) => s.name === read.stage);
       if (at < 0) out.push(`stage "${stage.name}" reads ${name} from stage "${read.stage}", which the pipeline does not have`);
-      else if (at >= i) out.push(`stage "${stage.name}" reads ${name} from stage "${read.stage}", which comes ${at === i ? "at the same place" : "after it"} in promotion order; a stage reads the stages before it`);
+      else if (upstream && !upstream.has(at)) {
+        out.push(`stage "${stage.name}" reads ${name} from stage "${read.stage}", which "${stage.name}" does not follow through after; a stage reads its upstream stages, and "${read.stage}" is not one of them`);
+      } else if (!upstream && at >= i) out.push(`stage "${stage.name}" reads ${name} from stage "${read.stage}", which comes ${at === i ? "at the same place" : "after it"} in promotion order; a stage reads the stages before it`);
       else if (!isMap(stages[at]!.publish) || !Object.prototype.hasOwnProperty.call(stages[at]!.publish, read.artifact)) {
         out.push(`stage "${stage.name}" reads ${name} from artifact "${read.artifact}" of stage "${read.stage}", which that stage never publishes`);
       }

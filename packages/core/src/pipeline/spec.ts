@@ -111,9 +111,11 @@ export interface PipelineStage {
    */
   publish?: Record<string, StageArtifactSource>;
   /**
-   * The artifacts of earlier stages the stage reads, of the release it takes
+   * The artifacts of upstream stages the stage reads, of the release it takes
    * (#5356), keyed by the variable its deploy gets each in. `chant build`
-   * refuses a read no earlier stage publishes. Absent: none.
+   * refuses a read of a stage that is not upstream (an ancestor through
+   * `after`, else earlier in `stages`) or that does not publish it (#5385).
+   * Absent: none.
    */
   reads?: Record<string, StageArtifactRead>;
   /**
