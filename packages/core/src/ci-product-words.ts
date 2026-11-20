@@ -1259,6 +1259,15 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "`description` of a stage's `hold` (#5354)",
     products: [],
   },
+  // #5327: the canary stage, written into `.chant/pipeline.ts` by `pipelineFromConfig`.
+  {
+    key: "environments.<name>.canary",
+    concept: "the canary stage, whose soak holds every stage after it",
+    section: "stage",
+    value: "`true` or `false`",
+    chant: "a stage's `canary` in `.chant/pipeline.ts`, which takes a `soak` with at least one check",
+    products: [],
+  },
   // #5326: soak checks that hold the next stage, written into `.chant/pipeline.ts` by `pipelineFromConfig`.
   {
     key: "environments.<name>.soak.duration",
