@@ -49,6 +49,9 @@
  * (`runInterpretDriver`), and each place that hands a capability its input
  * resolves the step again, which is a no-op on a resolved one.
  *
+ * An environment's config and secret set (./environment-sets.ts, #5348)
+ * picks its entry with {@link environmentEntryName}, the same lookup.
+ *
  * This module imports only the release floors at run time.
  */
 
@@ -127,8 +130,15 @@ function malformed(map: unknown): string | undefined {
   return undefined;
 }
 
-/** The name of the entry `env` takes: itself, or a pull request environment's template. */
-function entryName(map: Record<string, unknown>, env: string, options: StepEnvironmentOptions): string | undefined {
+/**
+ * The name of the entry `env` takes in a map keyed by environment name:
+ * itself, or for a pull request environment `pr-<n>` its template's (the
+ * template's name, or the last segment of a template that names a stack).
+ * Undefined when the map names neither. A step's `environments` and an
+ * environment's config and secret set (./environment-sets.ts, #5348) pick
+ * their entry with it, so both read the run's environment the same way.
+ */
+export function environmentEntryName(map: Record<string, unknown>, env: string, options: StepEnvironmentOptions = {}): string | undefined {
   if (env in map) return env;
   if (!PR_ENV.test(env)) return undefined;
   const template = options.template ?? (options.processEnv ?? process.env)[TEMPLATE_VAR];
@@ -152,7 +162,7 @@ export function stepForEnvironment<T extends Record<string, unknown>>(
   const bad = malformed(map);
   if (bad !== undefined) return { error: `its \`${STEP_ENVIRONMENTS_KEY}\` ${bad}`, named: [] };
   const named = Object.keys(map as Record<string, unknown>);
-  const name = entryName(map as Record<string, unknown>, env, options);
+  const name = environmentEntryName(map as Record<string, unknown>, env, options);
   if (name === undefined) {
     const template = PR_ENV.test(env) ? options.template ?? (options.processEnv ?? process.env)[TEMPLATE_VAR] : undefined;
     const via = template ? `, nor its template ${template}` : "";

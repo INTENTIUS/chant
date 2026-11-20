@@ -104,7 +104,8 @@ import { shellCmd } from "../op/activities/shell";
 import { OpRunFailure, runOpLocally, type OpRunResult, type StepRecord } from "../op/local-executor";
 import type { OpRunFailureReason, OpRunRecord } from "../op/runtime";
 import type { ActivityStep, OpConfig, PhaseDefinition } from "../op/types";
-import { redactText, type Redact } from "../op/redact";
+import { redactorOf, redactText, type Redact } from "../op/redact";
+import { ENV_SET_ENV, environmentSetSecretNames } from "../components/environment-sets";
 import { findWorkspaceRoot } from "../project-root";
 import { parseReportUrl, reportKey } from "../pr-report-url";
 import { reportUrlOf } from "./ci-report-url";
@@ -764,7 +765,8 @@ export async function ciRun(req: CiRunRequest): Promise<CiRunResult> {
   const poster = req.job === "plan" ? planPoster(req, hostEnv) : undefined;
   // #4096: the secrets and the job's secret-looking variables, redacted from everything the run writes and returns.
   // In place the forge's own variables come too; one whose value is short, such as a flag, is left out, so it can't blank common words.
-  const redact = ciRedactor(req.inPlace ? { ...longValues(jobEnv), ...own } : jobEnv, req.secrets);
+  // #5348: a secret of the environment's set is redacted whatever its length or name.
+  const redact = ciRedactor(req.inPlace ? { ...longValues(jobEnv), ...setSecretEnv(jobEnv), ...own } : jobEnv, req.secrets);
   try {
     const ran = await runCiJob(req, { cwd, top, commit, place, job, jobEnv, ...(redact ? { redact } : {}) });
     const posted = poster ? await postFromReport(req, poster, ran, { top, dir: place.dir, commit, ...(place.member ? { member: place.member } : {}) }) : [];
@@ -938,6 +940,13 @@ function longValues(env: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(env).filter(([, value]) => value.length >= 8));
 }
 
+/** The environment set's record and each secret it names (#5348), from `env`. */
+function setSecretEnv(env: Record<string, string>): Record<string, string> {
+  const names = environmentSetSecretNames(env);
+  if (names.length === 0) return {};
+  return Object.fromEntries([ENV_SET_ENV, ...names].flatMap((n) => (env[n] !== undefined ? [[n, env[n]!]] : [])));
+}
+
 /** The variables of `env` that have a value. */
 function definedEnv(env: Record<string, string | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -1098,6 +1107,10 @@ async function runCiJob(
       if (!(existsSync(report) && realpathSync(report) === realpathSync(written))) {
         cpSync(written, report, { recursive: true });
         if (redact) redactTree(report, redact);
+      } else {
+        // #5348: the secrets of the environment's set leave it even in place, since the note jobs post from it.
+        const setRedact = redactorOf(environmentSetSecretNames(jobEnv).flatMap((n) => (jobEnv[n] !== undefined ? [jobEnv[n]!] : [])));
+        if (setRedact) redactTree(report, setRedact);
       }
     }
     const failed = result.records.find((r) => r.status === "fail");

@@ -28,6 +28,7 @@ import { readFileSync, statSync } from "node:fs";
 import { redactorOf, type Redact } from "../op/redact";
 import { RUNNER_KEY_ENV } from "./ci-green";
 import type { CiJobName } from "./ci-run";
+import { environmentSetSecretNames } from "../components/environment-sets";
 
 /** The variable that names the secrets file when `--secrets` is not given. */
 export const CI_SECRETS_ENV = "CHANT_CI_SECRETS";
@@ -205,10 +206,13 @@ export function ciSecretsFor(secrets: CiSecrets | undefined, job: CiJobName): Re
  * The redactor for a job: every value in the secrets file, whether the job
  * gets it or not, and the value of each variable in the job's environment
  * whose name looks secret, such as `GITHUB_TOKEN` or a `--pass-env
- * AWS_SECRET_ACCESS_KEY`. Undefined when there is nothing to redact.
+ * AWS_SECRET_ACCESS_KEY`, and of each secret the environment's config and
+ * secret set names in `CHANT_ENV_SET` (#5348), whatever its name.
+ * Undefined when there is nothing to redact.
  */
 export function ciRedactor(jobEnv: Record<string, string>, secrets?: CiSecrets): Redact | undefined {
   const values = Object.values(secrets?.values ?? {});
   for (const [name, value] of Object.entries(jobEnv)) if (SECRET_NAME.test(name)) values.push(value);
+  for (const name of environmentSetSecretNames(jobEnv)) if (jobEnv[name] !== undefined) values.push(jobEnv[name]!);
   return redactorOf(values);
 }

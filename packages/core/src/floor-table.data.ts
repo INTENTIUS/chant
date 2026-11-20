@@ -6,6 +6,7 @@ import { NEXT_RELEASE } from "./release-floors";
 import type { FloorRow } from "./floor-table";
 
 export const FLOOR_ROWS: readonly FloorRow[] = [
+  { name: "ENVIRONMENT_SETS_FLOOR", version: NEXT_RELEASE, gates: "The first chant with config and secret sets per environment (#5348): `resolveEnvironmentSet`, `environmentSetJobInputs`, the pull request loop's `environmentSets`, which hands the stage's apply and record jobs the set of their environment, and `chant ci run`'s redaction of each secret the set names.", issue: "#5348", file: "components/environment-sets.ts", modules: ["@intentius/chant/components","@intentius/chant/components/environment-sets","@intentius/chant/components/index"] },
   { name: "CACHE4_PIN_FLOOR", version: "0.124.78", gates: "The first chant whose table has the `cache4` row (#4816).", issue: "#4816", file: "action-pins.ts", modules: ["@intentius/chant/action-pins"] },
   { name: "AGENT_GUARD_FLOOR", version: "0.124.77", gates: "The first chant with the shared agent guard (#4770).", issue: "#4770", file: "agent-guard.ts", modules: ["@intentius/chant/agent-guard","@intentius/chant/ci-product"] },
   { name: "CAPABILITY_TEMPLATES_FLOOR", version: "0.124.54", gates: "The first chant whose capabilities document carries `templates` (#4531).", issue: "#4531", file: "capabilities/templates.ts", modules: ["@intentius/chant/capabilities/templates"] },
