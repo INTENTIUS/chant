@@ -132,8 +132,8 @@ A release is newer than another when it was cut later; without a cut time, the o
 | `chant pipeline artifacts publish --stage <stage> [--release <ref>] [--dry-run] [--json]` | publishes the stage's artifacts for the release named, else the release cut from `HEAD`, reading `publish` from the pipeline on the default branch |
 | `chant pipeline artifacts read --stage <stage> [--release <ref>] [--name <artifact>] [--from <dir>] [--json]` | prints a stage's artifacts for the release named, else the one in `CHANT_CONTROL_RELEASE`, else the release it last published for. `--name` prints one value; `--from` reads another repository's `chant/lifecycle` |
 | `chant pipeline release-of <commit>` | prints the digest of the release cut from a commit, or exits 1 |
-
 | `chant reject <pipeline> <stage> --reason <text> [--plan <digest>] [--env <stage>] [--release <digest>] [--sign [<key file>]]` | rejects the release the stage's gate waits on, on `_gates/<pipeline>/rejected.jsonl`. `--statement`, then `--signature <file> --at <time>`, records a signature made elsewhere |
+
 ## Release artifacts
 
 A release artifact is a named value a stage publishes for the release it applied: a cluster endpoint, an image tag, a database host. Artifacts are strings or JSON values, at most 64 KiB of JSON text each, and never files.
