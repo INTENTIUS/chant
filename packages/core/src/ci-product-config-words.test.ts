@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import {
   CI_PRODUCTS,
   PRODUCT_AUDIT_KINDS,
+  PRODUCT_CONFIG_SCOPED_ALIASES_FLOOR,
   PRODUCT_CONFIG_WORDS,
   PRODUCT_CONFIG_WORDS_FLOOR,
   PRODUCT_RELEASE_ALIASES,
@@ -177,6 +178,24 @@ describe("productConfigProblems", () => {
       ["error", "ci.evidence.runnerKeySecret"],
       ["error", "ci.forges"],
     ]);
+  });
+
+  test("an alias beside its key is an error at the top level", () => {
+    const problems = productConfigProblems({ oidc: { plan_role: "a" }, identity: { aws: {} } }, { product: "terragucci" });
+    expect(problems.filter((p) => p.level === "error").map((p) => [p.path, p.message])).toEqual([["oidc", "and identity are both set; set identity alone"]]);
+  });
+
+  test("an alias beside its key inside a scope is an error naming both", () => {
+    const problems = productConfigProblems({ ci: { login: { aws: {} }, identity: { aws: {} } } }, { product: "sql-yodeler", case: "camel", scopes: ["ci"] });
+    expect(problems.filter((p) => p.level === "error").map((p) => [p.path, p.message])).toEqual([["ci.login", "and ci.identity are both set; set ci.identity alone"]]);
+    expect(problems.filter((p) => p.level === "warning").map((p) => p.path)).toEqual(["ci.login"]);
+    // The alias alone gives the warning and no error; a scope the caller does not pass is not read.
+    expect(productConfigProblems({ ci: { login: { aws: {} } } }, { product: "sql-yodeler", case: "camel", scopes: ["ci"] }).filter((p) => p.level === "error")).toEqual([]);
+    expect(productConfigProblems({ ci: { login: {}, identity: {} } }, { product: "sql-yodeler", case: "camel" }).filter((p) => p.level === "error")).toEqual([]);
+  });
+
+  test("the scoped-alias floor names the next release", () => {
+    expect(PRODUCT_CONFIG_SCOPED_ALIASES_FLOOR).toBe(NEXT_RELEASE);
   });
 
   test("promotion is a list of distinct environment names the environments map declares", () => {

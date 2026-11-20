@@ -2071,7 +2071,7 @@ export interface ProductConfigOptions {
   product: string;
   /** How the product spells keys. Default `snake`. */
   case?: ProductConfigCase;
-  /** Maps the vocabulary's keys may also sit under, such as sql-yodeler's `ci`. The top level is always read, and aliases are read there alone. */
+  /** Maps the vocabulary's keys may also sit under, such as sql-yodeler's `ci`. The top level is always read. An alias whose key starts at a scope is read inside it too, to find the key set beside it. */
   scopes?: readonly string[];
 }
 
@@ -2159,16 +2159,20 @@ export function productConfigProblems(config: unknown, options: ProductConfigOpt
     for (const word of PRODUCT_CONFIG_WORDS) {
       const shown = spelled(word.key, kase);
       for (const alias of word.aliases ?? []) {
-        // An alias names its full path, so it is read from the top level alone.
-        if (prefix !== "" || alias.product !== options.product || alias.key === undefined) continue;
-        for (const hit of resolve(doc, segments(alias.key, kase))) {
+        if (alias.product !== options.product || alias.key === undefined) continue;
+        // An alias names its full path. Inside a scope it is read when that
+        // path starts at the scope; the top-level pass already reports it as a
+        // warning, so here it only finds the key set beside it.
+        const parts = segments(alias.key, kase);
+        if (prefix !== "" && parts[0] !== prefix.slice(0, -1)) continue;
+        for (const hit of resolve(doc, prefix === "" ? parts : parts.slice(1))) {
           if (!hasShape(hit.value, alias.shape)) continue;
           aliased.add(hit.path);
-          out.push({ level: "warning", path: at(hit.path), key: word.key, message: `is accepted as ${shown}, the vocabulary's key` });
+          if (prefix === "") out.push({ level: "warning", path: at(hit.path), key: word.key, message: `is accepted as ${shown}, the vocabulary's key` });
           // The key set beside its alias, where the alias does not sit inside
           // it (plywood's `notify.slack.webhook` sits inside `notify.slack`).
           if (!alias.key.includes("<") && resolve(doc, segments(word.key, kase)).some((h) => !hit.path.startsWith(`${h.path}.`))) {
-            out.push({ level: "error", path: at(hit.path), key: word.key, message: `and ${shown} are both set; set ${shown} alone` });
+            out.push({ level: "error", path: at(hit.path), key: word.key, message: `and ${at(shown)} are both set; set ${at(shown)} alone` });
           }
         }
       }
