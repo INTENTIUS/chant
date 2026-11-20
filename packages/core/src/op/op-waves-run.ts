@@ -49,6 +49,7 @@
  *   (`pointGateResumable`, #3835).
  */
 
+import { NEXT_RELEASE } from "../release-floors";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -812,7 +813,7 @@ function quorumAtBase(spec: OpWavesSpec, where: string): Pick<OpWaveBaseRules, "
   }
   // terragucci issue 1303: the review ledger and the involved count without rules too.
   if (raw === undefined) return extra;
-  const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true }) : ["`approvals.quorum` must be a list of rules"];
+  const problems = Array.isArray(raw) ? quorumProblems(raw, "approvals.quorum", { notAuthor: true, proven: true }) : ["`approvals.quorum` must be a list of rules"];
   if (problems.length > 0) return { quorumRefused: `the approval rules in ${where} cannot be read (${problems.join("; ")})` };
   return (raw as GateQuorumRule[]).length > 0 ? { quorum: raw as GateQuorumRule[], ...extra } : extra;
 }
@@ -834,6 +835,14 @@ function pointAtBase(spec: OpWavesSpec, name: string, where: string): Pick<OpWav
   if (problems.length > 0) return { pointRefused: `the decision point at base cannot be asked (${where}: ${problems.join("; ")})` };
   return { point: opWavePointAt(spec, name)! };
 }
+
+/**
+ * The first chant whose approval rules take `proven` (#5349): a rule's
+ * `count` met by proven approvers only, and the warnings
+ * `opWavesQuorumWarnings` gives for a count above 1 that plain `chant
+ * approve` lines can meet.
+ */
+export const PROVEN_APPROVERS_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose Op waves spec takes `approvals.preview`: a merged wave applies the plans its pull request previewed, or exits 4. */
 export const OP_WAVES_PREVIEW_FLOOR = "0.124.59";

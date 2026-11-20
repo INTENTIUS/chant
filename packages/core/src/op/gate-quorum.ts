@@ -23,6 +23,13 @@
  * with none, no approval proves anything, so a rule naming roles or
  * `notAuthor` is never met.
  *
+ * With `proven` (#5349), only a proven approver counts toward the rule's
+ * `count` at all. Without it a `count` counts every human approver of the
+ * plan, proven or not, so under a mode that takes plain `chant approve`
+ * lines (`ledger`, `pr-review`, `pull-request`) one person who can push to
+ * `chant/lifecycle` can write two lines in two names and meet `count: 2`.
+ * Off by default.
+ *
  * `notAuthor` reads who was involved in the change (#4333): the pull
  * request's author, each login a `Requested-by:` trailer on its commits
  * names, and the accounts an agent acts as. With `excludeInvolved`, an
@@ -46,6 +53,12 @@ export interface GateQuorumRule {
   roles?: string[];
   /** When true, at least one counted approver is proven and is not the change's author. */
   notAuthor?: boolean;
+  /**
+   * When true (#5349), only a proven approver counts toward `count`: a seal
+   * that verifies against the signers at base, or a review the judge proves.
+   * Default false: every human approver of the plan counts.
+   */
+  proven?: boolean;
 }
 
 /** A gate's quorum: one rule (the form before #4290), or a list of them. */
@@ -79,6 +92,7 @@ export interface GateQuorumRuleProgress {
   count: number;
   roles?: string[];
   notAuthor?: boolean;
+  proven?: boolean;
   /** The approvers it counts, oldest first. */
   approvers: string[];
   met: boolean;
@@ -131,9 +145,11 @@ export function quorumNeed(rules: readonly GateQuorumRule[]): number {
 /**
  * Everything wrong with a quorum, one line each. `where` names it
  * (`approval.quorum`). With `notAuthor: false`, a rule naming `notAuthor` is
- * refused, since that caller has no author to judge by.
+ * refused, since that caller has no author to judge by. Without `proven:
+ * true`, a rule naming `proven` is refused (#5349): an Op waves spec's
+ * `approvals.quorum` reads it.
  */
-export function quorumProblems(value: unknown, where: string, opts: { notAuthor: boolean }): string[] {
+export function quorumProblems(value: unknown, where: string, opts: { notAuthor: boolean; proven?: boolean }): string[] {
   const list = Array.isArray(value) ? value : [value];
   const problems: string[] = [];
   if (Array.isArray(value) && value.length === 0) problems.push(`\`${where}\` must name at least one rule`);
@@ -155,8 +171,13 @@ export function quorumProblems(value: unknown, where: string, opts: { notAuthor:
     if (q.notAuthor === true && !opts.notAuthor) {
       problems.push(`\`${at}.notAuthor\` is not read here: an Op gate has no author to judge by. An Op waves spec's \`approvals.quorum\` reads it from the merged pull request`);
     }
-    const known = new Set(["targets", "count", "roles", "notAuthor"]);
-    for (const key of Object.keys(q)) if (!known.has(key)) problems.push(`\`${at}.${key}\` is not a quorum field; use targets, count, roles or notAuthor`);
+    if (q.proven !== undefined && typeof q.proven !== "boolean") problems.push(`\`${at}.proven\` must be true or false`);
+    if (q.proven !== undefined && opts.proven !== true) {
+      problems.push(`\`${at}.proven\` is not read here. An Op waves spec's \`approvals.quorum\` reads it`);
+    }
+    const known = new Set(["targets", "count", "roles", "notAuthor", "proven"]);
+    const names = opts.proven ? "targets, count, roles, notAuthor or proven" : "targets, count, roles or notAuthor";
+    for (const key of Object.keys(q)) if (!known.has(key)) problems.push(`\`${at}.${key}\` is not a quorum field; use ${names}`);
   });
   return problems;
 }
@@ -187,6 +208,7 @@ export function quorumRuleProgress(rule: GateQuorumRule, approvers: readonly Quo
   const counted: QuorumApprover[] = [];
   for (const a of [...approvers].sort((x, y) => Date.parse(x.at) - Date.parse(y.at))) {
     if (seen.has(norm(a.who)) || a.judged.excluded !== undefined) continue;
+    if (rule.proven && !a.judged.proven) continue;
     if (rule.roles?.length && !(a.judged.proven && a.judged.roles.some((r) => rule.roles!.includes(r)))) continue;
     seen.add(norm(a.who));
     counted.push(a);
@@ -198,6 +220,7 @@ export function quorumRuleProgress(rule: GateQuorumRule, approvers: readonly Quo
     count: rule.count,
     ...(rule.roles?.length ? { roles: [...rule.roles] } : {}),
     ...(rule.notAuthor ? { notAuthor: true } : {}),
+    ...(rule.proven ? { proven: true } : {}),
     approvers: counted.map((a) => a.who),
     met: counted.length >= rule.count && notAuthor,
     ...(authorUnknown ? { authorUnknown: true } : {}),
@@ -214,7 +237,7 @@ export function quorumRuleLine(p: GateQuorumRuleProgress): string {
   if (p.met) return `${scope}: ${have}, met`;
   const more = p.count - p.approvers.length;
   const needs: string[] = [];
-  if (more > 0) needs.push(`${more} more${p.roles?.length ? ` from ${p.roles.join(" or ")}` : ""}`);
+  if (more > 0) needs.push(`${more} more${p.proven && !p.roles?.length ? " proven" : ""}${p.roles?.length ? ` from ${p.roles.join(" or ")}` : ""}`);
   if (p.notAuthor) needs.push(more > 0 ? "one of them not the author" : "an approver who is not the author");
   const unknown = p.authorUnknown ? " (the change's author is not known, so no approver can show they are someone else)" : "";
   return `${scope}: ${have}, needs ${needs.join(", ")}${unknown}`;
@@ -225,8 +248,8 @@ export function quorumWaiting(progress: readonly GateQuorumRuleProgress[]): stri
   return progress.filter((p) => !p.met).map(quorumRuleLine).join("; ");
 }
 
-/** Whether a rule needs a proven approver: it names roles, or `notAuthor`. */
-export const ruleNeedsProof = (rule: GateQuorumRule): boolean => (rule.roles?.length ?? 0) > 0 || rule.notAuthor === true;
+/** Whether a rule needs a proven approver: it names roles, `notAuthor` or `proven`. */
+export const ruleNeedsProof = (rule: GateQuorumRule): boolean => (rule.roles?.length ?? 0) > 0 || rule.notAuthor === true || rule.proven === true;
 
 /** Someone involved in a change (#4333), and why: `github:bob asked for abc1234`. */
 export interface QuorumInvolvement {

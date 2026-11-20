@@ -28,6 +28,7 @@ import {
   type OpWavesPipelineOptions,
 } from "../lexicon";
 import { assertOpWavesSpec, type OpWaveJob, type OpWavesSpec } from "./op-waves";
+import { opWavesQuorumWarnings } from "./op-waves-quorum-warnings";
 import { activeProductWords } from "../ci-product-words";
 
 /**
@@ -127,6 +128,8 @@ export interface GenerateOpWavesPipelineResult {
   files?: OpPipelineFile[];
   jobs?: OpWaveJob[];
   error?: string;
+  /** What the spec allows but should not rely on (#5349), one line each: {@link opWavesQuorumWarnings}. */
+  warnings?: string[];
 }
 
 /**
@@ -167,7 +170,8 @@ export async function generateOpWavesPipeline(
     // #4617: the control dispatch speaks in the product's words too.
     const words = options.words ?? (spec.control ? active : undefined);
     const { files, jobs } = plugin.generateOpWavesPipeline(spec, { ...options, ...(bin ? { bin } : {}), ...(words ? { words } : {}) });
-    return { success: true, files, jobs };
+    const warnings = opWavesQuorumWarnings(spec);
+    return { success: true, files, jobs, ...(warnings.length > 0 ? { warnings } : {}) };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }

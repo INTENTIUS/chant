@@ -69,6 +69,7 @@ export {
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
+export { opWavesQuorumWarnings, PLAIN_APPROVAL_MODES } from "./op-waves-quorum-warnings";
 export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesApprovals, OpWavesDigest, OpWavesInvolved, OpWavesOverride, OpWavesSpec } from "./op-waves";
 export {
   OP_WAVE_APPLY_OUTCOMES,
@@ -82,6 +83,7 @@ export {
   opWavePlansPath,
   OP_WAVE_PLAN_PATH_FLOOR,
   OP_WAVES_PREVIEW_FLOOR,
+  PROVEN_APPROVERS_FLOOR,
   opWaveRunsPath,
   opWaveReportDir,
   opWaveSetDigest,
