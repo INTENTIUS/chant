@@ -35,6 +35,7 @@ import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext, ParsedArgs } from "../registry";
 import type { LexiconPlugin } from "../../lexicon";
 import { computeComponentGraph, generateComponentsPipeline } from "../../components/cli-support";
+import type { PlacedGraphRead } from "../../components/declared-reads";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { BuildParamProvenance } from "../../provenance";
 import { discoverComponents } from "../../components/discover";
@@ -695,7 +696,9 @@ async function runComponentGraphView(
     return 1;
   }
 
-  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox, componentParams);
+  const graph = await computeComponentGraph(projectPath, ctx.args.sandbox, componentParams, {
+    reads: ctx.args.env ? { env: ctx.args.env } : {},
+  });
   if (!graph.success) {
     console.error(formatError({ message: graph.error ?? "Failed to compute component graph" }));
     return 1;
@@ -740,6 +743,7 @@ async function runComponentGraphView(
       byWave: Object.fromEntries(graph.waves.map((wave, i) => [`wave-${i + 1}`, [...wave]])),
     },
   };
+  ir = withStackReads(ir, graph.reads ?? []);
 
   if (ctx.args.projection) {
     const pipeline = await buildPipelineProjection(projectPath, ctx.args.projection, ctx.args.sandbox);
@@ -751,6 +755,44 @@ async function runComponentGraphView(
   }
 
   return emitIr(ir, ctx, format);
+}
+
+/** The id of the node a stack outside the project is drawn as (#5331). */
+export function externalStackNodeId(name: string): string {
+  return `external:${name}`;
+}
+
+/**
+ * The reads a capability finds in its steps' files (#5331, a Pulumi
+ * program's `StackReference`s) as edges of the component graph: from the
+ * reader to the component that deploys the stack it reads, `viaAttr` naming
+ * the output where the program shows it. A stack no component deploys is a
+ * node of kind `ExternalStack` with `attrs.external: true`, and the edge goes
+ * to it. The edges carry `origin: "declared"` beside the `dependsOn` edges
+ * they may repeat, since they differ in `viaAttr`. Pure.
+ */
+export function withStackReads(ir: GraphIR, reads: readonly PlacedGraphRead[]): GraphIR {
+  if (reads.length === 0) return ir;
+  const nodes = [...ir.nodes];
+  const edges = [...ir.edges];
+  const have = new Set(nodes.map((n) => n.id));
+  const seen = new Set(edges.map((e) => `${e.from}|${e.to}|${e.viaAttr ?? ""}`));
+  for (const r of reads) {
+    let to = r.upstream;
+    if (to === undefined) {
+      if (r.external === undefined) continue;
+      to = externalStackNodeId(r.external);
+      if (!have.has(to)) {
+        have.add(to);
+        nodes.push({ id: to, kind: "ExternalStack", lexicon: r.kind === "pulumi-up" ? "pulumi" : "chant", attrs: { external: true, stack: r.external } });
+      }
+    }
+    const key = `${r.reader}|${to}|${r.output ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ from: r.reader, to, kind: "ref", ...(r.output !== undefined ? { viaAttr: r.output } : {}), origin: "declared" });
+  }
+  return { ...ir, nodes, edges };
 }
 
 /**

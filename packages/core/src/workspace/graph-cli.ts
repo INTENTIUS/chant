@@ -40,7 +40,7 @@ import type { NamedCatalog } from "../graph-refs";
 import { isViewDocument, prefixView } from "../capabilities/view";
 import { refusedCapabilityView } from "./nested-graph";
 import { openGraphCache, planStamps, splitCached, storeReads, withoutUnits } from "./graph-cache";
-import { DECLARATION_FILES, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation, type RepoRef } from "./declaration";
+import { DECLARATION_FILES, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type Declaration, type ErrorLocation, type Member, type RepoRef } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberArgv, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry, REPO_KIND, type KindRegistry } from "./kinds";
 import { repoIdentity } from "./repo-ref";
@@ -400,6 +400,8 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root, repo: repoIdentity(located.rootOnDisk) }, inputs, { declaration, kinds, read: readKindLinks(declaration, located.tree, kinds) });
     // The reference catalogs over the composed graph (#5097), on full attributes whatever --detail asks for.
     if (query.catalog && !args.live) await addCatalogEdges(graph, query, args, { workspace: graph.workspace, inputs, located, runsOn: runsOnOf(declaration.members) });
+    // Reads between members that sit in the members' files (#5331), such as a StackReference.
+    if (!args.live) await addStackReadEdges(graph, declaration.members, located.rootOnDisk, args.env);
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
     for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
@@ -430,6 +432,27 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
+  }
+}
+
+/**
+ * The reads between members the lexicons of the graph's nodes find in the
+ * members' files (#5331), drawn as edges (`./stack-read-edges.ts`). A lexicon
+ * that does not load, or throws, reports none.
+ */
+async function addStackReadEdges(graph: WorkspaceGraph, members: readonly Member[], root: string, env?: string): Promise<void> {
+  const { loadPlugin } = await import("../cli/plugins");
+  const { placeStackReads } = await import("./stack-read-edges");
+  const ctx = { root, ...(env ? { env } : {}), members: members.map((m) => ({ name: m.name, dir: m.dir, kind: m.kind })) };
+  for (const lexicon of [...new Set(graph.nodes.map((n) => n.lexicon))].sort()) {
+    try {
+      const plugin = await loadPlugin(lexicon);
+      if (typeof plugin.workspaceStackReads !== "function") continue;
+      const answer = await plugin.workspaceStackReads(ctx);
+      if (answer) placeStackReads(graph, answer);
+    } catch {
+      // Not installed where this chant can load it, or it could not read: no reads.
+    }
   }
 }
 

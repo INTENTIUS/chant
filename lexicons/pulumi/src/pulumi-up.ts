@@ -146,6 +146,7 @@ import type {
   DeclaredRead,
   DeclaredReadMember,
   DeclaredReadsContext,
+  GraphRead,
   DeployContext,
   ReleaseInputs,
   ReleaseInputsContext,
@@ -849,18 +850,30 @@ export function exportUpdatedAt(exported: unknown): string | undefined {
   return typeof time === "string" && !Number.isNaN(Date.parse(time)) ? time : undefined;
 }
 
+/** One step `StackReference` reads resolved: who reads, which stack, and the outputs the export recorded. */
+export interface PulumiStackRead {
+  reader: string;
+  index: number;
+  ref: string;
+  /** The component that deploys the stack read, or the stack as `org/project/stack` (`project/stack` with no org named) when none does. */
+  target: { upstream: string } | { external: string };
+  /** Recorded outputs, secret ones left out (a secret one has no value to wire). */
+  outputs: string[];
+  /** Recorded outputs that are secret. Their names are read; no value is. */
+  secretOutputs: string[];
+}
+
 /**
- * `declaredReads` (#4547): each step's `StackReference`s, read from its
- * export (the index store's, else the checked-in one), as reads of the one
- * other `pulumi-up` step whose project and stack the reference names, one
- * per output the export recorded that is not secret, placed at
- * `/stackReferences/<reference name>/<output>`.
+ * The one reader behind `declaredReads` (#4547) and `graphReads` (#5331):
+ * each step's `StackReference`s, read from its export (the index store's,
+ * else the checked-in one), each resolved to the one other `pulumi-up` step
+ * whose project and stack it names, else to the stack it names.
  */
-export async function pulumiDeclaredReads(
+export async function pulumiStackReads(
   ctx: DeclaredReadsContext,
   members: readonly DeclaredReadMember[],
   opts: { exportStore?: SnapshotStore | null } = {},
-): Promise<DeclaredRead[]> {
+): Promise<PulumiStackRead[]> {
   const steps = members
     .map((m) => {
       const step = m.step as unknown as PulumiUpStepInput;
@@ -871,16 +884,63 @@ export async function pulumiDeclaredReads(
     })
     .filter((x): x is NonNullable<typeof x> => x !== undefined);
   const owners = steps.map((s) => ({ component: s.m.component, project: s.project, stack: s.step.stack }));
-  const out: DeclaredRead[] = [];
+  const out: PulumiStackRead[] = [];
   for (const s of steps) {
     const exported = await memberExportOf(s.dir, { stack: s.step.stack, ...(opts.exportStore !== undefined ? { store: opts.exportStore } : {}) });
     for (const ref of pulumiStackReferences(exported)) {
       const found = stackReferenceOwner(ref, { component: s.m.component, project: s.project }, owners);
-      if (!("owner" in found)) continue;
-      for (const output of ref.outputs) {
-        out.push({ reader: s.m.component, index: s.m.index, upstream: found.owner.component, output, at: `/stackReferences/${pointerSegment(ref.name)}/${pointerSegment(output)}` });
-      }
+      const stack = [ref.org, ref.project ?? s.project, ref.stack].filter((p): p is string => p !== undefined).join("/");
+      out.push({
+        reader: s.m.component,
+        index: s.m.index,
+        ref: ref.name,
+        target: "owner" in found ? { upstream: found.owner.component } : { external: stack },
+        outputs: ref.outputs,
+        secretOutputs: ref.secretOutputs,
+      });
     }
+  }
+  return out;
+}
+
+/**
+ * `declaredReads` (#4547): each step's `StackReference`s as reads of the one
+ * other `pulumi-up` step whose project and stack the reference names, one
+ * per output the export recorded that is not secret, placed at
+ * `/stackReferences/<reference name>/<output>`.
+ */
+export async function pulumiDeclaredReads(
+  ctx: DeclaredReadsContext,
+  members: readonly DeclaredReadMember[],
+  opts: { exportStore?: SnapshotStore | null } = {},
+): Promise<DeclaredRead[]> {
+  const out: DeclaredRead[] = [];
+  for (const r of await pulumiStackReads(ctx, members, opts)) {
+    if (!("upstream" in r.target)) continue;
+    for (const output of r.outputs) {
+      out.push({ reader: r.reader, index: r.index, upstream: r.target.upstream, output, at: `/stackReferences/${pointerSegment(r.ref)}/${pointerSegment(output)}` });
+    }
+  }
+  return out;
+}
+
+/**
+ * `graphReads` (#5331): the same reads, for `chant graph --components`. One
+ * per output the reference recorded, secret ones included by name, or one
+ * with no output when the export recorded none. A stack no `pulumi-up` step
+ * applies is `external`.
+ */
+export async function pulumiGraphReads(
+  ctx: DeclaredReadsContext,
+  members: readonly DeclaredReadMember[],
+  opts: { exportStore?: SnapshotStore | null } = {},
+): Promise<GraphRead[]> {
+  const out: GraphRead[] = [];
+  for (const r of await pulumiStackReads(ctx, members, opts)) {
+    const outputs = [...r.outputs, ...r.secretOutputs].sort();
+    const where = "upstream" in r.target ? { upstream: r.target.upstream } : { external: r.target.external };
+    if (outputs.length === 0) out.push({ reader: r.reader, index: r.index, ...where });
+    for (const output of outputs) out.push({ reader: r.reader, index: r.index, ...where, output });
   }
   return out;
 }
@@ -1111,6 +1171,7 @@ export function createPulumiUpCapability(opts: PulumiUpOptions = {}): Capability
     // #4555: the stack, the engine and the summary's counts, for the step's span and run record.
     traceFacts: (input, outcome) => pulumiTraceFacts(input, outcome),
     declaredReads: (ctx, members) => pulumiDeclaredReads(ctx, members, opts.snapshots !== undefined ? { exportStore: opts.snapshots } : {}),
+    graphReads: (ctx, members) => pulumiGraphReads(ctx, members, opts.snapshots !== undefined ? { exportStore: opts.snapshots } : {}),
   };
 }
 

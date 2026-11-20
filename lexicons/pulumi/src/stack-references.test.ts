@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { layerWaves } from "@intentius/chant/gated-waves";
-import { pulumiDeclaredReads } from "./pulumi-up";
+import { pulumiDeclaredReads, pulumiGraphReads } from "./pulumi-up";
+import { PULUMI_STACK_REFERENCE_GRAPH_FLOOR } from "./chant-floors";
+import { pulumiWorkspaceStackReads } from "./workspace-stack-reads";
+import { placeStackReads } from "../../../packages/core/src/workspace/stack-read-edges";
+import type { WorkspaceGraph } from "../../../packages/core/src/workspace/compose-graph";
 import { parsePulumiStackName, pulumiStackReferences, stackReferenceOwner } from "./stack-references";
 
 const ref = (stack: string, name: string, outputs: Record<string, unknown>, secret: string[] = []) => ({
@@ -111,5 +115,80 @@ describe("pulumi-up's declaredReads", () => {
   test("a reference to a stack outside the project adds no read", async () => {
     const app = project("app", exportOf([ref("prod", "acme/billing/prod", { invoiceQueue: "q" })]));
     expect(await pulumiDeclaredReads({ root: "/" }, [{ component: "app", index: 0, step: { dir: app, stack: "prod" } }], { exportStore: null })).toEqual([]);
+  });
+});
+
+describe("pulumi-up's graphReads (#5331)", () => {
+  test("the floor is a version or the next release", () => {
+    expect(PULUMI_STACK_REFERENCE_GRAPH_FLOOR).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test("a two-stack fixture: one edge per output, secret ones by name, the same reader as the wave order", async () => {
+    const network = project("network", exportOf([]));
+    const app = project("app", exportOf([ref("prod", "acme/network/prod", { vpcId: "vpc-1", token: "[secret]" }, ["token"])]));
+    const members = [
+      { component: "app", index: 0, step: { dir: app, stack: "prod" } },
+      { component: "network", index: 0, step: { dir: network, stack: "prod" } },
+    ];
+    const graph = await pulumiGraphReads({ root: "/" }, members, { exportStore: null });
+    expect(graph).toEqual([
+      { reader: "app", index: 0, upstream: "network", output: "token" },
+      { reader: "app", index: 0, upstream: "network", output: "vpcId" },
+    ]);
+    const ordered = await pulumiDeclaredReads({ root: "/" }, members, { exportStore: null });
+    expect(ordered.map((r) => `${r.reader}>${r.upstream}:${r.output}`)).toEqual(["app>network:vpcId"]);
+  });
+
+  test("a stack no step applies is external, named org/project/stack, with a bare name in the reader's project", async () => {
+    const app = project("app", exportOf([ref("prod", "acme/billing/prod", { invoiceQueue: "q" }), ref("prod", "shared", {})]));
+    const graph = await pulumiGraphReads({ root: "/" }, [{ component: "app", index: 0, step: { dir: app, stack: "prod" } }], { exportStore: null });
+    expect(graph).toEqual([
+      { reader: "app", index: 0, external: "acme/billing/prod", output: "invoiceQueue" },
+      { reader: "app", index: 0, external: "app/shared" },
+    ]);
+  });
+});
+
+describe("workspace graph stack reads (#5331)", () => {
+  const exportFor = (stack: string, resources: unknown[] = []) =>
+    exportOf([{ urn: `urn:pulumi:${stack}::x::pulumi:pulumi:Stack::x-${stack}`, type: "pulumi:pulumi:Stack" }, ...resources]);
+  const empty = (): WorkspaceGraph =>
+    ({ version: 1, workspace: { name: "w", root: "." }, members: [], nodes: [], edges: [], groups: { byMember: {} }, exports: [], imports: [], links: [], collectors: [], records: [] }) as unknown as WorkspaceGraph;
+
+  test("two members: an edge from the reader's stack node to the upstream's, naming each output", async () => {
+    const net = project("network", exportFor("prod"));
+    const app = project("app", exportFor("prod", [ref("prod", "acme/network/prod", { vpcId: "v", token: "[secret]" }, ["token"])]));
+    const answer = await pulumiWorkspaceStackReads({ root: "/", members: [{ name: "app", dir: app, kind: "pulumi" }, { name: "net", dir: net, kind: "pulumi" }, { name: "other", dir: "/x", kind: "chant" }] }, { exportStore: null });
+    const g = empty();
+    placeStackReads(g, answer!);
+    expect(g.nodes.map((n) => n.id)).toEqual(["app/pulumi:pulumi:Stack", "net/pulumi:pulumi:Stack"]);
+    expect(g.edges).toEqual([
+      { from: "app/pulumi:pulumi:Stack", to: "net/pulumi:pulumi:Stack", kind: "ref", viaAttr: "token", origin: "declared", member: "app" },
+      { from: "app/pulumi:pulumi:Stack", to: "net/pulumi:pulumi:Stack", kind: "ref", viaAttr: "vpcId", origin: "declared", member: "app" },
+    ]);
+    expect(g.edges.every((e) => e.grain === undefined)).toBe(true);
+    expect(g.groups.byMember.app).toEqual(["app/pulumi:pulumi:Stack"]);
+  });
+
+  test("a stack no member applies is an external node in the reader's member", async () => {
+    const app = project("app", exportFor("prod", [ref("prod", "acme/billing/prod", { queue: "q" })]));
+    const answer = await pulumiWorkspaceStackReads({ root: "/", members: [{ name: "app", dir: app, kind: "pulumi" }] }, { exportStore: null });
+    const g = empty();
+    placeStackReads(g, answer!);
+    const external = g.nodes.find((n) => n.attrs.external === true)!;
+    expect(external).toMatchObject({ id: "external:acme/billing/prod", member: "app", attrs: { external: true, stack: "acme/billing/prod" } });
+    expect(g.edges).toEqual([{ from: "app/pulumi:pulumi:Stack", to: "external:acme/billing/prod", kind: "ref", viaAttr: "queue", origin: "declared", member: "app" }]);
+  });
+
+  test("--env picks the member's Pulumi.<env>.yaml stack over the exported one", async () => {
+    const net = project("network", exportFor("dev"));
+    writeFileSync(join(net, "Pulumi.prod.yaml"), "config: {}\n");
+    const app = project("app", exportFor("dev", [ref("dev", "network/prod", { vpcId: "v" })]));
+    const members = [{ name: "app", dir: app, kind: "pulumi" }, { name: "net", dir: net, kind: "pulumi" }];
+    const asDeclared = await pulumiWorkspaceStackReads({ root: "/", members }, { exportStore: null });
+    expect(asDeclared!.reads).toEqual([{ reader: "app", external: "network/prod", output: "vpcId" }]);
+    writeFileSync(join(app, "Pulumi.prod.yaml"), "config: {}\n");
+    const forProd = await pulumiWorkspaceStackReads({ root: "/", env: "prod", members }, { exportStore: null });
+    expect(forProd!.reads).toEqual([{ reader: "app", upstream: "net", output: "vpcId" }]);
   });
 });

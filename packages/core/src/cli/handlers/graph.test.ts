@@ -738,6 +738,32 @@ describe("runGraph", () => {
       expect(discoverMock).not.toHaveBeenCalled();
     });
 
+    test("--components --format ir draws the capabilities' stack reads: an edge naming the output, an external node for a stack no component deploys (#5331)", async () => {
+      lintMock.mockResolvedValue({ success: true });
+      componentGraphMock.mockResolvedValue({
+        success: true,
+        order: ["network", "app"],
+        waves: [["network"], ["app"]],
+        edges: [],
+        files: {},
+        reads: [
+          { reader: "app", index: 0, kind: "pulumi-up", upstream: "network", output: "vpcId" },
+          { reader: "app", index: 0, kind: "pulumi-up", external: "acme/billing/prod", output: "queue" },
+          { reader: "app", index: 0, kind: "pulumi-up", external: "acme/billing/prod" },
+        ],
+      });
+      const exit = await runGraph({ args: makeArgs({ format: "ir", components: true }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      const ir = JSON.parse(stdoutBuf.join("\n"));
+      expect(ir.edges).toContainEqual({ from: "app", to: "network", kind: "ref", viaAttr: "vpcId", origin: "declared" });
+      expect(ir.edges).toContainEqual({ from: "app", to: "external:acme/billing/prod", kind: "ref", viaAttr: "queue", origin: "declared" });
+      expect(ir.edges).toContainEqual({ from: "app", to: "external:acme/billing/prod", kind: "ref", origin: "declared" });
+      const external = ir.nodes.filter((n: { kind: string }) => n.kind === "ExternalStack");
+      expect(external).toEqual([{ id: "external:acme/billing/prod", kind: "ExternalStack", lexicon: "pulumi", attrs: { external: true, stack: "acme/billing/prod" } }]);
+      // Waves list components only.
+      expect(ir.groups.byWave).toEqual({ "wave-1": ["network"], "wave-2": ["app"] });
+    });
+
     test("--components --format ir carries declared composites (#1492); undeclared components have no composites attr", async () => {
       lintMock.mockResolvedValue({ success: true });
       componentGraphMock.mockResolvedValue({

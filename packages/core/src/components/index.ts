@@ -66,6 +66,7 @@ export {
   type GroupRun,
   type ReportedGroupRead,
   type DeclaredRead,
+  type GraphRead,
   type DeclaredReadMember,
   type DeclaredReadsContext,
   type DiscoveredRuns,
@@ -235,7 +236,7 @@ export {
   deriveFanOut,
   fanOutRegistry,
 } from "./fan-out-support";
-export { applyDeclaredReads, declaredReadsOf, withDeclaredReads, type PlacedRead } from "./declared-reads";
+export { applyDeclaredReads, declaredReadsOf, graphReadsOf, withDeclaredReads, GRAPH_READS_FLOOR, type PlacedRead, type PlacedGraphRead } from "./declared-reads";
 export {
   EcsFargateComponent,
   type EcsFargateComponentConfig,

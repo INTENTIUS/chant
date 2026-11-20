@@ -18,7 +18,12 @@
  * waves put the referenced stack first, a failed upstream holds the reader,
  * and a reader whose upstream's plan cannot say a value waits for its `up`.
  *
- * What adds no edge, and is reported on the plan by name
+ * `graphReads` (`./pulumi-up.ts`, #5331) is the same reader for `chant graph
+ * --components`: an edge from the reader's component to the upstream's, one
+ * per output the export recorded (secret ones by name), and for a reference
+ * to a stack no step applies, a node marked external to draw the edge to.
+ *
+ * What adds no edge to the wave order, and is reported on the plan by name
  * (`PulumiUpArtifact.stackReferences.outside`): a reference to a stack no
  * step in the project applies, one two steps could own, and one whose
  * export recorded no output that is not secret (core reads a stack's

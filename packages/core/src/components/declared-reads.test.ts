@@ -5,8 +5,8 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { CapabilityRegistry, type DeclaredRead, type DeclaredReadMember } from "./capability";
-import { applyDeclaredReads, declaredReadsOf, withDeclaredReads } from "./declared-reads";
+import { CapabilityRegistry, type DeclaredRead, type DeclaredReadMember, type GraphRead } from "./capability";
+import { applyDeclaredReads, declaredReadsOf, graphReadsOf, withDeclaredReads } from "./declared-reads";
 import { planFanOut } from "./fan-out";
 import { unresolvedWiringReferences } from "./driver";
 import { capabilitySteps } from "./wave-plan";
@@ -99,5 +99,48 @@ describe("declared reads (#4466)", () => {
     });
     expect(await declaredReadsOf(components, throwing, "/project")).toEqual([]);
     expect(await withDeclaredReads(components, throwing, "/project")).toEqual(components);
+  });
+});
+
+describe("graph reads (#5331)", () => {
+  const build = (graphReads?: () => GraphRead[], declared?: () => DeclaredRead[]) => {
+    const r = new CapabilityRegistry();
+    r.register({
+      kind: "fake-stack",
+      run: async () => {
+        throw new Error("not called here");
+      },
+      ...(graphReads ? { graphReads } : {}),
+      ...(declared ? { declaredReads: declared } : {}),
+    } as never);
+    return r;
+  };
+
+  test("reads naming a component and reads naming a stack outside the project are kept; a component outside the project and a self read are not", async () => {
+    const r = build(() => [
+      { reader: "app", upstream: "network", output: "vpcId" },
+      { reader: "app", external: "acme/billing/prod", output: "queue" },
+      { reader: "app", upstream: "ghost", output: "x" },
+      { reader: "app", upstream: "app", output: "y" },
+      { reader: "nobody", external: "a/b/c" },
+    ]);
+    const out = await graphReadsOf([stack("app"), stack("network")], r, "/project");
+    expect(out.map((x) => [x.reader, x.upstream ?? x.external, x.output])).toEqual([
+      ["app", "acme/billing/prod", "queue"],
+      ["app", "network", "vpcId"],
+    ]);
+  });
+
+  test("a capability with only declaredReads reports those", async () => {
+    const r = build(undefined, () => [{ reader: "app", upstream: "network", output: "VpcId", at: "/x" }]);
+    const out = await graphReadsOf([stack("app"), stack("network")], r, "/project");
+    expect(out).toEqual([{ reader: "app", index: 0, upstream: "network", output: "VpcId", kind: "fake-stack" }]);
+  });
+
+  test("a throw counts as no reads", async () => {
+    const r = build(() => {
+      throw new Error("boom");
+    });
+    expect(await graphReadsOf([stack("app")], r, "/project")).toEqual([]);
   });
 });
