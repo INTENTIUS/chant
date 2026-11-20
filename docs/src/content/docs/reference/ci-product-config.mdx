@@ -78,6 +78,10 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `agent.wave-refused.max_runs` | the most refused-wave summaries per day | a whole number | `WaveSummarySpec.maxRuns` (`CHANT_WAVE_SUMMARY_MAX_RUNS`) |
 | `agent.wave-refused.max_cost_usd` | the most US dollars the refused-wave summaries may cost per day | a number above 0 | `WaveSummarySpec.maxCostUsd` (`CHANT_WAVE_SUMMARY_MAX_COST_USD`) |
 | `approval_rules.<rule>.proven`, `approval_rules[].proven` | a rule's count met only by approvers a seal or a review proves | `true` or `false` | `proven` of a quorum rule (`GateQuorumRule`) |
+| `environments.<name>.publish.<artifact>` | a release artifact the stage publishes once it applied, kept with the release digest | a map with `member` and `output`, or with `secret` naming where a secret is kept | a stage's `publish` in `.chant/pipeline.ts` |
+| `environments.<name>.publish.<artifact>.secret.forge_secret` | the forge secret a secret artifact names; the artifact holds the name, never the secret | a secret or variable name | `forgeSecret` in a stage's `publish` |
+| `environments.<name>.reads.<variable>` | an artifact of an earlier stage that the stage's deploy gets in a variable, from the release it takes | a map with `stage` and `artifact` | a stage's `reads` in `.chant/pipeline.ts` |
+| `control.release` | the `<product>-applied` dispatch carries the release digest of the applied commit | `true` or `false` | `release` of the control settings, sent as `CHANT_CONTROL_RELEASE` |
 
 A product writes one component per member and puts each environment's target in its step's `environments` map, keyed by environment name. Before the step's capability sees its input, chant merges the entry for the run's environment over the step's own input, so `promote --to staging` applies the staging target and records it under staging, and `rollback` and `redeploy` pick the target of the environment they act on. An environment the map does not name is refused before anything runs, and the refusal lists the environments it names. A pull request's environment `pr-<n>` takes its template environment's entry.
 
@@ -110,6 +114,25 @@ stages: [{ name: "prod", waves: [/* ... */], replanDependents: ["network", "shar
 ```
 
 The mechanism ships as `replanAfterApply` from `@intentius/chant/components`, and a product feature-detects it on `UPSTREAM_REPLAN_FLOOR`.
+
+### Release artifacts
+
+A stage names the values it publishes for each release under `environments.<name>.publish`, and a later stage names what it reads of them under `environments.<name>.reads`. The product maps both onto the stage's `publish` and `reads` in `.chant/pipeline.ts` with `pipelineFromConfig`, which renames a secret's snake_case keys (`aws_secrets_manager`, `json_key`) to the set's words. The [pipeline reference](/chant/reference/pipeline/#release-artifacts) gives the rules.
+
+```yaml
+environments:
+  dev:
+    publish:
+      endpoint: { member: cluster, output: endpoint }
+      db_password: { secret: { aws_secrets_manager: "arn:aws:secretsmanager:us-east-2:111111111111:secret:dev/db" } }
+  staging:
+    reads:
+      TF_VAR_dev_endpoint: { stage: dev, artifact: endpoint }
+control:
+  repo: github.com/acme/control
+  op: deploy
+  release: true
+```
 
 ### Cost estimate
 

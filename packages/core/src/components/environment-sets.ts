@@ -173,6 +173,14 @@ const isMap = (v: unknown): v is Record<string, unknown> => typeof v === "object
 /** The variable names a set refuses: chant's own, which the jobs set themselves. */
 const isReserved = (name: string): boolean => name.startsWith("CHANT_");
 
+/**
+ * Where `ref` is kept, or why it names no store: a sentence that follows
+ * the secret's name. A release artifact's secret (#5356) is checked here too.
+ */
+export function environmentSecretSource(ref: unknown): EnvironmentSecretSource | string {
+  return sourceOf(ref);
+}
+
 /** Where `ref` is kept, or why it names no store. */
 function sourceOf(ref: unknown): EnvironmentSecretSource | string {
   if (typeof ref === "string") return NAME.test(ref) ? { store: "forge", secret: ref } : `names the forge secret ${JSON.stringify(ref)}, which is not a secret name`;

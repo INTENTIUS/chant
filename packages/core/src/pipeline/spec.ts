@@ -23,6 +23,7 @@ import { opWavesControlProblems, type GateApprovalSource, type OpWave, type OpWa
 import type { OpWaveHolds } from "../op/op-waves-capability-spec";
 import type { GateQuorumRule } from "../op/gate-quorum";
 import type { OpEnvironment } from "../lexicon";
+import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
 
 /** The `kind` a folded pipeline carries. A reader refuses any other. */
 export const PIPELINE_SPEC_KIND = "chant.pipeline/v1";
@@ -103,6 +104,18 @@ export interface PipelineStage {
    * plans; the plan waits at its gate.
    */
   replanDependents?: string[];
+  /**
+   * The release artifacts the stage publishes once it applied (#5356), by
+   * name: a member's output, or where a secret is kept. Recorded on
+   * `<stage>/artifacts.jsonl` with the release digest. Absent: none.
+   */
+  publish?: Record<string, StageArtifactSource>;
+  /**
+   * The artifacts of earlier stages the stage reads, of the release it takes
+   * (#5356), keyed by the variable its deploy gets each in. `chant build`
+   * refuses a read no earlier stage publishes. Absent: none.
+   */
+  reads?: Record<string, StageArtifactRead>;
 }
 
 /**
@@ -147,7 +160,7 @@ const TOLERANCE = /^(100|[1-9]?[0-9])%$/;
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
 export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
@@ -256,6 +269,7 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   if (tolerance) out.push(tolerance);
   const replan = replanDependentsProblem(stage.replanDependents, `${at}.replanDependents`);
   if (replan) out.push(replan);
+  out.push(...stagePublishProblems(stage.publish, at), ...stageReadsProblems(stage.reads, at));
   return out;
 }
 
@@ -273,6 +287,7 @@ export function pipelineSpecProblems(value: unknown): string[] {
   else {
     const seen = new Set<string>();
     value.stages.forEach((s, i) => out.push(...stageProblems(s, i, seen)));
+    out.push(...stageArtifactsSpecProblems(value));
   }
   if (value.defaults !== undefined) {
     if (!isMap(value.defaults)) out.push("the pipeline's defaults must be op-waves settings: { \"op\", \"step\", ... }");
@@ -356,6 +371,19 @@ export const PIPELINE_SPEC_SCHEMA = {
           failureTolerance: { $ref: "#/$defs/tolerance" },
           forgeEnvironment: { type: "object", required: ["name"], properties: { name: { type: "string", minLength: 1 }, url: { type: "string" } } },
           replanDependents: { type: "array", items: { type: "string", minLength: 1 } },
+          publish: {
+            type: "object",
+            additionalProperties: {
+              oneOf: [
+                { type: "object", required: ["member", "output"], additionalProperties: false, properties: { member: { type: "string", minLength: 1 }, output: { type: "string", minLength: 1 } } },
+                { type: "object", required: ["secret"], additionalProperties: false, properties: { secret: { type: ["string", "object"] } } },
+              ],
+            },
+          },
+          reads: {
+            type: "object",
+            additionalProperties: { type: "object", required: ["stage", "artifact"], additionalProperties: false, properties: { stage: { type: "string", pattern: NAME.source }, artifact: { type: "string", minLength: 1 } } },
+          },
         },
       },
     },

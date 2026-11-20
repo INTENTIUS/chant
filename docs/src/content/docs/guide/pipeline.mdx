@@ -84,6 +84,17 @@ With a pipeline, `components promote` reads it at the default branch's tip:
 
 `chant workspace train promote` reads the same holds for each member before any member deploys.
 
+## Hand values to later stages
+
+A stage publishes named values for the release it applied, and a later stage reads them from that same release:
+
+```ts
+{ name: "dev", waves: [...], publish: { endpoint: { member: "cluster", output: "endpoint" } } },
+{ name: "staging", waves: [...], reads: { TF_VAR_dev_endpoint: { stage: "dev", artifact: "endpoint" } } },
+```
+
+The merge publishes `dev`'s artifacts right after it cuts the release. `promote --to staging --release v1.4.0` reads `endpoint` from `dev`'s record of v1.4.0 into `TF_VAR_dev_endpoint` before it deploys, and refuses when `dev` has not published it for that release. `chant build` refuses a read that no earlier stage publishes. A secret is published as where it is kept (`{ secret: { awsSecretsManager: "..." } }`), and an output the engine marks sensitive is refused. Another repository reads them with `chant pipeline artifacts read --stage dev --from <dir>`. The [reference](/chant/reference/pipeline/#release-artifacts) has the rules.
+
 ## Let a wave of many targets go on past a few failures
 
 A wave that applies to many tenant databases can tolerate a few failed runs. Set `failureTolerance` on the stage, or on one wave:

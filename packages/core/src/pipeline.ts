@@ -45,9 +45,39 @@ export function pipeline(declaration: PipelineDeclaration): PipelineDeclaration 
 
 export * from "./pipeline/spec";
 export { foldPipelineSource, pipelineFindingLine, PIPELINE_FOLD_RULE, PIPELINE_MODULE, type PipelineFinding, type PipelineFold } from "./pipeline/fold";
-export { promotionOrderOf, pipelineStage, releaseCutHook, stageHeldAt, stageHeldLine, stageWavesName, stageWavesSpec, type StageHeld } from "./pipeline/stages";
+export { artifactsPublishHook, promotionOrderOf, pipelineStage, releaseCutHook, stageHeldAt, stageHeldLine, stageWavesName, stageWavesSpec, type StageHeld } from "./pipeline/stages";
 export { gitShowPipeline, promoteBase, readMemberPipeline, readPipelineAt, type PipelineRead, type PipelineShow } from "./pipeline/read";
 export { lineDiff, pipelineChange, pipelineChangeSection, pipelineSpecLines, type PipelineChange } from "./pipeline/diff";
+export {
+  gitStageArtifactPort,
+  parseStageArtifactRecords,
+  publishStageArtifacts,
+  readStageArtifacts,
+  releaseCutFrom,
+  resolveStageReads,
+  stageArtifactsNote,
+  stageArtifactsSpecProblems,
+  stageArtifactText,
+  stagePublishProblems,
+  stageReadsProblems,
+  withStageReadVariables,
+  STAGE_ARTIFACT_MAX_BYTES,
+  STAGE_ARTIFACTS_FILE,
+  STAGE_ARTIFACTS_FLOOR,
+  STAGE_ARTIFACTS_KIND,
+  STAGE_ARTIFACTS_RELEASE_ENV,
+  type MemberOutputs,
+  type PublishStageArtifactsInput,
+  type PublishStageArtifactsResult,
+  type ResolvedStageRead,
+  type StageArtifactEntry,
+  type StageArtifactPort,
+  type StageArtifactRead,
+  type StageArtifactRecord,
+  type StageArtifactSource,
+  type StageArtifactValue,
+  type StageReadsResult,
+} from "./pipeline/artifacts";
 export { pipelinePromoteGates, pipelinePromoteSource, promotedDigest, type PipelineGatesOutcome, type PipelinePromoteStop } from "./pipeline/promote";
 export {
   checkPipelineFile,

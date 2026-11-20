@@ -5,7 +5,8 @@
  * `yodel.config.ts` itself, so the product writes the file from its config,
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
- * `.freeze`, `.failure_tolerance`, `approval_rules`, `release.cut`) onto a
+ * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `approval_rules`,
+ * `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
  * {@link checkPipelineFile} is what `<product> ci --check` runs: it fails
  * when the committed file is not the one the config writes now.
@@ -36,6 +37,10 @@ export interface PipelineEnvironmentConfig {
   forge_environment?: string | OpEnvironment;
   forgeEnvironment?: string | OpEnvironment;
   canary?: boolean;
+  /** `publish.<artifact>`: `{ member, output }`, or `{ secret }` in a set's secret words, snake_case or camelCase (#5356). */
+  publish?: Record<string, { member?: string; output?: string; secret?: unknown }>;
+  /** `reads.<variable>`: `{ stage, artifact }` (#5356). */
+  reads?: Record<string, { stage: string; artifact: string }>;
   [key: string]: unknown;
 }
 
@@ -86,6 +91,22 @@ function rulesOf(config: ApprovalRulesConfig | undefined): GateQuorumRule[] | un
   }));
 }
 
+const SECRET_WORDS: Record<string, string> = { forge_secret: "forgeSecret", aws_secrets_manager: "awsSecretsManager", gcp_secret_manager: "gcpSecretManager", azure_key_vault: "azureKeyVault", json_key: "jsonKey" };
+
+/** A secret's place in camelCase, as a set's secret takes it (#5348): a product's snake_case keys renamed, a string kept. */
+function secretRefOf(ref: unknown): unknown {
+  if (ref === null || typeof ref !== "object" || Array.isArray(ref)) return ref;
+  return Object.fromEntries(Object.entries(ref).map(([k, v]) => [SECRET_WORDS[k] ?? k, v]));
+}
+
+/** A stage's `publish` from `environments.<name>.publish` (#5356). */
+function publishOf(publish: PipelineEnvironmentConfig["publish"]): PipelineStage["publish"] | undefined {
+  if (!publish || Object.keys(publish).length === 0) return undefined;
+  return Object.fromEntries(
+    Object.entries(publish).map(([name, source]) => [name, (source && "secret" in source ? { secret: secretRefOf(source.secret) } : { member: source?.member, output: source?.output }) as NonNullable<PipelineStage["publish"]>[string]]),
+  );
+}
+
 function holdOf(hold: PipelineEnvironmentConfig["hold"]): PipelineHold | undefined {
   if (hold === undefined || hold === false) return undefined;
   if (hold === true) return true;
@@ -120,6 +141,8 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(env.freeze && env.freeze.length > 0 ? { freeze: env.freeze.map((w) => ({ ...w })) } : {}),
       ...(tolerance !== undefined ? { failureTolerance: tolerance } : {}),
       ...(forge ? { forgeEnvironment: forge } : {}),
+      ...(publishOf(env.publish) ? { publish: publishOf(env.publish)! } : {}),
+      ...(env.reads && Object.keys(env.reads).length > 0 ? { reads: Object.fromEntries(Object.entries(env.reads).map(([k, r]) => [k, { stage: r.stage, artifact: r.artifact }])) } : {}),
     };
   });
   const declaration: PipelineDeclaration = {

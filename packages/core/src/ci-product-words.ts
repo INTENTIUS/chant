@@ -981,6 +981,39 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     also: ["environments.<name>.replan_dependents"],
     products: [],
   },
+  // #5356: release artifacts, values a stage publishes for the release it applied, read by later stages and other repos.
+  {
+    key: "environments.<name>.publish.<artifact>",
+    concept: "a release artifact the stage publishes once it applied, kept with the release digest",
+    section: "stage",
+    value: "a map with `member` and `output` (a member's output), or with `secret` (where a secret is kept, as `environments.<name>.secrets.<variable>` takes it)",
+    chant: "a stage's `publish` in `.chant/pipeline.ts`, recorded on `<stage>/artifacts.jsonl`",
+    products: [],
+  },
+  {
+    key: "environments.<name>.publish.<artifact>.secret.forge_secret",
+    concept: "the forge secret a secret artifact names; the artifact holds the name, never the secret",
+    section: "stage",
+    pattern: SECRET_NAME,
+    chant: "`forgeSecret` of the `EnvironmentSecretRef` in a stage's `publish`",
+    products: [],
+  },
+  {
+    key: "environments.<name>.reads.<variable>",
+    concept: "an artifact of an earlier stage that the stage's deploy gets in a variable, from the release it takes",
+    section: "stage",
+    value: "a map with `stage` (an earlier stage) and `artifact` (a name that stage publishes)",
+    chant: "a stage's `reads` in `.chant/pipeline.ts`",
+    products: [],
+  },
+  {
+    key: "control.release",
+    concept: "the `<product>-applied` dispatch carries the release digest the applied commit was cut into, so a downstream run reads that release's artifacts",
+    section: "stage",
+    value: "`true` or `false`",
+    chant: "`release` of `ControlSettingsInput`, sent as `CHANT_CONTROL_RELEASE`",
+    products: [],
+  },
   // #5334: the cost estimate, in the plan note, as the policy's input.cost, and as a hold.
   {
     key: "cost.command",

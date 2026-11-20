@@ -46,6 +46,20 @@ export function releaseCutHook(spec: Pick<PipelineSpec, "release">): OpWaveHook 
   return { name: "release-cut", command: [...bin, "release", "cut", spec.release?.label ?? "auto", "--yes"] };
 }
 
+/**
+ * The hook a stage publishes its release artifacts with (#5356), run after
+ * the release cut on the first stage's last wave: `chant pipeline artifacts
+ * publish --stage <stage>`, through the cut's bin. Undefined when the stage
+ * publishes nothing or the merge cuts no release.
+ */
+export function artifactsPublishHook(spec: Pick<PipelineSpec, "release" | "stages">, stage: string): OpWaveHook | undefined {
+  if (spec.release?.cut === false) return undefined;
+  const declared = spec.stages.find((s) => s.name === stage)?.publish;
+  if (!declared || Object.keys(declared).length === 0) return undefined;
+  const bin = spec.release?.bin ?? ["chant"];
+  return { name: "artifacts-publish", command: [...bin, "pipeline", "artifacts", "publish", "--stage", stage] };
+}
+
 function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | undefined): OpWaveHooks | undefined {
   if (!first) return then;
   if (!then) return first;
@@ -85,7 +99,8 @@ export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
       ...(tolerance !== undefined && tolerance !== 0 ? { failureTolerance: tolerance } : {}),
     };
     const cut = first && k === stage.waves.length - 1 ? releaseCutHook(spec) : undefined;
-    if (cut) wave.hooks = joinHooks(wave.hooks, { after: { apply: [cut] } });
+    const publish = cut ? artifactsPublishHook(spec, stage.name) : undefined;
+    if (cut) wave.hooks = joinHooks(wave.hooks, { after: { apply: publish ? [cut, publish] : [cut] } });
     return wave;
   });
   const approvals = gate.quorum !== undefined ? { ...defaults.approvals, quorum: gate.quorum } : defaults.approvals;
