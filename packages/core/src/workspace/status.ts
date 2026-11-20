@@ -263,10 +263,14 @@ export interface StatusMember {
    */
   featureFlags: StatusFeatureFlag[] | null;
   /**
-   * The stages of the member's pipeline that keep a stage log (#5353), for
-   * the environments asked for: the release in each, the releases waiting
-   * for it, and the waiting releases a newer one replaced. Absent when no
-   * stage log names those environments. Added in contract 1.
+   * The stage queues of the member's pipeline (#5353): the release in each
+   * stage, the releases waiting for it, and the waiting releases a newer one
+   * replaced. One entry per stage of the pipeline, in pipeline order,
+   * whatever environment was asked for, and only from the log of the
+   * member's own pipeline, also when members share a ledger (#5419). A
+   * member with no pipeline lists the logs of its own ledger for the
+   * environments asked for. Absent when no stage log applies. Added in
+   * contract 1.
    */
   stageQueues?: StatusStageQueue[];
   /**
@@ -823,7 +827,12 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
             }),
           }
         : undefined;
-      const stageQueues = (await readMemberStageQueues(gatesDir, commit, found.dir, query.readStageLogs)).filter((q) => envs.includes(q.stage));
+      // #5419: a pipeline's queues cover every stage and only its own log, also on a ledger members share. A member with no pipeline keeps the environments asked for, on a ledger of its own.
+      const stageQueues = spec
+        ? await readMemberStageQueues(gatesDir, commit, found.dir, query.readStageLogs, { name: spec.name, stages: spec.stages.map((s) => s.name) })
+        : own
+          ? (await readMemberStageQueues(gatesDir, commit, found.dir, query.readStageLogs)).filter((q) => envs.includes(q.stage))
+          : [];
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       // The declaration's x- keys go back on the objects that hold them (#3595).
       const x = (pointer: string) => extensionsAt(declaration, pointer);
