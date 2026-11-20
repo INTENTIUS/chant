@@ -143,9 +143,10 @@ import type {
 
 import { emitGitlabFile } from "./ci-jobs";
 import { assertReviewSplit, GITLAB_REVIEW_NOTES_VAR, gitlabReviewJobs, REVIEW_DIR, reviewNoteJobName } from "./review-jobs";
-import { AGENT_DIR, resolveAgentSpec } from "@intentius/chant/ci-agent";
+import { AGENT_ALERT_SCHEDULE, AGENT_DIR, resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
-import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
+import { TRIGGER_GUARD_RULE, triggerPipelineWarnings } from "./trigger-pipeline-jobs";
+import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabAlertAgentRules, gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
 import { gitlabCommitHeader, gitlabCommitJobs, gitlabCommitPushJobName, gitlabFindingArtifacts, gitlabFindingRunLines } from "./commit-jobs";
 import { COMMIT_DIR, resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { assertScheduledOpCloud, scheduledOpUpdateJobName } from "@intentius/chant/scheduled-op-cloud";
@@ -349,6 +350,32 @@ export function generateGitlabOpPipeline(
       });
       doc[jobName] = commit;
       const pushName = gitlabCommitPushJobName(jobName);
+      doc[pushName] = push;
+      noteJobs.push(pushName);
+      continue;
+    }
+    // #5329: the alert agent is its own pair of jobs, in a pipeline the relay's trigger token starts and in its schedule.
+    if (spec.agent?.on === "alert") {
+      const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
+      const jobName = jobPrefix + ciJobName(spec.name);
+      const trigger = spec.trigger ?? { kind: "cron" as const, schedule: spec.schedule ?? AGENT_ALERT_SCHEDULE };
+      if (trigger.kind !== "cron") throw new Error(`${subject} sets an alert agent, which runs when the relay starts it and on a schedule; give it a cron trigger or none.`);
+      anyCron = true;
+      jobs.push({ jobName, op: spec.name, trigger, findingMode: "report" });
+      opLines.push(...gitlabAgentHeader(jobName, settings, spec.agent.tokenEnv));
+      const { agent, push } = gitlabAgentJobs({
+        jobName,
+        stage,
+        image,
+        settings,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        script: [...setupScript, ...beforeScript],
+        ...(spec.agent.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+        alertRules: gitlabAlertAgentRules(spec.name, SELECTOR_VAR),
+      });
+      doc[jobName] = agent;
+      const pushName = gitlabAgentPushJobName(jobName);
       doc[pushName] = push;
       noteJobs.push(pushName);
       continue;
@@ -587,6 +614,18 @@ export function generateGitlabOpPipeline(
       "# merge request pipeline gets it.",
     );
   }
+  // #5329: the relay's trigger pipeline runs the project's own jobs too; the file says so, and the warnings name each unguarded one.
+  const alertAgent = ops.some((s) => s.agent?.on === "alert");
+  if (alertAgent) {
+    headerLines.push(
+      "#",
+      "# An alert agent runs in a pipeline the relay starts with a pipeline",
+      "# trigger token, and GitLab runs every job of .gitlab-ci.yml that a",
+      "# trigger pipeline reaches, a deploy job too. Put this first in the",
+      "# rules of each job of your own:",
+      ...TRIGGER_GUARD_RULE.split("\n").map((l) => `#   ${l}`),
+    );
+  }
   headerLines.push("#", ...opLines);
 
   const yaml = emitGitlabFile(
@@ -594,7 +633,9 @@ export function generateGitlabOpPipeline(
     headerLines,
   );
 
-  return { files: [{ name: fileName, yaml }], jobs };
+  const generated = new Set([...jobs.map((j) => j.jobName), ...noteJobs, ...Object.keys(doc)]);
+  const warnings = alertAgent ? triggerPipelineWarnings(options.projectCi, generated, [fileName]) : [];
+  return { files: [{ name: fileName, yaml }], jobs, ...(warnings.length > 0 ? { warnings } : {}) };
 }
 
 /**

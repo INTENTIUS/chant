@@ -12,12 +12,13 @@ An agent's change arrives as a commit on a pull request. It gets the same plan, 
 
 <AgentFlow />
 
-## Four ways to work with an agent
+## Five ways to work with an agent
 
 | You want | Use | The agent |
 |---|---|---|
 | A change on a pull request you already have | [A comment agent](/chant/guide/agent-jobs/#answer-a-comment) | Pushes one commit to the pull request when someone writes `/chant agent <ask>` |
 | Drift fixed for you | [A drift agent](/chant/guide/agent-jobs/#follow-a-drift-check) | Opens a pull request after a drift check finds the cloud has moved, and updates it on the next drift |
+| A fix proposed when production alerts | [An alert agent](/chant/guide/agent-jobs/#answer-a-production-alert) | Opens a pull request after an alert from Alertmanager, PagerDuty, Datadog, Honeycomb, Sentry or a webhook of your own reaches the relay |
 | A second reader on every pull request | [The review agent](/chant/guide/review-agent/) | Posts a note naming the risk it sees, which a [gate policy](/chant/guide/gate-policy/) can read |
 | Your own agent, in an editor or a harness | [The MCP server's propose tier](/chant/cli/mcp/#propose-tier) | Opens pull requests and comments through a CI product's tools |
 

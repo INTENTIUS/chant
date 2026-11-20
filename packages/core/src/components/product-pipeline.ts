@@ -40,7 +40,7 @@ import { checkJobOptions, PR_LOOP_REPORT_DIR, prActionJob, prCommentLockJobs, pr
 import type { DriverComponent } from "./driver";
 import type { OpWavesPipelineOptions, ScheduledOpSpec } from "../lexicon";
 import type { CiRunner } from "../ci-jobs";
-import { resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
+import { AGENT_ALERT_SCHEDULE, resolveAgentSpec, type OpAgentSpec } from "../ci-agent";
 import { resolveCommitSpec, type OpCommitSpec } from "../ci-commit";
 import type { CiResponses } from "../ci-respond";
 import { planEvidenceOf, productPlanContext, productPlanJobs, productPlanReachLock, type ProductPlanJob, type ProductPlanOptions, type ProductPlanReachLock } from "./product-plan";
@@ -437,6 +437,22 @@ export function productAgentSpec(wordsIn: CiProductWordsInput | CiProductWords, 
   const agent: OpAgentSpec = { on: "comment", comment, ...settings };
   resolveAgentSpec(name, agent, words.product);
   return { name, trigger: { kind: "pull_request" }, agent, ...(runner !== undefined ? { runner } : {}) };
+}
+
+/**
+ * The alert agent's Op spec (#5329): a workflow of its own that the relay
+ * starts after it records an alert, and that runs on its schedule
+ * (`AGENT_ALERT_SCHEDULE` unless `schedule` names another cron). The agent
+ * answers each member's new alerts with a pull request from
+ * `<product>/agent/<name>-<member>`. Off until a product asks for it.
+ */
+export function productAlertAgent(wordsIn: CiProductWordsInput | CiProductWords, options: ProductAgentOptions & { schedule?: string } = {}): ScheduledOpSpec {
+  const words = assertProductWords(wordsIn);
+  const { name: given, runner, schedule, ...settings } = options;
+  const name = given ?? `${words.product}-alert-agent`;
+  const agent: OpAgentSpec = { on: "alert", ...settings };
+  resolveAgentSpec(name, agent, words.product);
+  return { name, trigger: { kind: "cron", schedule: schedule ?? AGENT_ALERT_SCHEDULE }, agent, ...(runner !== undefined ? { runner } : {}) };
 }
 
 /**

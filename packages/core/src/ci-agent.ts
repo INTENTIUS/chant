@@ -5,11 +5,14 @@
  * moved here, so terragucci and plywood generate the same jobs in their own
  * words.
  *
- * Two triggers. `comment`: `/<product> agent <ask>` on a pull request
+ * Three triggers. `comment`: `/<product> agent <ask>` on a pull request
  * (`parseProductComment`), answered with a commit pushed to the pull
  * request's branch. `drift`: a scheduled Op whose run exits with chant's
  * `drift` code, answered with a pull request from the agent's own branch,
- * opened the first time and updated after.
+ * opened the first time and updated after. `alert` (#5329): a production
+ * alert the relay recorded as a signed fact (`./agent-facts.ts`,
+ * `./ci-agent-alert.ts`), answered the way drift is, from a branch per
+ * member.
  *
  * Two jobs, so the model never shares a job with a token that can write:
  *
@@ -41,6 +44,8 @@ import { CHANT_EXIT } from "./exit-codes";
 import { COMMENT_ALLOW_ENV, commentAllowFromEnv, commentAllowProblems, decideCommentAllow, type CommentAllow, type CommentAllowReads } from "./ci-comment-allow";
 import { parseProductComment, type CiProductWords } from "./ci-product-words";
 import { quoted } from "./op/activities/review-agent";
+import { AGENT_JOIN_WINDOW_MINUTES, pendingAgentFacts, verifyAgentFact, type AgentFact } from "./agent-facts";
+import { agentAlertPrompt, alertOfData, type AlertRecord } from "./ci-agent-alert";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { PrForge } from "./pr-forge";
@@ -49,8 +54,17 @@ import type { PrForge } from "./pr-forge";
 export const CI_AGENT_FLOOR = "0.124.55";
 
 /** What starts an agent run. */
-export type AgentTrigger = "comment" | "drift";
-export const AGENT_TRIGGERS: readonly AgentTrigger[] = ["comment", "drift"];
+export type AgentTrigger = "comment" | "drift" | "alert";
+export const AGENT_TRIGGERS: readonly AgentTrigger[] = ["comment", "drift", "alert"];
+
+/** The triggers answered from a branch of the agent's own, with a pull request it opens and updates. */
+export const AGENT_BRANCH_TRIGGERS: readonly AgentTrigger[] = ["drift", "alert"];
+
+/** The variable the alert agent's jobs read the relay key from, to check the facts' signatures. */
+export const AGENT_RELAY_KEY_ENV = "CHANT_RELAY_KEY";
+
+/** How often the alert agent's workflow runs on its own, to pick up a fact whose start did not arrive. */
+export const AGENT_ALERT_SCHEDULE = "*/15 * * * *";
 
 /**
  * The trigger a run record names (#4817): one of chant's {@link AgentTrigger}s,
@@ -65,7 +79,9 @@ export type AgentRunTrigger = AgentTrigger | (string & {});
  * writes. With `on: "comment"` the spec is the agent's own workflow,
  * answering `comment` on a pull request, and its trigger is not read. With
  * `on: "drift"` the jobs follow the Op's own job and run when its run exits
- * with chant's `drift` code.
+ * with chant's `drift` code. With `on: "alert"` (#5329) the spec is the
+ * agent's own workflow, started by the relay after it records an alert and
+ * by its own schedule, and the jobs read the alert facts themselves.
  */
 export interface OpAgentSpec {
   on: AgentTrigger;
@@ -93,8 +109,16 @@ export interface OpAgentSpec {
   tokenEnv?: string;
   /** Paths beyond chant's own that the agent may not change: a product's config files and directories (a trailing `/`). */
   guarded?: string[];
-  /** The agent's branch, for `on: "drift"`. Default `<product>/agent/<name>`. */
+  /** The agent's branch, for `on: "drift"` and `on: "alert"`. Default `<product>/agent/<name>`; an alert for a member adds `-<member>`. */
   branch?: string;
+  /**
+   * For `on: "alert"` (#5329): the minutes after a member's first alert in
+   * which later alerts for that member join the same run. Default
+   * {@link AGENT_JOIN_WINDOW_MINUTES}.
+   */
+  window?: number;
+  /** For `on: "alert"`: the secret (GitHub, Forgejo) or variable (GitLab) holding the relay key the facts are signed with. Default `CHANT_RELAY_KEY`. */
+  relayKeyEnv?: string;
   /** The ledger environment the runs are recorded under. Default `local`, the rule every Op follows (#4551 ruling A). */
   env?: string;
   /**
@@ -122,6 +146,10 @@ export interface AgentSettings {
   maxTurns: number;
   guarded: string[];
   branch?: string;
+  /** See {@link OpAgentSpec.window}: minutes, for `on: "alert"`. */
+  window?: number;
+  /** See {@link OpAgentSpec.relayKeyEnv}, for `on: "alert"`. */
+  relayKeyEnv?: string;
   env: string;
   /** See {@link OpAgentSpec.commentAllow}. */
   commentAllow?: CommentAllow;
@@ -170,6 +198,7 @@ export const AGENT_ENV = {
   maxTurns: "CHANT_AGENT_MAX_TURNS",
   guarded: "CHANT_AGENT_GUARDED",
   branch: "CHANT_AGENT_BRANCH",
+  window: "CHANT_AGENT_WINDOW",
   env: "CHANT_AGENT_ENV",
 } as const;
 
@@ -238,15 +267,17 @@ export function branchOk(b: string): boolean {
 export function resolveAgentSpec(name: string, spec: OpAgentSpec, product = "chant"): AgentSettings {
   const where = `Scheduled Op "${name}" agent`;
   if (!NAME.test(name)) throw new AgentError(`${where}: the name is letters, digits, '.', '_' and '-'`);
-  if (!AGENT_TRIGGERS.includes(spec.on)) throw new AgentError(`${where}: on is "comment" or "drift"`);
+  if (!AGENT_TRIGGERS.includes(spec.on)) throw new AgentError(`${where}: on is ${AGENT_TRIGGERS.map((t) => `"${t}"`).join(", ")}`);
   if (spec.on === "comment" && !(typeof spec.comment === "string" && /^\/[a-z][a-z0-9-]* [a-z][a-z0-9-]*$/.test(spec.comment))) {
     throw new AgentError(`${where}: on "comment" needs comment, the line it answers, such as "/${product} agent"`);
   }
   if (spec.command !== undefined && (typeof spec.command !== "string" || spec.command.trim() === "")) throw new AgentError(`${where}: command is a shell line`);
-  for (const [k, v] of [["keyEnv", spec.keyEnv], ["tokenEnv", spec.tokenEnv]] as const) {
+  for (const [k, v] of [["keyEnv", spec.keyEnv], ["tokenEnv", spec.tokenEnv], ["relayKeyEnv", spec.relayKeyEnv]] as const) {
     if (v !== undefined && !VAR.test(v)) throw new AgentError(`${where}: ${k} is a variable name`);
   }
-  const branch = spec.on === "drift" ? spec.branch ?? `${product}/agent/${name}` : undefined;
+  if (spec.on === "alert" && [spec.keyEnv ?? AGENT_KEY_ENV].includes(spec.relayKeyEnv ?? AGENT_RELAY_KEY_ENV)) throw new AgentError(`${where}: keyEnv and relayKeyEnv name the same variable, and the model never holds the relay key`);
+  const branch = AGENT_BRANCH_TRIGGERS.includes(spec.on) ? spec.branch ?? `${product}/agent/${name}` : undefined;
+  const alert = spec.on === "alert";
   if (branch !== undefined && !branchOk(branch)) throw new AgentError(`${where}: branch ${JSON.stringify(branch)} is not a branch name`);
   const guarded = spec.guarded ?? [];
   for (const g of guarded) {
@@ -271,6 +302,7 @@ export function resolveAgentSpec(name: string, spec: OpAgentSpec, product = "cha
     maxTurns: spec.maxTurns === undefined ? AGENT_MAX_TURNS : intIn(`${where}: maxTurns`, spec.maxTurns, 1, 500),
     guarded: [...guarded],
     ...(branch !== undefined ? { branch } : {}),
+    ...(alert ? { window: spec.window === undefined ? AGENT_JOIN_WINDOW_MINUTES : intIn(`${where}: window`, spec.window, 1, 1440), relayKeyEnv: spec.relayKeyEnv ?? AGENT_RELAY_KEY_ENV } : {}),
     env,
     ...(spec.commentAllow !== undefined ? { commentAllow: spec.commentAllow } : {}),
     ...(spec.commentAllowTokenEnv !== undefined ? { commentAllowTokenEnv: spec.commentAllowTokenEnv } : {}),
@@ -291,6 +323,7 @@ export function agentSettingsEnv(s: AgentSettings): Record<string, string> {
     [AGENT_ENV.maxTurns]: String(s.maxTurns),
     ...(s.guarded.length > 0 ? { [AGENT_ENV.guarded]: JSON.stringify(s.guarded) } : {}),
     ...(s.branch ? { [AGENT_ENV.branch]: s.branch } : {}),
+    ...(s.window !== undefined ? { [AGENT_ENV.window]: String(s.window) } : {}),
     [AGENT_ENV.env]: s.env,
     ...(s.commentAllow ? { [COMMENT_ALLOW_ENV]: JSON.stringify(s.commentAllow) } : {}),
   };
@@ -323,6 +356,7 @@ export function agentSettingsFromEnv(env: Record<string, string | undefined>, pr
   if (usd !== undefined && usd !== "" && !/^[0-9]+(\.[0-9]+)?$/.test(usd)) throw new AgentError(`${AGENT_ENV.maxCostUsd} is a number of US dollars: got ${JSON.stringify(usd)}`);
   const maxCostUsd = usd === undefined || usd === "" ? undefined : Number(usd);
   const maxTurns = num(AGENT_ENV.maxTurns);
+  const window = num(AGENT_ENV.window);
   const spec: OpAgentSpec = {
     on: env[AGENT_ENV.on] as AgentTrigger,
     ...(env[AGENT_ENV.comment] ? { comment: env[AGENT_ENV.comment] } : {}),
@@ -334,6 +368,7 @@ export function agentSettingsFromEnv(env: Record<string, string | undefined>, pr
     ...(maxTurns !== undefined ? { maxTurns } : {}),
     ...(guarded ? { guarded } : {}),
     ...(env[AGENT_ENV.branch] ? { branch: env[AGENT_ENV.branch] } : {}),
+    ...(window !== undefined ? { window } : {}),
     ...(env[AGENT_ENV.env] ? { env: env[AGENT_ENV.env] } : {}),
   };
   let commentAllow: CommentAllow | undefined;
@@ -366,7 +401,7 @@ export function agentForbiddenPaths(paths: readonly string[], guarded: readonly 
 }
 
 /** The guarded paths as the prompt names them. */
-function guardedSentence(guarded: readonly string[]): string {
+export function guardedSentence(guarded: readonly string[]): string {
   return [".github/", ".forgejo/", ".gitea/", ".gitlab/", ".gitlab-ci.yml", ".chant/", "chant.workspace.json", "chant.config.ts", ...guarded, "CODEOWNERS", "CLAUDE.md, AGENTS.md, .gitattributes or .gitmodules (in any directory)", ".mcp.json", ".claude/", ".cursor/", ".cursorrules"].join(", ");
 }
 
@@ -484,6 +519,14 @@ export interface AgentDecision {
   branch?: string;
   user?: string;
   ask?: string;
+  /** For `on: "alert"`: no new fact, so nothing ran and nothing is recorded. */
+  idle?: boolean;
+  /** For `on: "alert"`: the ids of the facts the run took. */
+  facts?: string[];
+  /** For `on: "alert"`: the member the facts are for, "" for the repository. */
+  member?: string;
+  /** For `on: "alert"`: the join window the run opened. */
+  window?: { from: string; until: string };
   started: string;
 }
 
@@ -494,6 +537,9 @@ export function readDecision(dir: string): AgentDecision | undefined {
     if (d.sha !== undefined && !SHA.test(d.sha)) return undefined;
     if (d.pr !== undefined && !(Number.isInteger(d.pr) && d.pr > 0)) return undefined;
     if (d.branch !== undefined && !branchOk(d.branch)) return undefined;
+    if (d.facts !== undefined && !(Array.isArray(d.facts) && d.facts.every((f) => typeof f === "string" && /^sha256:[0-9a-f]{64}$/.test(f)))) return undefined;
+    if (d.member !== undefined && !(d.member === "" || NAME.test(d.member))) return undefined;
+    if (d.window !== undefined && !(typeof d.window?.from === "string" && typeof d.window?.until === "string")) return undefined;
     return d as AgentDecision;
   } catch {
     return undefined;
@@ -651,6 +697,8 @@ export interface PrepareInput {
   teams?: CommentAllowReads;
   /** The agent's earlier run records on the ledger. */
   readRuns: () => Promise<OpRunRecord[]>;
+  /** For `on: "alert"`: the alert facts on the ledger. */
+  readFacts?: () => Promise<AgentFact[]>;
   git: AgentGit;
   now: Date;
 }
@@ -689,13 +737,47 @@ export async function prepareAgentRun(i: PrepareInput): Promise<AgentDecision> {
   }
 
   let records: OpRunRecord[] = [];
+  let runsUnread: string | undefined;
   try {
     records = await i.readRuns();
   } catch (e) {
-    if (agentHasLimit(i.settings)) return no(`the agent's runs could not be read from the ledger (${errText(e)}), so its limit cannot be checked`, ask ? { pr: ask.pr, user: ask.user } : {});
+    runsUnread = errText(e);
   }
+
+  // #5329: the oldest group of new alert facts, read and checked here; nothing the run was started with is read.
+  let alert: { group: { member: string; facts: AgentFact[]; window: { from: string; until: string } }; alerts: AlertRecord[] } | undefined;
+  if (i.settings.on === "alert") {
+    // Which facts are spent is on the run records, so they are read before anything else.
+    if (runsUnread !== undefined) return no(`the agent's runs could not be read from the ledger (${runsUnread}), so the alerts already answered are not known`);
+    let facts: AgentFact[];
+    try {
+      facts = (await i.readFacts?.()) ?? [];
+    } catch (e) {
+      return no(`the alert facts could not be read from the ledger (${errText(e)})`);
+    }
+    const relayKey = i.env[AGENT_RELAY_KEY_ENV];
+    if (!relayKey) return no(`${AGENT_RELAY_KEY_ENV} is not set, so no alert fact can be checked`);
+    const pending = pendingAgentFacts({ facts, runs: records, relayKey, now: i.now, windowMs: (i.settings.window ?? AGENT_JOIN_WINDOW_MINUTES) * 60_000 });
+    const unsigned = pending.setAside.filter((s) => s.reason === "unsigned").length;
+    if (unsigned > 0) console.error(`${i.words.product} agent: ${unsigned} alert fact${unsigned === 1 ? " is" : "s are"} not signed with the relay key and start nothing`);
+    const group = pending.groups[0];
+    if (!group) return write({ ...base, go: false, idle: true, reason: "no new alert" });
+    const alerts = group.facts.map((f) => alertOfData(f.data)).filter((a): a is AlertRecord => a !== undefined);
+    alert = { group, alerts };
+  }
+  const took = alert ? { facts: alert.group.facts.map((f) => f.id), member: alert.group.member, window: alert.group.window } : {};
+
+  if (runsUnread !== undefined && agentHasLimit(i.settings)) return no(`the agent's runs could not be read from the ledger (${runsUnread}), so its limit cannot be checked`, ask ? { pr: ask.pr, user: ask.user } : {});
   const over = overLimit(i.settings, records, i.now);
-  if (over) return no(over, { stop: "stopped", ...(ask ? { pr: ask.pr, user: ask.user } : {}) });
+  if (over) return no(over, { stop: "stopped", ...(ask ? { pr: ask.pr, user: ask.user } : {}), ...took });
+
+  if (alert) {
+    const sha = i.git(["rev-parse", "HEAD"]).trim();
+    if (alert.alerts.length === 0) return no("the new alert facts hold no alert the agent reads", took);
+    const d = write({ ...base, go: true, sha, ...took });
+    writeFileSync(join(i.dir, AGENT_PROMPT_FILE), agentAlertPrompt({ product: i.words.product, name: i.settings.name, sha, member: alert.group.member, alerts: alert.alerts, guardedSentence: guardedSentence(i.settings.guarded) }));
+    return d;
+  }
 
   if (ask) {
     const who = { pr: ask.pr, user: ask.user };
@@ -779,7 +861,7 @@ export async function runAgent(i: RunInput): Promise<{ rc: AgentRc; changed: boo
 // ── agent land ─────────────────────────────────────────────────────────────
 
 /** How a run ended, as its record says. */
-export type AgentResult = "pushed" | "opened" | "updated" | "refused" | "stopped" | "failed";
+export type AgentResult = "pushed" | "opened" | "updated" | "refused" | "stopped" | "failed" | "idle";
 
 export interface LandOutcome {
   result: AgentResult;
@@ -806,6 +888,8 @@ export interface LandInput {
   /** Push `HEAD` of `cwd` to `ref`, with `lease` (`<ref>:<sha>`, or `<ref>:` for a new branch) when given. */
   push: (o: { cwd: string; ref: string; lease?: string }) => void;
   readRuns: () => Promise<OpRunRecord[]>;
+  /** For `on: "alert"`: the alert facts on the ledger, which this job checks the decision's against. */
+  readFacts?: () => Promise<AgentFact[]>;
   /** Append the run's record to the ledger and push it. */
   record: (input: OpRunRecordInput) => Promise<void>;
   now: () => Date;
@@ -833,6 +917,11 @@ export function agentRunRecordInput(o: {
   usage?: AgentUsage;
   gitSha?: string;
   runOrigin?: RunOrigin;
+  /** For `on: "alert"` (#5329): the facts the run took, their member and window, and each alert's source and id. */
+  facts?: string[];
+  member?: string;
+  window?: { from: string; until: string };
+  alerts?: Array<{ source: string; sourceId: string }>;
 }): OpRunRecordInput {
   const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated";
   const durationMs = Math.max(0, Date.parse(o.ended) - Date.parse(o.started)) || 0;
@@ -846,6 +935,10 @@ export function agentRunRecordInput(o: {
     ...(o.pullRequest ? { pullRequest: o.pullRequest } : {}),
     ...(o.promptDigest ? { promptDigest: o.promptDigest } : {}),
     ...(o.usage && Object.keys(o.usage).length > 0 ? { usage: o.usage } : {}),
+    ...(o.facts ? { facts: o.facts } : {}),
+    ...(o.member !== undefined ? { member: o.member } : {}),
+    ...(o.window ? { window: o.window } : {}),
+    ...(o.alerts ? { alerts: o.alerts } : {}),
   };
   return {
     op: o.settings.name,
@@ -884,6 +977,9 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
   let user: string | undefined;
   let ask: string | undefined;
   let commitSha: string | undefined;
+  // #5329: the facts this run answers, once this job has checked them against the ledger.
+  let took: { facts: string[]; member: string; window?: { from: string; until: string }; alerts: Array<{ source: string; sourceId: string }> } | undefined;
+  let alerts: AlertRecord[] = [];
 
   const say = async (text: string): Promise<void> => {
     if (pr === undefined) return;
@@ -913,6 +1009,7 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
           usage,
           ...(commitSha ? { gitSha: commitSha } : {}),
           ...(i.runOrigin ? { runOrigin: i.runOrigin } : {}),
+          ...(took ? { facts: took.facts, member: took.member, ...(took.window ? { window: took.window } : {}), alerts: took.alerts } : {}),
         }),
       );
     } catch (e) {
@@ -931,6 +1028,32 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
   }
   const decision = readDecision(i.dir);
   if (!decision || decision.name !== s.name || decision.on !== s.on) return finish({ result: "failed", reason: "the agent job left no decision this job can read" }, "the agent job left nothing to land, so nothing was pushed.");
+  // #5329: no new alert, so nothing ran and nothing is recorded: the scheduled run says so every few minutes.
+  if (s.on === "alert" && decision.idle && !decision.go) return { result: "idle", reason: decision.reason ?? "no new alert", code: CHANT_EXIT.done };
+  if (s.on === "alert" && decision.facts) {
+    // The decision is the agent job's data: each fact it names must be on the ledger, signed with the relay key, and taken by no run yet.
+    const relayKey = i.env[AGENT_RELAY_KEY_ENV];
+    let onLedger: AgentFact[];
+    let runs: OpRunRecord[];
+    try {
+      onLedger = (await i.readFacts?.()) ?? [];
+      runs = await i.readRuns();
+    } catch (e) {
+      return finish({ result: "failed", reason: `could not read the alert facts or the runs (${errText(e)})` });
+    }
+    const named = decision.facts.map((id) => onLedger.find((f) => f.id === id));
+    if (decision.facts.length === 0 || named.some((f) => !f || !verifyAgentFact(relayKey, f) || f.member !== (decision.member ?? ""))) {
+      return finish({ result: "refused", reason: "the decision names an alert fact the ledger does not hold signed with the relay key" });
+    }
+    const spent = new Set(runs.flatMap((r) => (r.outcomes?.agent as { facts?: unknown } | undefined)?.facts).filter((x): x is string => typeof x === "string"));
+    if (decision.facts.some((id) => spent.has(id))) return finish({ result: "refused", reason: "another run took these alerts" });
+    const facts = named as AgentFact[];
+    alerts = facts.map((f) => alertOfData(f.data)).filter((a): a is AlertRecord => a !== undefined);
+    took = { facts: decision.facts, member: decision.member ?? "", ...(decision.window ? { window: decision.window } : {}), alerts: alerts.map((a) => ({ source: a.source, sourceId: a.sourceId })) };
+  } else if (s.on === "alert") {
+    // A run that took no fact answers nothing; it fails the job, so the reason shows, and is not recorded, so it spends no run of the limit.
+    return { result: "failed", reason: decision.go ? "the decision names no alert fact" : decision.reason ?? "the agent did not run", code: CHANT_EXIT.failed };
+  }
   if (!decision.go) {
     const stopped = decision.stop === "stopped";
     return finish({ result: stopped ? "stopped" : "refused", reason: decision.reason ?? "refused" }, `${decision.reason ?? "the agent did not run"}, so nothing was pushed.`);
@@ -956,8 +1079,9 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
       if (sha !== head.sha || sha !== decision.sha) return finish({ result: "refused", reason: "the head moved" }, `the ${what} moved while the agent worked, so nothing was pushed. Ask again.`);
     } else {
       sha = i.git(["rev-parse", "HEAD"]).trim();
-      branch = s.branch!;
-      if (sha !== decision.sha) return finish({ result: "refused", reason: "the checkout is not the drift check's commit" }, undefined);
+      branch = took?.member ? `${s.branch!}-${took.member}` : s.branch!;
+      if (!branchOk(branch)) return finish({ result: "refused", reason: `${branch} is not a branch the agent pushes to` });
+      if (sha !== decision.sha) return finish({ result: "refused", reason: s.on === "alert" ? "the checkout is not the commit the agent worked on" : "the checkout is not the drift check's commit" }, undefined);
     }
   } catch (e) {
     return finish({ result: "failed", reason: `could not read the head (${errText(e)})` });
@@ -983,9 +1107,14 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
     );
   }
 
-  const title = s.on === "comment" ? `Change asked for by ${user} on ${what} #${pr}` : `Bring the code in line with the drift ${s.name} found`;
+  const alertTitle = (): string => {
+    const first = alerts[0]?.title.replace(/[\r\n]+/g, " ").slice(0, 120) ?? "a production alert";
+    return `Answer ${alerts.length > 1 ? `${alerts.length} alerts` : "the alert"}${took?.member ? ` for ${took.member}` : ""}: ${first}`;
+  };
+  const title = s.on === "comment" ? `Change asked for by ${user} on ${what} #${pr}` : s.on === "alert" ? alertTitle() : `Bring the code in line with the drift ${s.name} found`;
   const trailers = [...(user ? [`Requested-by: ${user}`] : []), `Agent-run: ${s.name}`];
-  const message = [title, "", ...(ask ? [ask, ""] : s.on === "drift" ? [`Written by the agent from the drift found at ${sha.slice(0, 12)}.`, ""] : []), ...trailers, ""].join("\n");
+  const fromWhat = s.on === "drift" ? [`Written by the agent from the drift found at ${sha.slice(0, 12)}.`, ""] : s.on === "alert" ? [`Written by the agent from ${alerts.map((a) => `${a.source} alert ${a.sourceId}`).join(", ")}.`, ""] : [];
+  const message = [title, "", ...(ask ? [ask, ""] : fromWhat), ...trailers, ""].join("\n");
   try {
     i.git(["-c", `user.name=${AGENT_GIT_NAME}`, "-c", `user.email=${AGENT_GIT_EMAIL}`, "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], { cwd: i.workDir, input: message });
     commitSha = i.git(["rev-parse", "HEAD"], { cwd: i.workDir }).trim();
@@ -1023,19 +1152,30 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
   } catch (e) {
     return finish({ result: "failed", reason: `could not push to ${branch} (${errText(e)})`, commit: commitSha });
   }
-  const body = [
-    `The agent changed the code to describe what is live, from the drift ${code(s.name)} found at ${code(sha.slice(0, 12))}.`,
-    "",
-    `It changes ${paths.map(code).join(", ")}. A person reviews it: merging keeps the change made outside the code, and the merge's apply goes through the gate like any other. Close it to undo the drift by applying the code as it is instead.`,
-    "",
-    "Nothing was applied, approved or merged.",
-  ].join("\n");
+  const body =
+    s.on === "alert"
+      ? [
+          `The agent ${code(s.name)} changed the code at ${code(sha.slice(0, 12))} in answer to ${alerts.length === 1 ? "this alert" : "these alerts"}:`,
+          "",
+          ...alerts.map((a) => `- ${a.source} ${code(a.sourceId)}${a.url && /^https:\/\/\S+$/.test(a.url) ? `, ${a.url}` : ""}`),
+          "",
+          `It changes ${paths.map(code).join(", ")}. A person reviews it, and the merge's apply goes through the gate like any other. Close it to leave the code as it is.`,
+          "",
+          "Nothing was applied, approved or merged.",
+        ].join("\n")
+      : [
+          `The agent changed the code to describe what is live, from the drift ${code(s.name)} found at ${code(sha.slice(0, 12))}.`,
+          "",
+          `It changes ${paths.map(code).join(", ")}. A person reviews it: merging keeps the change made outside the code, and the merge's apply goes through the gate like any other. Close it to undo the drift by applying the code as it is instead.`,
+          "",
+          "Nothing was applied, approved or merged.",
+        ].join("\n");
   try {
     const open = await i.forge.findPullRequest(branch);
     if (open) {
       await i.forge.editPullRequest(open.number, { title, body });
       pr = open.number;
-      return finish({ result: "updated", reason: `updated #${open.number} from ${branch}`, commit: commitSha, ...(open.url ? { pullRequest: open.url } : {}), paths }, `the agent replaced the change on ${code(branch)} with ${code(commitSha.slice(0, 8))} for newer drift.`);
+      return finish({ result: "updated", reason: `updated #${open.number} from ${branch}`, commit: commitSha, ...(open.url ? { pullRequest: open.url } : {}), paths }, `the agent replaced the change on ${code(branch)} with ${code(commitSha.slice(0, 8))} for ${s.on === "alert" ? "a newer alert" : "newer drift"}.`);
     }
     const made = await i.forge.openPullRequest({ head: branch, title, body });
     pr = made.number > 0 ? made.number : undefined;

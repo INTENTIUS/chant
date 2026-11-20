@@ -16,6 +16,11 @@
  *   starts no workflow on GitHub, so the pull request is planned again only
  *   with a token of a user or an app.
  *
+ * An alert agent (#5329) is a workflow of its own, started by the relay's
+ * `workflow_dispatch` and by its schedule. Both jobs check out the default
+ * branch and the ledger, and the decision and land steps alone hold the
+ * relay key, which the alert facts are checked with.
+ *
  * Forgejo's runner ignores `permissions:` and has no author association, so
  * there `chant agent prepare` asks the forge whether the commenter can write,
  * and both jobs drop the token variables before any step that does not need
@@ -31,6 +36,7 @@ import {
   AGENT_DRIFT_FILE,
   AGENT_PATCH_FILE,
   AGENT_RC_FILE,
+  AGENT_RELAY_KEY_ENV,
   agentCommandLines,
   agentGitAuthLines,
   agentHeadFetchLine,
@@ -124,9 +130,12 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
   const lines = agentCommandLines(i.forge, i.bin);
   const drop = dropForgeTokens("sh");
   const comment = s.on === "comment";
+  const alert = s.on === "alert";
   const settingsEnv = agentSettingsEnv(s);
+  // #5329: the relay key checks the alert facts, in the decision and land steps alone.
+  const relayKey = alert ? { [AGENT_RELAY_KEY_ENV]: githubSecret(s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV) } : {};
   const checkout = (head: boolean): Record<string, unknown> => ({
-    name: head ? "Check out the target branch's commit and the pull request's head" : "Check out the commit the drift check ran on",
+    name: head ? "Check out the target branch's commit and the pull request's head" : alert ? "Check out the default branch's commit and the ledger" : "Check out the commit the drift check ran on",
     env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN, ...(head ? { PR_NUMBER: "${{ github.event.issue.number }}" } : {}) },
     // The ledger branch too: prepare counts the agent's runs on it, and land appends to it.
     run: [checkoutScript(true, true), ...(head ? [agentHeadFetchLine(i.forge, "PR_NUMBER")] : [])].join("\n"),
@@ -134,7 +143,7 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
   const before = i.beforeScript.map((line) => ({ run: `${drop}\n${line}` }));
   const timeout = s.timeout + 15;
   const agent: Record<string, unknown> = {
-    ...(comment ? { if: agentCommentIf(i.forge, s.comment!) } : { needs: i.after, if: `always() && needs.${i.after}.outputs.drift == 'true'` }),
+    ...(comment ? { if: agentCommentIf(i.forge, s.comment!) } : alert ? {} : { needs: i.after, if: `always() && needs.${i.after}.outputs.drift == 'true'` }),
     "runs-on": githubRunsOn(i.runner),
     container: i.image,
     "timeout-minutes": timeout,
@@ -143,11 +152,11 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
     outputs: handoverOutputs(AGENT_STEP_ID, i.forge),
     steps: [
       checkout(comment),
-      ...(comment ? [] : [{ name: "Take the drift from the drift check", run: takeOverScript(i.after!, AGENT_DIR, i.forge) }]),
+      ...(comment || alert ? [] : [{ name: "Take the drift from the drift check", run: takeOverScript(i.after!, AGENT_DIR, i.forge) }]),
       ...i.setup,
       ...before,
       // Reads only: the comment, the commenter's access, the pull request's head and the ledger.
-      { name: "Decide whether the agent runs", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, ...(comment && s.commentAllow && s.commentAllowTokenEnv ? { [COMMENT_ALLOW_TOKEN_ENV]: githubSecret(s.commentAllowTokenEnv) } : {}) }, run: lines.prepare },
+      { name: "Decide whether the agent runs", env: { GITHUB_TOKEN: GITHUB_JOB_TOKEN, ...relayKey, ...(comment && s.commentAllow && s.commentAllowTokenEnv ? { [COMMENT_ALLOW_TOKEN_ENV]: githubSecret(s.commentAllowTokenEnv) } : {}) }, run: lines.prepare },
       // The job's last step: the model's key and no forge token, and the agent directory handed on however it ends.
       {
         id: AGENT_STEP_ID,
@@ -172,7 +181,7 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
       ...before,
       {
         name: comment ? "Push the change to the pull request" : "Open or update the agent's pull request",
-        env: { [PUSH_TOKEN_ENV]: token, GITHUB_TOKEN: token, ...(i.forge === "forgejo" ? { CHANT_FORGEJO_TOKEN: token } : {}) },
+        env: { [PUSH_TOKEN_ENV]: token, GITHUB_TOKEN: token, ...relayKey, ...(i.forge === "forgejo" ? { CHANT_FORGEJO_TOKEN: token } : {}) },
         run: [...agentGitAuthLines(PUSH_TOKEN_ENV, "x-access-token"), lines.land].join("\n"),
       },
     ],

@@ -98,7 +98,7 @@ import type {
 } from "@intentius/chant/lexicon";
 import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs";
-import { resolveAgentSpec } from "@intentius/chant/ci-agent";
+import { AGENT_ALERT_SCHEDULE, resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { agentJobName, agentPushJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
 import { commitJobName, commitPushJobName, findingRunOutputs, findingRunStep, githubCommitJobs } from "./commit-jobs";
@@ -419,6 +419,17 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
 }
 
 /**
+ * The alert agent's schedule (#5329): the spec's cron trigger, else
+ * {@link AGENT_ALERT_SCHEDULE}. The relay starts the workflow by hand
+ * (`workflow_dispatch`); the schedule picks up a start that did not arrive.
+ */
+export function alertAgentTrigger(spec: ScheduledOpSpec): OpTrigger & { kind: "cron" } {
+  const trigger = spec.trigger ?? (spec.schedule ? { kind: "cron" as const, schedule: spec.schedule } : { kind: "cron" as const, schedule: AGENT_ALERT_SCHEDULE });
+  if (trigger.kind !== "cron") throw new Error(`Scheduled Op "${spec.name}" sets an alert agent, which runs when the relay starts it and on a schedule; give it a cron trigger or none.`);
+  return trigger;
+}
+
+/**
  * Build one `GithubOpPipelineDoc` per scheduled Op: its trigger, its `setup`
  * steps, least-privilege `permissions:` for its finding-mode plus whatever
  * the spec adds, one job that runs `chant run <name>`. Every
@@ -482,6 +493,40 @@ export function buildGithubOpPipelineDocs(
           permissions: { contents: "read" },
           jobsDoc: {},
           commitDoc: { [jobName]: commit, [commitPushJobName(jobName)]: push },
+        },
+      });
+      continue;
+    }
+    // #5329: the alert agent is a workflow of its own, started by the relay's workflow_dispatch and by its schedule.
+    if (spec.agent?.on === "alert") {
+      const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
+      const jobName = ciJobName(spec.name);
+      const trigger = alertAgentTrigger(spec);
+      const setup = spec.setup ?? [];
+      assertSetupSteps(spec.name, setup);
+      jobs.push({ jobName, op: spec.name, trigger, findingMode: "report" });
+      const { agent, push } = githubAgentJobs({
+        forge,
+        jobName,
+        image,
+        settings,
+        ...(spec.runner !== undefined ? { runner: spec.runner } : {}),
+        setup: setup.map(setupStepDoc),
+        beforeScript,
+        ...(spec.agent.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
+        ...(words.bin ? { bin: words.bin } : {}),
+      });
+      files.push({
+        name: `${spec.name}.yml`,
+        doc: {
+          name: spec.name,
+          on: onTrigger(trigger),
+          ...nonEmpty("env", options.variables),
+          // One run at a time: each reads the facts the last one took before it starts another.
+          concurrency: concurrency(jobName),
+          permissions: { contents: "read" },
+          jobsDoc: {},
+          agentDoc: { [jobName]: agent, [agentPushJobName(jobName)]: push },
         },
       });
       continue;

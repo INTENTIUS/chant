@@ -97,3 +97,33 @@ describe("the drift agent of a workspace member on GitLab", () => {
     expect(out.files[0]!.yaml).toContain("and to $4 a day of recorded cost");
   });
 });
+
+// #5329: the alert agent, in a pipeline the relay's trigger token starts and in its schedule.
+describe("the alert agent on GitLab", () => {
+  const { doc, yaml } = gen({ name: "chant-alert-agent", agent: { on: "alert", relayKeyEnv: "OPS_RELAY_KEY" } });
+  const agent = doc["chant-alert-agent"]!;
+  const push = doc["chant-alert-agent-push"]!;
+
+  test("runs in a trigger pipeline of the default branch, or its own schedule", () => {
+    expect(agent.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "trigger" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }, { if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "chant-alert-agent"' }]);
+    expect(push.rules).toEqual(agent.rules);
+    expect(agent.needs).toBeUndefined();
+    expect(yaml).toContain("trigger token starts");
+  });
+
+  test("the relay key reaches the decision and is gone before the model runs", () => {
+    const exp = agent.script.indexOf('export CHANT_RELAY_KEY="$OPS_RELAY_KEY"');
+    const prepare = agent.script.findIndex((l) => l.includes("chant agent prepare"));
+    const unset = agent.script.indexOf("unset CHANT_RELAY_KEY OPS_RELAY_KEY");
+    const run = agent.script.findIndex((l) => l.includes("chant agent run"));
+    expect(exp).toBeGreaterThan(-1);
+    expect(exp).toBeLessThan(prepare);
+    expect(unset).toBeGreaterThan(prepare);
+    expect(unset).toBeLessThan(run);
+    expect(push.script).toContain('export CHANT_RELAY_KEY="$OPS_RELAY_KEY"');
+  });
+
+  test("never applies, approves or merges", () => {
+    expect([...agent.script, ...push.script].join("\n")).not.toMatch(/chant (run|approve)\b|merge_when_pipeline_succeeds|\bterraform apply\b|\bpulumi up\b/);
+  });
+});

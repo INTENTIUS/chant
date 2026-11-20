@@ -20,6 +20,12 @@
  *   `<agent>-push` environment, protected and masked, so the agent job never
  *   holds it.
  *
+ * An alert agent (#5329) runs in a pipeline of the default branch that the
+ * relay starts with a pipeline trigger token and no variables, and in its
+ * own pipeline schedule. Both jobs fetch the ledger and read the alert
+ * facts themselves, with the relay key (`CHANT_RELAY_KEY` unless
+ * `relayKeyEnv` names another variable).
+ *
  * A workspace member's drift Op runs in the member's directory, so its
  * artifact holds `<member>/.chant/agent` (#4619). Both agent jobs run at
  * the repository root and take `dir`, that path, as their agent directory.
@@ -33,6 +39,7 @@ import {
   AGENT_DRIFT_FILE,
   AGENT_GITLAB_TOKEN_ENV,
   AGENT_HEAD_REF,
+  AGENT_RELAY_KEY_ENV,
   agentCommandLines,
   agentGitAuthLines,
   agentHeadFetchLine,
@@ -49,6 +56,14 @@ const AGENT_ARTIFACT_EXPIRY = "7 days";
 
 /** The comment agent's rule: a pipeline of the default branch started with the merge request and the ask. */
 export const GITLAB_AGENT_RULE = `$CI_PIPELINE_SOURCE =~ /^(web|api|trigger|chat)$/ && $${GITLAB_AGENT_PR_VAR} =~ /^[0-9]+$/ && $${GITLAB_AGENT_ASK_VAR} && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`;
+
+/** The alert agent's rules (#5329): a pipeline of the default branch from a trigger token, or its own schedule. */
+export function gitlabAlertAgentRules(name: string, selector = "CHANT_SCHEDULED_OP"): Array<{ if: string }> {
+  return [
+    { if: '$CI_PIPELINE_SOURCE == "trigger" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' },
+    { if: `$CI_PIPELINE_SOURCE == "schedule" && $${selector} == "${name.replace(/"/g, "")}"` },
+  ];
+}
 
 export function gitlabAgentPushJobName(jobName: string): string {
   return `${jobName}-push`;
@@ -96,6 +111,8 @@ export interface GitlabAgentJobsInput {
   bin?: string;
   /** For a drift agent: the Op's job and its rules. */
   after?: { job: string; rules: unknown[] };
+  /** For an alert agent: its rules, {@link gitlabAlertAgentRules}. */
+  alertRules?: unknown[];
   /** The agent directory from the repository root: where the drift Op's artifact put the drift. Default {@link AGENT_DIR}. */
   dir?: string;
 }
@@ -106,12 +123,16 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
   const dir = i.dir ?? AGENT_DIR;
   const lines = agentCommandLines("gitlab", i.bin, dir);
   const comment = s.on === "comment";
+  const alert = s.on === "alert";
   const tags = gitlabTags(i.runner);
   const variables = { ...agentSettingsEnv(s), GIT_DEPTH: "0" };
-  const rules = comment ? [{ if: GITLAB_AGENT_RULE }] : i.after!.rules.map((r) => ({ ...(r as Record<string, unknown>), when: "always" }));
+  const rules = comment ? [{ if: GITLAB_AGENT_RULE }] : alert ? i.alertRules! : i.after!.rules.map((r) => ({ ...(r as Record<string, unknown>), when: "always" }));
   const head = comment ? [agentHeadFetchLine("gitlab", GITLAB_AGENT_PR_VAR)] : [];
+  // #5329: the relay key under the name chant reads, when the project keeps it in another variable.
+  const ownKeyVar = alert && s.relayKeyEnv && s.relayKeyEnv !== AGENT_RELAY_KEY_ENV ? s.relayKeyEnv : undefined;
+  const relayKey = ownKeyVar ? [`export ${AGENT_RELAY_KEY_ENV}="$${ownKeyVar}"`] : [];
   // A drift agent's job runs whatever the drift check found, and stops here when it found none.
-  const driftGate = comment ? [] : [`if [ "\${CHANT_AGENT_DRIFT:-0}" != "1" ]; then echo "no drift, so the agent does not run"; exit 0; fi`];
+  const driftGate = comment || alert ? [] : [`if [ "\${CHANT_AGENT_DRIFT:-0}" != "1" ]; then echo "no drift, so the agent does not run"; exit 0; fi`];
   const agent: Record<string, unknown> = {
     stage: i.stage,
     image: i.image,
@@ -120,7 +141,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
     timeout: `${s.timeout + 15} minutes`,
     variables,
     rules,
-    ...(comment ? {} : { needs: [{ job: i.after!.job, artifacts: true }] }),
+    ...(comment || alert ? {} : { needs: [{ job: i.after!.job, artifacts: true }] }),
     script: [
       ...driftGate,
       ...head,
@@ -129,7 +150,10 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
       ...i.script,
       // No forge token reaches the model: the decision needs none on GitLab, and the push job checks the merge request.
       GITLAB_DROP_FORGE_TOKENS,
+      ...relayKey,
       lines.prepare,
+      // The model's step holds no relay key.
+      ...(alert ? [["unset", AGENT_RELAY_KEY_ENV, ...(ownKeyVar ? [ownKeyVar] : [])].join(" ")] : []),
       lines.run,
     ],
     artifacts: { when: "always", paths: [dir], expire_in: AGENT_ARTIFACT_EXPIRY },
@@ -152,6 +176,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
       PLAIN_REMOTE,
       ...i.script,
       `export CHANT_GITLAB_TOKEN="$${tokenVar}"`,
+      ...relayKey,
       ...agentGitAuthLines(tokenVar, "oauth2"),
       lines.land,
     ],
@@ -164,7 +189,9 @@ export function gitlabAgentHeader(jobName: string, s: AgentSettings, tokenVar = 
   return [
     comment(s)
       ? `#   ${jobName}: answers ${s.comment} from a pipeline of the default branch started with ${GITLAB_AGENT_PR_VAR}=<iid> and ${GITLAB_AGENT_ASK_VAR}=<ask>`
-      : `#   ${jobName}: after the drift check exits ${CHANT_EXIT.drift}, opens or updates a merge request from ${s.branch}`,
+      : s.on === "alert"
+        ? `#   ${jobName}: answers the alerts the relay recorded, in a pipeline its trigger token starts and in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}[-<member>], with the relay key in ${s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV}`
+        : `#   ${jobName}: after the drift check exits ${CHANT_EXIT.drift}, opens or updates a merge request from ${s.branch}`,
     `#     ${gitlabAgentPushJobName(jobName)} pushes with ${tokenVar}: scope it to environment ${gitlabAgentEnvironment(jobName)}, protected and masked; the model's key is ${s.keyEnv}`,
     `#     the fetched head is ${AGENT_HEAD_REF}; runs are limited to ${s.maxRuns ?? "no fixed number of"} a day on the ledger` +
       (s.maxCostUsd !== undefined ? `, and to $${s.maxCostUsd} a day of recorded cost` : ""),
