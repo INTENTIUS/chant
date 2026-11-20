@@ -10,6 +10,8 @@
  * const spec = { ..., step: { kind: "pulumi-up", stack: "{target}" }, holds: { cost: pulumiCostHold({ approveAbove: 100, command: ["./price-preview", "{planJson}"] }) } };
  * ```
  *
+ * The command reads a copy of the preview with its secrets replaced by
+ * `[redacted]` and runs without the forge tokens in its environment.
  * No estimator ships with it. The command prints the estimate on standard
  * output in `format`: `{ "monthlyDelta": <number>, "currency"?: "<code>" }`
  * for `chant` (the default), or infracost's JSON for `infracost`. The hold

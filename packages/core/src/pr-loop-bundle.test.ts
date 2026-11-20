@@ -34,10 +34,12 @@ describe("the pull-request loop bundle", () => {
     expect(inputs.map((i) => i.replace(/^.*?packages\//, "packages/")).sort()).toEqual([
       // The change risk's record and note lines (#5325): types only.
       "packages/core/src/change-risk.ts",
+      // The forge token variables' names (#5416): the cost estimate leaves them out of its command's environment; the forge type it imports is erased.
+      "packages/core/src/ci-handover.ts",
       // The product's words (#4550): no imports.
       "packages/core/src/ci-product-words.ts",
       "packages/core/src/content-digest.ts",
-      // The cost estimate's record and note lines (#5334): node built-ins only.
+      // The cost estimate's record and note lines (#5334): node built-ins only, and the token names above (#5416).
       "packages/core/src/cost-estimate.ts",
       "packages/core/src/declarable.ts",
       "packages/core/src/effect-receipt.ts",

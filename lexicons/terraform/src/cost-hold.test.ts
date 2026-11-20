@@ -6,7 +6,7 @@
  */
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { costEstimateLines, costEstimateProblems, estimateCosts, policyCost } from "@intentius/chant/ci-product";
 import { opWaveCostVerdict, opWaveCosts, opWaveHoldsProblems } from "@intentius/chant/op/op-waves-capability";
@@ -34,7 +34,9 @@ describe("terraformCostHold", () => {
       return { status: 0, stdout: JSON.stringify({ currency: "EUR", totalMonthlyCost: "180", pastTotalMonthlyCost: "40", diffTotalMonthlyCost: "140" }), stderr: "" };
     };
     const estimate = estimateCosts(hold, [{ member: "envs/prod/network", artifact, empty: false }], dir, infracost);
-    expect(seen[0]).toEqual(["infracost", "breakdown", "--path", planJson, "--format", "json", "--log-level", "error"]);
+    // #5416: infracost reads a redacted copy of the document, under the same file name.
+    expect(seen[0]!.map((a) => (a.endsWith("tfplan.json") ? basename(a) : a))).toEqual(["infracost", "breakdown", "--path", "tfplan.json", "--format", "json", "--log-level", "error"]);
+    expect(seen[0]![3]).not.toBe(planJson);
     expect(estimate).toEqual({
       estimator: "infracost",
       format: "infracost",

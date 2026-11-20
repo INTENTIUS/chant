@@ -7,6 +7,10 @@
  * const spec = { ..., step: { kind: "terraform-apply", root: "{target}" }, holds: { cost: terraformCostHold({ approveAbove: 100 }) } };
  * ```
  *
+ * infracost reads a copy of the plan document with its sensitive values
+ * replaced by `[redacted]` and runs without the forge tokens in its
+ * environment.
+ *
  * The shape is core's `OpWaveCostHold`, written out here so the lexicon
  * builds against a core without it.
  */

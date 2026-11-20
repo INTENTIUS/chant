@@ -7,7 +7,7 @@
 import { afterAll, describe, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { composeChangeSet, type ChangeSetPart } from "./change-set";
 import { parseDeclaration, WorkspaceReadError } from "./workspace/declaration";
@@ -128,10 +128,12 @@ describe("the estimate over a planned set (#5334)", () => {
       dir,
       fakeEstimator({ "network.tfplan.json": { monthlyDelta: 30, monthlyTotal: 130, pastMonthlyTotal: 100 }, "shop-dev.preview.json": { monthlyDelta: 12.5, monthlyTotal: 12.5, pastMonthlyTotal: 0 } }, seen),
     )!;
-    expect(seen).toEqual([
-      ["price", set.tfJson, "network"],
-      ["price", set.previewJson, "shop-dev"],
+    // #5416: the estimator reads a redacted copy, which keeps the document's file name.
+    expect(seen.map(([cmd, file, member]) => [cmd, basename(file!), member])).toEqual([
+      ["price", basename(set.tfJson), "network"],
+      ["price", basename(set.previewJson), "shop-dev"],
     ]);
+    expect(seen.every(([, file]) => file !== set.tfJson && file !== set.previewJson)).toBe(true);
     expect(estimate).toEqual({
       estimator: "price",
       format: "chant",

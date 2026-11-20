@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { opWaveCostVerdict, opWaveCosts, opWaveHoldsProblems } from "@intentius/chant/op/op-waves-capability";
 import { costEstimateLines, costEstimateProblems, estimateCosts, policyCost } from "@intentius/chant/ci-product";
@@ -56,7 +56,9 @@ describe("a pulumi-up plan feeds the cost hold", () => {
         seen.push(argv);
         return { status: 0, stdout: JSON.stringify({ monthlyDelta: 250 }), stderr: "" };
       });
-      expect(seen).toEqual([["price", artifact.planJson]]);
+      // #5416: the command reads a redacted copy of the preview, under the same file name.
+      expect(seen.map(([cmd, file]) => [cmd, basename(file!)])).toEqual([["price", basename(artifact.planJson!)]]);
+      expect(seen[0]![1]).not.toBe(artifact.planJson);
       const verdict = opWaveCostVerdict(hold, costs);
       expect(verdict.monthlyDelta).toBe(250);
       expect(verdict.hold).toMatch(/over holds.cost.approveAbove/);
@@ -64,7 +66,7 @@ describe("a pulumi-up plan feeds the cost hold", () => {
 
       // #5334: the plan note's estimate and input.cost come from the same command over the same document.
       const estimate = estimateCosts(hold, [{ member: "floci", artifact, empty: false }], dir, (argv) => {
-        expect(argv).toEqual(["price", artifact.planJson]);
+        expect(argv.map((a) => basename(a))).toEqual(["price", basename(artifact.planJson!)]);
         return { status: 0, stdout: JSON.stringify({ monthlyDelta: 250, monthlyTotal: 250, pastMonthlyTotal: 0 }), stderr: "" };
       });
       expect(estimate).toMatchObject({ estimator: "price", format: "chant", monthlyDelta: 250, approveAbove: 100, over: true, unestimated: [] });
