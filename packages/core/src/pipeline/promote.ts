@@ -77,8 +77,10 @@ import { gateRejections, rejectionLine } from "../op/gate-reject";
 import { gateSealRefusal, type GateSigners } from "../lifecycle/gate-seal";
 import type { GateRejectionRecord } from "../lifecycle/gate-rejection";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
+import { agentStepGateRule, agentStepRiskLevels, readStageAgentAnswers, stageAgentPolicyInput, stageAgentStepsHold, stageAgentSteps, type PolicyAgentAnswer, type StageAgentAnswerPort } from "./agent-steps";
 import { stageHeldAt, stageHeldLine } from "./stages";
 import { stageRiskContext, stageRiskRead, type ReleaseRisk } from "../lifecycle/release-risk";
+import { agentStepRiskReasons, type ChangeRiskReason } from "../change-risk";
 import type { ResolvedGateApproval } from "../op/gate-approval";
 import { soakAtGate, stageSoakGate, type SoakGateInput, type SoakGateOutcome } from "./soak-gate";
 import type { SoakCheckReader } from "./soak";
@@ -104,7 +106,10 @@ export interface PipelinePromoteStop {
     | "pipeline-no-urgent-rule"
     | "pipeline-urgent-skips"
     | "pipeline-urgent-upstream"
-    | "pipeline-soak-waiting";
+    | "pipeline-soak-waiting"
+    | "pipeline-agent-step-holding"
+    | "pipeline-agent-step-no-release"
+    | "pipeline-agent-policy-denied";
   /** Lines the promote prints before the stop, such as a rejection that does not count and why (#5354). */
   lines?: string[];
 }
@@ -307,6 +312,12 @@ export async function pipelinePromoteGates(input: {
   urgent?: boolean;
   /** The change risk the release's cut carries (#5387). Absent: the release carries none, and each gate is as it was. */
   risk?: ReleaseRisk;
+  /**
+   * The reasons the target stage's agent steps add to the risk its gate
+   * reads (#5358), from {@link pipelinePromoteAgentSteps}. They only raise
+   * the score. Absent: none.
+   */
+  agentRisk?: readonly ChangeRiskReason[];
 }): Promise<PipelineGatesOutcome> {
   const { spec, port, digest } = input;
   const proof = input.proof ?? NO_PROOF;
@@ -328,7 +339,7 @@ export async function pipelinePromoteGates(input: {
   const reads = new Map<string, ReturnType<typeof stageRiskRead>>();
   const riskOf = (stage: PipelineStage) => {
     if (!reads.has(stage.name)) {
-      const read = stageRiskRead(spec, stage.name, input.risk);
+      const read = stageRiskRead(spec, stage.name, input.risk, stage.name === input.to ? (input.agentRisk ?? []) : []);
       reads.set(stage.name, read);
       if (read) lines.push(read.line);
     }
@@ -337,7 +348,10 @@ export async function pipelinePromoteGates(input: {
   const riskOver = (stage: PipelineStage): boolean => riskOf(stage)?.risk?.over === true;
   const check = async (stage: PipelineStage, gate: string) => {
     const read = riskOf(stage);
-    const rule = await ruleFor(stage, gate);
+    // #5358: a stage with agent steps counts a person's approval only, and refuses an agent's by name.
+    const agentRead = stageAgentSteps(spec, stage.name).length > 0 && gate === stage.name;
+    const own = await ruleFor(stage, gate);
+    const rule = agentRead ? bothRules(own, agentStepGateRule(gate)) : own;
     // #5387: an over risk adds its rules; a gate that read a record counts people only, and a permit that reads it only from a proven one.
     const rules = [...(stage.gate?.quorum ?? []), ...(read?.rules ?? [])];
     const context = read ? stageRiskContext(read) : undefined;
@@ -345,7 +359,9 @@ export async function pipelinePromoteGates(input: {
       ? { ...(rules.length > 0 ? { quorum: rules } : {}), mode: "enforce", risk: read.settings, ...(context ? { context } : {}) }
       : rules.length > 0
         ? { quorum: rules, mode: "enforce" }
-        : undefined;
+        : agentRead
+          ? { mode: "log-only" }
+          : undefined;
     return evaluateGate(port, {
       rule,
       op: spec.name,
@@ -358,9 +374,10 @@ export async function pipelinePromoteGates(input: {
       ...(approval ? { approval } : {}),
     });
   };
-  const waiting = (gate: string, stage: PipelineStage): PipelineGatesOutcome => ({
+  // #5358: an approval the gate's rule refused is named, so a wait says why it did not count.
+  const waiting = (gate: string, stage: PipelineStage, refused: ReadonlyArray<{ reason: string }> = []): PipelineGatesOutcome => ({
     passed: false,
-    lines: [...lines],
+    lines: [...lines, ...refused.map((r) => `${spec.name} ${gate}: an approval does not count: ${r.reason}`)],
     exitCode: 3,
     code: "pipeline-gate-waiting",
     message: `${spec.name} ${gate} waits for an approval of ${digest}${reads.get(stage.name)?.risk?.over ? `; ${reads.get(stage.name)!.line}` : ""}`,
@@ -396,12 +413,14 @@ export async function pipelinePromoteGates(input: {
     if (!got.passed) return { ...got, lines: [...lines, ...(got.lines ?? [])] };
     return { passed: true, lines: [...lines, ...got.lines], urgent: { approval: got.approval, role: got.role } };
   }
-  if (stage.gate?.policy === "never" && !riskOver(stage)) {
+  // #5358: `chant build` refuses never on a stage whose policy reads agent answers; a spec written around the build still waits.
+  const answersReachPolicy = stageAgentSteps(spec, stage.name).length > 0 && stage.gate?.holds?.policy === true;
+  if (stage.gate?.policy === "never" && !riskOver(stage) && !answersReachPolicy) {
     lines.push(`stage ${stage.name}: its gate never waits`);
     return { passed: true, lines };
   }
   const got = await check(stage, stage.name);
-  if (!got.satisfied) return waiting(stage.name, stage);
+  if (!got.satisfied) return waiting(stage.name, stage, got.refused ?? []);
   lines.push(`stage ${stage.name}: ${spec.name} ${stage.name} approved by ${got.resolution.resolvedBy}`);
   return { passed: true, lines };
 }
@@ -463,12 +482,14 @@ export async function pipelineStageEntry(input: {
   now: Date;
   /** What proves an approver or a rejecter (#5354), handed to {@link pipelinePromoteGates}. */
   proof?: PipelineGateProof;
+  /** The reasons the stage's agent steps add to its gate's risk (#5358), handed to {@link pipelinePromoteGates}. */
+  agentRisk?: readonly ChangeRiskReason[];
 }): Promise<PipelineEntryOutcome> {
   const { spec, to, digest, log } = input;
   // #5355: under --urgent the stage's urgent rule stands in for its gate, after its rejections, and nothing is skipped.
   let urgent: { approval: GateResolutionRecord; role: string } | undefined;
   const gates = async (skipped: readonly PipelineStage[]): Promise<PipelineGatesOutcome> => {
-    const got = await pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.release?.risk ? { risk: input.release.risk } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), ...(input.urgent ? { urgent: true } : {}), now: input.now });
+    const got = await pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.release?.risk ? { risk: input.release.risk } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), ...(input.urgent ? { urgent: true } : {}), ...(input.agentRisk?.length ? { agentRisk: input.agentRisk } : {}), now: input.now });
     if (got.passed && got.urgent) urgent = got.urgent;
     return got;
   };
@@ -781,4 +802,82 @@ export async function pipelinePromoteSoak(input: {
     ...(input.gitSha ? { gitSha: input.gitSha } : {}),
     ...(input.notify ? { notify: input.notify } : {}),
   });
+}
+
+/** Both rules at once: an approval counts only when neither refuses it. */
+function bothRules(a: GateApprovalRule | null, b: GateApprovalRule): GateApprovalRule {
+  if (!a) return b;
+  return { requirement: a.requirement, refuses: (r) => a.refuses(r) ?? b.refuses(r) };
+}
+
+/** What a stage gate's policy said of the agent answers: a verdict, or undefined when no policy is named at base. */
+export type AgentPolicyVerdict = { result: "passed" | "denied" | "held" | "error"; reasons: string[] } | undefined;
+
+/** What {@link pipelinePromoteAgentSteps} decided. `agent` is what the policy read as `input.agent`. */
+export type PipelineAgentStepsOutcome =
+  | {
+      passed: true;
+      lines: string[];
+      agent: Record<string, PolicyAgentAnswer>;
+      /** The reasons the answers' levels add to the risk the stage gate reads (#5325): hand them to {@link pipelineStageEntry} as `agentRisk`. */
+      risk: ChangeRiskReason[];
+    }
+  | ({ passed: false } & PipelinePromoteStop);
+
+/**
+ * The agent steps part of a promote (#5358), before the stage's gate: every
+ * step of the stage `to` needs an answer for the release that matches its
+ * schema, or the promote holds (exit 3) and says why. With
+ * `gate.holds.policy`, `policy` runs the workspace's `ci.policy` with the
+ * answers as `input.agent`: a deny refuses the promote, a hold is printed,
+ * and the gate still waits for a person either way. Nothing here passes a
+ * gate.
+ */
+export async function pipelinePromoteAgentSteps(input: {
+  spec: PipelineSpec;
+  to: string;
+  release?: { digest: string; label?: string | null };
+  port: StageAgentAnswerPort;
+  policy?: (agent: Record<string, PolicyAgentAnswer>) => Promise<AgentPolicyVerdict>;
+}): Promise<PipelineAgentStepsOutcome> {
+  const { spec, to } = input;
+  const steps = stageAgentSteps(spec, to);
+  if (steps.length === 0) return { passed: true, lines: [], agent: {}, risk: [] };
+  if (!input.release) {
+    return {
+      passed: false,
+      exitCode: 1,
+      code: "pipeline-agent-step-no-release",
+      message: `stage "${to}" has agent steps, which answer for the release it takes; promote a release with --release <label|digest>`,
+    };
+  }
+  const name = input.release.label ?? input.release.digest;
+  const answers = await readStageAgentAnswers(input.port, { stage: to, release: input.release.digest });
+  const hold = stageAgentStepsHold(spec, to, input.release.digest, answers);
+  if (hold.length > 0) {
+    return {
+      passed: false,
+      exitCode: 3,
+      code: "pipeline-agent-step-holding",
+      message: `stage "${to}" holds for release ${name}: ${hold.join("; ")}`,
+      hint: `Run the stage's agent steps for the release and record them: chant pipeline agent run --stage ${to} --release ${name}, then chant pipeline agent record --stage ${to} --release ${name}`,
+    };
+  }
+  const agent = stageAgentPolicyInput(answers);
+  const lines = steps.map(([step]) => `agent step ${step}: answered for release ${name}${agent[step]?.costUsd !== undefined ? `, ${agent[step]!.costUsd!.toFixed(2)} USD` : ""}`);
+  const stage = spec.stages.find((s) => s.name === to)!;
+  if (stage.gate?.holds?.policy === true && input.policy) {
+    const verdict = await input.policy(agent);
+    if (verdict?.result === "denied" || verdict?.result === "error") {
+      return {
+        passed: false,
+        exitCode: 1,
+        code: "pipeline-agent-policy-denied",
+        message: `stage "${to}"'s policy ${verdict.result === "denied" ? "denies" : "could not read"} release ${name} with its agent steps' answers${verdict.reasons.length ? `: ${verdict.reasons.join("; ")}` : ""}`,
+      };
+    }
+    if (verdict?.result === "held") lines.push(`stage ${to}: the policy holds on its agent steps' answers${verdict.reasons.length ? ` (${verdict.reasons.join("; ")})` : ""}; the gate waits for a person's approval`);
+    else if (verdict) lines.push(`stage ${to}: the policy read its agent steps' answers and passed them; the gate still waits for a person's approval`);
+  }
+  return { passed: true, lines, agent, risk: agentStepRiskReasons(agentStepRiskLevels(answers)) };
 }

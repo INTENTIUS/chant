@@ -1237,6 +1237,22 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       return soak.exitCode;
     }
     for (const line of soak.lines) console.error(formatInfo(line));
+    // #5358: each agent step's answer for the release, and the gate's policy over them, before the gate.
+    const { pipelinePromoteAgentSteps } = await import("../../pipeline/promote");
+    const { gitStageAgentAnswerPort } = await import("../../pipeline/agent-steps");
+    const { stageAgentPolicy } = await import("./pipeline-agent");
+    const agent = await pipelinePromoteAgentSteps({
+      spec: pipeline,
+      to,
+      ...(under ? { release: { digest: under.release.releaseDigest, label: under.label } } : {}),
+      port: gitStageAgentAnswerPort(),
+      policy: (answers) => stageAgentPolicy(project.projectPath, pipeline, to, answers),
+    });
+    if (!agent.passed) {
+      console.error(formatError({ message: `${agent.message}${agent.code ? ` [${agent.code}]` : ""}`, ...(agent.hint ? { hint: agent.hint } : {}) }));
+      return agent.exitCode;
+    }
+    for (const line of agent.lines) console.error(formatInfo(line));
     const release = under ? await entryRelease(under) : undefined;
     const first = pipeline.stages[0]!.name;
     const firstStageCommits = upstreams?.includes(first) ? new Set((await readLedger(first)).filter((r) => r.env === first).map((r) => r.gitSha)) : undefined;
@@ -1257,6 +1273,8 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       now: new Date(),
       // #5354: the signers and roles at the commit the pipeline is read at prove who approved or rejected.
       ...(proof ? { proof } : {}),
+      // #5358: the agent steps' levels are reasons of the risk the stage's gate reads.
+      ...(agent.risk.length > 0 ? { agentRisk: agent.risk } : {}),
     });
     if (!gates.passed) {
       for (const line of gates.lines ?? []) console.error(formatInfo(line));

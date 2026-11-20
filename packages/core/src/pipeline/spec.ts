@@ -25,6 +25,7 @@ import { quorumProblems, QUORUM_MAX_DEPTH, type GateQuorumNode } from "../op/gat
 import type { OpEnvironment } from "../lexicon";
 import { stageArtifactsSpecProblems, stagePublishProblems, stageReadsProblems, type StageArtifactRead, type StageArtifactSource } from "./artifacts";
 import { soakCheckCount, soakProblems, type Soak } from "./soak";
+import { stageAgentStepsProblems, stageAgentStepsSpecProblems, type PipelineAgentStep } from "./agent-steps";
 
 /** The `kind` a folded pipeline carries. A reader refuses any other. */
 export const PIPELINE_SPEC_KIND = "chant.pipeline/v1";
@@ -187,6 +188,13 @@ export interface PipelineStage {
    * its gate. A promotion during the soak exits 3 with the time left.
    */
   soak?: Soak;
+  /**
+   * The stage's agent steps (#5358), by name, run in declared order for the
+   * release the stage takes: each a prompt, what it reads, and the JSON
+   * Schema its answer must match. A step reads, never approves and never
+   * applies. Refused on the first stage. Absent: none.
+   */
+  agentSteps?: Record<string, PipelineAgentStep>;
 }
 
 /** The values a stage's `queue` takes (#5353). */
@@ -238,7 +246,7 @@ const CRON = /^\S+(\s+\S+){4}$/;
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
 export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control", "recheck"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback", "soak"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback", "soak", "agentSteps"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds", "urgent"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
@@ -367,7 +375,7 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   if (tolerance) out.push(tolerance);
   const replan = replanDependentsProblem(stage.replanDependents, `${at}.replanDependents`);
   if (replan) out.push(replan);
-  out.push(...stagePublishProblems(stage.publish, at), ...stageReadsProblems(stage.reads, at));
+  out.push(...stagePublishProblems(stage.publish, at), ...stageReadsProblems(stage.reads, at), ...stageAgentStepsProblems(stage.agentSteps, at));
   if (stage.after !== undefined) {
     if (!Array.isArray(stage.after) || stage.after.length === 0 || !stage.after.every((n) => typeof n === "string" && NAME.test(n))) out.push(`${at}.after must list the names of one or more stages`);
     else {
@@ -517,7 +525,7 @@ export function pipelineSpecProblems(value: unknown): string[] {
     value.stages.forEach((s, i) => out.push(...stageProblems(s, i, seen)));
     if (out.length === 0) out.push(...graphProblems(value.stages));
     if (out.length === 0) out.push(...laterRiskProblems(value.stages, value.defaults));
-    out.push(...stageArtifactsSpecProblems(value));
+    out.push(...stageArtifactsSpecProblems(value), ...stageAgentStepsSpecProblems(value));
   }
   if (value.defaults !== undefined) {
     if (!isMap(value.defaults)) out.push("the pipeline's defaults must be op-waves settings: { \"op\", \"step\", ... }");
@@ -627,6 +635,32 @@ export const PIPELINE_SPEC_SCHEMA = {
           queue: { enum: [...PIPELINE_STAGE_QUEUES] },
           pauseAfterRollback: { type: "boolean" },
           soak: { $ref: "#/$defs/soak" },
+          agentSteps: {
+            type: "object",
+            additionalProperties: {
+              type: "object",
+              required: ["prompt", "schema"],
+              additionalProperties: false,
+              properties: {
+                prompt: { type: "string", minLength: 1 },
+                schema: { type: "object" },
+                reads: {
+                  type: "object",
+                  additionalProperties: {
+                    oneOf: [
+                      { type: "object", required: ["stage", "artifact"], additionalProperties: false, properties: { stage: { type: "string", pattern: NAME.source }, artifact: { type: "string", minLength: 1 } } },
+                      { type: "object", required: ["step"], additionalProperties: false, properties: { step: { type: "string", minLength: 1 } } },
+                    ],
+                  },
+                },
+                command: { type: "string", minLength: 1 },
+                keyEnv: { type: "string", pattern: "^[A-Za-z_][A-Za-z0-9_]*$" },
+                timeout: { type: "integer", minimum: 1, maximum: 360 },
+                maxRuns: { type: "integer", minimum: 1 },
+                maxCostUsd: { type: "number", exclusiveMinimum: 0 },
+              },
+            },
+          },
         },
       },
     },

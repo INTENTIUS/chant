@@ -22,11 +22,22 @@
  * `CHANT_AGENT_FACTS=verify-failed` and the relay key, so a failed verify
  * step or a soak check that starts failing records a fact for the
  * verify-failed agent.
+ *
+ * A stage with agent steps (#5358) gets a job `agent-<stage>` before its
+ * promote. It asks for `contents: read` alone, and the job token reaches its
+ * checkout step only, which fetches the commit and `chant/lifecycle`. The
+ * step that runs `<bin> pipeline agent run` drops every forge token first,
+ * holds the model keys alone, and hands its answers on through the job's
+ * outputs however it ends. The promote job takes them and runs `<bin>
+ * pipeline agent record` before it promotes, so a failed step is recorded
+ * with its reason and the promote holds on it. Forgejo's runner ignores
+ * `permissions:`; there the dropped tokens keep the step read-only.
  */
 
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
-import { assertEnvironment, CI_IMAGE, environmentDoc, githubRunsOn } from "@intentius/chant/ci-jobs";
+import { assertEnvironment, CI_IMAGE, environmentDoc, GITHUB_JOB_TOKEN, githubRunsOn, githubSecret } from "@intentius/chant/ci-jobs";
+import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
 import { checkoutStep, concurrency } from "./ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
@@ -34,6 +45,14 @@ import { opWavesAgentFactsEnv } from "@intentius/chant/ci-agent-triggers";
 
 /** The env var a promote job reads the release from. */
 export const PROMOTE_RELEASE_ENV = "CHANT_PROMOTE_RELEASE";
+
+/** The step id the agent job's answers are handed on from (#5358). */
+export const AGENT_STEPS_STEP_ID = "chant-agent-steps";
+
+/** Where a stage's agent answers are written and taken back (#5358), `chant pipeline agent`'s default. */
+export function agentStepsDir(stage: string): string {
+  return `.chant/agent-steps/${stage}`;
+}
 
 /** The stage names a promote accepts: lowercase letters, digits, `-` and `_`. */
 export const PROMOTE_STAGE_NAME = /^[a-z0-9][a-z0-9_-]*$/;
@@ -55,8 +74,9 @@ export function assertPipelinePromote(input: PipelinePromoteInput): void {
 /** The workflow document, before emission. */
 export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { forge?: "github" | "forgejo" } = {}): GithubOpPipelineDoc {
   assertPipelinePromote(input);
+  const forge = dialect.forge ?? "github";
   // #5339: the verify-failed facts' variables, on the command step alone.
-  const facts = input.agentFacts ? (opWavesAgentFactsEnv(dialect.forge ?? "github", { ...input.agentFacts, triggers: ["verify-failed"] }) ?? {}) : {};
+  const facts = input.agentFacts ? (opWavesAgentFactsEnv(forge, { ...input.agentFacts, triggers: ["verify-failed"] }) ?? {}) : {};
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
   const jobsDoc: Record<string, unknown> = {};
@@ -64,7 +84,12 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
     if (stage.environment) assertEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
     // #5348: the stage's own identity, traded for before the checkout, and its config and secret set.
     const cloud = stage.cloud;
-    const job = (condition: string, step: string, command: string, own: Record<string, string>) => ({
+    // #5358: the agent steps' answers are recorded, a failed step with its reason, before the promote reads them.
+    const agent = stage.agentSteps;
+    const agentJob = `agent-${stage.name}`;
+    const dir = agentStepsDir(stage.name);
+    const job = (condition: string, step: string, command: string, own: Record<string, string>, answers = false) => ({
+      ...(answers ? { needs: agentJob } : {}),
       if: condition,
       "runs-on": githubRunsOn(input.runner),
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
@@ -75,15 +100,41 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
       steps: [
         ...(cloud ? [{ name: "Trade the job's OIDC token for the stage's cloud identity", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : []),
         checkoutStep(true),
+        ...(answers ? [{ name: `Take the answers of ${stage.name}'s agent steps`, run: takeOverScript(agentJob, dir, forge) }] : []),
         { name: step, ...(Object.keys({ ...stage.variables, ...own, ...facts }).length > 0 ? { env: { ...(stage.variables ?? {}), ...own, ...facts } } : {}), run: [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
       ],
     });
-    jobsDoc[`promote-${stage.name}`] = job(
-      `\${{ inputs.stage == '${stage.name}' }}`,
-      `Promote the release into ${stage.name}`,
-      `${bin} components promote --to ${stage.name} --release "$${PROMOTE_RELEASE_ENV}"`,
-      { [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
-    );
+    if (agent) {
+      jobsDoc[agentJob] = {
+        if: `\${{ inputs.stage == '${stage.name}' }}`,
+        "runs-on": githubRunsOn(input.runner),
+        permissions: { contents: "read" },
+        "timeout-minutes": timeout.minutes,
+        container: CI_IMAGE,
+        outputs: handoverOutputs(AGENT_STEPS_STEP_ID, forge),
+        steps: [
+          { name: "Check out the commit and the ledger", env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN }, run: checkoutScript(true, true) },
+          {
+            id: AGENT_STEPS_STEP_ID,
+            name: `Run the agent steps of ${stage.name}`,
+            // The model keys alone: every forge token is dropped before the command starts.
+            env: { ...Object.fromEntries(agent.keyEnvs.map((k) => [k, githubSecret(k)])), [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
+            run: [dropForgeTokens("sh"), ...handoverTrap(dir, forge, { label: "chant-agent-steps" }), `${bin} pipeline agent run --stage ${stage.name} --release "$${PROMOTE_RELEASE_ENV}" --output ${dir}`].join("\n"),
+          },
+        ],
+      };
+    }
+    const promote = `${bin} components promote --to ${stage.name} --release "$${PROMOTE_RELEASE_ENV}"`;
+    jobsDoc[`promote-${stage.name}`] = agent
+      ? // With agent steps, the promote runs when a step failed too, so it records why and holds.
+        job(
+          `\${{ !cancelled() && inputs.stage == '${stage.name}' }}`,
+          `Promote the release into ${stage.name}`,
+          [`${bin} pipeline agent record --stage ${stage.name} --release "$${PROMOTE_RELEASE_ENV}" --from ${dir}`, promote].join("\n"),
+          { [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
+          true,
+        )
+      : job(`\${{ inputs.stage == '${stage.name}' }}`, `Promote the release into ${stage.name}`, promote, { [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" });
     // #5326: the promotion a soak holds, tried again on the schedule. It shares the stage's concurrency group, so it never runs beside a promote.
     if (input.recheck) {
       jobsDoc[`recheck-${stage.name}`] = job("${{ github.event_name == 'schedule' }}", `Promote the release a soak holds into ${stage.name}`, `${bin} components promote --to ${stage.name} --pending`, {});

@@ -45,6 +45,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `replanDependents` | the members whose dependents are planned again when an output they read changes: once a wave of the stage applied, its job runs `chant components replan` for the runs it applied. A stage's list, else `defaults.replanDependents`. Absent, no step runs |
 | `publish` | the [release artifacts](#release-artifacts) the stage publishes once it applied, by name: `{ member, output }` or `{ secret }`. Absent, it publishes none |
 | `reads` | the artifacts of upstream stages the stage reads (an ancestor through `after`, else an earlier stage), of the release it takes, keyed by the variable each reaches its deploy in: `{ stage, artifact }`. Absent, it reads none |
+| `agentSteps` | the stage's [agent steps](#agent-steps), by name, each `{ prompt, schema, reads, command, keyEnv, timeout, maxRuns, maxCostUsd }`; run in declared order for the release the stage takes. Refused on the first stage. Absent, none |
 | `after` | the stages a release applies in before this one opens for it. Absent, the stage before it in `stages`. The first stage takes none, and a cycle among stages fails the build with the stages named |
 | `queue` | `"replace"`: the stage takes one release at a time. A newer release waiting replaces an older one, and a release in the stage finishes before the next enters. Absent, each promote goes through on its own |
 | `soak` | `{ duration, checks, overrides }`: checks that must keep passing for `duration` after the stage's last apply before a release is promoted into the stages after it. A promote during the soak exits 3 with the time left. A wave takes a `soak` too, which holds the wave after it. See [Soak](/chant/guide/soak/). Absent, nothing soaks |
@@ -173,6 +174,9 @@ A hold, a freeze window, a pause and a rejection refuse an urgent promote as the
 | `chant pipeline artifacts publish --stage <stage> [--release <ref>] [--dry-run] [--json]` | publishes the stage's artifacts for the release named, else the release cut from `HEAD`, reading `publish` from the pipeline on the default branch |
 | `chant pipeline artifacts read --stage <stage> [--release <ref>] [--name <artifact>] [--from <dir>] [--json]` | prints a stage's artifacts for the release named, else the one in `CHANT_CONTROL_RELEASE`, else the release it last published for. `--name` prints one value; `--from` reads another repository's `chant/lifecycle` |
 | `chant pipeline release-of <commit>` | prints the digest of the release cut from a commit, or exits 1 |
+| `chant pipeline agent run --stage <stage> --release <ref> [--output <dir>]` | runs the stage's agent steps for the release and writes each record to `<dir>/<step>.json` (default `.chant/agent-steps/<stage>`); reads the ledger and writes nothing to it; exits 1 when a step failed |
+| `chant pipeline agent record --stage <stage> --release <ref> [--from <dir>]` | checks each record against the schema at base, records it on `<stage>/agent-answers.jsonl` with a run record per model run, and pushes; exits 1 when a step failed |
+| `chant pipeline agent answer --stage <stage> --release <ref> [--name <step>] [--json]` | prints the stage's answers for the release, or one step's answer as JSON |
 | `chant reject <pipeline> <stage> --reason <text> [--plan <digest>] [--env <stage>] [--release <digest>] [--sign [<key file>]]` | rejects the release the stage's gate waits on, on `_gates/<pipeline>/rejected.jsonl`. `--statement`, then `--signature <file> --at <time>`, records a signature made elsewhere |
 | `chant stage pause <stage> [--reason <text>]` | pauses the stage |
 | `chant stage resume <stage> [--reason <text>]` | resumes it; the newest release that waited enters |
@@ -215,6 +219,54 @@ Each publish appends one line to `<stage>/artifacts.jsonl` on `chant/lifecycle`:
 With `control.release: true`, the `<product>-applied` dispatch looks up the release cut from the applied commit (`chant pipeline release-of`) and sends its digest as `release`. The control repo's step gets it in `CHANT_CONTROL_RELEASE`, and `chant pipeline artifacts read` reads that release when no `--release` is named, so a downstream run reads the artifacts of the release the member applied. A commit with no release sends none.
 
 `@intentius/chant/pipeline` exports the reading API: `readStageArtifacts(port, { stage, release })`, `resolveStageReads(spec, stage, release, port)`, `gitStageArtifactPort({ cwd })`, `stageArtifactText(entry)` and `releaseCutFrom(commit)`, with `STAGE_ARTIFACTS_FLOOR`, the first chant that has release artifacts.
+
+## Agent steps
+
+An agent step is a model's reading of the release a stage takes, with an answer of a declared shape: a summary for the release notes, or the services to watch during the soak. It reads, and approves nothing and applies nothing.
+
+```ts
+{
+  name: "prod",
+  waves: [{ name: "prod", runs: [{ target: "prod" }] }],
+  gate: { holds: { policy: true } },
+  agentSteps: {
+    watch: {
+      prompt: "List the services to watch during the soak, from the endpoint staging published.",
+      reads: { endpoint: { stage: "staging", artifact: "endpoint" } },
+      schema: { type: "object", required: ["services", "risk"], properties: { services: { type: "array", items: { type: "string" } }, risk: { enum: ["low", "medium", "high"] } } },
+      maxRuns: 20,
+      maxCostUsd: 5,
+    },
+    notes: { prompt: "Write one paragraph for the release notes.", reads: { watch: { step: "watch" } }, schema: { type: "string", maxLength: 2000 } },
+  },
+}
+```
+
+| Field | Value |
+|---|---|
+| `prompt` | what the model is asked, at most 4000 characters. The prompt adds the step's inputs as data between tags, and the schema |
+| `schema` | the JSON Schema (2020-12) the answer must match; `chant build` refuses one that does not compile |
+| `reads` | by the name the prompt shows each under: `{ stage, artifact }`, an artifact an upstream stage published for the same release, or `{ step }`, the answer of a step declared before it. A secret artifact reads as where it is kept, never as its value |
+| `command` | the model command, prompt on stdin and answer on stdout. Default: the review command with `--output-format json`, which runs Claude Code with no tools and one turn |
+| `keyEnv` | the variable holding the model's key, the one secret the command sees. Default `ANTHROPIC_API_KEY` |
+| `timeout` | minutes the command may run, 1 to 360. Default 10 |
+| `maxRuns`, `maxCostUsd` | the most runs, and US dollars, per day, counted on the run records under op `<pipeline>-<stage>-<step>`, as every agent's limits are |
+
+`chant build` refuses agent steps on the first stage, which applies before the merge cuts the release a step answers for, a read of a stage that is not upstream or an artifact it never publishes, and a gate policy of `never` on a stage whose gate sets `holds.policy`.
+
+| Step | What happens |
+|---|---|
+| run | `chant pipeline agent run` runs each step in order, in a job that holds a read token only: the job token reaches its checkout, and the step drops every forge token before the command and holds the model keys alone. The model's environment holds its key and the process basics. Each step's record goes to a file; nothing is written to the ledger |
+| fail | an answer that is not JSON, or does not match the schema, fails the step with the schema's complaint, and a step reading it fails too. So do a missing key and a run past a limit |
+| record | the promote job runs `chant pipeline agent record` before it promotes, also when a step failed. It checks each answer against the schema at base again and appends it to `<stage>/agent-answers.jsonl` on `chant/lifecycle`, with the release digest and label, the prompt's digest, the schema's digest and the cost the command reported, and one run record per model run |
+| hold | `chant components promote --to <stage> --release <ref>` exits 3 (`pipeline-agent-step-holding`) while a step has no answer for the release, or its answer failed or does not match the schema at base, naming each step and why. With no `--release` it exits 1 |
+| policy | with `gate.holds.policy`, the promote runs the workspace's `ci.policy` at base with the answers as `input.agent.<step>`: `{ answer, stage, release, label, promptDigest, schemaDigest, costUsd, model, at }`. A deny refuses the promote with exit 1 (`pipeline-agent-policy-denied`); a hold is printed |
+| gate | the stage's gate counts a person's approval only: an approval an agent recorded is refused, and the wait names it. The gate waits for a person even when its policy says `never` |
+| risk | an answer that is an object with `risk` of `low`, `medium` or `high` is one reason `agent.<step>` of the [change risk](/chant/guide/change-risk/) the stage gate's `holds.risk` reads, weighed as the review's level. It only raises the score |
+
+`chant pipeline generate` gives each stage with agent steps a job `agent-<stage>` before its promote job, and the promote job takes its answers. A stage with none renders as before.
+
+`@intentius/chant/pipeline` exports `readStageAgentAnswers(port, { stage, release })`, `gitStageAgentAnswerPort({ cwd })`, `stageAgentPolicyInput(answers)` and `agentStepRiskLevels(answers)` for a reader such as the risk record, with `STAGE_AGENT_STEPS_FLOOR`, the first chant that has agent steps.
 
 ## Product helpers
 

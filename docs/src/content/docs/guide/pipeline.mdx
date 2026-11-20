@@ -113,6 +113,35 @@ A stage publishes named values for the release it applied, and a later stage rea
 
 The merge publishes `dev`'s artifacts right after it cuts the release. `promote --to staging --release v1.4.0` reads `endpoint` from `dev`'s record of v1.4.0 into `TF_VAR_dev_endpoint` before it deploys, and refuses when `dev` has not published it for that release. `chant build` refuses a read of a stage that is not upstream of the reading stage, or that does not publish the artifact. Upstream means an ancestor through `after`, or an earlier stage when no stage names `after`, so a stage cannot read from a sibling that fans out from the same stage. A secret is published as where it is kept (`{ secret: { awsSecretsManager: "..." } }`), and an output the engine marks sensitive is refused. Another repository reads them with `chant pipeline artifacts read --stage dev --from <dir>`. The [reference](/chant/reference/pipeline/#release-artifacts) has the rules.
 
+## Ask a model about a release
+
+A later stage can run agent steps: a model reads what earlier stages published for the release and answers in a shape you declare, such as the services to watch during the soak.
+
+```ts
+{
+  name: "prod",
+  waves: [...],
+  gate: { holds: { policy: true } },
+  agentSteps: {
+    watch: {
+      prompt: "List the services to watch during the soak.",
+      reads: { endpoint: { stage: "staging", artifact: "endpoint" } },
+      schema: { type: "object", required: ["services"], properties: { services: { type: "array", items: { type: "string" } } } },
+    },
+  },
+}
+```
+
+The generated promote workflow runs the steps in a job of their own that holds a read token only, then records their answers with the release before it promotes:
+
+```bash
+chant pipeline agent run --stage prod --release v1.4.0
+chant pipeline agent record --stage prod --release v1.4.0
+chant components promote --to prod --release v1.4.0
+```
+
+An answer that does not match the schema fails its step, and the promote holds with exit 3 naming the step and the schema's complaint. With `holds.policy`, the gate's policy reads the answers as `input.agent.watch`, and the gate still waits for a person's approval. `chant pipeline agent answer --stage prod --release v1.4.0 --name watch` prints an answer for any later step. The [reference](/chant/reference/pipeline/#agent-steps) has the rules.
+
 ## Fan out to regions and join before production
 
 A stage follows the stage before it in `stages` unless it names its own with `after`. Name one stage in several `after` lists and a release fans out to each; name several stages in one `after` and the stage waits for the same release in each of them:

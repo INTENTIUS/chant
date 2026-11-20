@@ -504,6 +504,14 @@ Pipeline:
                         Print the artifacts a stage published for a release
                         (default $CHANT_CONTROL_RELEASE, else its latest);
                         --from reads another repository's chant/lifecycle
+  pipeline agent run --stage <stage> --release <label|digest> [--output <dir>]
+                        Run the stage's agent steps for a release and write
+                        each answer to a file; reads the ledger, writes none
+  pipeline agent record --stage <stage> --release <label|digest> [--from <dir>]
+                        Check each answer against the schema at base and
+                        record it with the release, its prompt digest and cost
+  pipeline agent answer --stage <stage> --release <label|digest> [--name <step>]
+                        Print the stage's agent answers for a release
   pipeline release-of <commit>
                         Print the digest of the release cut from a commit
   stage pause <stage> [--reason <text>]
@@ -2286,6 +2294,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "pipeline generate", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline")).runPipelineGenerate(ctx) },
   // #5356: release artifacts a stage publishes, and the release cut from a commit.
   { name: "pipeline artifacts", handler: async (ctx) => (await import("./handlers/pipeline-artifacts")).runPipelineArtifacts(ctx) },
+  { name: "pipeline agent", handler: async (ctx) => (await import("./handlers/pipeline-agent")).runPipelineAgent(ctx) },
   { name: "pipeline release-of", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline-artifacts")).runPipelineReleaseOf(ctx) },
   { name: "pipeline", runsNoConfig: true, handler: async () => (await import("./handlers/pipeline")).runPipelineUnknown() },
   // #5355: pause and resume a stage of the member's pipeline.

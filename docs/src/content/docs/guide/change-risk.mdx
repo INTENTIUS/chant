@@ -57,6 +57,7 @@ A reason that counts things turns its count into a value as `1 - 2^(-n / half)`:
 | `environments` | environments reached beyond the first | 0.3 | 1 |
 | `dependents` | graph nodes that read a changed node and are not changed themselves | 0.3 | 4 |
 | `review` | the review agent's level: `low` 0, `medium` 0.5, `high` 1, and 0.5 when there is no review | 0.5 | |
+| `agent.<step>` | the level an [agent step](/chant/reference/pipeline/#agent-steps) of the stage answers in its answer's `risk`: `low` 0, `medium` 0.5, `high` 1. Read at that stage's gate; a step whose answer names no level adds nothing | 0.5 | |
 | `question.<id>` | the review's answer to a question, from 0 to 1, and 1 when there is no answer | the question's `weight` | |
 
 Each lexicon's classifier gives the disruption classes; the terraform and pulumi lexicons both classify ([lifecycle](/chant/cli/lifecycle/)). The dependents come from the member's `chant graph --format ir`. A graph read that fails is logged, and then no dependents count. The review reason appears once the job has looked for the pull request's review.

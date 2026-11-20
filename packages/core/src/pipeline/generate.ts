@@ -11,7 +11,8 @@
  *   and the control dispatch come with that stage's spec;
  * - the promote jobs: one manual job per later stage, from the lexicon's
  *   `generatePipelinePromote`, each running `components promote --to
- *   <stage> --release <release>`.
+ *   <stage> --release <release>`. A stage with agent steps (#5358) gets a
+ *   job before its promote that holds a read token only and runs them.
  *
  * Each stage's jobs log in as that stage alone and take that stage's config
  * and secret set (#5348): the first stage's waves trade for the apply
@@ -30,6 +31,7 @@ import { activeProductWords } from "../ci-product-words";
 import { opWaveBinArgv, type OpWaveJob } from "../op/op-waves";
 import type { PipelineSpec } from "./spec";
 import { stageWavesSpec } from "./stages";
+import { stageAgentKeyEnvs, stageAgentSteps } from "./agent-steps";
 
 /**
  * Options for {@link generatePipeline}: the op-waves generator's, without
@@ -121,7 +123,13 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
       ? []
       : found.generatePipelinePromote({
           pipeline: spec.name,
-          stages: later.map((s) => ({ name: s.name, ...(s.forgeEnvironment ? { environment: s.forgeEnvironment } : {}), ...promoteStageInputs(s.name, lexicon, options) })),
+          stages: later.map((s) => ({
+            name: s.name,
+            ...(s.forgeEnvironment ? { environment: s.forgeEnvironment } : {}),
+            ...promoteStageInputs(s.name, lexicon, options),
+            // #5358: the stage's agent steps run in a job of their own before the promote.
+            ...(stageAgentSteps(spec, s.name).length > 0 ? { agentSteps: { keyEnvs: stageAgentKeyEnvs(spec, s.name) } } : {}),
+          })),
           ...(bin ? { bin } : {}),
           ...(spec.defaults?.runner ? { runner: spec.defaults.runner } : {}),
           ...(options.jobTimeoutMinutes ? { jobTimeoutMinutes: options.jobTimeoutMinutes } : {}),
