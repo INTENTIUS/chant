@@ -1097,6 +1097,32 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     also: ["approval_rules[].proven"],
     products: [],
   },
+  // #5325: the scored change risk, in the plan note, as the policy's input.risk, and as a hold.
+  {
+    key: "risk.approve_above",
+    concept: "the risk score above which a plan needs an approval of its own",
+    section: "stage",
+    value: "a score from 0 to 1",
+    chant: "`ci.risk.approveAbove` and `holds.risk.approveAbove`",
+    also: ["environments.<name>.risk.approve_above"],
+    products: [],
+  },
+  {
+    key: "risk.questions",
+    concept: "the questions the review agent answers from 0 to 1, each a reason in the risk score",
+    section: "stage",
+    value: "a list of maps with `id`, `text`, `weight` (0 to 1) and `approve_above` (0 to 1)",
+    chant: "`ci.risk.questions`",
+    products: [],
+  },
+  {
+    key: "environments.<name>.risk.approval_rules",
+    concept: "the approval rules a stage's gate takes on top of its own when the risk is over its score",
+    section: "stage",
+    value: "the rules `approval_rules` takes",
+    chant: "a stage gate's `holds.risk.quorum` in `.chant/pipeline.ts`",
+    products: [],
+  },
   // Apply
   {
     key: "apply.when",

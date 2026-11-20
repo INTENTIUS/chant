@@ -53,6 +53,7 @@ import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
 import { costEstimateLines, type CostEstimate } from "./cost-estimate";
+import { changeRiskLines, type ChangeRisk } from "./change-risk";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
 import { activeProductWords, approveLine, commentLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
 import type { CrossStackEdge } from "./control/edges";
@@ -636,6 +637,16 @@ export interface PrReport {
    */
   cost?: CostEstimate;
   /**
+   * The change risk (#5325), with `ci.risk` at base: the score from 0 to 1,
+   * its level, each reason with its weight, and whether a threshold is
+   * crossed, so the plan needs an approval of its own digest. The same
+   * record the policy reads as `input.risk` and the stored change set
+   * keeps. Absent when the base sets no `ci.risk`, or the stage reached no
+   * plan to score. Added within contract 1 by the chant that carries
+   * `CHANGE_RISK_FLOOR` (`@intentius/chant/ci-product`).
+   */
+  risk?: ChangeRisk;
+  /**
    * `pr-apply --before-merge` (#4301): the requires checks. Absent on every
    * other stage. Added within contract 1 by chant
    * {@link PR_REPORT_BEFORE_MERGE_FLOOR}.
@@ -1160,6 +1171,8 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
   out.push(...policyLines(report));
   // #5334: the cost estimate, member by member.
   if (report.cost) out.push(...costEstimateLines(report.cost, noun));
+  // #5325: the change risk, reason by reason.
+  if (report.risk) out.push(...changeRiskLines(report.risk));
   out.push(...capabilityPolicyLines(report, words));
   out.push(...renderMigrationLines(report.migrations));
   if (report.selection.unclaimed.length > 0) {

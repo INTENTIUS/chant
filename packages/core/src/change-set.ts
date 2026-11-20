@@ -45,6 +45,7 @@
 import { computePlanDigest } from "./lifecycle/plan-digest";
 import type { ChangeSet as LifecycleChangeSet, ChangeSetEntry as LifecycleEntry } from "./lifecycle/change-set";
 import type { ChangeSet as ReconcileChangeSet } from "./reconcile";
+import type { ChangeRisk } from "./change-risk";
 
 /** The schema a change-set document names in `$schema`. */
 export const CHANGE_SET_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json";
@@ -303,6 +304,13 @@ export interface ChangeSetDocument {
   releaseDigest?: string;
   /** The environment this change set was planned for (#4045), set with `releaseDigest`. Part of the digest when present. */
   environment?: string;
+  /**
+   * The change risk scored when the gate bound it (#5325,
+   * `./change-risk.ts`): the score, its level and each reason with its
+   * weight. Set on a stored change set when `ci.risk` was set at base.
+   * Like `graph`, never part of the digest.
+   */
+  risk?: ChangeRisk;
 }
 
 /** Where a document's node ids come from. */

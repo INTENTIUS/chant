@@ -105,6 +105,7 @@ import { activeOtlp, RunEventTrace, type CapabilityTraceFacts, type OtlpExporter
 import { joinRunEventSinks, resolveRunEventRun, type RunEventSink } from "../run-event-stream";
 import { OpWaveRunEvents } from "./op-waves-events";
 import type { ChangeSetDocument, ChangeSetPart } from "../change-set";
+import { changeRiskQuorum, scoreChangeRisk, type ChangeRisk } from "../change-risk";
 import type { CapabilityRegistry } from "../components/capability";
 import type { RunEventResource } from "../run-event";
 import { opWaveReleaseNames, type OpWaveReleaseOutcome, type OpWaveReleasePort, type OpWaveReleaseRequest } from "./op-waves-release";
@@ -367,6 +368,8 @@ export interface OpWaveDecision {
   hooks?: Partial<Record<OpWaveHookMoment, OpWaveHook[]>>;
   /** The `onFailure: approve` hooks that failed: the wave needs an approval whatever its policy (#3762). */
   heldBy?: string[];
+  /** The wave's change risk under `holds.risk` (#5325): the score, its level and each reason with its weight. */
+  risk?: ChangeRisk;
   /**
    * Spent approvals (#3784). `base`: the spec at base sets `approvals.spend`,
    * so a spent approval counts for nothing and the approval this wave applies
@@ -1126,6 +1129,10 @@ interface WaveContext {
   report?: string;
   /** The approvals the after-plan hooks settled before the gate (terragucci issue 1303), recorded at it before it is decided. */
   answerApprovals?: OpWaveAnswerApproval[];
+  /** The wave's change risk under `holds.risk` (#5325), recorded on the decision. */
+  risk?: ChangeRisk;
+  /** The approval rules an over risk adds to the wave's gate (#5325). */
+  riskQuorum?: GateQuorumRule[];
 }
 
 function planRun(opts: { spec: OpWavesSpec; wave: number; cwd: string; exec: OpWaveExec }, waveName: string, run: OpWaveRun): OpWaveMember {
@@ -1596,6 +1603,33 @@ function waveCostsOf(
 }
 
 /**
+ * The change risk of a wave's plans (#5325, `../change-risk.ts`): the runs'
+ * change-set parts, the engine's destructive classes and the stage's
+ * environment. Over its threshold, or with a run whose change set it cannot
+ * read, the wave waits: the hold lines say why. It never lets a wave through.
+ */
+function waveRiskOf(
+  ctx: WaveContext,
+  settings: NonNullable<OpWaveHolds["risk"]>,
+  members: readonly OpWaveMember[],
+  parts: ReadonlyMap<string, ChangeSetPart> | undefined,
+): { record: ChangeRisk; holds: string[] } {
+  const { spec, wave } = ctx;
+  const read = members.map((m) => parts?.get(m.member) ?? ctx.steps?.get(m.member)?.part).filter((p): p is ChangeSetPart => p !== undefined);
+  const unread = members.filter((m) => m.empty !== true && !parts?.has(m.member) && !ctx.steps?.get(m.member)?.part).map((m) => m.member);
+  const destructive = [...new Set(members.flatMap((m) => ctx.steps?.get(m.member)?.destructiveClasses ?? []))].sort();
+  const env = spec.labels?.Env;
+  const record = scoreChangeRisk(
+    { changeSet: { members: read.map((p) => p.member), entries: read.flatMap((p) => p.entries) }, ...(destructive.length ? { destructive } : {}), ...(env ? { environments: [env] } : {}) },
+    settings,
+  );
+  const holds: string[] = [];
+  if (record.over) holds.push(`risk ${record.score.toFixed(2)} (${record.level}): ${record.overBy.join("; ")}`);
+  if (unread.length > 0) holds.push(`risk: the plans of ${unread.join(", ")} gave no change set to score`);
+  return { record, holds };
+}
+
+/**
  * Run a wave's holds over its plans (#4545): the policy marks each run it
  * denies or holds (the gate then settles them as a product's plan file
  * would), and the cost adds its digest member and, over its amount, a hold.
@@ -1612,6 +1646,14 @@ async function runWaveHolds(
   // #4614: each run's ci.policy row, which the after-plan hooks and the run record read.
   const out: { holds: string[]; extras: WaveMember[]; rows: Map<string, OpRunPolicyRow>; policySource?: ResolvedGatePolicySource } = { holds: [], extras: [], rows: new Map<string, OpRunPolicyRow>() };
   if (!holds) return out;
+  // #5325: the wave's change set is scored once, before the policy, so each run's policy reads it as input.risk.
+  const risk = holds.risk ? waveRiskOf(ctx, holds.risk, members, parts) : undefined;
+  if (risk) {
+    ctx.risk = risk.record;
+    log(`wave ${k} (${wave.name}): risk ${risk.record.score.toFixed(2)} (${risk.record.level})${risk.record.over ? `, ${risk.record.overBy.join("; ")}` : ""}`);
+    out.holds.push(...risk.holds);
+    ctx.riskQuorum = changeRiskQuorum(risk.record, holds.risk);
+  }
   // #5334: the wave is priced once, before the policy, so each run's policy reads the estimate as input.cost.
   const costs = holds.cost ? waveCostsOf(holds.cost, spec, k, members, ctx.steps, cwd, options.holdExec) : undefined;
   if (holds.policy) {
@@ -1627,7 +1669,7 @@ async function runWaveHolds(
     }
     let got: Awaited<ReturnType<typeof opWavePolicyVerdicts>>;
     try {
-      got = await opWavePolicyVerdicts({ spec, gate: opWaveGateName(spec, k), env: spec.labels?.Env ?? wave.name, base, head, cwd, ...(options.holdExec ? { exec: options.holdExec } : {}) }, parts!, holds.cost && costs ? opWaveCostEstimate(holds.cost, costs) : undefined);
+      got = await opWavePolicyVerdicts({ spec, gate: opWaveGateName(spec, k), env: spec.labels?.Env ?? wave.name, base, head, cwd, ...(options.holdExec ? { exec: options.holdExec } : {}) }, parts!, holds.cost && costs ? opWaveCostEstimate(holds.cost, costs) : undefined, risk?.record);
     } catch (err) {
       return { failed: `wave ${k} (${wave.name}): ${err instanceof Error ? err.message : String(err)}, so nothing in it was applied` };
     }
@@ -3764,6 +3806,9 @@ async function decideOpWave(
   decision.members = members;
   // #4290: the rules at base whose targets glob matches one of the wave's runs.
   const takes = planned.rules.quorum ? quorumRulesFor(planned.rules.quorum, members.map((m) => m.member)) : [];
+  // #5325: an over risk adds its rules on top of the wave's own, and records the score.
+  if (ctx.risk) decision.risk = ctx.risk;
+  if (ctx.riskQuorum?.length) takes.push(...quorumRulesFor(ctx.riskQuorum, members.map((m) => m.member)));
   if (takes.length > 0) decision.quorum = takes;
   // terragucci issue 1303: a wave no rule covers still leaves the involved out, and counts a review the product recorded.
   if (takes.length > 0 || opWaveOneApprover(decision.approval, planned.rules)) {

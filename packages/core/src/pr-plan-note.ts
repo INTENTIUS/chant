@@ -26,6 +26,7 @@
 import { renderPrNote as renderPrLoopNote, type PrReport } from "./pr-loop";
 import { GITHUB_COMMENT_LIMIT } from "./plan-summary";
 import { costEstimateLines, type CostEstimate } from "./cost-estimate";
+import { changeRiskLines, type ChangeRisk } from "./change-risk";
 import { activeProductWords, approveLine, overrideLine, type CiProductWords } from "./ci-product-words";
 
 /** The first chant with the product plan note (#4810). */
@@ -287,6 +288,12 @@ export interface PrPlanNote {
    * facts, a row per unit, in the same words as the pr loop's note.
    */
   cost?: CostEstimate;
+  /**
+   * The change risk (#5325), as `scoreChangeRisk` from
+   * `@intentius/chant/ci-product` gives it: chant renders it under the
+   * cost, in the same words as the pr loop's note.
+   */
+  risk?: ChangeRisk;
   named: PrPlanNoteNamed[];
   overrides?: PrPlanNoteOverride[];
   warnings?: { member: string; text: string }[];
@@ -550,6 +557,8 @@ export function renderPlanNote(report: PrPlanNote, options: PlanNoteOptions = {}
 
   // #5334: the cost estimate, unit by unit, as the pr loop's note shows it.
   if (report.cost) head.push(...costEstimateLines(report.cost, unitWord).slice(1), "");
+  // #5325: the change risk, as the pr loop's note shows it.
+  if (report.risk) head.push(...changeRiskLines(report.risk).slice(1), "");
 
   const blocks: Block[] = [];
   const line = (text: string): void => void blocks.push({ kind: "line", units: 0, text });

@@ -239,6 +239,9 @@
         "cost": {
           "$ref": "#/$defs/ciCost"
         },
+        "risk": {
+          "$ref": "#/$defs/ciRisk"
+        },
         "reportUrl": {
           "type": "string",
           "minLength": 1,
@@ -2076,6 +2079,29 @@
         "approveAbove": { "type": "number", "minimum": 0, "description": "The monthly change above which the plan needs an approval of its own digest. A member with no estimate counts as over. Absent: the estimate only informs." }
       },
       "description": "The cost estimate of a pull request's plan (#5334), read from the declaration at base: chant components pr-plan and pr-apply run command over each member's plan document and put the estimate in the report and the note, and the policy reads it as input.cost. With approveAbove, a plan over it needs an approval of its own digest, so a green commit's plan does not apply under the approvals of the merges it carries. The estimate adds approvals and never removes one, and a failed estimate never fails the plan. The terraform lexicon's terraformCostHold and the pulumi lexicon's pulumiCostHold build the same object. Read by the chant release that carries COST_ESTIMATE_FLOOR (@intentius/chant/ci-product)."
+    },
+    "ciRisk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "approveAbove": { "type": "number", "minimum": 0, "maximum": 1, "description": "The score above which the plan needs an approval of its own digest. Absent: the score only informs." },
+        "questions": {
+          "type": "array",
+          "description": "Questions the review agent answers from 0 to 1, each a reason in the score with its weight. An answer over the question's approveAbove makes the plan need an approval of its own digest; an unknown answer, given when the plan is larger than the review's context or no review was found, is over every threshold.",
+          "items": {
+            "type": "object",
+            "required": ["id", "text", "weight"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+              "text": { "type": "string", "minLength": 1 },
+              "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+              "approveAbove": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      },
+      "description": "The change risk of a pull request's plan (#5325), read from the declaration at base: chant components pr-plan and pr-apply score the change set from its deletes, replacements, disruption classes, destructive migration classes, members and environments reached, graph dependents, the review's level and the answers to questions, put the record in the report, the note and the stored change set, and the policy reads it as input.risk. The score only adds approvals: with approveAbove, a plan over it needs an approval of its own digest, and no setting lets a low score pass a gate. Read by the chant release that carries CHANGE_RISK_FLOOR (@intentius/chant/ci-product)."
     },
     "ciPhaseName": {
       "type": "string",

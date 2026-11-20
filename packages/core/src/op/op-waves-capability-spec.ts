@@ -8,6 +8,7 @@
  */
 
 import type { OpWavesSpec } from "./op-waves";
+import type { ChangeRiskSettings } from "../change-risk";
 
 /** A capability step a wave plans and applies each run through (#4545): `{ kind, ...input }`. */
 export interface OpWaveStep {
@@ -44,6 +45,13 @@ export interface OpWaveHolds {
   policy?: boolean;
   /** Price each run and hold the wave over a monthly change. */
   cost?: OpWaveCostHold;
+  /**
+   * Score the wave's change set (#5325, `../change-risk.ts`): each run's
+   * policy reads the record as `input.risk`, the decision records it, and
+   * over `approveAbove` the wave waits whatever its gate says and takes
+   * `quorum`'s rules on top of its own. It only ever adds approvals.
+   */
+  risk?: Omit<ChangeRiskSettings, "questions">;
 }
 
 /** The digest member a cost hold adds (#4545): no run has this name. */
@@ -96,14 +104,40 @@ export function opWaveParallelismProblems(spec: Pick<OpWavesSpec, "parallelism" 
 /** What is wrong with a spec's `holds`, empty when nothing is. */
 export function opWaveHoldsProblems(holds: unknown): string[] {
   if (holds === undefined) return [];
-  if (holds === null || typeof holds !== "object" || Array.isArray(holds)) return ["`holds` must be { \"policy\"?: true, \"cost\"?: {...} }"];
+  if (holds === null || typeof holds !== "object" || Array.isArray(holds)) return ["`holds` must be { \"policy\"?: true, \"cost\"?: {...}, \"risk\"?: {...} }"];
   const problems: string[] = [];
   for (const [key, value] of Object.entries(holds as Record<string, unknown>)) {
     if (key === "policy") {
       if (typeof value !== "boolean") problems.push("`holds.policy` must be true or false");
     } else if (key === "cost") {
       problems.push(...costHoldProblems(value));
-    } else problems.push(`\`holds.${key}\` is not a setting; the ones there are holds.policy and holds.cost`);
+    } else if (key === "risk") {
+      problems.push(...riskHoldProblems(value));
+    } else problems.push(`\`holds.${key}\` is not a setting; the ones there are holds.policy, holds.cost and holds.risk`);
+  }
+  return problems;
+}
+
+/**
+ * What is wrong with `holds.risk` (#5325). Kept here rather than read from
+ * `../change-risk.ts`, so the spec module stays free of run-time imports;
+ * `change-risk.test.ts` checks the two agree.
+ */
+function riskHoldProblems(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return ["`holds.risk` must be { \"approveAbove\"?: <0 to 1>, \"quorum\"?: [...] }"];
+  const r = value as Record<string, unknown>;
+  const problems: string[] = [];
+  const unit = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
+  for (const key of Object.keys(r)) {
+    if (key === "approveAbove") {
+      if (!unit(r.approveAbove)) problems.push("`holds.risk.approveAbove` must be a score from 0 to 1");
+    } else if (key === "quorum") {
+      if (!Array.isArray(r.quorum) || r.quorum.length === 0 || r.quorum.some((q) => q === null || typeof q !== "object" || !Number.isInteger((q as { count?: unknown }).count) || ((q as { count: number }).count < 1))) {
+        problems.push("`holds.risk.quorum` must be a non-empty list of approval rules, each { \"count\", \"roles\"?, \"notAuthor\"?, \"proven\"? }");
+      }
+    } else if (key === "questions") {
+      problems.push("`holds.risk.questions` is answered by the pull request's review, so it is set in `ci.risk.questions`");
+    } else problems.push(`\`holds.risk.${key}\` is refused: a risk score only adds approvals, and its settings are approveAbove and quorum`);
   }
   return problems;
 }
@@ -128,6 +162,8 @@ function costHoldProblems(value: unknown): string[] {
 export function opWaveHoldsAt(atBase: OpWaveHolds | undefined, change: OpWaveHolds | undefined): OpWaveHolds | undefined {
   const policy = atBase?.policy === true || change?.policy === true;
   const cost = atBase !== undefined ? atBase.cost : change?.cost;
-  if (!policy && !cost) return undefined;
-  return { ...(policy ? { policy: true } : {}), ...(cost ? { cost } : {}) };
+  // #5325: the risk at base, else the change's; it only ever adds approvals.
+  const risk = atBase !== undefined ? atBase.risk : change?.risk;
+  if (!policy && !cost && !risk) return undefined;
+  return { ...(policy ? { policy: true } : {}), ...(cost ? { cost } : {}), ...(risk ? { risk } : {}) };
 }

@@ -33,6 +33,10 @@
       "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
       "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer. The release a release gate's change set was planned for: the releaseDigest of the release chant components promote --release deploys. Set with environment, and absent on every other change set. Part of digest, so a stored change set names the one release its gate bound."
     },
+    "risk": {
+      "type": "object",
+      "description": "Added in contract 1 by #5325, written by the chant that carries CHANGE_RISK_FLOOR on a stored change set when ci.risk was set at base. The change risk: version, score (0 to 1), level (low, medium, high), reasons (each id, weight, value, contribution and detail, with count, answer and approveAbove where they apply), approveAbove (a number or null), over and overBy. Not part of digest."
+    },
     "environment": {
       "type": "string",
       "description": "Added in contract 1 by #4045, written by chant 0.124.28 and newer. The environment a release gate's change set was planned for, set with releaseDigest. Part of digest."

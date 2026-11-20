@@ -234,7 +234,7 @@ describe("the step and holds settings (#4545)", () => {
     expect(opWaveHoldsAt({ cost }, { cost: { command: ["y"], approveAbove: 1e9 } })).toEqual({ cost });
     expect(opWaveHoldsAt(undefined, undefined)).toBeUndefined();
     expect(opWaveHoldsProblems({ cost: { command: [], approveAbove: -1 } })).toHaveLength(2);
-    expect(opWaveHoldsProblems({ budget: 1 })).toEqual(["`holds.budget` is not a setting; the ones there are holds.policy and holds.cost"]);
+    expect(opWaveHoldsProblems({ budget: 1 })).toEqual(["`holds.budget` is not a setting; the ones there are holds.policy, holds.cost and holds.risk"]);
   });
 
   test("estimates read in both formats, and the cost verdict sums them", () => {
@@ -256,5 +256,49 @@ describe("the step and holds settings (#4545)", () => {
     const p = part("a", "no-op");
     expect(partEffects({ ...p, member: { ...p.member, outputs: ["url"] } })).toEqual({ empty: false, destructive: false });
     expect(partEffects({ ...p, member: { ...p.member, outputs: [] } })).toEqual({ empty: true, destructive: false });
+  });
+});
+
+describe("a wave's holds.risk (#5325)", () => {
+  const withRisk = (gate: "always" | "never", risk: NonNullable<NonNullable<OpWavesSpec["holds"]>["risk"]>): OpWavesSpec => ({
+    ...base,
+    labels: { Env: "prod" },
+    holds: { risk },
+    waves: [{ ...base.waves[0]!, gate }],
+  });
+
+  test("a low score passes no gate: under gate always the wave still waits, and the decision records the score", async () => {
+    const spec = withRisk("always", { approveAbove: 0.5 });
+    const { registry, calls } = fakeCapability({ network: digest("1"), app: digest("2") });
+    const h = harness(spec);
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, show: h.show, gates: memoryGateLedgerPort(), capabilities: registry });
+    expect(result.exitCode).toBe(3);
+    expect(calls.ran).toHaveLength(0);
+    expect(result.decision?.risk).toMatchObject({ level: "low", over: false });
+    expect(result.decision?.heldBy).toBeUndefined();
+    h.done();
+  });
+
+  test("under its threshold, a gate that never waits behaves as it does with no risk", async () => {
+    const spec = withRisk("never", { approveAbove: 0.5, quorum: [{ count: 2 }] });
+    const { registry, calls } = fakeCapability({ network: digest("1"), app: digest("2") });
+    const h = harness(spec);
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, show: h.show, gates: memoryGateLedgerPort(), capabilities: registry });
+    expect(result.exitCode).toBe(0);
+    expect(calls.ran).toHaveLength(2);
+    h.done();
+  });
+
+  test("over its threshold, the wave waits whatever its gate says and takes the risk's rules on top of its own", async () => {
+    const spec = withRisk("never", { approveAbove: 0.5, quorum: [{ count: 2 }, { count: 1, roles: ["sre"] }] });
+    const { registry, calls } = fakeCapability({ network: digest("1"), app: digest("2") }, { action: "delete" });
+    const h = harness(spec);
+    const result = await runOpWave({ spec, specFile: "waves.json", wave: 1, cwd: h.cwd, show: h.show, gates: memoryGateLedgerPort(), capabilities: registry });
+    expect(result.exitCode).toBe(3);
+    expect(calls.ran).toHaveLength(0);
+    expect(result.decision?.risk).toMatchObject({ over: true });
+    expect(result.decision?.heldBy?.join()).toMatch(/^risk 0\.\d+ \(\w+\): the score/);
+    expect(result.decision?.quorum).toEqual([{ count: 2 }, { count: 1, roles: ["sre"] }]);
+    h.done();
   });
 });

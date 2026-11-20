@@ -47,6 +47,7 @@ import { GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isCon
 
 export { GATE_APPROVAL_MODES, gateBaseApprovalProblems, gatePolicyVersion, isGatePolicyRef } from "./gate-approval-base";
 import { quorumProblems, type GateQuorumRule, type GateQuorumSpec } from "./gate-quorum";
+import { CHANGE_RISK_CONTEXT_KEY, changeRiskProblems, type ChangeRiskSettings } from "../change-risk";
 
 export type { GateQuorumRule, GateQuorumSpec } from "./gate-quorum";
 
@@ -96,6 +97,15 @@ export interface GateApproval {
    * puts that change set's `GatePlanSummary` there on its own.
    */
   context?: Record<string, GateContextValue>;
+  /**
+   * The change risk (#5325): when the gate's `plan` names the step that
+   * planned it, the run scores that change set (`../change-risk.ts`) and puts
+   * the record under `context.changeRisk` for the policy. A gate that sets
+   * it counts a policy's permit only from a human whose approval
+   * `.chant/trust.json` at base proves; an agent's permit counts for nothing.
+   * Over `approveAbove`, the gate takes `quorum`'s rules on top of its own.
+   */
+  risk?: Omit<ChangeRiskSettings, "questions">;
 }
 
 /**
@@ -110,6 +120,19 @@ export interface ResolvedGateApproval {
   policy?: GatePolicyRef;
   mode: GateApprovalMode;
   context?: Record<string, unknown>;
+  /** `approval.risk` (#5325): a permit then counts only from a proven human. */
+  risk?: Omit<ChangeRiskSettings, "questions">;
+}
+
+/**
+ * Whether a gate's permit reads the change risk (#5325): the gate declares
+ * `approval.risk`, its resolved context carries `changeRisk`, or its policy
+ * names `changeRisk`. Such a permit passes the gate only from a human
+ * principal `.chant/trust.json` at base proves, never from an agent, so a
+ * score never lets a plan through with no person approving it.
+ */
+export function gatePermitReadsRisk(approval: Pick<ResolvedGateApproval, "risk" | "context" | "policy">): boolean {
+  return approval.risk !== undefined || approval.context?.[CHANGE_RISK_CONTEXT_KEY] !== undefined || (approval.policy?.text.includes(CHANGE_RISK_CONTEXT_KEY) ?? false);
 }
 
 /** Who recorded an approval. Absent on every resolution written before #2508, which reads as a human with no roles. */
@@ -217,6 +240,10 @@ export function gateApprovalProblems(approval: unknown): string[] {
     problems.push("`approval.mode: \"enforce\"` needs an `approval.policy` to enforce");
   }
 
+  if (a.risk !== undefined) {
+    problems.push(...changeRiskProblems("approval.risk", a.risk, { quorum: true, questions: false }, (rules, at) => quorumProblems(rules, at, { notAuthor: false })));
+  }
+
   if (a.context !== undefined) {
     if (typeof a.context !== "object" || a.context === null || Array.isArray(a.context)) {
       problems.push("`approval.context` must be an object of plan attributes");
@@ -224,6 +251,10 @@ export function gateApprovalProblems(approval: unknown): string[] {
       problems.push("`approval.context` is only read by a policy, and this gate declares none");
     } else {
       for (const [key, value] of Object.entries(a.context)) {
+        if (key === CHANGE_RISK_CONTEXT_KEY) {
+          problems.push(`\`approval.context.${key}\` is reserved: the run fills it with the change risk (#5325) when the gate sets \`approval.risk\``);
+          continue;
+        }
         if (key === GATE_PLAN_CONTEXT_KEY) {
           problems.push(
             `\`approval.context.${key}\` is reserved: the run fills it with the plan's change-set summary (#3182) ` +

@@ -30,6 +30,7 @@ describe("the review-agent bundle", () => {
       "packages/core/src/op/activities/review-agent.ts",
       "packages/core/src/pr-forge.ts",
     ]);
-    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(96 * 1024);
+    // #5325 adds the review's questions and answers to the same modules: about 3 KiB, no new import.
+    expect(result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0)).toBeLessThan(100 * 1024);
   });
 });

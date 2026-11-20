@@ -84,6 +84,7 @@ import type { WaveMember } from "../wave-engine";
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import { resolvePlannedLock, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
 import { costEstimateOf, planJsonOf as planJsonPath, policyCost, priceRuns, readCostEstimate as readEstimate, type CostEstimate, type CostFigures, type MemberCost } from "../cost-estimate";
+import type { ChangeRisk } from "../change-risk";
 import { OP_WAVE_COST_MEMBER, type OpWaveCostFormat, type OpWaveCostHold, type OpWaveStep } from "./op-waves-capability-spec";
 
 export { OP_WAVE_COST_FORMATS, OP_WAVE_COST_MEMBER, opWaveHoldsAt, opWaveHoldsProblems, opWaveStepProblems } from "./op-waves-capability-spec";
@@ -147,6 +148,8 @@ export interface OpWaveStepPlan {
   part?: ChangeSetPart;
   empty: boolean;
   destructive: boolean;
+  /** The engine's own destructive classes (`CapabilityPlan.destructive`), which the change risk counts (#5325). */
+  destructiveClasses?: string[];
   /** The run's lock grain and rows (#4552), which the apply leases on the resource grain. */
   lock?: PlannedLock;
   /** Set when the wave planned `together` (#4842): the one plan every run of it shares. */
@@ -224,6 +227,7 @@ export async function planOpWaveStep(
     ...(planned.artifact !== undefined ? { artifact: planned.artifact } : {}),
     ...(planned.changeSet ? { part: planned.changeSet } : {}),
     ...effects,
+    ...(planned.destructive?.length ? { destructiveClasses: [...planned.destructive] } : {}),
     lock,
   };
   writeStepPlanFile(join(cwd, at.planPath), plan);
@@ -366,6 +370,7 @@ export async function planOpWaveStepGroup(
       ...(p.artifact !== undefined ? { artifact: p.artifact } : {}),
       ...(p.changeSet ? { part: p.changeSet } : {}),
       ...effects,
+      ...(p.destructive?.length ? { destructiveClasses: [...p.destructive] } : {}),
       lock,
       group,
     };
@@ -503,7 +508,8 @@ export interface OpWaveRunVerdict {
 /**
  * Run the workspace's `ci.policy` at `base` over each run's part (#4545).
  * With a cost hold, each run's policy reads the wave's estimate and the
- * run's own as `input.cost` (#5334).
+ * run's own as `input.cost` (#5334), and with a risk hold the wave's
+ * risk record as `input.risk` (#5325).
  * Returns each run's verdict, or a line saying why no policy runs (the base
  * names none). Throws when the policy at base cannot be read while the
  * checkout names one, as the pull-request path does.
@@ -512,13 +518,14 @@ export async function opWavePolicyVerdicts(
   at: { spec: Pick<OpWavesSpec, "name">; gate: string; env: string; base: string; head: string; cwd: string; exec?: GatePolicyExec },
   parts: ReadonlyMap<string, ChangeSetPart>,
   cost?: CostEstimate,
+  risk?: ChangeRisk,
 ): Promise<{ verdicts: Map<string, OpWaveRunVerdict>; source?: ResolvedGatePolicySource } | { note: string }> {
   const { prLoopPolicyAt, preparePrPolicyEngine, runPrPolicy } = await import("../components/pr-policy");
   const read = await preparePrPolicyEngine(prLoopPolicyAt(at.cwd, at.base));
   if (!read.settings) return { note: read.note ?? `holds.policy: the declaration at ${at.base.slice(0, 12)} names no ci.policy, so no policy runs` };
   const verdicts = new Map<string, OpWaveRunVerdict>();
   for (const [target, part] of parts) {
-    const verdict = runPrPolicy(read, { version: 1, stage: "apply", op: at.spec.name, gate: at.gate, env: at.env, pr: null, base: at.base, head: at.head, changeSet: composeChangeSet([part]), ...(cost ? { cost: policyCost(cost, target) } : {}) }, at.exec);
+    const verdict = runPrPolicy(read, { version: 1, stage: "apply", op: at.spec.name, gate: at.gate, env: at.env, pr: null, base: at.base, head: at.head, changeSet: composeChangeSet([part]), ...(cost ? { cost: policyCost(cost, target) } : {}), ...(risk ? { risk } : {}) }, at.exec);
     if (!verdict) continue;
     const reason = verdict.result === "error" ? verdict.error : [...verdict.denials, ...verdict.holds].map((f) => f.message).filter(Boolean).join("; ") || undefined;
     verdicts.set(target, { result: verdict.result, rules: verdict.rules, holds: [...new Set(verdict.holds.map((h) => h.rule))].sort(), ...(reason ? { reason } : {}) });

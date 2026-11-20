@@ -127,6 +127,48 @@ export {
 } from "./cost-estimate";
 export { estimatePrSet, prCostRuns, prLoopCostAt, type PrLoopCost } from "./components/pr-cost";
 
+/**
+ * The first chant with the scored change risk (#5325): `ci.risk` in the
+ * workspace declaration, read at base, which `pr-plan` and `pr-apply` score
+ * over the change set from its deletes, replacements, disruption classes,
+ * destructive migration classes, members and environments reached, graph
+ * dependents, the review's level and the answers to `ci.risk.questions`,
+ * with the record as the report's and the note's `risk`, the stored change
+ * set's `risk` and the policy's `input.risk`; a wave's and a stage gate's
+ * `holds.risk`, which over `approveAbove` holds the wave and adds its
+ * `quorum` rules; an Op gate's `approval.risk`, which puts the record in
+ * Cedar's `context.changeRisk` and counts a permit only from a proven human;
+ * the review agent's `questions` and answers; and `scoreChangeRisk`,
+ * `changeRiskLines` and `CHANGE_RISK_WEIGHTS` for a product that plans by
+ * itself. The score only adds approvals, and it is off until `ci.risk`,
+ * `holds.risk` or `approval.risk` is set.
+ */
+export const CHANGE_RISK_FLOOR = NEXT_RELEASE;
+export {
+  CHANGE_RISK_CONTEXT_KEY,
+  CHANGE_RISK_HALF,
+  CHANGE_RISK_LEVEL_FROM,
+  CHANGE_RISK_REVIEW_VALUES,
+  CHANGE_RISK_VERSION,
+  CHANGE_RISK_WEIGHTS,
+  changeRiskContext,
+  changeRiskLevel,
+  changeRiskLines,
+  changeRiskProblems,
+  changeRiskQuorum,
+  destructiveMigrationClasses,
+  graphDependents,
+  scoreChangeRisk,
+  type ChangeRisk,
+  type ChangeRiskContext,
+  type ChangeRiskFacts,
+  type ChangeRiskLevel,
+  type ChangeRiskQuestion,
+  type ChangeRiskReason,
+  type ChangeRiskSettings,
+} from "./change-risk";
+export { prLoopRiskAt, prRiskDependents, scorePrSet, type PrLoopRisk } from "./components/pr-risk";
+
 export { driftNotifyFields, NOTIFY_MESSAGE_WORDS_FLOOR, productNotifySource, productNotifyWords, productSendOptions, type DriftNotifyInput } from "./notify-product";
 
 /** The first chant with `chant notify relay` and the notify relay buttons (#4611). */

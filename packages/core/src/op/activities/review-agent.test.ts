@@ -32,6 +32,9 @@ import {
   reviewNoteBody,
   reviewPrompt,
   riskOf,
+  answersOf,
+  changeSetTooLarge,
+  reviewResultMarker,
   type CommandOutcome,
 } from "./review-agent";
 
@@ -180,7 +183,8 @@ describe("what the model sees", () => {
   test("instructions come from the base branch, and their absence is said", async () => {
     const withInstructions = harness({ instructions: "Flag every replaced bucket." });
     await withInstructions.run({ op: "pr-review", changeSet: doc() });
-    expect(withInstructions.shown).toEqual([{ base: "main", path: REVIEW_INSTRUCTIONS }]);
+    // #5325: the declaration at base is read too, for ci.risk.questions.
+    expect(withInstructions.shown).toEqual([{ base: "main", path: REVIEW_INSTRUCTIONS }, { base: "main", path: "chant.workspace.json" }]);
     expect(withInstructions.runs[0]!.input).toContain(`<instructions source="${REVIEW_INSTRUCTIONS} on main">\nFlag every replaced bucket.\n</instructions>`);
 
     const without = harness();
@@ -485,5 +489,54 @@ describe("the diff is read with git, and nothing in the change runs (#4326)", ()
 
   test("a base git does not know gives no diff", async () => {
     expect(await gitDiffIn(repo())("nope")).toBeUndefined();
+  });
+});
+
+describe("questions for the change risk (#5325)", () => {
+  const questions = [
+    { id: "customer-data", text: "Does this touch customer data?" },
+    { id: "network", text: "Does it change network reach?" },
+  ];
+
+  test("the prompt asks each question, and the answers are read from the review's answer lines", async () => {
+    const { run, runs } = harness({ review: "Bucket renamed.\n\nrisk: medium\nanswer customer-data: 0.8\nanswer network: 0\nanswer invented: 1\n" });
+    const result = await run({ op: "pr-review", changeSet: doc(), mode: "report", questions });
+    expect(runs[0]!.input).toContain("- customer-data: Does this touch customer data?");
+    expect(result.answers).toEqual({ "customer-data": 0.8, network: 0 });
+    expect(parseReviewResult(result.summary)).toEqual({ head: HEAD, risk: "medium", answers: { "customer-data": 0.8, network: 0 } });
+  });
+
+  test("the questions are read from ci.risk.questions on the base branch when the step names none", async () => {
+    const declaration = JSON.stringify({ name: "acme", schema: 1, members: [], ci: { risk: { questions: [{ id: "network", text: "Network?", weight: 0.5 }] } } });
+    const shown: string[] = [];
+    const run = createReviewAgent({
+      env: ENV,
+      event: async () => ({ pull_request: { title: "t", body: "b", head: { sha: HEAD } } }),
+      diff: async () => "",
+      show: async (_base, path) => {
+        shown.push(path);
+        return path === "chant.workspace.json" ? declaration : undefined;
+      },
+      run: async () => ({ stdout: "risk: low\nanswer network: 0.25\n", exitCode: 0 }),
+    });
+    const result = await run({ op: "pr-review", changeSet: doc(), mode: "report" });
+    expect(shown).toContain("chant.workspace.json");
+    expect(result.answers).toEqual({ network: 0.25 });
+  });
+
+  test("a plan too large for the prompt answers every question unknown, and a missing answer is unknown", () => {
+    expect(answersOf("answer network: 0.1\n", questions)).toEqual({ "customer-data": "unknown", network: 0.1 });
+    expect(answersOf("answer network: 0.1\n", questions, true)).toEqual({ "customer-data": "unknown", network: "unknown" });
+    const big = doc();
+    big.entries = Array.from({ length: 2000 }, (_, i) => ({ ...big.entries[0]!, address: `bucket${i}` }));
+    expect(changeSetTooLarge(doc())).toBe(false);
+    expect(changeSetTooLarge(big)).toBe(true);
+  });
+
+  test("a failed review command records every answer unknown, and the marker drops anything that is not an answer", () => {
+    const body = reviewNoteBody({ review: "answer network: 0", exitCode: 1, digest: "sha256:00", instructions: "base", head: HEAD, answers: { network: 0 } });
+    expect(parseReviewResult(body)?.answers).toEqual({ network: "unknown" });
+    const forged = reviewResultMarker(HEAD, "low", { network: 7 as never, "Bad Id": 0, ok: "unknown" });
+    expect(parseReviewResult(forged)?.answers).toEqual({ ok: "unknown" });
   });
 });
