@@ -28,7 +28,25 @@ import {
   type OpWavesPipelineOptions,
 } from "../lexicon";
 import { assertOpWavesSpec, type OpWaveJob, type OpWavesSpec } from "./op-waves";
-import { opWavesQuorumWarnings } from "./op-waves-quorum-warnings";
+import { opWavesQuorumFindings, type OpWavesProofSources } from "./op-waves-quorum-warnings";
+
+/**
+ * What can prove an approver in the repository at `root` (#5349): the
+ * signers file `.chant/trust.json` names, and whether it, or the passkeys,
+ * list anyone. A policy that cannot be read lists nobody. The workspace
+ * modules load here, never at import, so level 0 stays free of them (#5219).
+ */
+export async function opWavesProofSourcesAt(root: string): Promise<OpWavesProofSources> {
+  const { DEFAULT_SIGNERS_PATH } = await import("../workspace/trust/trust-files");
+  try {
+    const { readTrustPolicy } = await import("../workspace/trust/policy");
+    const { workingTreeSource } = await import("../workspace/record-source");
+    const policy = readTrustPolicy(workingTreeSource(root), null);
+    return { signersPath: policy.signersPath, signersNamed: policy.active && (policy.signers.length > 0 || (policy.passkeys?.length ?? 0) > 0) };
+  } catch {
+    return { signersPath: DEFAULT_SIGNERS_PATH, signersNamed: false };
+  }
+}
 import { activeProductWords } from "../ci-product-words";
 
 /**
@@ -128,7 +146,7 @@ export interface GenerateOpWavesPipelineResult {
   files?: OpPipelineFile[];
   jobs?: OpWaveJob[];
   error?: string;
-  /** What the spec allows but should not rely on (#5349), one line each: {@link opWavesQuorumWarnings}. */
+  /** What the spec allows but should not rely on (#5349), one line each, from `opWavesQuorumFindings`. */
   warnings?: string[];
 }
 
@@ -142,6 +160,8 @@ export async function generateOpWavesPipeline(
   lexicon: string,
   options: OpWavesPipelineOptions,
   cwd?: string,
+  /** What can prove an approver (#5349). Default: read from the repository at `cwd`. */
+  proof?: OpWavesProofSources,
 ): Promise<GenerateOpWavesPipelineResult> {
   const plugin = await loadLexiconPlugin(lexicon);
   if (!plugin?.generateOpWavesPipeline) {
@@ -155,6 +175,10 @@ export async function generateOpWavesPipeline(
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
+  // #5349: rules no approver can meet (refused once UNPROVABLE_QUORUM_REFUSED is true), and counts plain lines can meet.
+  const findings = opWavesQuorumFindings(spec, proof ?? (await opWavesProofSourcesAt(cwd ?? process.cwd())));
+  if (findings.refusals.length > 0) return { success: false, error: findings.refusals.join("\n") };
+  const warnings = findings.warnings;
   const discovered = await discoverOps({ cwd });
   if (discovered.errors.length > 0) return { success: false, error: discovered.errors.join("\n") };
   const named = [...new Set([spec.op, ...spec.waves.flatMap((w) => w.runs.map((r) => r.op ?? spec.op))])];
@@ -170,7 +194,6 @@ export async function generateOpWavesPipeline(
     // #4617: the control dispatch speaks in the product's words too.
     const words = options.words ?? (spec.control ? active : undefined);
     const { files, jobs } = plugin.generateOpWavesPipeline(spec, { ...options, ...(bin ? { bin } : {}), ...(words ? { words } : {}) });
-    const warnings = opWavesQuorumWarnings(spec);
     return { success: true, files, jobs, ...(warnings.length > 0 ? { warnings } : {}) };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };

@@ -3,14 +3,15 @@
  * count plain `chant approve` lines can meet.
  */
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { quorumProblems, quorumRuleLine, quorumRuleProgress, ruleNeedsProof, type GateQuorumJudge, type GateQuorumRule } from "./gate-quorum";
 import { evaluateGate, memoryGateLedgerPort } from "./gate";
 import { gateApprovalProblems } from "./gate-approval";
 import { assertOpWavesSpec, type OpWavesSpec } from "./op-waves";
-import { opWavesQuorumWarnings } from "./op-waves-quorum-warnings";
+import { opWavesQuorumFindings, opWavesQuorumWarnings, opWavesUnprovableQuorum, UNPROVABLE_QUORUM_REFUSED } from "./op-waves-quorum-warnings";
+import { opWavesProofSourcesAt } from "./generate-pipeline";
 import { runOpWave, type OpWaveExec, type OpWaveShowAtBase } from "./op-waves-run";
 import { waveSetDigest } from "../gated-waves";
 import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
@@ -150,5 +151,63 @@ describe("opWavesQuorumWarnings (#5349)", () => {
     expect(quiet({ approvals: { quorum: [{ targets: ["dev"], count: 2 }] } })).toEqual([]);
     expect(quiet({ waves: [{ ...spec.waves[0]!, approval: "sealed" }], approvals: { quorum: [{ count: 2 }] } })).toEqual([]);
     expect(quiet({})).toEqual([]);
+  });
+});
+
+describe("rules no approver can meet (#5349)", () => {
+  const nobody = { signersPath: ".chant/allowed_signers", signersNamed: false };
+  const someone = { ...nobody, signersNamed: true };
+  const withRules = (quorum: GateQuorumRule[], approval?: "ledger" | "pr-review" | "sealed" | "pull-request"): OpWavesSpec => ({
+    ...spec,
+    waves: [{ ...spec.waves[0]!, ...(approval ? { approval } : {}) }],
+    approvals: { quorum },
+  });
+
+  test("a rule naming roles, notAuthor or proven, with no signer and no review mode, can never be met", () => {
+    for (const rule of [{ count: 1, roles: ["platform"] }, { count: 1, notAuthor: true }, { count: 2, proven: true }]) {
+      for (const mode of ["ledger", "pull-request", "sealed"] as const) {
+        const [line, ...rest] = opWavesUnprovableQuorum(withRules([rule], mode), nobody);
+        expect(rest).toEqual([]);
+        expect(line).toMatch(new RegExp(`^wave 1 \\(prod\\): approvals.quorum\\[0\\] needs a proven approver .*\`${mode}\` reads no review`));
+        expect(line).toContain(".chant/allowed_signers names no signer");
+        expect(line).toContain("chant approve --sign");
+        expect(line).toContain("`pr-review`");
+      }
+    }
+  });
+
+  test("a signer in the signers file, or pr-review, can prove an approver, so nothing is said", () => {
+    expect(opWavesUnprovableQuorum(withRules([{ count: 1, roles: ["platform"] }]), someone)).toEqual([]);
+    expect(opWavesUnprovableQuorum(withRules([{ count: 1, roles: ["platform"], notAuthor: true }], "pr-review"), nobody)).toEqual([]);
+  });
+
+  test("a rule that needs no proof, a rule the wave does not take, and a point are left out", () => {
+    expect(opWavesUnprovableQuorum(withRules([{ count: 2 }]), nobody)).toEqual([]);
+    expect(opWavesUnprovableQuorum(withRules([{ targets: ["dev"], count: 1, roles: ["platform"] }]), nobody)).toEqual([]);
+    expect(opWavesUnprovableQuorum({ ...spec, point: "ship", approvals: { quorum: [{ count: 1, roles: ["platform"] }] } }, nobody)).toEqual([]);
+  });
+
+  test("this release warns and writes the pipeline; the flag turns the same lines into a refusal", () => {
+    expect(UNPROVABLE_QUORUM_REFUSED).toBe(false);
+    const s = withRules([{ count: 1, roles: ["platform"] }, { count: 2 }]);
+    const now = opWavesQuorumFindings(s, nobody);
+    expect(now.refusals).toEqual([]);
+    expect(now.warnings).toHaveLength(2);
+    expect(now.warnings.some((w) => /needs a proven approver/.test(w))).toBe(true);
+    const next = opWavesQuorumFindings(s, nobody, true);
+    expect(next.refusals).toEqual(opWavesUnprovableQuorum(s, nobody));
+    expect(next.warnings).toEqual(opWavesQuorumWarnings(s));
+    expect(opWavesQuorumFindings(s, someone, true).refusals).toEqual([]);
+  });
+
+  test("the generator reads the signers file in the repository it runs in", async () => {
+    const root = mkdtempSync(join(tmpdir(), "op-waves-proof-"));
+    expect(await opWavesProofSourcesAt(root)).toEqual({ signersPath: ".chant/allowed_signers", signersNamed: false });
+    mkdirSync(join(root, ".chant"));
+    writeFileSync(join(root, ".chant/allowed_signers"), "# nobody yet\n");
+    expect((await opWavesProofSourcesAt(root)).signersNamed).toBe(false);
+    writeFileSync(join(root, ".chant/allowed_signers"), "alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOv1\n");
+    expect((await opWavesProofSourcesAt(root)).signersNamed).toBe(true);
+    rmSync(root, { recursive: true, force: true });
   });
 });

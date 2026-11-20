@@ -49,7 +49,7 @@ export type {
 } from "./receipt-store";
 export { discoverOps } from "./discover";
 export type { DiscoveredOp, OpDiscoveryResult } from "./discover";
-export { generateOpsPipeline, generateOpWavesPipeline, withOpSchedules } from "./generate-pipeline";
+export { generateOpsPipeline, generateOpWavesPipeline, opWavesProofSourcesAt, withOpSchedules } from "./generate-pipeline";
 export type { GenerateOpsPipelineResult, GenerateOpWavesPipelineResult } from "./generate-pipeline";
 export {
   OP_WAVE_APPLY_HOOKS_RUNNERS,
@@ -69,7 +69,7 @@ export {
   opWaveRecordPath,
   opWaveShare,
 } from "./op-waves";
-export { opWavesQuorumWarnings, PLAIN_APPROVAL_MODES } from "./op-waves-quorum-warnings";
+export { opWavesQuorumFindings, opWavesQuorumWarnings, opWavesUnprovableQuorum, PLAIN_APPROVAL_MODES, UNPROVABLE_QUORUM_REFUSED, type OpWavesProofSources } from "./op-waves-quorum-warnings";
 export type { OpWave, OpWaveApplyHooksRunner, OpWaveGatePolicy, OpWaveHook, OpWaveHookFailure, OpWaveHookMoment, OpWaveHooks, OpWaveJob, OpWaveRun, OpWavesApprovals, OpWavesDigest, OpWavesInvolved, OpWavesOverride, OpWavesSpec } from "./op-waves";
 export {
   OP_WAVE_APPLY_OUTCOMES,

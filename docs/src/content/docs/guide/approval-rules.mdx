@@ -93,7 +93,14 @@ Plain lines still sit on the ledger, and the rule leaves them out. A wave that w
 
 `proven` is read on an Op waves spec's `approvals.quorum`. An Op gate's `approval.quorum` and `identity.gates.<gate>.quorum` refuse it. An `identity.gates` entry already counts sealed approvals alone.
 
-`chant run --generate` warns about each rule with a `count` above 1, no `roles` and no `proven`, on a wave whose mode takes plain lines (`opWavesQuorumWarnings` in `@intentius/chant/op`). The pipeline is still written and the rule works as before. Set `proven: true`, or move the wave to `approval: "sealed"`, to clear the warning.
+## Warnings when the pipeline is generated
+
+`chant run --generate` checks the rules when it writes the pipeline, and `generateOpWavesPipeline` returns the same lines as `warnings` (`opWavesQuorumFindings` in `@intentius/chant/op`). The pipeline is still written, and each rule works as before.
+
+- A rule with a `count` above 1, no `roles` and no `proven`, on a wave whose mode takes plain lines. Set `proven: true`, or move the wave to `approval: "sealed"`, to clear it.
+- A rule that needs a proven approver (`roles`, `notAuthor` or `proven`) on a wave where nothing can prove one: the signers file in the repository the generator runs in (`.chant/allowed_signers`, or the file `.chant/trust.json` names) lists no key or passkey, and the wave's mode is not `pr-review`. That wave would wait for an approval that can never count. Add the approvers' keys to the signers file and approve with `chant approve --sign`, or set the wave's approval to `pr-review`, so the merged pull request's review proves its reviewers.
+
+The second warning becomes a refusal in a later release. The switch is one constant, `UNPROVABLE_QUORUM_REFUSED` in `packages/core/src/op/op-waves-quorum-warnings.ts`, which is `false` today. Set to `true`, `generateOpWavesPipeline` refuses the spec with the same lines and writes nothing. A spec the generator gives this warning for today is the only kind that switch refuses.
 
 ## Approve a waiting wave
 

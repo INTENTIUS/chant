@@ -837,10 +837,11 @@ function pointAtBase(spec: OpWavesSpec, name: string, where: string): Pick<OpWav
 }
 
 /**
- * The first chant whose approval rules take `proven` (#5349): a rule's
- * `count` met by proven approvers only, and the warnings
- * `opWavesQuorumWarnings` gives for a count above 1 that plain `chant
- * approve` lines can meet.
+ * The first chant whose approval rules take `proven` (#5349), a rule's
+ * `count` met by proven approvers only, and whose generator warns about a
+ * count above 1 that plain `chant approve` lines can meet and about a rule
+ * that needs proof where the signers file names nobody and no review mode
+ * applies (`opWavesQuorumFindings`, `UNPROVABLE_QUORUM_REFUSED`).
  */
 export const PROVEN_APPROVERS_FLOOR = NEXT_RELEASE;
 
