@@ -8,13 +8,17 @@
  * reaches the command through an environment variable, never through the
  * script text. The job checks out the full history and the workflow asks for
  * `contents: write`, because the promote pushes its records to
- * `chant/lifecycle`. The forgejo generator reuses {@link buildGithubPromoteDoc}.
+ * `chant/lifecycle`. A stage with a cloud identity (#5348) trades the
+ * job's OIDC token for it before the checkout, and the stage's config and
+ * secret set reaches the promote's step as variables, with the lines that
+ * read the stage's store secrets before the command. The forgejo generator reuses {@link buildGithubPromoteDoc}.
  */
 
 import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
 import { assertEnvironment, CI_IMAGE, environmentDoc, githubRunsOn } from "@intentius/chant/ci-jobs";
 import { checkoutStep, concurrency } from "./ci-jobs";
+import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 
 /** The env var a promote job reads the release from. */
@@ -45,19 +49,25 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, _dialect: { f
   const jobsDoc: Record<string, unknown> = {};
   for (const stage of input.stages) {
     if (stage.environment) assertEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
+    // #5348: the stage's own identity, traded for before the checkout, and its config and secret set.
+    const cloud = stage.cloud;
+    const promote = `${bin} components promote --to ${stage.name} --release "$${PROMOTE_RELEASE_ENV}"`;
+    const run = [...(cloud ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), promote].join("\n");
     jobsDoc[`promote-${stage.name}`] = {
       if: `\${{ inputs.stage == '${stage.name}' }}`,
       "runs-on": githubRunsOn(input.runner),
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
+      ...(cloud ? { permissions: { contents: "write", "id-token": "write" } } : {}),
       "timeout-minutes": timeout.minutes,
       container: CI_IMAGE,
       concurrency: concurrency(`${input.pipeline}-promote-${stage.name}`, false),
       steps: [
+        ...(cloud ? [{ name: "Trade the job's OIDC token for the stage's cloud identity", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : []),
         checkoutStep(true),
         {
           name: `Promote the release into ${stage.name}`,
-          env: { [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
-          run: `${bin} components promote --to ${stage.name} --release "$${PROMOTE_RELEASE_ENV}"`,
+          env: { ...(stage.variables ?? {}), [PROMOTE_RELEASE_ENV]: "${{ inputs.release }}" },
+          run,
         },
       ],
     };

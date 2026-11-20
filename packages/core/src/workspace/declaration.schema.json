@@ -330,6 +330,17 @@
             }
           }
         },
+        "environmentSets": {
+          "type": "object",
+          "description": "Config and secret sets per environment (#5348): environments maps an environment name to its set (imports, config, secrets), and configSets maps a shared set's name to a set the environments import. A secret names where it is kept: a forge secret's name, or { forgeSecret }, { awsSecretsManager, jsonKey?, region? }, { gcpSecretManager } or { azureKeyVault }. chant build --pr-loop and chant pipeline generate hand each environment's jobs its set. Read at base. Added in schema 1 by chant 0.124.103, so a declaration that uses it sets minReader to 0.124.103 or newer.",
+          "required": ["environments"],
+          "additionalProperties": false,
+          "patternProperties": { "^x-": true },
+          "properties": {
+            "environments": { "type": "object" },
+            "configSets": { "type": "object" }
+          }
+        },
         "prEnvironment": {
           "type": "object",
           "description": "An environment per open pull request (#4298): chant components pr-env up applies the pull request's components to pr-<number>, which takes the template environment's declared endpoint, and pr-env down tears down only what carries that environment's ownership marker. A pull request's environment is never a release target. Read from the declaration at base, so a pull request cannot change its own template or TTL. Added in schema 1 by chant 0.124.42, so a declaration that uses it sets minReader to 0.124.42 or newer.",

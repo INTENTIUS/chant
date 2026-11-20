@@ -1190,6 +1190,18 @@ export interface OpWavesPipelineOptions
    */
   waveJobs?: Record<string, OpWaveJobInputs>;
   /**
+   * The config and secret sets per environment (#5348,
+   * `@intentius/chant/components/environment-sets`): each wave's jobs take
+   * the set of its environment, the spec's `labels.Env` or else the wave's
+   * name (`opWavesWithEnvironmentSets`, ./op/op-waves-environment-sets.ts).
+   * The config, the set's record and the forge secrets join the wave's
+   * `variables`; the store secrets are read in the command's step, after
+   * the wave's trade and `waveJobs` login. An environment the sets do not
+   * name is refused. Before merge a set holding secrets is refused. Absent:
+   * the jobs render as without it.
+   */
+  environmentSets?: import("./components/environment-sets").EnvironmentSets;
+  /**
    * What a product adds to the plans job, `record-plans` (#4791), which a
    * `pr-review` or `pull-request` wave adds: the steps before it plans
    * (a login, a check that the job cannot write), its variables and its
@@ -1449,13 +1461,26 @@ export interface PipelinePromoteInput {
   /** The pipeline's name: the workflow is `<name>-promote`. */
   pipeline: string;
   /** The stages a promote reaches, in order: every stage after the first. */
-  stages: Array<{ name: string; environment?: OpEnvironment }>;
+  stages: Array<{ name: string; environment?: OpEnvironment } & PipelinePromoteStageInputs>;
   /** The command each job runs in place of `chant`, such as `npx --no-install plywood`. Absent: `chant`. */
   bin?: string;
   /** Where the jobs run. Default the forge's default runner. */
   runner?: import("./ci-jobs").CiRunner;
   /** Each job's timeout in minutes. Default `OP_WAVE_JOB_TIMEOUT_MINUTES` (180). */
   jobTimeoutMinutes?: number;
+}
+
+/**
+ * What one stage's promote job adds (#5348), as the pipeline's generator
+ * gives it from the stage's config and secret set and its cloud identity.
+ */
+export interface PipelinePromoteStageInputs {
+  /** The job's variables, as the forge reads them: the set's config, its record and its forge secrets. */
+  variables?: Record<string, string>;
+  /** Shell lines run in the promote's step before the command, after the trade: the read of the set's store secrets. */
+  setup?: string[];
+  /** The stage's cloud identity, traded for before the checkout (`ci.identity`'s apply identity for the stage). */
+  cloud?: import("./ci-identity").CloudTradeSpec;
 }
 
 export interface OpWavesPipelineResult {

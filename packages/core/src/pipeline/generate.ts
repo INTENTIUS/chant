@@ -12,17 +12,65 @@
  * - the promote jobs: one manual job per later stage, from the lexicon's
  *   `generatePipelinePromote`, each running `components promote --to
  *   <stage> --release <release>`.
+ *
+ * Each stage's jobs log in as that stage alone and take that stage's config
+ * and secret set (#5348): the first stage's waves trade for the apply
+ * identity `ci.identity.cloud` gives the first stage, and each promote job
+ * for its own stage's, with its stage's set as variables and the read of
+ * its store secrets.
  */
 
 import { importLexiconPackage, lexiconModulePath } from "../lexicon-module";
-import { isLexiconPlugin, type LexiconPlugin, type OpPipelineFile, type OpWavesPipelineOptions } from "../lexicon";
+import { isLexiconPlugin, type LexiconPlugin, type OpPipelineFile, type OpWavesPipelineOptions, type PipelinePromoteStageInputs } from "../lexicon";
+import type { OpWavesSpec } from "../op/op-waves";
+import { resolveCloudIdentity, type CloudIdentityDeclaration } from "../ci-identity";
+import { environmentSetJobInputs, resolveEnvironmentSet, type EnvironmentSetForge } from "../components/environment-sets";
+import { environmentSetForgeVariables } from "../op/op-waves-environment-sets";
 import { activeProductWords } from "../ci-product-words";
 import { opWaveBinArgv, type OpWaveJob } from "../op/op-waves";
 import type { PipelineSpec } from "./spec";
 import { stageWavesSpec } from "./stages";
 
-/** Options for {@link generatePipeline}: the op-waves generator's, without the spec file and the render, which the pipeline sets. */
-export type PipelineGenerateOptions = Omit<OpWavesPipelineOptions, "specFile" | "renderSpec">;
+/**
+ * Options for {@link generatePipeline}: the op-waves generator's, without
+ * the spec file and the render, which the pipeline sets, and the cloud
+ * identities (#5348): `ci.identity.cloud`, which gives each stage's jobs
+ * that stage's apply identity, resolved for the stage and `member`. With
+ * `environmentSets`, each stage's jobs take that stage's config and secret
+ * set: the first stage's wave jobs through the op-waves generator, and each
+ * later stage's promote job here.
+ */
+export type PipelineGenerateOptions = Omit<OpWavesPipelineOptions, "specFile" | "renderSpec"> & {
+  identity?: CloudIdentityDeclaration;
+  member?: string;
+};
+
+/** The forges a pipeline renders for, as the set's forge words spell them. */
+const SET_FORGES = new Set(["github", "gitlab", "forgejo"]);
+
+/**
+ * The first stage's op-waves spec with each wave's cloud identity, from
+ * `identity` for the stage, on every wave that names none of its own.
+ */
+function withStageIdentity(shape: OpWavesSpec, stage: string, identity: CloudIdentityDeclaration | undefined, member: string | undefined): OpWavesSpec {
+  const cloud = identity ? resolveCloudIdentity(identity, stage, member)?.apply : undefined;
+  if (!cloud) return shape;
+  return { ...shape, waves: shape.waves.map((w) => (w.cloud ? w : { ...w, cloud })) };
+}
+
+/** What one later stage's promote job adds: its identity and its set. */
+function promoteStageInputs(stage: string, lexicon: string, options: PipelineGenerateOptions): PipelinePromoteStageInputs {
+  const cloud = options.identity ? resolveCloudIdentity(options.identity, stage, options.member)?.apply : undefined;
+  const out: PipelinePromoteStageInputs = cloud ? { cloud } : {};
+  if (options.environmentSets && SET_FORGES.has(lexicon)) {
+    const forge = lexicon as EnvironmentSetForge;
+    const set = resolveEnvironmentSet(options.environmentSets, stage);
+    out.variables = environmentSetForgeVariables(set, forge);
+    const setup = environmentSetJobInputs(set, forge).setup;
+    if (setup.length > 0) out.setup = setup;
+  }
+  return out;
+}
 
 /** What {@link generatePipeline} rendered. */
 export interface PipelineGenerateResult {
@@ -60,9 +108,10 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
   try {
     const first = spec.stages[0]!.name;
     const bin = options.bin ?? activeProductWords().bin;
-    const shape = stageWavesSpec(spec, first);
+    const { identity, member, ...waveOptions } = options;
+    const shape = withStageIdentity(stageWavesSpec(spec, first), first, identity, member);
     const waves = found.generateOpWavesPipeline(shape, {
-      ...options,
+      ...waveOptions,
       ...(bin ? { bin } : {}),
       specFile: pipelineStageSpecFile(spec, first),
       renderSpec: { command: pipelineSpecCommand(first, bin) },
@@ -72,7 +121,7 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
       ? []
       : found.generatePipelinePromote({
           pipeline: spec.name,
-          stages: later.map((s) => ({ name: s.name, ...(s.forgeEnvironment ? { environment: s.forgeEnvironment } : {}) })),
+          stages: later.map((s) => ({ name: s.name, ...(s.forgeEnvironment ? { environment: s.forgeEnvironment } : {}), ...promoteStageInputs(s.name, lexicon, options) })),
           ...(bin ? { bin } : {}),
           ...(spec.defaults?.runner ? { runner: spec.defaults.runner } : {}),
           ...(options.jobTimeoutMinutes ? { jobTimeoutMinutes: options.jobTimeoutMinutes } : {}),

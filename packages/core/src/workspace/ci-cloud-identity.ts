@@ -64,3 +64,29 @@ export async function declaredTargetCloudIdentity(cwd: string, env: string): Pro
     throw Object.assign(new Error(`${err.describe()} [${err.code}]`), { code: err.code });
   }
 }
+
+/** The workspace declaration's `ci.environmentSets` (#5348), or undefined outside a workspace or when unset. */
+export async function declaredEnvironmentSets(cwd: string): Promise<import("../components/environment-sets").EnvironmentSets | undefined> {
+  const found = findWorkspaceRoot(cwd);
+  if (!found) return undefined;
+  const [{ readDeclaration, WorkspaceReadError }, { workingTree }] = await Promise.all([import("./declaration"), import("./tree")]);
+  try {
+    return readDeclaration(workingTree(found.dir)).ci?.environmentSets;
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    throw Object.assign(new Error(`${err.describe()} [${err.code}]`), { code: err.code });
+  }
+}
+
+/** The workspace declaration's `ci.identity.cloud` (#4296), or undefined outside a workspace or when unset. */
+export async function declaredCloudIdentityDeclaration(cwd: string): Promise<import("../ci-identity").CloudIdentityDeclaration | undefined> {
+  const found = findWorkspaceRoot(cwd);
+  if (!found) return undefined;
+  const [{ readDeclaration, WorkspaceReadError }, { workingTree }] = await Promise.all([import("./declaration"), import("./tree")]);
+  try {
+    return readDeclaration(workingTree(found.dir)).ci?.identity?.cloud;
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    throw Object.assign(new Error(`${err.describe()} [${err.code}]`), { code: err.code });
+  }
+}

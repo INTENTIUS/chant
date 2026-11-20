@@ -149,6 +149,7 @@
  * permissions, and the notify secrets go on the wave jobs.
  */
 
+import { opWavesWithEnvironmentSets } from "@intentius/chant/op/op-waves-environment-sets";
 import {
   notifyVariables,
   opWaveChecksDir,
@@ -325,6 +326,8 @@ export function buildGithubOpWavesDoc(
   options: OpWavesPipelineOptions,
   dialect: { forge?: "github" | "forgejo" } = {},
 ): { doc: GithubOpPipelineDoc; jobs: OpWavesPipelineResult["jobs"]; resumeDoc?: GithubOpPipelineDoc; plansDoc?: GithubOpPipelineDoc } {
+  // #5348: each wave's environment set on its jobs; without environmentSets both come back as given.
+  ({ spec, options } = opWavesWithEnvironmentSets(spec, options, dialect.forge ?? "github"));
   // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
   // #5032: with defaultBranch, every guarded job carries the default branch's name, for the guard and the stand-down.
   const renderEnv = { ...opWavesRenderSpecEnv(options.renderSpec), ...(spec.defaultBranch === true ? GITHUB_DEFAULT_BRANCH_ENV : {}) };

@@ -59,10 +59,12 @@ import { environmentEntryName, type StepEnvironmentOptions } from "./step-enviro
 
 /**
  * The first chant with config and secret sets per environment (#5348):
- * `resolveEnvironmentSet`, `environmentSetJobInputs`, the pull request
- * loop's `environmentSets`, which hands the stage's apply and record jobs
- * the set of their environment, and `chant ci run`'s redaction of each
- * secret the set names.
+ * `resolveEnvironmentSet`, `environmentSetJobInputs`, `environmentSets` on
+ * the Op waves generators, the pipeline's generator and the pull request
+ * loop, which hand each stage's jobs the set of their environment,
+ * `ci.environmentSets` in the workspace declaration, each stage's own
+ * identity on a pipeline's promote jobs, and `chant ci run`'s redaction of
+ * each secret the set names.
  */
 export const ENVIRONMENT_SETS_FLOOR = NEXT_RELEASE;
 
