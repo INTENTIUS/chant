@@ -29,6 +29,7 @@ export const PULUMI_COST_HOLD_FLOOR = NEXT_RELEASE;
 export const PULUMI_PREVIEW_OBSERVATION_FLOOR = NEXT_RELEASE;
 
 /**
+<<<<<<< HEAD
  * The first pulumi lexicon release whose `classifyDisruption` classifies a
  * planned update from a preview's steps (in place, replace, destroy), with
  * `pulumiDisruptionQueries` for a preview in hand, and whose `healthTargets`
@@ -38,6 +39,6 @@ export const PULUMI_PREVIEW_OBSERVATION_FLOOR = NEXT_RELEASE;
 export const PULUMI_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;
 
 /**
- * The first pulumi lexicon release whose `pulumi-up` reports its `StackReference` reads through `graphReads` (`./pulumi-up`), so `chant graph --components` draws an edge from a stack to each stack it reads, naming the output, and a node marked external for a stack no component deploys (#5331).
+ * The first pulumi lexicon release whose `pulumi-up` reports its `StackReference` reads through `graphReads` (`./pulumi-up`), so `chant graph --components` and `chant workspace graph` draw an edge from a stack to each stack it reads, naming the output, and a node marked external for a stack nothing applies (#5331).
  */
 export const PULUMI_STACK_REFERENCE_GRAPH_FLOOR = NEXT_RELEASE;

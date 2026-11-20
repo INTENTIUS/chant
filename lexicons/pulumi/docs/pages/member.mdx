@@ -238,6 +238,14 @@ by value. A reference to a stack no component applies is a node of kind
 the edge goes to it. With `--env`, each step is read for that environment, so
 a stack that sits only in a step's `environments` map is the one read.
 
+`chant workspace graph` draws the reads between Pulumi members. Each member has
+a `pulumi:pulumi:Stack` node, and a `StackReference` is an edge from the
+reading member's node to the node of the member that applies the stack, with
+the output as `viaAttr` and no `grain`. A stack no member applies is a node
+with `attrs.external: true` in the reading member. A member's stack is the
+one its checked-in export records; with `--env`, it is that environment when
+the member has a `Pulumi.<env>.yaml`.
+
 ## Reading the member into a build
 
 A project can set `pulumi.member` itself to read a member's graph into its

@@ -1667,6 +1667,31 @@ export interface CompositeEntry {
  */
 export const CI_SETUP_UNLINKED_FLOOR = "0.124.78";
 
+/** A stack of a workspace member that reads take part in (#5331): its node is `<member>/<id>`. */
+export interface LexiconStackNode {
+  member: string;
+  id: string;
+  kind: string;
+  attrs: Record<string, unknown>;
+}
+
+/** What `workspaceStackReads` answers (#5331). */
+export interface LexiconStackReads {
+  /** The lexicon the nodes belong to. */
+  lexicon: string;
+  stacks: LexiconStackNode[];
+  reads: {
+    /** The member that reads. */
+    reader: string;
+    /** The member that applies the stack read. Absent with `external`. */
+    upstream?: string;
+    /** The stack read when no member applies it, as the engine names it. */
+    external?: string;
+    /** The output read, where the files show it. */
+    output?: string;
+  }[];
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -2176,6 +2201,18 @@ export interface LexiconPlugin {
    * a workspace asks for them (#5219).
    */
   workspaceLinks?(entities: ReadonlyMap<string, Declarable>, unread?: readonly LexiconUnreadSource[]): LexiconWorkspaceLinks | undefined | Promise<LexiconWorkspaceLinks | undefined>;
+
+  /**
+   * Reads between workspace members that sit in the members' files (#5331),
+   * such as a Pulumi program's `StackReference` to the stack another member
+   * applies. `chant workspace graph` asks once per lexicon that supplies a
+   * member kind, with every declared member (`dir` relative to the workspace
+   * root, `root` absolute) and the run's `--env`, and draws each read as an
+   * edge from the reader's stack node to the upstream member's, or to a node
+   * marked external when no member applies the stack. The answer must come
+   * from the files alone and a throw counts as no reads.
+   */
+  workspaceStackReads?(ctx: { root: string; env?: string; members: readonly { name: string; dir: string; kind: string }[] }): Promise<LexiconStackReads | undefined> | LexiconStackReads | undefined;
 
   // LSP
   /** Provide completions for LSP */

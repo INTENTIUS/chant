@@ -118,6 +118,12 @@ export const pulumiPlugin: LexiconPlugin = {
     return pulumiTipsDetail({ member: input.member, changeSet: input.changeSet, words: { product: words.product, noun: words.noun } });
   },
 
+  // StackReference reads between pulumi members, for `chant workspace graph` (#5331); see ./workspace-stack-reads.ts.
+  async workspaceStackReads(ctx) {
+    const { pulumiWorkspaceStackReads } = await import("./workspace-stack-reads");
+    return pulumiWorkspaceStackReads(ctx);
+  },
+
   // A pulumi workspace member's reader project (#3179): its stack export from
   // the index store, else the checked-in one, never the program. See ./workspace-member.ts. `chant workspace
   // graph` writes `dir` absolute; a project that writes the namespace itself

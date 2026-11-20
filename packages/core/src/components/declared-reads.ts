@@ -157,7 +157,9 @@ export async function withDeclaredReads(
  * The first chant whose `chant graph --components` draws the reads a
  * capability reports through `graphReads`: an edge from the reader to the
  * component it reads, naming the output, and a node marked external for a
- * stack no component deploys (#5331).
+ * stack no component deploys (#5331). It is also the first chant whose
+ * `chant workspace graph` asks a lexicon's `workspaceStackReads` and draws the
+ * reads between members.
  */
 export const GRAPH_READS_FLOOR = NEXT_RELEASE;
 
