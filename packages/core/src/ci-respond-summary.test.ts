@@ -210,3 +210,22 @@ describe("the note", () => {
     expect(posted[0]!.body).toContain("updated nothing");
   });
 });
+
+describe("the generated jobs' variables (#5335)", () => {
+  test("only with summary: the settings, and the key's secret off GitLab", async () => {
+    const { opWavesSummaryEnv } = await import("./op/op-waves");
+    const spec = { respond: { "wave-refused": "summary" as const }, waveSummary: { keyEnv: "MODEL_KEY", maxRuns: 3 } };
+    expect(opWavesSummaryEnv(spec, "github")).toEqual({ MODEL_KEY: "${{ secrets.MODEL_KEY }}", CHANT_WAVE_SUMMARY_KEY_ENV: "MODEL_KEY", CHANT_WAVE_SUMMARY_MAX_RUNS: "3" });
+    expect(opWavesSummaryEnv(spec, "forgejo")).toEqual(opWavesSummaryEnv(spec, "github"));
+    expect(opWavesSummaryEnv(spec, "gitlab")).toEqual({ CHANT_WAVE_SUMMARY_KEY_ENV: "MODEL_KEY", CHANT_WAVE_SUMMARY_MAX_RUNS: "3" });
+    for (const mode of ["diff", "off"] as const) expect(opWavesSummaryEnv({ ...spec, respond: { "wave-refused": mode } }, "github")).toEqual({});
+    expect(opWavesSummaryEnv({ waveSummary: spec.waveSummary }, "github")).toEqual({});
+  });
+
+  test("an op waves spec checks its waveSummary", () => {
+    const base = { name: "x", op: "x", plan: ["./bin/plan", "{target}", "{plan}"], waves: [{ name: "prod", runs: [{ target: "app" }] }] };
+    expect(() => assertOpWavesSpec({ ...base, waveSummary: { maxCostUsd: -1 } } as unknown as OpWavesSpec)).toThrow(/waveSummary: the summary's maxCostUsd/);
+    expect(() => assertOpWavesSpec({ ...base, waveSummary: { model: "x" } } as unknown as OpWavesSpec)).toThrow(/no field "model"/);
+    expect(() => assertOpWavesSpec({ ...base, respond: { "wave-refused": "summary" }, waveSummary: { keyEnv: "MODEL_KEY" } } as unknown as OpWavesSpec)).not.toThrow(/waveSummary/);
+  });
+});

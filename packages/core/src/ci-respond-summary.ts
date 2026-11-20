@@ -37,13 +37,17 @@ import { activeProductWords, type CiProductWords } from "./ci-product-words";
 import type { RefusedDiff } from "./ci-respond";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
-import { quoted, REVIEW_COMMAND, REVIEW_KEY_ENV, reviewCommandEnv, runReviewCommand, type RunReviewCommand } from "./op/activities/review-agent";
+import { quoted, REVIEW_COMMAND, reviewCommandEnv, runReviewCommand, type RunReviewCommand } from "./op/activities/review-agent";
+import { OP_NAME, WAVE_SUMMARY_ENV, WAVE_SUMMARY_KEY_ENV, WAVE_SUMMARY_TIMEOUT_MINUTES, waveSummarySpecProblem, type WaveSummarySpec } from "./ci-respond-summary-env";
+
+export { WAVE_SUMMARY_ENV, WAVE_SUMMARY_KEY_ENV, WAVE_SUMMARY_TIMEOUT_MINUTES, waveSummaryEnv, waveSummaryJobEnv, waveSummarySpecProblem, type WaveSummarySpec } from "./ci-respond-summary-env";
 import { NEXT_RELEASE } from "./release-floors";
 
 /**
  * The first chant whose `wave-refused` response takes `summary` (#5335): a
  * model's summary of a refused wave's diff above the diff, one run record per
- * summary with its prompt digest and cost, under the agent's limits.
+ * summary with its prompt digest and cost, under the agent's limits, and
+ * generated apply and wave jobs that carry `waveSummary` and the model's key.
  */
 export const WAVE_REFUSED_SUMMARY_FLOOR = NEXT_RELEASE;
 
@@ -53,30 +57,10 @@ export const WAVE_SUMMARY_TRIGGER = "refused-wave";
 /** The default command: the review agent's, printing Claude Code's JSON result so the run's cost is read. */
 export const WAVE_SUMMARY_COMMAND = `${REVIEW_COMMAND} --output-format json`;
 
-/** Minutes the command may run unless `timeout` says otherwise. */
-export const WAVE_SUMMARY_TIMEOUT_MINUTES = 10;
 
 /** The longest diff the prompt carries and the longest summary the note shows. The rest is cut, and the text says so. */
 const MAX_DIFF_TEXT = 60_000;
 const MAX_SUMMARY = 4_000;
-
-/** The summary's settings as a product sets them. Every field is optional. */
-export interface WaveSummarySpec {
-  /** The model command, run through the shell with the prompt on stdin. Default {@link WAVE_SUMMARY_COMMAND}. */
-  command?: string;
-  /** The variable holding the model's key, the one secret the command sees. Default `ANTHROPIC_API_KEY`. */
-  keyEnv?: string;
-  /** Minutes the command may run. Default {@link WAVE_SUMMARY_TIMEOUT_MINUTES}. */
-  timeout?: number;
-  /** The most summaries per day, counted on the ledger. Absent: no count limit. */
-  maxRuns?: number;
-  /** The most US dollars the summaries may cost per day, summed from their records. Absent: no money limit. */
-  maxCostUsd?: number;
-  /** The op the runs are recorded under. Default `<product>-refused-wave`. */
-  name?: string;
-  /** The ledger environment the runs are recorded under. Default `local`, as every agent's. */
-  env?: string;
-}
 
 /** The summary's settings, every default filled. */
 export interface WaveSummarySettings {
@@ -89,34 +73,16 @@ export interface WaveSummarySettings {
   maxCostUsd?: number;
 }
 
-/** The variables a job carries the settings in. A product sets them beside `CHANT_RESPOND`. */
-export const WAVE_SUMMARY_ENV = {
-  command: "CHANT_WAVE_SUMMARY_COMMAND",
-  keyEnv: "CHANT_WAVE_SUMMARY_KEY_ENV",
-  timeout: "CHANT_WAVE_SUMMARY_TIMEOUT",
-  maxRuns: "CHANT_WAVE_SUMMARY_MAX_RUNS",
-  maxCostUsd: "CHANT_WAVE_SUMMARY_MAX_COST_USD",
-  name: "CHANT_WAVE_SUMMARY_NAME",
-  env: "CHANT_WAVE_SUMMARY_ENV",
-} as const;
-
-const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const OP_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-
 /** The settings with every default filled, or why they are not settings. */
 export function resolveWaveSummarySpec(spec: WaveSummarySpec = {}, product = "chant"): WaveSummarySettings | { error: string } {
+  const problem = waveSummarySpecProblem(spec);
+  if (problem) return { error: problem };
   const name = spec.name ?? `${product}-refused-wave`;
   if (!OP_NAME.test(name)) return { error: `the summary's name ${JSON.stringify(name)} is not an op name` };
   const env = spec.env ?? "local";
-  if (!OP_NAME.test(env)) return { error: `the summary's ledger environment ${JSON.stringify(env)} is not an environment name` };
   const command = spec.command ?? WAVE_SUMMARY_COMMAND;
-  if (command.trim() === "" || /[\r\n]/.test(command)) return { error: "the summary's command is one line" };
-  const keyEnv = spec.keyEnv ?? REVIEW_KEY_ENV;
-  if (!VAR_NAME.test(keyEnv)) return { error: `the summary's key variable ${JSON.stringify(keyEnv)} is not a variable name` };
+  const keyEnv = spec.keyEnv ?? WAVE_SUMMARY_KEY_ENV;
   const timeout = spec.timeout ?? WAVE_SUMMARY_TIMEOUT_MINUTES;
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 360) return { error: "the summary's timeout is a whole number of minutes from 1 to 360" };
-  if (spec.maxRuns !== undefined && !(Number.isInteger(spec.maxRuns) && spec.maxRuns >= 1)) return { error: "the summary's maxRuns is a whole number of at least 1" };
-  if (spec.maxCostUsd !== undefined && !(Number.isFinite(spec.maxCostUsd) && spec.maxCostUsd > 0)) return { error: "the summary's maxCostUsd is a number of US dollars above 0" };
   return {
     name,
     env,
@@ -126,16 +92,6 @@ export function resolveWaveSummarySpec(spec: WaveSummarySpec = {}, product = "ch
     ...(spec.maxRuns !== undefined ? { maxRuns: spec.maxRuns } : {}),
     ...(spec.maxCostUsd !== undefined ? { maxCostUsd: spec.maxCostUsd } : {}),
   };
-}
-
-/** The variables that carry `spec` to a job, for a product's generator. Only the fields set. */
-export function waveSummaryEnv(spec: WaveSummarySpec): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const field of Object.keys(WAVE_SUMMARY_ENV) as (keyof WaveSummarySpec)[]) {
-    const v = spec[field];
-    if (v !== undefined) out[WAVE_SUMMARY_ENV[field]] = String(v);
-  }
-  return out;
 }
 
 /** The settings a job's variables carry, or why they are not settings. */

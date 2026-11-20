@@ -163,6 +163,7 @@ import {
   opWavesOutcomeCommand,
   opWavesRecordPlansCommand,
   opWavesResumeCommand,
+  opWavesSummaryEnv,
   type OpWavesSpec,
 } from "@intentius/chant/op/op-waves";
 import { CONTROL_DISPATCH_JOB, CONTROL_OUTCOME_VAR, CONTROL_TOKEN_VARS, controlDispatchJob } from "@intentius/chant/control/dispatch";
@@ -239,6 +240,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
   ({ spec, options } = opWavesWithEnvironmentSets(spec, options, "gitlab"));
   // #4982: with renderSpec each wave job renders the spec at base through the product's command; `spec` is the jobs' shape.
   const renderEnv = opWavesRenderSpecEnv(options.renderSpec);
+  // #5335: empty unless the spec's respond sets wave-refused: summary.
+  const summaryEnv = opWavesSummaryEnv(spec, "gitlab");
   // #4984: the before-merge mode, a pipeline of the default branch the note poll starts for a merge request's decided head.
   const bm = options.beforeMerge;
   if (bm) assertOpWavesBeforeMerge("gitlab", bm);
@@ -461,6 +464,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           [JOB_GUARD_ENV]: JSON.stringify(guard),
           ...(signs ? evidenceKeyEnv("gitlab", options.evidence!) : {}),
           ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}),
+          // #5335: with wave-refused: summary, the summary's settings; the model's key is the CI/CD variable they name.
+          ...summaryEnv,
         },
         rules: waveRules,
         ...(needs.length > 0 ? { needs } : {}),
@@ -755,6 +760,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
   const evidenceOf = (job: OpWaveSplitJob) => (job.phase === "plan" && options.evidence !== undefined ? evidenceNamed(job, opWaveEvidencePlan(spec, job, { signs: true, keylessCloud: false, keyOutOfWave: true })) : undefined);
   const evidenceNeeds = opWaveEvidenceNeeds(spec, split.map((job) => ({ wave: job.wave, plan: evidenceOf(job) })));
   const specTags = gitlabTags(spec.runner);
+  const summaryEnv = opWavesSummaryEnv(spec, "gitlab");
   const outcomes = `${opWaveOutcomeDir(spec)}/`;
   const checksDir = `${opWaveChecksDir(spec)}/`;
   const out: Array<readonly [string, unknown]> = [];
@@ -791,7 +797,7 @@ function gitlabSplitEntries(input: GitlabSplitInput): Array<readonly [string, un
         ...(specTags ? { tags: specTags } : {}),
         // #4992: the gate job of a step spec waits for its rows on the ledger, up to the job's timeout.
         ...(gate ? { timeout: `${timeout.minutes} minutes` } : {}),
-        variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), ...restVariables, ...starts, ...resume, [JOB_GUARD_ENV]: JSON.stringify(guard) },
+        variables: { ...GITLAB_FULL_HISTORY, ...(gate ? timeout.env : {}), ...renderEnv, ...(wave.variables ?? {}), ...restVariables, ...starts, ...resume, [JOB_GUARD_ENV]: JSON.stringify(guard), ...summaryEnv },
         rules: restRules,
         // The record job needs the gate job too, whose decision names the rows it leased (#4992).
         needs: needsOf(job.needs),
