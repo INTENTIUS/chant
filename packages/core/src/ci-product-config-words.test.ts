@@ -194,6 +194,21 @@ describe("productConfigProblems", () => {
     expect(productConfigProblems({ ci: { login: {}, identity: {} } }, { product: "sql-yodeler", case: "camel" }).filter((p) => p.level === "error")).toEqual([]);
   });
 
+  test("a key inside its alias's path reads as the key", () => {
+    const plywood = { product: "plywood" };
+    expect(productConfigProblems({ pass: { secrets: ["TOKEN"] } }, plywood)).toEqual([]);
+    // The alias alone, in either of its shapes, is still a warning and not an error.
+    for (const pass of [["TOKEN"], { TOKEN: "x" }]) {
+      const problems = productConfigProblems({ pass }, plywood);
+      expect(problems.map((p) => [p.level, p.path])).toEqual([["warning", "pass"]]);
+    }
+  });
+
+  test("an alias beside a key outside its path is still an error in a scope", () => {
+    const problems = productConfigProblems({ ci: { login: { aws: {} }, identity: { aws: {} } } }, { product: "sql-yodeler", case: "camel", scopes: ["ci"] });
+    expect(problems.filter((p) => p.level === "error").map((p) => p.path)).toEqual(["ci.login"]);
+  });
+
   test("the scoped-alias floor names the next release", () => {
     expect(PRODUCT_CONFIG_SCOPED_ALIASES_FLOOR).toBe(NEXT_RELEASE);
   });
