@@ -37,7 +37,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { normalizeObservation } from "@intentius/chant/observation";
 import type { Declarable } from "@intentius/chant/declarable";
 import { buildLiveGraphIr } from "@intentius/chant/graph-ir";
-import { ENGINE_FACTS_FLOOR } from "@intentius/chant/engine-facts";
+import { ENGINE_FACTS_FLOOR, type EngineFacts } from "@intentius/chant/engine-facts";
 import {
   describeResources,
   readEngineGraph,
@@ -262,14 +262,20 @@ describe("describeResources reads live-graph after live-plan on the module-keyed
     ]);
     expect(pool.instances![0]!.facts!.markers).toEqual({ owner: ESTATE, address: "module.app:0.aws_eip.pool:0", encoding: "escaped", source: "live" });
 
+    // The rows beside each word (#5402) are ./describe-resources.ownership-rows.test.ts's.
+    const word = (f: EngineFacts | undefined) => {
+      if (!f) return f;
+      const { ownershipRows: _, ...rest } = f;
+      return rest;
+    };
     const logs = resources["estate/module.app/aws_cloudwatch_log_group.logs"]!;
-    expect(logs.instances!.map((i) => [i.address, i.verdict, i.facts])).toEqual([
+    expect(logs.instances!.map((i) => [i.address, i.verdict, word(i.facts)])).toEqual([
       ["module.app[0].aws_cloudwatch_log_group.logs", "present", { ownership: "bound", ownedBy: "name", cloudIds: [{ kind: "import-id", value: `/${ESTATE}/app-0` }] }],
       ["module.app[1].aws_cloudwatch_log_group.logs", "absent", { ownership: "pending" }],
     ]);
 
     const front = resources["estate/module.edge/aws_cloudwatch_log_group.front"]!;
-    expect(front.instances!.map((i) => i.facts)).toEqual([
+    expect(front.instances!.map((i) => word(i.facts))).toEqual([
       { ownership: "unowned", cloudIds: [{ kind: "import-id", value: `/${ESTATE}/edge-east` }] },
       { ownership: "foreign", markers: { owner: "other-estate", encoding: "escaped", source: "live" }, cloudIds: [{ kind: "import-id", value: `/${ESTATE}/edge-west` }] },
     ]);

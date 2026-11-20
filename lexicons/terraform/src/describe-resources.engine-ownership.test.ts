@@ -91,7 +91,9 @@ describe("a choudoufu live root's declared nodes carry its facts.ownership (#533
     const observed = await observe(MODULE_KEYED, await declared(MODULE_KEYED));
     expect(Object.keys(observed.resources)).toEqual(["estate/module.app/aws_cloudwatch_log_group.logs", "estate/module.app/aws_eip.pool"]);
     expect(observed.unobserved["estate/module.edge/aws_cloudwatch_log_group.front"]).toMatchObject({ reason: "filtered" });
-    expect(observed.engineFacts).toEqual({
+    // The rows beside each word (#5402) are ./describe-resources.ownership-rows.test.ts's.
+    const withoutRows = Object.fromEntries(Object.entries(observed.engineFacts ?? {}).map(([id, { ownershipRows: _, ...f }]) => [id, f]));
+    expect(withoutRows).toEqual({
       "estate/module.app[1]/aws_cloudwatch_log_group.logs": { ownership: "pending" },
       'estate/module.edge["east"]/aws_cloudwatch_log_group.front': { ownership: "unowned", cloudIds: [{ kind: "import-id", value: "/module-keyed-estate/edge-east" }] },
       'estate/module.edge["west"]/aws_cloudwatch_log_group.front': {

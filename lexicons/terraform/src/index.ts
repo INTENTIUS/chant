@@ -225,4 +225,4 @@ export {
   terraformQueryVerdict,
 } from "./disruption";
 export { TERRAFORM_HEALTH_TYPES, terraformHealthTargets } from "./health-targets";
-export { TERRAFORM_HEALTH_DISRUPTION_FLOOR } from "./chant-floors";
+export { TERRAFORM_HEALTH_DISRUPTION_FLOOR, TERRAFORM_OWNERSHIP_ROWS_FLOOR } from "./chant-floors";

@@ -348,6 +348,12 @@ export interface ChoudoufuLiveLsArgs extends TerraformRootArgs {
   estate?: string;
   /** `-consistent`: poll past the Resource Groups Tagging API's eventual-consistency window. */
   consistent?: boolean;
+  /**
+   * Pass the root as `DIR` (`.`), so the listing compares the declared
+   * instances and prints `gaps[]` (#5402). Without it, `gaps[]` is empty and
+   * `gaps_skipped` says no configuration was given.
+   */
+  compare?: boolean;
 }
 
 export type ChoudoufuLiveCheckArgs = TerraformRootArgs;
@@ -788,9 +794,10 @@ export function classifyLiveGraphFailure(code: unknown, output: string): "unsupp
 }
 
 /** `live-ls -estate=<estate> -json [-consistent]`. */
-export function choudoufuLiveLsCommand(opts: { binary: string; estate: string; consistent?: boolean }): string {
+export function choudoufuLiveLsCommand(opts: { binary: string; estate: string; consistent?: boolean; compare?: boolean }): string {
   const parts = [opts.binary, "live-ls", `-estate=${quoteArg(opts.estate)}`, "-json"];
   if (opts.consistent) parts.push("-consistent");
+  if (opts.compare) parts.push(".");
   return parts.join(" ");
 }
 
@@ -2345,10 +2352,11 @@ export async function choudoufuLiveLs(
   const env = terraformEnvironment(resolved.root);
 
   const consistent = args.consistent === true;
-  const cmd = choudoufuLiveLsCommand({ binary, estate, ...(consistent ? { consistent: true } : {}) });
+  const compare = args.compare === true;
+  const cmd = choudoufuLiveLsCommand({ binary, estate, ...(consistent ? { consistent: true } : {}), ...(compare ? { compare: true } : {}) });
   // Shared with every identical listing in the same read session, the way
   // {@link choudoufuLivePlanDocument} shares the document (chant #2498).
-  const key = liveReadKey("live-ls", { root: args.root, dir, binary, estate, consistent, env });
+  const key = liveReadKey("live-ls", { root: args.root, dir, binary, estate, consistent, compare, env });
   const stdout = await memoLiveRead(key, async () => {
     const result = await run(cmd, dir, env, signal);
     report(result.stdout, result.stderr);
