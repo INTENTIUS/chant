@@ -132,6 +132,9 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
           })),
           ...(bin ? { bin } : {}),
           ...(spec.defaults?.runner ? { runner: spec.defaults.runner } : {}),
+          // #5425: the product's image and install lines, as the wave jobs take them.
+          ...(options.image ? { image: options.image } : {}),
+          ...(options.beforeScript && options.beforeScript.length > 0 ? { beforeScript: [...options.beforeScript] } : {}),
           ...(options.jobTimeoutMinutes ? { jobTimeoutMinutes: options.jobTimeoutMinutes } : {}),
           // #5326: the scheduled re-run of the promotions a soak holds.
           ...(spec.recheck ? { recheck: { schedule: spec.recheck.schedule } } : {}),

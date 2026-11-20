@@ -95,3 +95,28 @@ describe("gitlab pipeline promote: idTokens", () => {
     expect(() => yaml({ ...input, stages: [{ name: "staging", idTokens: { "1BAD": "aud" } }] })).toThrow(/not a variable name/);
   });
 });
+
+// #5425: the product's image and install lines, as the wave jobs take them.
+describe("gitlab pipeline promote: the product's image and install lines", () => {
+  type Doc = Record<string, { image: string; script: string[] }>;
+
+  test("every job runs in the image and installs before its command", () => {
+    const doc = parseYAML(yaml({ ...input, recheck: { schedule: "0 * * * *" }, image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci --ignore-scripts"] })) as unknown as Doc;
+    for (const name of ["promote-staging", "promote-prod", "recheck-staging", "recheck-prod"]) {
+      expect(doc[name]!.image, name).toBe("ghcr.io/intentius/plunge:1");
+      const at = doc[name]!.script.indexOf("npm ci --ignore-scripts");
+      expect(at, name).toBeGreaterThanOrEqual(0);
+      expect(at, name).toBeLessThan(doc[name]!.script.findIndex((l) => l.includes("components promote")));
+    }
+  });
+
+  test("the agent job takes them after the tokens are dropped", () => {
+    const doc = parseYAML(yaml({ ...input, stages: [{ name: "staging", agentSteps: { keyEnvs: ["MODEL_KEY"] } }], image: "ghcr.io/intentius/plunge:1", beforeScript: ["npm ci --ignore-scripts"] })) as unknown as Doc;
+    expect(doc["agent-staging"]!.image).toBe("ghcr.io/intentius/plunge:1");
+    expect(doc["agent-staging"]!.script.indexOf("npm ci --ignore-scripts")).toBeGreaterThan(2);
+  });
+
+  test("with neither set, the file is the golden's", async () => {
+    await expect(yaml({ ...input, image: undefined, beforeScript: undefined })).toMatchFileSnapshot("./__golden__/pipeline-promote.gitlab.yml");
+  });
+});

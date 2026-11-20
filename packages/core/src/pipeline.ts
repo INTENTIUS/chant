@@ -36,6 +36,15 @@ import type { PipelineDeclaration } from "./pipeline/spec";
 export const PIPELINE_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose pipeline helpers carry a product's job image and
+ * install lines and its stage risk and replan keys (#5425): `pipelineFromConfig`
+ * maps `environments.<name>.risk` and `replan_dependents`, and the pipeline
+ * generator gives the promote, recheck and agent jobs the `image` and
+ * `beforeScript` the wave jobs already take, on GitHub, GitLab and Forgejo.
+ */
+export const PIPELINE_PRODUCT_JOBS_FLOOR = NEXT_RELEASE;
+
+/**
  * The first chant with stages that follow several stages and stages that
  * take one release at a time (#5353): a stage's `after` and `queue` in
  * `.chant/pipeline.ts`, a cycle among stages refused at build, the stage

@@ -5,7 +5,7 @@
  * `yodel.config.ts` itself, so the product writes the file from its config,
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
- * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `.after`, `.queue`,
+ * `.freeze`, `.failure_tolerance`, `.risk`, `.replan_dependents`, `.publish`, `.reads`, `.after`, `.queue`,
  * `.urgent`, `.pause_after_rollback`, `.hooks.<when>`, `.agent_steps`, `.on_verify_fail`,
  * `approval_rules`, `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
@@ -75,6 +75,11 @@ export interface PipelineEnvironmentConfig {
   /** `pause_after_rollback` (#5355): a rollback of the stage pauses it. */
   pause_after_rollback?: boolean;
   pauseAfterRollback?: boolean;
+  /** `risk.approve_above` and `risk.approval_rules` (#5325): the score over which the stage's waves wait, and the rules they take on top of the gate's own. Land on the gate's `holds.risk`. */
+  risk?: RiskConfig;
+  /** `replan_dependents`: the members whose dependents are planned again when an output they read changes after an apply (#5345). Replaces `defaults.replanDependents` for the stage. */
+  replan_dependents?: string[];
+  replanDependents?: string[];
   /** `soak`: `{ duration, checks, overrides }`; a check's `on_fail` and `timeout_seconds` in snake_case or camelCase (#5326). */
   soak?: SoakConfig;
   /** `hooks.<when>` (#5421): the commands a stage runs at `before-observe`, `before-plan`, `after-plan`, `after-gate`, `before-apply` or `after-apply`, each a list of hooks. */
@@ -86,6 +91,28 @@ export interface PipelineEnvironmentConfig {
   on_verify_fail?: PipelineStage["onVerifyFail"];
   onVerifyFail?: PipelineStage["onVerifyFail"];
   [key: string]: unknown;
+}
+
+/** `environments.<name>.risk` as a product's config spells it, snake_case or camelCase (#5325). */
+export interface RiskConfig {
+  approve_above?: number;
+  approveAbove?: number;
+  /** Rules only; a group (`all`, `any`) is refused, since a risk hold takes plain rules. */
+  approval_rules?: ApprovalRulesConfig;
+  approvalRules?: ApprovalRulesConfig;
+}
+
+/** A stage's `gate.holds.risk` from `environments.<name>.risk` (#5325). */
+function riskOf(risk: RiskConfig | undefined, stage: string): NonNullable<NonNullable<PipelineGate["holds"]>["risk"]> | undefined {
+  if (!risk) return undefined;
+  const approveAbove = risk.approve_above ?? risk.approveAbove;
+  const rules = rulesOf(risk.approval_rules ?? risk.approvalRules);
+  if (rules?.some((n) => "all" in n || "any" in n)) throw new Error(`environments.${stage}.risk.approval_rules holds a group; a risk hold takes rules only`);
+  const out: NonNullable<NonNullable<PipelineGate["holds"]>["risk"]> = {
+    ...(approveAbove !== undefined ? { approveAbove } : {}),
+    ...(rules && rules.length > 0 ? { quorum: rules as GateQuorumRule[] } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** A soak as a product's config spells it (#5326): the keys of {@link Soak}, snake_case or camelCase. */
@@ -276,7 +303,9 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     const approvalRaw = env.approval ?? input.approval;
     const approval = typeof approvalRaw === "object" ? approvalRaw.mode : approvalRaw;
     const quorum = rulesOf(env.approval_rules ?? env.approvalRules ?? input.approvalRules);
-    const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}), ...(env.urgent ? { urgent: { role: env.urgent.role } } : {}) };
+    const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}), ...(env.urgent ? { urgent: { role: env.urgent.role } } : {}), ...(risk ? { holds: { risk } } : {}) };
+    const risk = riskOf(env.risk, name);
+    const replan = env.replan_dependents ?? env.replanDependents;
     const pauseAfterRollback = env.pause_after_rollback ?? env.pauseAfterRollback;
     const onVerifyFail = env.on_verify_fail ?? env.onVerifyFail;
     const hold = holdOf(env.hold);
@@ -287,6 +316,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     return {
       name,
       ...(env.canary ? { canary: true } : {}),
+      ...(replan && replan.length > 0 ? { replanDependents: [...replan] } : {}),
       waves: waves.map((w) => structuredClone(w)),
       ...(Object.keys(gate).length > 0 ? { gate } : {}),
       ...(hooks ? { hooks } : {}),

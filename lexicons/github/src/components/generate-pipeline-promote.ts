@@ -42,7 +42,7 @@ import { opWaveBinArgv, opWaveJobTimeout } from "@intentius/chant/op/op-waves";
 import type { PipelinePromoteInput } from "@intentius/chant/lexicon";
 import { assertEnvironment, CI_IMAGE, environmentDoc, GITHUB_JOB_TOKEN, githubRunsOn, githubSecret, idTokenAudienceEnv, idTokensProblem } from "@intentius/chant/ci-jobs";
 import { CHECKOUT_TOKEN_ENV, checkoutScript, dropForgeTokens, handoverOutputs, handoverTrap, takeOverScript } from "@intentius/chant/ci-handover";
-import { checkoutStep, concurrency } from "./ci-jobs";
+import { checkoutStep, concurrency, runSteps } from "./ci-jobs";
 import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine } from "@intentius/chant/ci-identity";
 import { emitOpPipelineYAML, type GithubOpPipelineDoc } from "./generate-op-pipeline";
 import { opWavesAgentFactsEnv } from "@intentius/chant/ci-agent-triggers";
@@ -85,6 +85,9 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
   const facts = input.agentFacts ? (opWavesAgentFactsEnv(forge, { ...input.agentFacts, triggers: ["verify-failed"] }) ?? {}) : {};
   const timeout = opWaveJobTimeout(input.jobTimeoutMinutes);
   const bin = opWaveBinArgv(input.bin).join(" ");
+  // #5425: the product's image and install lines, as the wave jobs take them.
+  const image = input.image ?? CI_IMAGE;
+  const install = input.beforeScript ?? [];
   const jobsDoc: Record<string, unknown> = {};
   for (const stage of input.stages) {
     if (stage.environment) assertEnvironment(`${input.pipeline}/${stage.name}`, stage.environment);
@@ -104,13 +107,13 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
       ...(stage.environment ? { environment: environmentDoc(stage.environment) } : {}),
       ...(oidc ? { permissions: { contents: "write", "id-token": "write" } } : {}),
       "timeout-minutes": timeout.minutes,
-      container: CI_IMAGE,
+      container: image,
       concurrency: concurrency(`${input.pipeline}-promote-${stage.name}`, false),
       steps: [
         ...(cloud ? [{ name: "Trade the job's OIDC token for the stage's cloud identity", env: { [TRADE_SPEC_ENV]: JSON.stringify(cloud) }, run: tradeLine("$GITHUB_ENV", "github-env") }] : []),
         checkoutStep(true),
         ...(answers ? [{ name: `Take the answers of ${stage.name}'s agent steps`, run: takeOverScript(agentJob, dir, forge) }] : []),
-        { name: step, ...(Object.keys({ ...stage.variables, ...own, ...facts, ...idTokenAudienceEnv(idTokens) }).length > 0 ? { env: { ...(stage.variables ?? {}), ...idTokenAudienceEnv(idTokens), ...own, ...facts } } : {}), run: [...(cloud && !idTokens ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...(stage.setup ?? []), command].join("\n") },
+        { name: step, ...(Object.keys({ ...stage.variables, ...own, ...facts, ...idTokenAudienceEnv(idTokens) }).length > 0 ? { env: { ...(stage.variables ?? {}), ...idTokenAudienceEnv(idTokens), ...own, ...facts } } : {}), run: [...(cloud && !idTokens ? [`unset ${OIDC_REQUEST_VARS.join(" ")}`] : []), ...install, ...(stage.setup ?? []), command].join("\n") },
       ],
     });
     if (agent) {
@@ -119,10 +122,11 @@ export function buildGithubPromoteDoc(input: PipelinePromoteInput, dialect: { fo
         "runs-on": githubRunsOn(input.runner),
         permissions: { contents: "read" },
         "timeout-minutes": timeout.minutes,
-        container: CI_IMAGE,
+        container: image,
         outputs: handoverOutputs(AGENT_STEPS_STEP_ID, forge),
         steps: [
           { name: "Check out the commit and the ledger", env: { [CHECKOUT_TOKEN_ENV]: GITHUB_JOB_TOKEN }, run: checkoutScript(true, true) },
+          ...runSteps(install),
           {
             id: AGENT_STEPS_STEP_ID,
             name: `Run the agent steps of ${stage.name}`,
