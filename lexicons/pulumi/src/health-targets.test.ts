@@ -38,9 +38,10 @@ describe("pulumi health targets (#5338)", () => {
     });
     expect(r.absent).toEqual(["app/aws:ecs/service:Service::gone"]);
     expect(r.unobserved).toEqual({});
+    expect(r.uncovered).toEqual({ "app/aws:s3/bucket:Bucket::logs": "aws:s3/bucket:Bucket" });
   });
 
-  test("with no export read, a covered resource is a hole and the rest are left out", async () => {
+  test("with no export read, a covered resource is a hole and the rest are uncovered", async () => {
     const entities = new Map([
       ["app/aws:ecs/service:Service::api", { entityType: "aws:ecs/service:Service", props: {} }],
       ["app/aws:s3/bucket:Bucket::logs", { entityType: "aws:s3/bucket:Bucket", props: {} }],
@@ -48,6 +49,7 @@ describe("pulumi health targets (#5338)", () => {
     const r = await pulumiHealthTargets({ environment: "dev", buildOutput: "", entities }, undefined);
     expect(Object.keys(r.unobserved)).toEqual(["app/aws:ecs/service:Service::api"]);
     expect(r.unobserved["app/aws:ecs/service:Service::api"]).toMatchObject({ type: "AWS::ECS::Service", reason: "no-binding" });
+    expect(r.uncovered).toEqual({ "app/aws:s3/bucket:Bucket::logs": "aws:s3/bucket:Bucket" });
   });
 
   test("ids key like the member read's entities, on a recorded export", () => {

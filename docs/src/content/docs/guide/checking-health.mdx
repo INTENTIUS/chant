@@ -27,7 +27,7 @@ prompt: |
    1 healthy, 1 unhealthy, 0 unknown, 1 not observed
    ```
 
-   The same command reads a terraform root or a pulumi stack. Install the aws, azure or gcp lexicon for the resources it holds; the [reference](/chant/cli/lifecycle/#terraform-roots-and-pulumi-stacks) lists the covered types.
+   The same command reads a terraform root or a pulumi stack, through the provider lexicon installed for its resources. The [reference](/chant/cli/lifecycle/#terraform-roots-and-pulumi-stacks) lists the covered types; any other resource there reads `unknown`.
 
 3. Fix what keeps a row from being read before you trust the rest. A `not read` row is a read that failed, so chant does not know whether that service is up. It is never counted as unhealthy.
 

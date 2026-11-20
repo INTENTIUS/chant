@@ -2568,9 +2568,10 @@ export interface LexiconPlugin {
    * engine type a provider lexicon reads health for, with that provider's
    * health type and the id the engine recorded (a root's state, a stack's
    * export) (#5338). `chant lifecycle health` hands each target to the
-   * provider's {@link observeHealth} with `physicalIds`. Resources of other
-   * types are left out. An id that could not be read is `unobserved` with a
-   * reason; a resource the records do not hold is `absent`.
+   * provider's {@link observeHealth} with `physicalIds`. Every other
+   * resource goes in `uncovered` with its engine type, and core reports it
+   * `unknown`. An id that could not be read is `unobserved` with a reason; a
+   * resource the records do not hold is `absent`.
    */
   healthTargets?(options: import("./health").HealthReadOptions): Promise<import("./health").HealthTargetsResult>;
 

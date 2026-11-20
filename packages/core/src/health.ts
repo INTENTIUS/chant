@@ -204,14 +204,21 @@ export interface HealthTarget {
 
 /**
  * What an engine lexicon's {@link EngineHealthLexicon.healthTargets} returns:
- * each entity of a covered type in exactly one of `targets`, `unobserved` or
- * `absent`. Entities of other types are left out, as a provider lexicon
- * leaves out the types missing from its `healthTypes`.
+ * each resource of a covered type in exactly one of `targets`, `unobserved`
+ * or `absent`, and each resource of any other type in `uncovered`, keyed by
+ * entity name with its engine type.
  */
 export interface HealthTargetsResult {
   targets: Record<string, HealthTarget>;
   unobserved: Record<string, UnobservedEntity>;
   absent: string[];
+  /**
+   * The root's or stack's resources no provider lexicon reads health for.
+   * Core reports each one `unknown`: nothing says whether it is up, and a
+   * soak that counts `unknown` as failing must not pass on a root nobody can
+   * observe.
+   */
+  uncovered?: Record<string, string>;
 }
 
 /**
@@ -225,20 +232,22 @@ export interface EngineHealthLexicon {
   healthTargets?(options: HealthReadOptions): Promise<HealthTargetsResult>;
 }
 
-/** The first chant whose `lifecycle health` reads a terraform root's or pulumi stack's resources through the provider lexicons, with `healthTargets` and `HealthReadOptions.physicalIds` (#5338). */
+/** The first chant whose `lifecycle health` reads a terraform root's or pulumi stack's resources through the provider lexicons, with `healthTargets` and `HealthReadOptions.physicalIds`, and reports each resource no provider reads as `unknown` (#5338). */
 export const ENGINE_HEALTH_FLOOR = NEXT_RELEASE;
 
 /**
  * Health for an engine lexicon's entities (#5338): its `healthTargets`, then
  * each target read by its provider lexicon with the engine's id. Never
  * throws. A provider that is not installed, or whose health read does not
- * cover the type, leaves the target `unsupported-kind`. A thrown
- * `healthTargets` comes back as `error`, with no entries.
+ * cover the type, leaves the target `unsupported-kind`. Each `uncovered`
+ * resource is `unknown`, with its engine type. A thrown `healthTargets`
+ * comes back as `error`, with no entries.
  */
 export async function observeEngineHealth(
   engine: EngineHealthLexicon,
   options: HealthReadOptions,
   provider: (lexicon: string) => Promise<HealthLexicon | undefined>,
+  now?: () => Date,
 ): Promise<{ result: HealthReadResult; error?: string }> {
   const empty: HealthReadResult = { entities: {}, unobserved: {}, absent: [] };
   if (!engine.healthTargets || options.entities.size === 0) return { result: empty };
@@ -249,6 +258,10 @@ export async function observeEngineHealth(
     return { result: empty, error: err instanceof Error ? err.message : String(err) };
   }
   const entities: Record<string, HealthEntry> = {};
+  const observedAt = (now?.() ?? new Date()).toISOString();
+  for (const [name, engineType] of Object.entries(found.uncovered ?? {})) {
+    entities[name] = healthEntry(engineType, "unknown", `no health read for ${engineType}`, observedAt);
+  }
   const unobserved: Record<string, UnobservedEntity> = { ...(found.unobserved ?? {}) };
   const absent: string[] = [...(found.absent ?? [])];
 

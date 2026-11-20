@@ -7,7 +7,7 @@ import { terraformPlugin } from "./plugin";
 const resource = (type: string, address: string) => ({ entityType: RESOURCE_TYPE, props: { type, address, root: "app" } });
 
 describe("terraform health targets (#5338)", () => {
-  test("covered types map to their provider's health type with the id from state; other types are left out", async () => {
+  test("covered types map to their provider's health type with the id from state; other resources are uncovered", async () => {
     const asked: string[][] = [];
     const read: TerraformIdRead = async (o) => {
       asked.push(o.entityNames);
@@ -62,14 +62,16 @@ describe("terraform health targets (#5338)", () => {
     expect(r.absent.sort()).toEqual(["app/aws_ecs_service.later", "app/google_cloud_run_v2_service.web[1]"]);
     expect(r.unobserved["app/aws_ecs_service.broken"]).toMatchObject({ type: "AWS::ECS::Service", reason: "no-credentials" });
     expect(r.unobserved["app/azurerm_container_app.norow"]).toMatchObject({ reason: "read-failed" });
+    // A resource no provider reads is uncovered, which core reports unknown; a variable is no resource.
+    expect(r.uncovered).toEqual({ "app/aws_s3_bucket.logs": "aws_s3_bucket" });
   });
 
-  test("a root with no covered type reads nothing", async () => {
+  test("a root with no covered type reads no state, and every resource is uncovered", async () => {
     const read: TerraformIdRead = async () => {
       throw new Error("not called");
     };
     const r = await terraformHealthTargets({ environment: "dev", buildOutput: "", entities: new Map([["app/aws_s3_bucket.logs", resource("aws_s3_bucket", "aws_s3_bucket.logs")]]) }, read);
-    expect(r).toEqual({ targets: {}, unobserved: {}, absent: [] });
+    expect(r).toEqual({ targets: {}, unobserved: {}, absent: [], uncovered: { "app/aws_s3_bucket.logs": "aws_s3_bucket" } });
   });
 
   test("the plugin answers health targets and classifies disruption", () => {

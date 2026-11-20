@@ -87,6 +87,7 @@ describe("engine health through the provider lexicons (#5338)", () => {
       },
       unobserved: {},
       absent: ["app/aws_ecs_service.gone"],
+      uncovered: { "app/aws_s3_bucket.logs": "aws_s3_bucket" },
     }),
   };
 
@@ -100,7 +101,12 @@ describe("engine health through the provider lexicons (#5338)", () => {
         return { entities: { "app/aws_ecs_service.api": { type: "AWS::ECS::Service", state: "healthy", detail: "2/2 running", observedAt: "t" } }, unobserved: {}, absent: [] };
       },
     };
-    const { result, error } = await observeEngineHealth(engine, { environment: "dev", buildOutput: "x", entities: declared }, async (l) => (l === "aws" ? aws : undefined));
+    const { result, error } = await observeEngineHealth(
+      engine,
+      { environment: "dev", buildOutput: "x", entities: declared },
+      async (l) => (l === "aws" ? aws : undefined),
+      () => new Date("2026-11-19T00:00:00.000Z"),
+    );
     expect(error).toBeUndefined();
     expect(seen?.physicalIds).toEqual({ "app/aws_ecs_service.api": "arn:svc" });
     expect([...seen!.entities]).toEqual([["app/aws_ecs_service.api", { entityType: "AWS::ECS::Service", props: {} }]]);
@@ -108,6 +114,14 @@ describe("engine health through the provider lexicons (#5338)", () => {
     expect(result.unobserved["app/aws_route53_health_check.api"]).toMatchObject({ reason: "unsupported-kind", detail: "the aws lexicon has no health read for AWS::Route53::HealthCheck" });
     expect(result.unobserved["app/azurerm_container_app.web"]).toMatchObject({ reason: "unsupported-kind", detail: "azurerm_container_app is read by the azure lexicon, which is not installed" });
     expect(result.absent).toEqual(["app/aws_ecs_service.gone"]);
+    // A resource no provider reads is unknown, never left out: a soak must not pass on what nobody observed.
+    expect(result.entities["app/aws_s3_bucket.logs"]).toEqual({
+      type: "aws_s3_bucket",
+      state: "unknown",
+      detail: "no health read for aws_s3_bucket",
+      observedAt: "2026-11-19T00:00:00.000Z",
+    });
+    expect(summarizeHealth([result])).toMatchObject({ healthy: 1, unknown: 1 });
   });
 
   test("a thrown healthTargets is an error with no entries", async () => {

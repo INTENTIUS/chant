@@ -11,9 +11,10 @@
  * which knows nothing of a terraform root.
  *
  * A block expanded with `count` or `for_each` is one target per instance,
- * named by its instance node id (`app/aws_ecs_service.api[0]`). A resource
- * of any other type has no health read and is left out, as the provider
- * lexicons leave out the types they do not read.
+ * named by its instance node id (`app/aws_ecs_service.api[0]`). A
+ * `resource` block of any other type goes in `uncovered`, and core reports it
+ * `unknown`: nothing reads whether it is up. Other blocks (variables, data
+ * sources, modules) are not resources and are left out.
  */
 import type { HealthReadOptions, HealthTarget, HealthTargetsResult, UnobservedEntity } from "@intentius/chant/lexicon";
 import type { DescribeResourcesResult } from "@intentius/chant/lexicon";
@@ -62,17 +63,21 @@ function resourceTypeOf(entity: { entityType: string; props: Record<string, unkn
 export async function terraformHealthTargets(options: HealthReadOptions, read: TerraformIdRead = defaultRead): Promise<HealthTargetsResult> {
   const covered = new Map<string, { entityType: string; props: Record<string, unknown> }>();
   const kinds = new Map<string, string>();
+  const uncovered: Record<string, string> = {};
   for (const [name, entity] of options.entities) {
     const type = resourceTypeOf(entity);
-    if (type && TERRAFORM_HEALTH_TYPES[type]) {
+    if (!type) continue;
+    if (TERRAFORM_HEALTH_TYPES[type]) {
       covered.set(name, entity);
       kinds.set(name, type);
+    } else {
+      uncovered[name] = type;
     }
   }
   const targets: Record<string, HealthTarget> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const absent: string[] = [];
-  if (covered.size === 0) return { targets, unobserved, absent };
+  if (covered.size === 0) return { targets, unobserved, absent, uncovered };
 
   const observed = normalizeObservation(await read({
     environment: options.environment,
@@ -114,5 +119,5 @@ export async function terraformHealthTargets(options: HealthReadOptions, read: T
     }
     targets[name] = target(present.physicalId);
   }
-  return { targets, unobserved, absent };
+  return { targets, unobserved, absent, uncovered };
 }

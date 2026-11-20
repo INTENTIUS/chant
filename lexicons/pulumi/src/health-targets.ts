@@ -6,7 +6,8 @@
  * with the id the stack's export recorded. The export is the one the member
  * read in this process loaded (the index store's, else the checked-in
  * `stack-export.json`); nothing else is run. A resource of a type outside
- * {@link PULUMI_HEALTH_TYPES} has no health read and is left out.
+ * {@link PULUMI_HEALTH_TYPES} goes in `uncovered`, and core reports it
+ * `unknown`: nothing reads whether it is up.
  */
 import type { HealthReadOptions, HealthTarget, HealthTargetsResult, UnobservedEntity } from "@intentius/chant/lexicon";
 import { pulumiNodeKey } from "@intentius/chant/pulumi-urn";
@@ -50,10 +51,14 @@ export async function pulumiHealthTargets(
   const targets: Record<string, HealthTarget> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
   const absent: string[] = [];
+  const uncovered: Record<string, string> = {};
   const ids = read?.doc !== undefined ? exportIds(read) : undefined;
   for (const [name, { entityType }] of options.entities) {
     const mapped = PULUMI_HEALTH_TYPES[entityType];
-    if (!mapped) continue;
+    if (!mapped) {
+      uncovered[name] = entityType;
+      continue;
+    }
     if (!ids) {
       unobserved[name] = { type: mapped.type, reason: "no-binding", detail: "no stack export was read, so there is no recorded id to read health by" };
       continue;
@@ -62,5 +67,5 @@ export async function pulumiHealthTargets(
     if (id) targets[name] = { lexicon: mapped.lexicon, type: mapped.type, engineType: entityType, physicalId: id };
     else absent.push(name);
   }
-  return { targets, unobserved, absent };
+  return { targets, unobserved, absent, uncovered };
 }
