@@ -86,10 +86,13 @@ export function staticPromotionOrder(source: string): PromotionStep[] | undefine
 export async function readMemberPromotionOrder(dir: string): Promise<PromotionStep[] | null> {
   try {
     // #5324: a member with a pipeline takes its order from the folded stages; one that does not fold has none to read.
-    const { readMemberPipeline } = await import("../pipeline/read");
-    const pipeline = readMemberPipeline(dir);
-    if (pipeline.status === "folded") return pipeline.spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
-    if (pipeline.status === "refused") return null;
+    // The fold loads the TypeScript compiler, so it is imported only for a member that has the file.
+    if (existsSync(join(dir, ".chant", "pipeline.ts"))) {
+      const { readMemberPipeline } = await import("../pipeline/read");
+      const pipeline = readMemberPipeline(dir);
+      if (pipeline.status === "folded") return pipeline.spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
+      if (pipeline.status === "refused") return null;
+    }
     const ts = join(dir, "chant.config.ts");
     if (existsSync(ts)) {
       const plain = staticPromotionOrder(readFileSync(ts, "utf-8"));
