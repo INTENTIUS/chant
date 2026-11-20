@@ -1,0 +1,221 @@
+{
+  "estate": "tlmig-sample-monolith",
+  "choudoufu_version": "v0.15.0-30-g9c7d3701e2",
+  "upstream_version": "1.13.0-dev",
+  "bound": [
+    {
+      "addr": "aws_cloudwatch_log_group.stray",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/stray",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_a_0",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-a/svc-0",
+      "identity_values": {
+        "name": "/tlmig-sample/team-a/svc-0"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_a_1",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-a/svc-1",
+      "identity_values": {
+        "name": "/tlmig-sample/team-a/svc-1"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_a_2",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-a/svc-2",
+      "identity_values": {
+        "name": "/tlmig-sample/team-a/svc-2"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_b_0",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-b/svc-0",
+      "identity_values": {
+        "name": "/tlmig-sample/team-b/svc-0"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_b_1",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-b/svc-1",
+      "identity_values": {
+        "name": "/tlmig-sample/team-b/svc-1"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_b_2",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-b/svc-2",
+      "identity_values": {
+        "name": "/tlmig-sample/team-b/svc-2"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_c_0",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-c/svc-0",
+      "identity_values": {
+        "name": "/tlmig-sample/team-c/svc-0"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_c_1",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-c/svc-1",
+      "identity_values": {
+        "name": "/tlmig-sample/team-c/svc-1"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_cloudwatch_log_group.team_c_2",
+      "type": "aws_cloudwatch_log_group",
+      "identity": "/tlmig-sample/team-c/svc-2",
+      "identity_values": {
+        "name": "/tlmig-sample/team-c/svc-2"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_policy.team_a",
+      "type": "aws_iam_policy",
+      "identity": "arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_iam_policy.team_b",
+      "type": "aws_iam_policy",
+      "identity": "arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_iam_policy.team_c",
+      "type": "aws_iam_policy",
+      "identity": "arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy",
+      "source": "marker"
+    },
+    {
+      "addr": "aws_iam_role.team_a",
+      "type": "aws_iam_role",
+      "identity": "tlmig-sample-team-a-role",
+      "identity_values": {
+        "name": "tlmig-sample-team-a-role"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role.team_b",
+      "type": "aws_iam_role",
+      "identity": "tlmig-sample-team-b-role",
+      "identity_values": {
+        "name": "tlmig-sample-team-b-role"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role.team_c",
+      "type": "aws_iam_role",
+      "identity": "tlmig-sample-team-c-role",
+      "identity_values": {
+        "name": "tlmig-sample-team-c-role"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role_policy.team_a_inline",
+      "type": "aws_iam_role_policy",
+      "identity": "tlmig-sample-team-a-role:tlmig-sample-team-a-inline",
+      "identity_values": {
+        "name": "tlmig-sample-team-a-inline",
+        "role": "tlmig-sample-team-a-role"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role_policy.team_b_inline",
+      "type": "aws_iam_role_policy",
+      "identity": "tlmig-sample-team-b-role:tlmig-sample-team-b-inline",
+      "identity_values": {
+        "name": "tlmig-sample-team-b-inline",
+        "role": "tlmig-sample-team-b-role"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role_policy.team_c_inline",
+      "type": "aws_iam_role_policy",
+      "identity": "tlmig-sample-team-c-role:tlmig-sample-team-c-inline",
+      "identity_values": {
+        "name": "tlmig-sample-team-c-inline",
+        "role": "tlmig-sample-team-c-role"
+      },
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role_policy_attachment.team_a",
+      "type": "aws_iam_role_policy_attachment",
+      "identity": "tlmig-sample-team-a-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy",
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role_policy_attachment.team_b",
+      "type": "aws_iam_role_policy_attachment",
+      "identity": "tlmig-sample-team-b-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy",
+      "source": "derived"
+    },
+    {
+      "addr": "aws_iam_role_policy_attachment.team_c",
+      "type": "aws_iam_role_policy_attachment",
+      "identity": "tlmig-sample-team-c-role/arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy",
+      "source": "derived"
+    }
+  ],
+  "omissions": [],
+  "unowned": [],
+  "adoptable": [],
+  "swept": [
+    "aws_iam_policy",
+    "aws_iam_role"
+  ],
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "summary": "Provider version does not match the admission evidence version",
+      "detail": "This run resolved hashicorp/aws 6.58.0. Live resource markers' admission table - which resource types are accepted, what their import IDs look like, and how their identity is resolved - was verified against hashicorp/aws 6.59.0 (live/survey.json). Import grammar and identity schemas are the parts of that table a provider version change can invalidate: an import ID format or an identity attribute that changed between 6.58.0 and 6.59.0 would misbehave here with no further warning. Taggability judgments are not version-sensitive in the same way and rarely change between provider releases. This is a caution, not a failure: the plan continues."
+    },
+    {
+      "severity": "warning",
+      "summary": "Resource type has no orphan recovery",
+      "detail": "aws_cloudwatch_log_group is admitted by the provider's own identity schema rather than by this fork's admission table, so it plans and applies normally - but the estate-wide sweep draws its type universe from that table and will not list it. Deleting the last aws_cloudwatch_log_group block from this configuration leaves the live resource in the account with no run proposing to remove it, and no warning at that point either. Remove it by hand when you remove the block. See live/LIMITATIONS.md, \"Resource type has no orphan recovery\"."
+    },
+    {
+      "severity": "warning",
+      "summary": "Resource type has no orphan recovery",
+      "detail": "aws_iam_role is admitted by the provider's own identity schema rather than by this fork's admission table, so it plans and applies normally - but the estate-wide sweep draws its type universe from that table and will not list it. Deleting the last aws_iam_role block from this configuration leaves the live resource in the account with no run proposing to remove it, and no warning at that point either. Remove it by hand when you remove the block. See live/LIMITATIONS.md, \"Resource type has no orphan recovery\"."
+    },
+    {
+      "severity": "warning",
+      "summary": "Resource type has no orphan recovery",
+      "detail": "aws_iam_role_policy is admitted by the provider's own identity schema rather than by this fork's admission table, so it plans and applies normally - but the estate-wide sweep draws its type universe from that table and will not list it. Deleting the last aws_iam_role_policy block from this configuration leaves the live resource in the account with no run proposing to remove it, and no warning at that point either. Remove it by hand when you remove the block. See live/LIMITATIONS.md, \"Resource type has no orphan recovery\"."
+    },
+    {
+      "severity": "warning",
+      "summary": "Resource type has no orphan recovery",
+      "detail": "aws_iam_role_policy_attachment is admitted by the provider's own identity schema rather than by this fork's admission table, so it plans and applies normally - but the estate-wide sweep draws its type universe from that table and will not list it. Deleting the last aws_iam_role_policy_attachment block from this configuration leaves the live resource in the account with no run proposing to remove it, and no warning at that point either. Remove it by hand when you remove the block. See live/LIMITATIONS.md, \"Resource type has no orphan recovery\"."
+    }
+  ]
+}

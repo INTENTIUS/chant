@@ -176,6 +176,13 @@ export interface EngineOwnershipRows {
 /** The first chant whose graph carries `facts.ownershipRows` (#5402). */
 export const ENGINE_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;
 
+/**
+ * The first chant whose `graph --live` draws a node for each live object a
+ * lexicon reports that no declared entity names (#5429), from
+ * `ObservationResult.undeclared`, kept out of the diff and the change set.
+ */
+export const UNDECLARED_LIVE_NODES_FLOOR = NEXT_RELEASE;
+
 const GAP_READS: ReadonlySet<string> = new Set<EngineGapRead>(["listing", "graph"]);
 
 const rowRecord = (v: unknown): Record<string, unknown> | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);

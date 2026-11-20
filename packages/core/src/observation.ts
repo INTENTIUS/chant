@@ -225,6 +225,20 @@ export interface ObservationResult {
    * `ResourceMetadata.facts`.
    */
   engineFacts?: Record<string, EngineFacts>;
+  /**
+   * Live objects the read found that no declared entity names (#5429), keyed
+   * by the node id the live graph gives them. The case it exists for is a
+   * choudoufu live root: an object the estate's marker binds that no block of
+   * the configuration declares, which `live-plan` lists in `bound[]` (with a
+   * `not-in-configuration` gap in `live-graph`) and `live-ls` lists as an
+   * item with `declared: false`.
+   *
+   * Kept apart from {@link resources} so the change set and the live diff
+   * read exactly what they read before: nothing classifies on this map.
+   * `chant graph --live` draws each entry as a live node, so the overlay
+   * paints it the way it paints any provisioned node nothing declares.
+   */
+  undeclared?: Record<string, ResourceMetadata>;
 }
 
 /**
@@ -267,6 +281,8 @@ export interface NormalizedObservation {
   edges?: IREdge[];
   /** Engine facts about what the read does not return as present, by node id (#5333). Absent when the lexicon reported none. */
   engineFacts?: Record<string, EngineFacts>;
+  /** Live objects no declared entity names, by node id (#5429). Absent when the lexicon reported none. */
+  undeclared?: Record<string, ResourceMetadata>;
 }
 
 /** True when `value` is the versioned {@link ObservationResult} envelope. */
@@ -327,6 +343,7 @@ export function normalizeObservation(value: DescribeResourcesResult | undefined)
       ...(value.stackExports && Object.keys(value.stackExports).length > 0 ? { stackExports: value.stackExports } : {}),
       ...(Array.isArray(value.edges) && value.edges.length > 0 ? { edges: value.edges } : {}),
       ...(value.engineFacts && Object.keys(value.engineFacts).length > 0 ? { engineFacts: value.engineFacts } : {}),
+      ...(value.undeclared && Object.keys(value.undeclared).length > 0 ? { undeclared: value.undeclared } : {}),
     };
   }
   return { resources: value, unobserved: {}, queried: {}, sources: {}, notes: [] };
@@ -386,6 +403,8 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   const edgeKeys = new Set<string>();
   // Engine facts (#5333) merge like annotations: per node, disjoint parts.
   const engineFacts: Record<string, EngineFacts> = {};
+  // Undeclared live objects (#5429) merge per node, like engine facts.
+  const undeclared: Record<string, ResourceMetadata> = {};
   for (const part of parts) {
     Object.assign(resources, part.resources);
     Object.assign(unobserved, part.unobserved);
@@ -394,6 +413,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     Object.assign(annotations, part.annotations ?? {});
     Object.assign(rootReads, part.rootReads ?? {});
     Object.assign(engineFacts, part.engineFacts ?? {});
+    Object.assign(undeclared, part.undeclared ?? {});
     for (const n of part.notes) notes.add(n);
     Object.assign(stackExports, part.stackExports ?? {});
     for (const e of part.edges ?? []) {
@@ -408,6 +428,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
   for (const name of Object.keys(resources)) {
     delete unobserved[name];
     delete engineFacts[name];
+    delete undeclared[name];
   }
   return {
     resources,
@@ -420,6 +441,7 @@ export function mergeObservations(parts: Iterable<NormalizedObservation>): Norma
     ...(Object.keys(stackExports).length > 0 ? { stackExports } : {}),
     ...(edges.length > 0 ? { edges } : {}),
     ...(Object.keys(engineFacts).length > 0 ? { engineFacts } : {}),
+    ...(Object.keys(undeclared).length > 0 ? { undeclared } : {}),
   };
 }
 

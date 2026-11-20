@@ -58,6 +58,14 @@ export interface ObserveResult {
    */
   engineFacts?: Record<string, EngineFacts>;
   /**
+   * Live objects a read found that no declared entity names (#5429), one
+   * entry per lexicon that reported any (`ObservationResult.undeclared`).
+   * Never part of `observations`, so the diff and the change set read what
+   * they read before; `chant graph --live` adds them to the live graph's
+   * nodes with `buildLiveGraphIr`.
+   */
+  undeclared?: LiveObservation[];
+  /**
    * Which read answered each declared entity (#2267), keyed like the
    * observations' resources: `"state"`, `"live"`, `"plan"` or `"live+plan"`
    * from the terraform lexicon. Present only for lexicons that report it.
@@ -104,6 +112,8 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     ...(obs.annotations ? { annotations: q(obs.annotations) } : {}),
     // Engine facts (#5333) are keyed by node id, so they re-key the same way.
     ...(obs.engineFacts ? { engineFacts: q(obs.engineFacts) } : {}),
+    // Undeclared live objects (#5429) are keyed by node id too.
+    ...(obs.undeclared ? { undeclared: q(obs.undeclared) } : {}),
     notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),
@@ -182,6 +192,7 @@ export async function observeResources(
   const notes: string[] = [];
   const annotations: Record<string, Record<string, unknown>> = {};
   const engineFacts: Record<string, EngineFacts> = {};
+  const undeclared: LiveObservation[] = [];
   const sources: Record<string, string> = {};
   const rootReads: Record<string, RootRead> = {};
 
@@ -285,6 +296,7 @@ export async function observeResources(
       }
       Object.assign(annotations, observed.annotations ?? {});
       Object.assign(engineFacts, observed.engineFacts ?? {});
+      if (observed.undeclared) undeclared.push({ lexicon: plugin.name, resources: observed.undeclared });
       Object.assign(sources, observed.sources);
       Object.assign(rootReads, observed.rootReads ?? {});
       // What the estate depends on but does not declare (#1273). Read after the
@@ -356,7 +368,7 @@ export async function observeResources(
     }
   }
 
-  return { observations, warnings, errors, notes, annotations, ...(Object.keys(engineFacts).length > 0 ? { engineFacts } : {}), ...(Object.keys(sources).length > 0 ? { sources } : {}), ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}) };
+  return { observations, warnings, errors, notes, annotations, ...(Object.keys(engineFacts).length > 0 ? { engineFacts } : {}), ...(undeclared.length > 0 ? { undeclared } : {}), ...(Object.keys(sources).length > 0 ? { sources } : {}), ...(Object.keys(rootReads).length > 0 ? { rootReads } : {}) };
 }
 
 /**

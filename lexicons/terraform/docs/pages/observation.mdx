@@ -422,6 +422,16 @@ is also listed with `live-ls -estate=<estate> -json .`, and its `gaps[]` and
 whether it lists each bound object join the rows. See
 [the rows behind the word](/chant/reference/drift-record/#the-rows-behind-the-word).
 
+An object the estate binds that no block of the root declares is a node of
+its own in `chant graph --live`: each `bound[]` address no block or module
+call answers for, and, with the listing, each `live-ls` item marked
+`declared: false`. Its id is `<root>/<address>`, its kind is the resource type
+choudoufu prints, `attrs.status` is `orphan`, and its `facts.ownershipRows`
+carry `boundBy`, `listed` and the gaps, `live-graph`'s `not-in-configuration`
+among them. The overlay paints it `warn` with `_ownership: owned`, as it paints
+any provisioned node nothing declares. These nodes stay out of `lifecycle diff`
+and the change set.
+
 ## What has no answer at all
 
 Only `resource` and `data` blocks have rows in state. A `terraform`,

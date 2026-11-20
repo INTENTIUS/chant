@@ -52,3 +52,14 @@ export const TERRAFORM_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;
  * `ENGINE_OWNERSHIP_ROWS_FLOOR` or later.
  */
 export const TERRAFORM_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first terraform lexicon release that reports a choudoufu live root's
+ * bound objects no block declares as live nodes (#5429): each `live-plan`
+ * `bound[]` address no declared block answers for, and with
+ * `CHANT_TERRAFORM_LIVE_LISTING=1` each `live-ls` item with `declared: false`,
+ * with choudoufu's resource type as its kind, status `orphan`, and
+ * `boundBy`, `listed` and `gaps` under `facts.ownershipRows`. It needs
+ * `@intentius/chant` at `UNDECLARED_LIVE_NODES_FLOOR` or later to draw them.
+ */
+export const TERRAFORM_UNDECLARED_NODES_FLOOR = NEXT_RELEASE;

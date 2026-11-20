@@ -1,0 +1,224 @@
+{
+    "estate": "tlmig-sample-monolith",
+    "consistent": false,
+    "stabilized": true,
+    "attempts": 1,
+    "config_dir": ".",
+    "schemas": "provider",
+    "items": [
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-a/svc-0",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_a_0",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_a_0",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-a/svc-1",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_a_1",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_a_1",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-a/svc-2",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_a_2",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_a_2",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-b/svc-0",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_b_0",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_b_0",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-b/svc-1",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_b_1",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_b_1",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-b/svc-2",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_b_2",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_b_2",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-c/svc-0",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_c_0",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_c_0",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-c/svc-1",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_c_1",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_c_1",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/team-c/svc-2",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.team_c_2",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.team_c_2",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:iam::000000000000:policy/tlmig-sample-team-a-policy",
+            "type": "aws_iam_policy",
+            "address": "aws_iam_policy.team_a",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_iam_policy.team_a",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:iam::000000000000:policy/tlmig-sample-team-b-policy",
+            "type": "aws_iam_policy",
+            "address": "aws_iam_policy.team_b",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_iam_policy.team_b",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:iam::000000000000:policy/tlmig-sample-team-c-policy",
+            "type": "aws_iam_policy",
+            "address": "aws_iam_policy.team_c",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_iam_policy.team_c",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:iam::000000000000:role/tlmig-sample-team-a-role",
+            "type": "aws_iam_role",
+            "address": "aws_iam_role.team_a",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_iam_role.team_a",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:iam::000000000000:role/tlmig-sample-team-b-role",
+            "type": "aws_iam_role",
+            "address": "aws_iam_role.team_b",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_iam_role.team_b",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:iam::000000000000:role/tlmig-sample-team-c-role",
+            "type": "aws_iam_role",
+            "address": "aws_iam_role.team_c",
+            "declared": true,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_iam_role.team_c",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        },
+        {
+            "id": "arn:aws:logs:us-east-1:000000000000:log-group:/tlmig-sample/stray",
+            "type": "aws_cloudwatch_log_group",
+            "address": "aws_cloudwatch_log_group.stray",
+            "declared": false,
+            "source": "tagging",
+            "tags": {
+                "tofu-address": "aws_cloudwatch_log_group.stray",
+                "tofu-estate": "tlmig-sample-monolith"
+            }
+        }
+    ],
+    "gaps": [
+        {
+            "address": "aws_iam_role_policy.team_a_inline",
+            "type": "aws_iam_role_policy",
+            "rung": "declaration-carried",
+            "detail": "aws_iam_role_policy has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+        },
+        {
+            "address": "aws_iam_role_policy.team_b_inline",
+            "type": "aws_iam_role_policy",
+            "rung": "declaration-carried",
+            "detail": "aws_iam_role_policy has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+        },
+        {
+            "address": "aws_iam_role_policy.team_c_inline",
+            "type": "aws_iam_role_policy",
+            "rung": "declaration-carried",
+            "detail": "aws_iam_role_policy has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+        },
+        {
+            "address": "aws_iam_role_policy_attachment.team_a",
+            "type": "aws_iam_role_policy_attachment",
+            "rung": "declaration-carried",
+            "detail": "aws_iam_role_policy_attachment has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+        },
+        {
+            "address": "aws_iam_role_policy_attachment.team_b",
+            "type": "aws_iam_role_policy_attachment",
+            "rung": "declaration-carried",
+            "detail": "aws_iam_role_policy_attachment has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+        },
+        {
+            "address": "aws_iam_role_policy_attachment.team_c",
+            "type": "aws_iam_role_policy_attachment",
+            "rung": "declaration-carried",
+            "detail": "aws_iam_role_policy_attachment has no settable tags argument, so no ownership marker was ever written for it - live/MARKERS.md's tier definitions (#417) name this the declaration-carried tier. Its identity comes entirely from configuration."
+        }
+    ]
+}

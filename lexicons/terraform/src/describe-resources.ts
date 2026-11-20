@@ -1241,7 +1241,7 @@ async function engineGraphFor(
   cwd: string | undefined,
   deps: TerraformReadDeps,
   handoff: LivePlanHandoff,
-): Promise<{ read?: EngineGraphRead; note?: string }> {
+): Promise<{ read?: EngineGraphRead; listing?: LiveLsListing; note?: string }> {
   if (!deps.liveGraph || handoff.json === undefined) return {};
   let scratch: string | undefined;
   try {
@@ -1262,7 +1262,7 @@ async function engineGraphFor(
     const listed = await ownershipListing(root, cwd, deps);
     const rows = ownershipRowsByAddress(indexLivePlan(handoff.json), listed.listing);
     const read = readEngineGraph(root, graph.json, rows);
-    return listed.note ? { read, note: listed.note } : { read };
+    return { read, ...(listed.listing ? { listing: listed.listing } : {}), ...(listed.note ? { note: listed.note } : {}) };
   } catch (err) {
     const message = (err instanceof Error ? err.message : String(err)).split("\n")[0];
     return {
@@ -1271,6 +1271,94 @@ async function engineGraphFor(
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** True when a declared block of the root answers for `address`: its own block, or a module call it sits under. */
+function declaresAddress(address: string, declared: readonly TerraformDeclared[]): boolean {
+  const block = blockAddressOf(address);
+  return declared.some((entity) =>
+    entity.type === MODULE_TYPE ? underModule(address, entity.address) : entity.type === RESOURCE_TYPE && entity.address === block,
+  );
+}
+
+/** The engine graph's facts for a choudoufu address, block or instance, if the read has a node for it. */
+function engineFactsAt(read: EngineGraphRead | undefined, key: string, address: string): EngineFacts | undefined {
+  if (!read) return undefined;
+  const block = read.blocks.get(key);
+  if (block) return block;
+  for (const byAddress of read.instances.values()) {
+    const facts = byAddress.get(address);
+    if (facts) return facts;
+  }
+  return undefined;
+}
+
+/**
+ * The objects a live root's estate binds that no block of its configuration
+ * declares (#5429), as live nodes keyed by {@link entityKeyFor}: each
+ * `live-plan` `bound[]` address no declared block or module call answers for
+ * (choudoufu's `live-graph` gives it a `not-in-configuration` gap), and each
+ * `live-ls` item with `declared: false` when the listing ran.
+ *
+ * Each one's `type` is the resource type choudoufu prints (`bound[].type`, or
+ * the item's `type`), its status `orphan`, the word {@link observeAmbient}
+ * gives the same object, and its ownership `owned`, since the estate's marker
+ * or record bound it. Its facts are the engine graph's node for the address
+ * with the address's rows under `ownershipRows`: `boundBy`, `listed` and the
+ * gaps from `live-graph` and `live-ls`.
+ *
+ * Empty when every bound address and listed item is declared, so such a root
+ * reads exactly as before.
+ */
+export function undeclaredBound(
+  root: string,
+  declared: readonly TerraformDeclared[],
+  index: LivePlanIndex,
+  listing?: LiveLsListing,
+  read?: EngineGraphRead,
+): Record<string, ResourceMetadata> {
+  const rows = ownershipRowsByAddress(index, listing);
+  const listedItems = new Map<string, LiveLsItem>();
+  for (const item of listing?.items ?? []) {
+    if (!item.declared) listedItems.set(item.address ?? item.id, item);
+  }
+  const addresses = new Set<string>();
+  for (const address of index.bound.keys()) if (!declaresAddress(address, declared)) addresses.add(address);
+  for (const address of listedItems.keys()) if (!declaresAddress(address, declared)) addresses.add(address);
+
+  const estate = index.estate || listing?.estate || "";
+  const out: Record<string, ResourceMetadata> = {};
+  for (const address of [...addresses].sort()) {
+    const bound = index.bound.get(address);
+    const item = listedItems.get(address);
+    const type = bound?.type ?? item?.type;
+    if (!type) continue;
+    const key = entityKeyFor(root, address);
+    // An object only the listing names is listed, though no bound row says so.
+    const facts = withOwnershipRows(engineFactsAt(read, key, address), mergeOwnershipRows(rows.get(address), item ? { listed: true } : undefined));
+    // A marker was read when the plan bound it by marker, or the listing found it by its tags.
+    const byMarker = bound ? bound.source === "marker" : item !== undefined;
+    out[key] = {
+      type,
+      physicalId: bound?.identity ?? item?.id ?? address,
+      status: "orphan",
+      ownership: "owned",
+      ...(byMarker && estate ? { marker: { stack: estate } as OwnershipMarker } : {}),
+      ambient: true,
+      attributes: {
+        address,
+        root,
+        estate,
+        resourceType: type,
+        status: "orphan",
+        ...(bound?.source ? { boundBy: bound.source } : {}),
+        ...(item?.slot ? { slot: item.slot } : {}),
+        ...(item?.source ? { listedBy: item.source } : {}),
+      },
+      ...(facts ? { facts } : {}),
+    };
+  }
+  return out;
 }
 
 /* ──────────────────── the estate beyond the declaration ─────────────────── */
@@ -2060,10 +2148,13 @@ export async function describeResources(
   const rootReads: Record<string, RootRead> = {};
   const edges: IREdge[] = [];
   const engineReads: EngineGraphRead[] = [];
+  // Bound objects no block declares (#5429), as live nodes beside the read.
+  const undeclared: Record<string, ResourceMetadata> = {};
   // A live root's observation with the engine graph's facts and edges on it (#4528).
-  const withEngineGraph = async (root: string, handoff: LivePlanHandoff, observed: ReturnType<typeof normalizeObservation>) => {
+  const withEngineGraph = async (root: string, declared: readonly TerraformDeclared[], handoff: LivePlanHandoff, observed: ReturnType<typeof normalizeObservation>) => {
     const graph = await engineGraphFor(root, options.cwd, deps, handoff);
     if (graph.note) notes.push(graph.note);
+    if (handoff.json !== undefined) Object.assign(undeclared, undeclaredBound(root, declared, indexLivePlan(handoff.json), graph.listing, graph.read));
     if (!graph.read) return observed;
     edges.push(...graph.read.edges);
     engineReads.push(graph.read);
@@ -2090,13 +2181,13 @@ export async function describeResources(
         for (const entity of declared) sources[entity.name] = outcome.answered;
         if (outcome.read) rootReads[`terraform.roots.${root}`] = outcome.read;
         if (outcome.note) notes.push(outcome.note);
-        parts.push(await withEngineGraph(root, handoff, normalizeObservation(read)));
+        parts.push(await withEngineGraph(root, declared, handoff, normalizeObservation(read)));
         continue;
       }
       for (const entity of declared) sources[entity.name] = "live";
       const handoff: LivePlanHandoff = {};
       const read = await observeEntities(declared, liveAdapter(root, options.cwd, deps, handoff));
-      parts.push(await withEngineGraph(root, handoff, normalizeObservation(read)));
+      parts.push(await withEngineGraph(root, declared, handoff, normalizeObservation(read)));
       continue;
     }
     if (depth === "plan") {
@@ -2149,6 +2240,11 @@ export async function describeResources(
   // in `resources`: the block stays absent. So do the engine's facts about
   // what no live node will carry (#5333), after --owned has filtered.
   const result = observation(resources, unobserved, merged.queried, merged.notes, undefined, sources, merged.annotations, rootReads, edges);
-  const beside = engineFactsBeside(resources, engineReads);
-  return Object.keys(beside).length > 0 ? { ...result, engineFacts: beside } : result;
+  // An undeclared object's facts ride on its own node (#5429), not beside.
+  const beside = engineFactsBeside({ ...undeclared, ...resources }, engineReads);
+  return {
+    ...result,
+    ...(Object.keys(beside).length > 0 ? { engineFacts: beside } : {}),
+    ...(Object.keys(undeclared).length > 0 ? { undeclared } : {}),
+  };
 }
