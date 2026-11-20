@@ -73,6 +73,23 @@ export interface PipelineGate {
   point?: string | OpWavePoint;
   /** The policy, cost and risk holds the stage's waves run over their plans. `risk` (#5325) holds a wave over its threshold and adds its `quorum` rules. */
   holds?: OpWaveHolds;
+  /**
+   * The urgent rule (#5355): `chant components promote --urgent` passes the
+   * stage's gate on one proven approval from `role`, in place of its quorum.
+   * Absent: a promote has no urgent path into the stage.
+   */
+  urgent?: PipelineUrgentRule;
+}
+
+/**
+ * A stage's urgent rule (#5355). One approval passes it, from an approver
+ * who holds `role` in `.chant/trust.json` at base and whose approval is
+ * proven by a seal against the signers at base. A plain `chant approve`
+ * line never counts, under any approval mode.
+ */
+export interface PipelineUrgentRule {
+  /** The role the one approver holds. */
+  role: string;
 }
 
 /** A wave inside a stage: an op wave, with the stage's failure tolerance on it unless it names its own. */
@@ -100,6 +117,11 @@ export interface PipelineStage {
   hold?: PipelineHold;
   /** Freeze windows. A stage in one refuses promotion with exit 3 until it ends. */
   freeze?: PipelineFreezeWindow[];
+  /**
+   * A rollback of the stage pauses it (#5355), so the next release waits for
+   * `chant stage resume`. Default false.
+   */
+  pauseAfterRollback?: boolean;
   /** Failed runs a wave of many targets tolerates before the stage stops. Default 0. A wave's own wins. */
   failureTolerance?: PipelineFailureTolerance;
   /** The forge deployment environment the stage's jobs run in, unless a wave names its own. */
@@ -190,9 +212,9 @@ const TOLERANCE = /^(100|[1-9]?[0-9])%$/;
 /** The keys a pipeline takes. A later pass adds its key here with its check. */
 export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defaults", "release", "control"];
 /** The keys a stage takes. */
-export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue"];
+export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback"];
 /** The keys a stage's gate takes. */
-export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds"];
+export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds", "urgent"];
 const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
 const DEFAULTS_REFUSED: readonly string[] = ["name", "waves", "control"];
 
@@ -259,7 +281,7 @@ function freezeProblems(freeze: unknown, where: string): string[] {
 
 function gateProblems(gate: unknown, where: string): string[] {
   if (gate === undefined) return [];
-  if (!isMap(gate)) return [`${where}.gate must be { "policy"?, "approval"?, "quorum"?, "point"?, "holds"? }`];
+  if (!isMap(gate)) return [`${where}.gate must be { "policy"?, "approval"?, "quorum"?, "point"?, "holds"?, "urgent"? }`];
   const out = unknownKeys(gate, GATE_KEYS, `${where}.gate`);
   if (gate.policy !== undefined && !["always", "on-destructive", "never"].includes(gate.policy as string)) out.push(`${where}.gate.policy is always, on-destructive or never`);
   if (gate.approval !== undefined && !["ledger", "pr-review", "sealed", "pull-request"].includes(gate.approval as string)) out.push(`${where}.gate.approval is ledger, pr-review, sealed or pull-request`);
@@ -267,6 +289,13 @@ function gateProblems(gate: unknown, where: string): string[] {
   else if (gate.quorum !== undefined) out.push(...quorumProblems(gate.quorum, `${where}.gate.quorum`, { notAuthor: true, proven: true, combine: true }).map((p) => p.replace(/`/g, "")));
   if (gate.point !== undefined && typeof gate.point !== "string" && !isMap(gate.point)) out.push(`${where}.gate.point must name a decision point`);
   if (gate.holds !== undefined && !isMap(gate.holds)) out.push(`${where}.gate.holds must be { "policy"?, "cost"?, "risk"? }`);
+  if (gate.urgent !== undefined) {
+    if (!isMap(gate.urgent)) out.push(`${where}.gate.urgent must be { "role" }`);
+    else {
+      out.push(...unknownKeys(gate.urgent, ["role"], `${where}.gate.urgent`));
+      if (typeof gate.urgent.role !== "string" || gate.urgent.role.trim() === "") out.push(`${where}.gate.urgent.role must name a role in .chant/trust.json`);
+    }
+  }
   return out;
 }
 
@@ -280,6 +309,7 @@ function stageProblems(stage: unknown, i: number, seen: Set<string>): string[] {
   else if (seen.has(name)) out.push(`${at} is named twice; each environment is one stage`);
   else seen.add(name);
   if (stage.canary !== undefined && typeof stage.canary !== "boolean") out.push(`${at}.canary must be true or false`);
+  if (stage.pauseAfterRollback !== undefined && typeof stage.pauseAfterRollback !== "boolean") out.push(`${at}.pauseAfterRollback must be true or false`);
   if (!Array.isArray(stage.waves) || stage.waves.length === 0) out.push(`${at}.waves must list at least one wave`);
   else {
     const waveNames = new Set<string>();
@@ -464,6 +494,7 @@ export const PIPELINE_SPEC_SCHEMA = {
               quorum: { type: "array", minItems: 1, items: { $ref: "#/$defs/quorumNode" } },
               point: { type: ["string", "object"] },
               holds: { type: "object" },
+              urgent: { type: "object", required: ["role"], additionalProperties: false, properties: { role: { type: "string", minLength: 1 } } },
             },
           },
           hooks: { type: "object" },
@@ -490,6 +521,7 @@ export const PIPELINE_SPEC_SCHEMA = {
           },
           after: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", pattern: NAME.source } },
           queue: { enum: [...PIPELINE_STAGE_QUEUES] },
+          pauseAfterRollback: { type: "boolean" },
         },
       },
     },

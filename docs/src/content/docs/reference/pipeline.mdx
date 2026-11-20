@@ -34,13 +34,14 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 |---|---|
 | `name` | the environment's name. `components promote --to` takes it, the release ledger records under it, and a step's per-environment inputs are read by it |
 | `waves` | the op waves the stage applies, in order; each wave as in the [op-waves spec](/chant/guide/op-waves/) |
-| `gate` | `{ policy, approval, quorum, point, holds }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules and `all`/`any` groups, all of which must be met ([groups](#approval-rule-groups)); `holds` is `{ policy, cost, risk }`, where `risk` is `{ approveAbove, quorum }`: over the score the stage's waves wait and take `quorum` on top of the gate's own rules ([Change Risk](/chant/guide/change-risk/)) |
+| `gate` | `{ policy, approval, quorum, point, holds, urgent }`. `policy` is `always` (the default), `on-destructive` or `never`; `approval` is `ledger`, `pr-review`, `sealed` or `pull-request`; `quorum` is a list of approval rules and `all`/`any` groups, all of which must be met ([groups](#approval-rule-groups)); `holds` is `{ policy, cost, risk }`, where `risk` is `{ approveAbove, quorum }`: over the score the stage's waves wait and take `quorum` on top of the gate's own rules ([Change Risk](/chant/guide/change-risk/)); `urgent` is `{ role }`, the stage's [urgent rule](#the-urgent-rule) |
 | `hooks` | stage hooks, run after the pipeline's own |
 | `hold` | `true`, or `{ reason, until, description }` with an ISO 8601 time. `description` is what the person who lifts the hold reads first: the refused promote, `chant workspace status` and the plan note of the change that lifts it show it |
 | `freeze` | a list of `{ from, until, reason }` windows, ISO 8601 times |
 | `failureTolerance` | failed runs a wave lets through: a whole number, or a share such as `"10%"`. A wave's own wins. Default `0` |
 | `canary` | `true` marks the canary stage |
 | `forgeEnvironment` | the forge deployment environment of the stage's jobs, unless a wave names its own |
+| `pauseAfterRollback` | `true` pauses the stage once a rollback of it finishes ([Pause and resume](#pause-and-resume)). Default `false` |
 | `replanDependents` | the members whose dependents are planned again when an output they read changes: once a wave of the stage applied, its job runs `chant components replan` for the runs it applied. A stage's list, else `defaults.replanDependents`. Absent, no step runs |
 | `publish` | the [release artifacts](#release-artifacts) the stage publishes once it applied, by name: `{ member, output }` or `{ secret }`. Absent, it publishes none |
 | `reads` | the artifacts of upstream stages the stage reads (an ancestor through `after`, else an earlier stage), of the release it takes, keyed by the variable each reaches its deploy in: `{ stage, artifact }`. Absent, it reads none |
@@ -122,6 +123,35 @@ A stage with `after`, and a stage with `queue`, add these cases. A pipeline wher
 
 A release is newer than another when it was cut later; without a cut time, the one that reached the stage later is newer. `chant workspace status --json` reads the log into `stageQueues` on the member. Each entry has `inStage`, `waiting` and `replaced`; a replaced entry carries `by`, the release that replaced it.
 
+## Pause and resume
+
+`chant stage pause <stage> --reason <text>` stops releases entering a stage, and `chant stage resume <stage> --reason <text>` lets them in again. Each writes a line naming who (`--actor`, else the CI or shell user) and why to `<stage>/stage.jsonl` on `chant/lifecycle`, and pushes it.
+
+| Case | Result |
+|---|---|
+| a promote into a paused stage | exit 3 (`pipeline-stage-paused`); the release is recorded as waiting on the stage's own `stage.jsonl`. A promote that is applying when the pause lands finishes |
+| `chant stage resume` | names the newest release that waited, which is the one that enters, and the older ones it replaces |
+| a promote of a release the resume replaced | exit 1 (`pipeline-release-superseded`), naming the release to promote |
+| a rollback of a stage with `pauseAfterRollback: true` | once it finishes, the stage is paused and the rollback says so |
+
+A pause is a stage's state on the ledger. `hold` and `freeze` are in the pipeline's file, and a change to the file lifts them.
+
+## The urgent rule
+
+A stage's gate may declare `urgent: { role }`. `chant components promote --to <stage> --release <label> --urgent --reason <text>` then passes the stage's gate on one approval of gate `<stage>-urgent` under the pipeline's name, bound to the release's digest, in place of the stage's quorum. The approval counts when its approver holds the role in `.chant/trust.json` at base and a seal from `chant approve --sign`, verified against the signers file at base, proves who they are. A plain `chant approve` line never counts, whatever the stage's `approval` mode.
+
+| Case | Result |
+|---|---|
+| the stage declares no urgent rule | exit 1 (`pipeline-no-urgent-rule`) |
+| `--from` skips a stage, with or without `--allow-skip` | exit 1 (`pipeline-urgent-skips`) |
+| the release has not deployed every promoted component in each stage upstream of the target, or a run of one failed there since | exit 1 (`pipeline-urgent-upstream`), naming the stages and components. A stage with `after` checks the stages it names and the stages those follow; a stage without `after` checks every stage before it |
+| `--allow-skip` toward a stage with `after` | the urgent path takes no skip gate, so a stage still missing refuses as above |
+| a rejection of the release at gate `<stage>` or `<stage>-urgent` | exit 8 (`pipeline-release-rejected`), before any approval is read |
+| no proven approval from the role yet | exit 3 (`pipeline-gate-waiting`), with the `chant approve ... --sign` command |
+| approved | the approval is spent on `_gates/<pipeline>/applied.jsonl`, an `urgent` line on the stage's ledger records the approver, their role and note, who promoted and why, and the pipeline's `defaults.notify` gets a `chant.notify/v1` event `urgent` |
+
+A hold, a freeze window, a pause and a rejection refuse an urgent promote as they refuse any other.
+
 ## Commands
 
 | Command | Does |
@@ -133,6 +163,8 @@ A release is newer than another when it was cut later; without a cut time, the o
 | `chant pipeline artifacts read --stage <stage> [--release <ref>] [--name <artifact>] [--from <dir>] [--json]` | prints a stage's artifacts for the release named, else the one in `CHANT_CONTROL_RELEASE`, else the release it last published for. `--name` prints one value; `--from` reads another repository's `chant/lifecycle` |
 | `chant pipeline release-of <commit>` | prints the digest of the release cut from a commit, or exits 1 |
 | `chant reject <pipeline> <stage> --reason <text> [--plan <digest>] [--env <stage>] [--release <digest>] [--sign [<key file>]]` | rejects the release the stage's gate waits on, on `_gates/<pipeline>/rejected.jsonl`. `--statement`, then `--signature <file> --at <time>`, records a signature made elsewhere |
+| `chant stage pause <stage> [--reason <text>]` | pauses the stage |
+| `chant stage resume <stage> [--reason <text>]` | resumes it; the newest release that waited enters |
 
 ## Release artifacts
 

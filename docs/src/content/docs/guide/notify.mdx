@@ -116,7 +116,7 @@ The webhook gets the event as JSON. The body is signed with HMAC-SHA256 over `<t
 |---|---|
 | `x-chant-signature` | `sha256=<hex>` |
 | `x-chant-timestamp` | The seconds the signature covers |
-| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit`, `ci.green`, `ci.quarantine-passed` or `ci.stale` |
+| `x-chant-event` | `waiting`, `refused`, `failed`, `drift`, `ci.red`, `ci.culprit`, `ci.green`, `ci.quarantine-passed`, `ci.stale` or `urgent` (a promote that passed a [pipeline stage's urgent rule](/chant/reference/pipeline/#the-urgent-rule)) |
 | `x-chant-delivery` | The event's `id` |
 
 `@intentius/chant/notify-verify` checks a delivery and needs nothing but `node:crypto`. The package ships it, and `@intentius/chant/notify`, as compiled JavaScript, so a receiver can import it under plain Node with no TypeScript loader, or bundle it alone:

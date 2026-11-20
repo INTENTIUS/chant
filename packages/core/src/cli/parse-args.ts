@@ -104,6 +104,7 @@ const BOOLEAN_FLAGS = new Set([
   "--uncommitted",
   "--allow-code",
   "--allow-skip",
+  "--urgent",
   "--allow-unsigned",
   "--override-green",
   "--require-provenance",
@@ -1354,6 +1355,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2550 — `chant workspace upgrade` runs a template's code migrations
       // only when asked to.
       result.allowCode = true;
+    } else if (arg === "--urgent") {
+      // #5355 — `chant components promote --urgent` passes the stage's gate on its urgent rule.
+      result.urgent = true;
     } else if (arg === "--allow-skip") {
       // #4030 — `chant components promote` skips a step of the member's
       // declared promotion order only when asked to.

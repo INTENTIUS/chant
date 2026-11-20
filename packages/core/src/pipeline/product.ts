@@ -6,6 +6,7 @@
  * the way it renders its workflows: {@link pipelineFromConfig} maps the
  * vocabulary's keys (`promotion`, `environments.<name>.gate`, `.hold`,
  * `.freeze`, `.failure_tolerance`, `.publish`, `.reads`, `.after`, `.queue`,
+ * `.urgent`, `.pause_after_rollback`,
  * `approval_rules`, `release.cut`) onto a
  * declaration, {@link pipelineSource} writes the file's text, and
  * {@link checkPipelineFile} is what `<product> ci --check` runs: it fails
@@ -45,6 +46,11 @@ export interface PipelineEnvironmentConfig {
   after?: string[];
   /** `replace`: one release at a time, a newer one waiting replacing an older (#5353). */
   queue?: PipelineStage["queue"];
+  /** `urgent.role` (#5355): the role whose one proven approval passes the stage's gate on `promote --urgent`. */
+  urgent?: { role: string };
+  /** `pause_after_rollback` (#5355): a rollback of the stage pauses it. */
+  pause_after_rollback?: boolean;
+  pauseAfterRollback?: boolean;
   [key: string]: unknown;
 }
 
@@ -146,7 +152,8 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
     const approvalRaw = env.approval ?? input.approval;
     const approval = typeof approvalRaw === "object" ? approvalRaw.mode : approvalRaw;
     const quorum = rulesOf(env.approval_rules ?? env.approvalRules ?? input.approvalRules);
-    const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}) };
+    const gate: PipelineGate = { ...(policy ? { policy } : {}), ...(approval ? { approval } : {}), ...(quorum ? { quorum } : {}), ...(env.urgent ? { urgent: { role: env.urgent.role } } : {}) };
+    const pauseAfterRollback = env.pause_after_rollback ?? env.pauseAfterRollback;
     const hold = holdOf(env.hold);
     const tolerance = env.failure_tolerance ?? env.failureTolerance;
     const forgeRaw = env.forge_environment ?? env.forgeEnvironment;
@@ -164,6 +171,7 @@ export function pipelineFromConfig(input: PipelineConfigInput): PipelineDeclarat
       ...(env.reads && Object.keys(env.reads).length > 0 ? { reads: Object.fromEntries(Object.entries(env.reads).map(([k, r]) => [k, { stage: r.stage, artifact: r.artifact }])) } : {}),
       ...(env.after && env.after.length > 0 ? { after: [...env.after] } : {}),
       ...(env.queue !== undefined ? { queue: env.queue } : {}),
+      ...(pauseAfterRollback ? { pauseAfterRollback: true } : {}),
     };
   });
   const declaration: PipelineDeclaration = {

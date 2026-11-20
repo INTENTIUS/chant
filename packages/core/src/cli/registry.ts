@@ -179,6 +179,8 @@ export interface ParsedArgs {
   allowCode?: boolean;
   /** `chant components promote --allow-skip` (#4030): promote past a step of the member's declared promotion order. */
   allowSkip?: boolean;
+  /** `chant components promote --urgent` (#5355): pass the stage's gate on its urgent rule, one proven approval from its role. */
+  urgent?: boolean;
   /** `chant release publish --allow-unsigned` (#4049): publish a release with no signature that verifies, with a warning. Never overrides identity.gates.release. */
   allowUnsigned?: boolean;
   /** `chant release publish --require-provenance` (#4049): refuse a run with no OIDC token, where it warns. */

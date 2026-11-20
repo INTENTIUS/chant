@@ -39,6 +39,15 @@
  * rules the gate's approvals count by (`../op/gate-reject.ts`): the gate's
  * `approval` mode (a `sealed` gate counts sealed approvals and rejections
  * only), the workspace's `identity.gates` rule, and the gate's rules.
+ * The urgent path (#5355), `promote --urgent --release <label>` into a stage
+ * whose gate declares `urgent: { role }`: the stage's gate passes on one
+ * approval of gate `<stage>-urgent`, bound to the release's digest, from an
+ * approver who holds the role and whose approval a seal against the signers
+ * at base proves. A plain `chant approve` line never counts, whatever the
+ * stage's approval mode. Holds, freeze windows and a pause still refuse it.
+ * It skips no stage, `--allow-skip` or not, and the release must have
+ * succeeded in every stage upstream of the one promoted to
+ * ({@link urgentUpstreamStages}).
  */
 
 import { createHash } from "node:crypto";
@@ -48,6 +57,7 @@ import { replacedIn, stageQueueOf, succeededIn, type StageLine, type StageLogPor
 import { gateRejections, rejectionLine } from "../op/gate-reject";
 import { gateSealRefusal, type GateSigners } from "../lifecycle/gate-seal";
 import type { GateRejectionRecord } from "../lifecycle/gate-rejection";
+import type { GateResolutionRecord } from "../lifecycle/gate-ledger";
 import { stageHeldAt, stageHeldLine } from "./stages";
 
 /** A refusal or a wait, with the exit code the promote ends with. */
@@ -65,7 +75,12 @@ export interface PipelinePromoteStop {
     | "pipeline-upstream-waiting"
     | "pipeline-release-replaced"
     | "pipeline-stage-busy"
-    | "pipeline-release-rejected";
+    | "pipeline-release-rejected"
+    | "pipeline-stage-paused"
+    | "pipeline-release-superseded"
+    | "pipeline-no-urgent-rule"
+    | "pipeline-urgent-skips"
+    | "pipeline-urgent-upstream";
   /** Lines the promote prints before the stop, such as a rejection that does not count and why (#5354). */
   lines?: string[];
 }
@@ -99,6 +114,8 @@ export function pipelinePromoteSource(input: {
   to: string;
   from?: string;
   allowSkip?: boolean;
+  /** `--urgent` (#5355): the stage must declare an urgent rule, and no stage is skipped. */
+  urgent?: boolean;
   now: Date;
 }): { from: string; skipped: PipelineStage[]; upstreams?: string[] } | PipelinePromoteStop | undefined {
   const { spec, to, now } = input;
@@ -107,6 +124,10 @@ export function pipelinePromoteSource(input: {
   if (toAt < 0) return undefined;
   const held = stageHeldAt(spec.stages[toAt]!, now);
   if (held) return { exitCode: 3, code: "pipeline-stage-held", message: stageHeldLine(held), hint: held.until ? `Promote again after ${held.until}.` : "Lift the hold in the pipeline's config and merge the change." };
+  // #5355: --urgent takes the stage's urgent rule, so a stage without one has no urgent path.
+  if (input.urgent && !spec.stages[toAt]!.gate?.urgent) {
+    return { exitCode: 1, code: "pipeline-no-urgent-rule", message: `stage "${to}" of the pipeline "${spec.name}" declares no urgent rule, so --urgent has no gate to pass`, hint: `Promote without --urgent, or declare gate.urgent: { role } on the stage.` };
+  }
   // #5353: a stage that names its upstream stages opens on the release's outcome in each, read once the release is known.
   const after = spec.stages[toAt]!.after;
   if (after !== undefined) {
@@ -127,6 +148,16 @@ export function pipelinePromoteSource(input: {
   }
   const fromAt = names.indexOf(from);
   const skipped = fromAt >= 0 && fromAt < toAt - 1 ? spec.stages.slice(fromAt + 1, toAt) : [];
+  if (input.urgent) {
+    if (skipped.length > 0) {
+      return {
+        exitCode: 1,
+        code: "pipeline-urgent-skips",
+        message: `promoting ${from} to ${to} skips ${skipped.map((s) => s.name).join(", ")}, and the urgent path skips no stage`,
+        hint: `Promote the release to ${skipped[0]!.name} first.`,
+      };
+    }
+  }
   if (skipped.length > 0 && !input.allowSkip) {
     return {
       exitCode: 1,
@@ -143,7 +174,7 @@ export function pipelinePromoteSource(input: {
 }
 
 /** What {@link pipelinePromoteGates} decided: every gate passed, or the stop. */
-export type PipelineGatesOutcome = { passed: true; lines: string[] } | ({ passed: false } & PipelinePromoteStop);
+export type PipelineGatesOutcome = { passed: true; lines: string[]; urgent?: { approval: GateResolutionRecord; role: string } } | ({ passed: false } & PipelinePromoteStop);
 
 /**
  * The gates part, once the promote knows what it deploys: each skipped
@@ -162,6 +193,12 @@ export async function pipelinePromoteGates(input: {
   now: Date;
   /** What proves an approver or a rejecter (#5354). */
   proof?: PipelineGateProof;
+  /**
+   * `--urgent` (#5355): after the stage's rejections, its urgent rule
+   * ({@link pipelineUrgentGate}) stands in for its gate. A rejection at
+   * `<stage>` or at `<stage>-urgent` stops it, and nothing is skipped.
+   */
+  urgent?: boolean;
 }): Promise<PipelineGatesOutcome> {
   const { spec, port, digest } = input;
   const proof = input.proof ?? NO_PROOF;
@@ -236,6 +273,9 @@ export async function pipelinePromoteGates(input: {
     hint: approveCommand(spec.name, gate, stage.name, digest, stage.gate?.approval === "sealed"),
   });
 
+  if (input.urgent && input.skipped.length > 0) {
+    return { passed: false, exitCode: 1, code: "pipeline-urgent-skips", message: `the urgent path skips no stage, and ${input.skipped.map((s) => s.name).join(", ")} would be skipped`, hint: `Promote the release to ${input.skipped[0]!.name} first.` };
+  }
   for (const stage of input.skipped) {
     const gate = `${stage.name}-skip`;
     // #5354: a release rejected at a stage is not skipped past it either.
@@ -254,8 +294,14 @@ export async function pipelinePromoteGates(input: {
 
   const stage = spec.stages.find((s) => s.name === input.to)!;
   // #5354: a rejection stops the stage whatever its policy, before any approval is read.
-  const stop = await rejected(stage, [stage.name]);
+  // #5355: on the urgent path too, at the stage's gate or its urgent gate.
+  const stop = await rejected(stage, input.urgent ? [stage.name, urgentGateName(stage.name)] : [stage.name]);
   if (stop) return stop;
+  if (input.urgent) {
+    const got = await pipelineUrgentGate({ spec, to: stage.name, digest, port, ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), now: input.now });
+    if (!got.passed) return { ...got, lines: [...lines, ...(got.lines ?? [])] };
+    return { passed: true, lines: [...lines, ...got.lines], urgent: { approval: got.approval, role: got.role } };
+  }
   if (stage.gate?.policy === "never") {
     lines.push(`stage ${stage.name}: its gate never waits`);
     return { passed: true, lines };
@@ -268,7 +314,7 @@ export async function pipelinePromoteGates(input: {
 
 /** How {@link pipelineStageEntry} ended: the stage's gate passed and the release entered, or the stop. */
 export type PipelineEntryOutcome =
-  | { passed: true; lines: string[]; entered?: StageLine }
+  | { passed: true; lines: string[]; entered?: StageLine; urgent?: { approval: GateResolutionRecord; role: string } }
   | ({ passed: false } & PipelinePromoteStop);
 
 /** The release a promote deploys, as the stage log names it. */
@@ -313,6 +359,8 @@ export async function pipelineStageEntry(input: {
   firstStageCommits?: ReadonlySet<string>;
   port: GateLedgerPort;
   log: StageLogPort;
+  /** `--urgent` (#5355): the stage's urgent rule ({@link pipelineUrgentGate}) in place of its gate. */
+  urgent?: boolean;
   actor?: string;
   gitSha?: string;
   runId?: string;
@@ -321,9 +369,15 @@ export async function pipelineStageEntry(input: {
   proof?: PipelineGateProof;
 }): Promise<PipelineEntryOutcome> {
   const { spec, to, digest, log } = input;
-  const gates = (skipped: readonly PipelineStage[]) =>
-    pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), now: input.now });
-  if (!pipelineTracksStages(spec)) return gates(input.skipped);
+  // #5355: under --urgent the stage's urgent rule stands in for its gate, after its rejections, and nothing is skipped.
+  let urgent: { approval: GateResolutionRecord; role: string } | undefined;
+  const gates = async (skipped: readonly PipelineStage[]): Promise<PipelineGatesOutcome> => {
+    const got = await pipelinePromoteGates({ spec, to, skipped, digest, port: input.port, ...(input.release ? { releaseDigest: input.release.releaseDigest } : {}), ...(input.actor ? { actor: input.actor } : {}), ...(input.gitSha ? { gitSha: input.gitSha } : {}), ...(input.proof ? { proof: input.proof } : {}), ...(input.urgent ? { urgent: true } : {}), now: input.now });
+    if (got.passed && got.urgent) urgent = got.urgent;
+    return got;
+  };
+  const withUrgent = (out: PipelineEntryOutcome): PipelineEntryOutcome => (out.passed && urgent ? { ...out, urgent } : out);
+  if (!pipelineTracksStages(spec)) return withUrgent(await gates(input.skipped));
 
   const timestamp = input.now.toISOString();
   const stage = spec.stages.find((s) => s.name === to)!;
@@ -420,17 +474,121 @@ export async function pipelineStageEntry(input: {
     }
     const entered: StageLine = { ...base, kind: "entered" };
     await log.append(entered);
-    return { passed: true, lines: [...notes, ...got.lines], entered };
+    return withUrgent({ passed: true, lines: [...notes, ...got.lines], entered });
   }
 
   const got = await gates(skipped);
   if (!got.passed) return got;
   const entered: StageLine = { ...base, kind: "entered" };
   await log.append(entered);
-  return { passed: true, lines: got.lines, entered };
+  return withUrgent({ passed: true, lines: got.lines, entered });
 }
 
 /** Write the `finished` line for a release that entered a stage (#5353): `applied` when its deploy did, else `failed`. */
 export async function pipelineStageFinished(log: StageLogPort, entered: StageLine, result: "applied" | "failed", now: Date): Promise<void> {
   await log.append({ ...entered, kind: "finished", result, timestamp: now.toISOString() });
+}
+
+/** The gate an urgent promote into `stage` is approved at (#5355). */
+export function urgentGateName(stage: string): string {
+  return `${stage}-urgent`;
+}
+
+/**
+ * The stages a release must have succeeded in before an urgent promote into
+ * `to` (#5355), in the pipeline's order. A stage with `after` (#5353) takes
+ * the stages it names and every stage those follow, by
+ * {@link stageUpstreams}. A stage without `after` takes every stage before it.
+ */
+export function urgentUpstreamStages(spec: Pick<PipelineSpec, "stages">, to: string): string[] {
+  const at = spec.stages.findIndex((s) => s.name === to);
+  if (at < 0) return [];
+  const stage = spec.stages[at]!;
+  if (stage.after === undefined) return spec.stages.slice(0, at).map((s) => s.name);
+  const seen = new Set<string>();
+  const visit = (name: string): void => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    for (const up of stageUpstreams(spec, name)) visit(up);
+  };
+  for (const up of stage.after) visit(up);
+  return spec.stages.map((s) => s.name).filter((n) => seen.has(n));
+}
+
+/**
+ * The stages upstream of `to` ({@link urgentUpstreamStages}) in which the
+ * release has not succeeded, each with the components it lacks there
+ * (#5355). `missingIn` answers for one stage. Empty when it succeeded in
+ * every one.
+ */
+export async function pipelineUrgentUpstream(input: {
+  spec: PipelineSpec;
+  to: string;
+  missingIn: (stage: string) => Promise<string[]>;
+}): Promise<{ stage: string; missing: string[] }[]> {
+  const out: { stage: string; missing: string[] }[] = [];
+  for (const stage of urgentUpstreamStages(input.spec, input.to).map((name) => ({ name }))) {
+    const missing = await input.missingIn(stage.name);
+    if (missing.length > 0) out.push({ stage: stage.name, missing });
+  }
+  return out;
+}
+
+/** The refusal for a release that has not succeeded in every stage before the one an urgent promote goes to. */
+export function urgentUpstreamStop(release: string, missing: readonly { stage: string; missing: string[] }[]): PipelinePromoteStop {
+  return {
+    exitCode: 1,
+    code: "pipeline-urgent-upstream",
+    message: `release ${release} has not succeeded in ${missing.map((m) => `${m.stage} (${m.missing.join(", ")})`).join("; ")}, and the urgent path takes only a release every upstream stage ran`,
+    hint: "Promote the release through each earlier stage first.",
+  };
+}
+
+/** What {@link pipelineUrgentGate} decided: passed on an approval, or the stop. */
+export type PipelineUrgentOutcome = { passed: true; lines: string[]; approval: GateResolutionRecord; role: string } | ({ passed: false } & PipelinePromoteStop);
+
+/**
+ * The urgent rule of stage `to` (#5355), in place of its gate: one approval
+ * of `<stage>-urgent` bound to the release's digest, from an approver the
+ * port's judge proves and gives the rule's role. The quorum rule is
+ * `{ count: 1, roles: [role], proven: true }`, so an unproven line never
+ * counts. The approval is spent on `_gates/<pipeline>/applied.jsonl`.
+ */
+export async function pipelineUrgentGate(input: {
+  spec: PipelineSpec;
+  to: string;
+  digest: string;
+  releaseDigest?: string;
+  port: GateLedgerPort;
+  gitSha?: string;
+  now: Date;
+}): Promise<PipelineUrgentOutcome> {
+  const { spec, port, digest } = input;
+  const stage = spec.stages.find((s) => s.name === input.to);
+  const rule = stage?.gate?.urgent;
+  if (!stage || !rule) return { passed: false, exitCode: 1, code: "pipeline-no-urgent-rule", message: `stage "${input.to}" of the pipeline "${spec.name}" declares no urgent rule` };
+  const gate = urgentGateName(stage.name);
+  const now = input.now.toISOString();
+  const got = await evaluateGate(port, {
+    op: spec.name,
+    gate,
+    planDigest: digest,
+    environment: stage.name,
+    now,
+    description: `urgent promote into stage ${stage.name} of the pipeline ${spec.name}: one proven approval from ${rule.role}`,
+    ...(input.gitSha ? { gitSha: input.gitSha } : {}),
+    approval: { quorum: [{ count: 1, roles: [rule.role], proven: true }], mode: "enforce" },
+  });
+  if (!got.satisfied) {
+    return {
+      passed: false,
+      exitCode: 3,
+      code: "pipeline-gate-waiting",
+      message: `${spec.name} ${gate} waits for one proven approval from ${rule.role} of ${digest}`,
+      hint: approveCommand(spec.name, gate, stage.name, digest, true),
+    };
+  }
+  const approval = got.resolution;
+  await port.appendApplied?.({ version: 1, kind: "applied", op: spec.name, gate, planDigest: digest, approvedAt: approval.timestamp, approvedBy: approval.resolvedBy, timestamp: now, ...(input.gitSha ? { commit: input.gitSha } : {}) });
+  return { passed: true, approval, role: rule.role, lines: [`stage ${stage.name}: urgent, ${spec.name} ${gate} approved by ${approval.resolvedBy} (${rule.role})`] };
 }

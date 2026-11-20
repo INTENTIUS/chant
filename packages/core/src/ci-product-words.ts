@@ -951,6 +951,23 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "a stage's `freeze` in `.chant/pipeline.ts`",
     products: [],
   },
+  // #5355: a stage's urgent rule and its pause after a rollback.
+  {
+    key: "environments.<name>.urgent.role",
+    concept: "the role whose one proven approval passes the stage's gate on an urgent promote",
+    section: "stage",
+    value: "a role name from `.chant/trust.json`",
+    chant: "a stage gate's `urgent.role` in `.chant/pipeline.ts`, which `chant components promote --urgent` passes",
+    products: [],
+  },
+  {
+    key: "environments.<name>.pause_after_rollback",
+    concept: "a rollback of the stage pauses it until it is resumed",
+    section: "stage",
+    value: "true or false",
+    chant: "a stage's `pauseAfterRollback` in `.chant/pipeline.ts`",
+    products: [],
+  },
   {
     key: "environments.<name>.failure_tolerance",
     concept: "the failed runs a wave of many targets lets through before the stage stops",
@@ -1839,7 +1856,7 @@ export const PRODUCT_RELEASE_WORDS = /* @__PURE__ */ Object.freeze({
   promote: "promote",
   /** `<product> reject <op> <gate> --plan <digest> --reason <text>`: `chant reject` (#5354), the release turned down at a stage's gate. */
   reject: "reject",
-  /** Why a release is rejected, on one line (#5354). */
+  /** Why a release is rejected, on one line (#5354), and why a pause, a resume or an urgent promote was made (#5355). */
   reason: "--reason",
   /** `<product> rollback <env> --release <label>`: `chant components rollback`, the environment positional. */
   rollback: "rollback",
@@ -1855,6 +1872,12 @@ export const PRODUCT_RELEASE_WORDS = /* @__PURE__ */ Object.freeze({
   allowSkip: "--allow-skip",
   /** Prints the plan and changes nothing. */
   dryRun: "--dry-run",
+  /** `<product> pause <env> --reason <text>`: `chant stage pause` (#5355). */
+  pause: "pause",
+  /** `<product> resume <env> --reason <text>`: `chant stage resume` (#5355). */
+  resume: "resume",
+  /** Lets a promote pass the stage's gate on its urgent rule (#5355). */
+  urgent: "--urgent",
 } as const);
 
 /** Release command spellings a product accepts beside {@link PRODUCT_RELEASE_WORDS}: `rollback --env <env>` for the positional. */
