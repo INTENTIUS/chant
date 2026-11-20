@@ -23,7 +23,16 @@
  * Nothing in chant decides from these facts (ruled on #4520, Q1): they ride
  * on `IRNode.facts` for people and for readers that show the graph.
  */
-import type { EdgeGrain, EngineFacts, EngineMarkers } from "@intentius/chant/engine-facts";
+import {
+  engineGapsOf,
+  engineOwnershipRowsOf,
+  mergeOwnershipRows,
+  withOwnershipRows,
+  type EdgeGrain,
+  type EngineFacts,
+  type EngineMarkers,
+  type EngineOwnershipRows,
+} from "@intentius/chant/engine-facts";
 
 /** The conventional place of a plunge member's engine graph, beside the export. */
 export const PULUMI_ENGINE_GRAPH_FILE = "engine-graph.json";
@@ -106,6 +115,8 @@ export function engineFactsOf(v: unknown): EngineFacts | undefined {
     };
   }
   if (str(v.observedAt)) facts.observedAt = v.observedAt;
+  const rows = engineOwnershipRowsOf(v.ownershipRows);
+  if (rows) facts.ownershipRows = rows;
   return Object.keys(facts).length > 0 ? facts : undefined;
 }
 
@@ -124,10 +135,18 @@ export function readPlungeEngineGraph(doc: unknown): { graph: PlungeEngineGraph 
   if (engine.name !== "plunge") return { error: `it was printed by ${JSON.stringify(engine.name)}, not plunge` };
   if (!Array.isArray(doc.nodes)) return { error: "it has no nodes list" };
 
+  // Each record plunge could not describe, by URN, as the node's
+  // `facts.ownershipRows.gaps` read `graph` (#5402).
+  const gapsByUrn = new Map<string, EngineOwnershipRows>();
+  for (const g of Array.isArray(meta.gaps) ? meta.gaps : []) {
+    if (!isObject(g) || !str(g.address)) continue;
+    const [gap] = engineGapsOf([{ read: "graph", reason: g.reason, detail: g.detail }]);
+    if (gap) gapsByUrn.set(g.address, mergeOwnershipRows(gapsByUrn.get(g.address), { gaps: [gap] })!);
+  }
   const nodes: PlungeGraphNode[] = [];
   for (const n of doc.nodes) {
     if (!isObject(n) || !str(n.id) || !str(n.kind)) continue;
-    const facts = engineFactsOf(n.facts);
+    const facts = withOwnershipRows(engineFactsOf(n.facts), gapsByUrn.get(n.id));
     nodes.push({ urn: n.id, kind: n.kind, ...(str(n.physicalId) ? { physicalId: n.physicalId } : {}), ...(facts ? { facts } : {}) });
   }
   const edges: PlungeGraphEdge[] = [];

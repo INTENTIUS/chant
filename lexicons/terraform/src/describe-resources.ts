@@ -263,7 +263,15 @@ import {
   TERRAFORM_INSTANCE_ROLLUP,
   type InstanceObservation,
 } from "@intentius/chant/instance-nodes";
-import type { EdgeGrain, EngineFacts } from "@intentius/chant/engine-facts";
+import {
+  engineGapsOf,
+  engineOwnershipRowsOf,
+  mergeOwnershipRows,
+  withOwnershipRows,
+  type EdgeGrain,
+  type EngineFacts,
+  type EngineOwnershipRows,
+} from "@intentius/chant/engine-facts";
 import type { IREdge } from "@intentius/chant/graph-ir";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -407,6 +415,8 @@ export interface LivePlanBoundRow {
   identity?: string;
   /** Which admission path supplied the identity: `marker`, `record`, `derived` or `cache`. */
   source?: string;
+  /** `identity_values`: the values that identify the bound object, by argument (#5402). */
+  identityValues?: Record<string, string>;
 }
 
 /** One `omissions[]` entry: a declared instance the plan could not read, and why. */
@@ -428,6 +438,8 @@ export interface LivePlanUnownedRow {
   adoptEstate?: string;
   /** `adopt_tofu_address`: the escaped address the adopting tag write would carry. */
   adoptAddress?: string;
+  /** `adopt_command`, or `hint`: the one-line write choudoufu composed, when it printed one (#5402). */
+  adoptCommand?: string;
 }
 
 /**
@@ -447,6 +459,7 @@ export interface LivePlanAdoptableRow {
   identity?: string;
   adoptEstate?: string;
   adoptAddress?: string;
+  adoptCommand?: string;
   /** `matched[]`: the arguments the declaration and the live resource agreed on exactly. */
   matched?: Array<{ attribute: string; value: string }>;
 }
@@ -493,11 +506,15 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
     const row = asRecord(entry);
     const addr = asString(row.addr);
     if (!addr) continue;
+    const identityValues = Object.fromEntries(
+      Object.entries(asRecord(row.identity_values)).filter((e): e is [string, string] => typeof e[1] === "string"),
+    );
     index.bound.set(addr, {
       addr,
       ...(asString(row.type) ? { type: asString(row.type) } : {}),
       ...(asString(row.identity) ? { identity: asString(row.identity) } : {}),
       ...(asString(row.source) ? { source: asString(row.source) } : {}),
+      ...(Object.keys(identityValues).length > 0 ? { identityValues } : {}),
     });
   }
 
@@ -523,6 +540,7 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
       ...(asString(row.tofu_estate) ? { heldBy: asString(row.tofu_estate) } : {}),
       ...(asString(row.adopt_tofu_estate) ? { adoptEstate: asString(row.adopt_tofu_estate) } : {}),
       ...(asString(row.adopt_tofu_address) ? { adoptAddress: asString(row.adopt_tofu_address) } : {}),
+      ...adoptCommandOf(row),
     });
   }
 
@@ -540,6 +558,7 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
       ...(asString(row.identity) ? { identity: asString(row.identity) } : {}),
       ...(asString(row.adopt_tofu_estate) ? { adoptEstate: asString(row.adopt_tofu_estate) } : {}),
       ...(asString(row.adopt_tofu_address) ? { adoptAddress: asString(row.adopt_tofu_address) } : {}),
+      ...adoptCommandOf(row),
       ...(matched.length > 0 ? { matched } : {}),
     });
   }
@@ -559,6 +578,59 @@ export function indexLivePlan(document: unknown): LivePlanIndex {
     ]),
   ].sort();
   return index;
+}
+
+/** An `unowned[]` or `adoptable[]` row's composed write: `adopt_command`, else `hint`. */
+function adoptCommandOf(row: Record<string, unknown>): { adoptCommand?: string } {
+  const command = asString(row.adopt_command) ?? asString(row.hint);
+  return command ? { adoptCommand: command } : {};
+}
+
+/**
+ * The rows behind each address's ownership (#5402), by the address
+ * `live-plan` printed: `bound[]`'s source and `identity_values`, the
+ * omission, and the adoption an `unowned[]` or `adoptable[]` row offers. With
+ * a `live-ls` listing, also its `gaps[]` (read `listing`, the rung as the
+ * reason) and, on a bound address, whether the listing holds it under the
+ * estate's marker. An address with none of these is left out.
+ */
+export function ownershipRowsByAddress(index: LivePlanIndex, listing?: LiveLsListing): Map<string, EngineOwnershipRows> {
+  const out = new Map<string, EngineOwnershipRows>();
+  const add = (address: string, rows: EngineOwnershipRows) => {
+    const merged = mergeOwnershipRows(out.get(address), rows);
+    if (merged) out.set(address, merged);
+  };
+  const listed = listing ? new Set(listing.items.map((i) => i.address).filter((a): a is string => !!a)) : undefined;
+  for (const [address, row] of index.bound) {
+    add(address, {
+      ...(row.source ? { boundBy: row.source } : {}),
+      ...(row.identityValues ? { identityValues: row.identityValues } : {}),
+      ...(listed ? { listed: listed.has(address) } : {}),
+    });
+  }
+  for (const [address, row] of index.omissions) {
+    if (row.reason) add(address, { omission: { reason: row.reason, detail: row.detail } });
+  }
+  const adoption = (row: LivePlanUnownedRow | LivePlanAdoptableRow): EngineOwnershipRows => {
+    const matched = "matched" in row ? row.matched : undefined;
+    const adopt = {
+      ...(row.adoptEstate ? { owner: row.adoptEstate } : {}),
+      ...(row.adoptAddress ? { address: row.adoptAddress } : {}),
+      ...(row.adoptCommand ? { command: row.adoptCommand } : {}),
+      ...(matched?.length ? { matched } : {}),
+    };
+    return Object.keys(adopt).length > 0 ? { adopt } : {};
+  };
+  for (const [address, row] of index.unowned) add(address, adoption(row));
+  for (const [address, row] of index.adoptable) {
+    // An unowned[] row answers first, as `classifyLiveInstance` reads it.
+    if (!index.unowned.has(address)) add(address, adoption(row));
+  }
+  for (const gap of listing?.gaps ?? []) {
+    add(gap.address, { gaps: [{ read: "listing", reason: gap.rung, detail: gap.detail }] });
+  }
+  for (const [address, rows] of out) if (Object.keys(rows).length === 0) out.delete(address);
+  return out;
 }
 
 /** The chant verdict for one omission: `no-credentials` when its detail says so. */
@@ -791,9 +863,9 @@ function readLiveResource(
  * The environment variable that asks for each live root's `live-plan -json`
  * document as a file, in a directory the caller owns (behold#924).
  *
- * The overlay keeps chant's verdict per block and drops the rows behind it:
- * each instance's omission reason and detail, `identity_values`, the adoptable
- * row's own fields. A caller that paints ownership from those rows and wants
+ * The overlay keeps chant's verdict per block; the rows behind it (each
+ * instance's omission reason and detail, `identity_values`, the adoptable
+ * row's own fields) ride on each node's `facts.ownershipRows` (#5402). A caller that paints ownership from those rows and wants
  * the plan's attributes from the plan depth would otherwise run its own
  * `live-plan` beside this one, two refreshes of the estate that can disagree
  * (choudoufu #1014). With this set to an absolute directory, the document this
@@ -982,6 +1054,8 @@ function engineFactsOf(value: unknown): EngineFacts | undefined {
   }
   const observedAt = asString(f.observedAt);
   if (observedAt) out.observedAt = observedAt;
+  const rows = engineOwnershipRowsOf(f.ownershipRows);
+  if (rows) out.ownershipRows = rows;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -995,14 +1069,26 @@ function engineFactsOf(value: unknown): EngineFacts | undefined {
  * the configuration reads, `estate:<name>`) has no chant entity, so its
  * edges are left out. Edges keep their grain; one without a grain is left out.
  *
+ * Each node's facts also carry its `ownershipRows` (#5402): `rows`, by the
+ * address `live-plan` printed (`ownershipRowsByAddress`), and the
+ * document's own `meta.engineGraph.gaps` entry for the node, read `graph`.
+ *
  * Throws when the document is not an engine graph document.
  */
-export function readEngineGraph(root: string, document: unknown): EngineGraphRead {
+export function readEngineGraph(root: string, document: unknown, rows?: ReadonlyMap<string, EngineOwnershipRows>): EngineGraphRead {
   const doc = asRecord(document);
   const engineGraph = asRecord(asRecord(doc.meta).engineGraph);
   if (doc.version !== 1 || engineGraph.format !== 1 || !Array.isArray(doc.nodes)) {
     throw new Error("not an engine graph document (want GraphIR version 1 with meta.engineGraph format 1)");
   }
+  const graphGaps = new Map<string, EngineOwnershipRows>();
+  for (const entry of asArray(engineGraph.gaps)) {
+    const gap = asRecord(entry);
+    const address = asString(gap.address);
+    const [g] = engineGapsOf([{ read: "graph", reason: gap.reason, detail: gap.detail }]);
+    if (address && g) graphGaps.set(address, mergeOwnershipRows(graphGaps.get(address), { gaps: [g] })!);
+  }
+  const rowsFor = (id: string) => mergeOwnershipRows(rows?.get(id), graphGaps.get(id));
   const blocks = new Map<string, EngineFacts>();
   const instances = new Map<string, Map<string, EngineFacts>>();
   const instanceNodes = new Map<string, string>();
@@ -1013,7 +1099,7 @@ export function readEngineGraph(root: string, document: unknown): EngineGraphRea
     const id = asString(node.id);
     const address = asString(asRecord(node.attrs).address);
     if (!id || !address) continue;
-    const facts = engineFactsOf(node.facts);
+    const facts = withOwnershipRows(engineFactsOf(node.facts), rowsFor(id));
     const instanceOf = asString(node.instanceOf);
     if (instanceOf) {
       const block = entityKeyFor(root, instanceOf);
@@ -1122,6 +1208,30 @@ export function engineFactsBeside(
 }
 
 /**
+ * The environment variable that adds a `live-ls -json` listing to each live
+ * root's engine facts (#5402). Set to `1`, a live read also runs `choudoufu
+ * live-ls -estate=<estate> -json .` per root, and each node's
+ * `facts.ownershipRows` carries the listing's `gaps[]` and, on a bound node,
+ * `listed`. Unset, no listing runs.
+ */
+export const TERRAFORM_LIVE_LISTING_ENV = "CHANT_TERRAFORM_LIVE_LISTING";
+
+/**
+ * The listing {@link TERRAFORM_LIVE_LISTING_ENV} asks for, or none. A failed
+ * listing is a note, and the rows from `live-plan` still ride.
+ */
+async function ownershipListing(root: string, cwd: string | undefined, deps: TerraformReadDeps): Promise<{ listing?: LiveLsListing; note?: string }> {
+  if (process.env[TERRAFORM_LIVE_LISTING_ENV] !== "1") return {};
+  try {
+    const listed = await deps.liveLs({ root, compare: true, ...(cwd ? { cwd } : {}) });
+    return { listing: readLiveLs(listed.json) };
+  } catch (err) {
+    const message = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    return { note: `terraform.roots.${root}: the listing's rows are absent: \`choudoufu live-ls -json\` failed (${message}); the rest of the read is unchanged` };
+  }
+}
+
+/**
  * Run `choudoufu live-graph -json -from-plan=<file>` over the document a
  * live root's bind handed off, and read it (#4528). Never throws: facts are
  * extra, so a failure is a note and no facts.
@@ -1149,7 +1259,10 @@ async function engineGraphFor(
           `(${graph.detail}), which needs v${MIN_CHOUDOUFU_GRAPH_VERSION} or later; the rest of the read is unchanged`,
       };
     }
-    return { read: readEngineGraph(root, graph.json) };
+    const listed = await ownershipListing(root, cwd, deps);
+    const rows = ownershipRowsByAddress(indexLivePlan(handoff.json), listed.listing);
+    const read = readEngineGraph(root, graph.json, rows);
+    return listed.note ? { read, note: listed.note } : { read };
   } catch (err) {
     const message = (err instanceof Error ? err.message : String(err)).split("\n")[0];
     return {

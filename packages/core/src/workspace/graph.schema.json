@@ -661,7 +661,7 @@
         },
         "facts": {
           "type": "object",
-          "description": "Added in contract 1 by #4529, written by chant 0.124.54 and newer. What an ownership engine observed about the node: ownership, markers, ownedBy, cloudIds, recordVersions and observedAt, each optional, in the shape of EngineFacts (packages/core/src/graph-schema/graph.schema.json). Set on a Pulumi member on plunge from its checked-in engine-graph.json. Never read for a decision."
+          "description": "Added in contract 1 by #4529, written by chant 0.124.54 and newer. What an ownership engine observed about the node: ownership, markers, ownedBy, cloudIds, recordVersions, observedAt and (chant#5402) ownershipRows, the rows behind the ownership word for this node, each optional, in the shape of EngineFacts (packages/core/src/graph-schema/graph.schema.json). Set on a Pulumi member on plunge from its checked-in engine-graph.json. Never read for a decision."
         },
         "nested": {
           "type": "string",

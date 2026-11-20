@@ -67,6 +67,21 @@ A `pending` node is a record with `status: "pending"` and no `ownership`. `engin
 
 On a choudoufu live root, `chant graph --live --overlay` and `chant workspace graph --live --overlay` put the engine's facts on every declared node it described: `bound` on a live node, and `pending`, `unowned` and `foreign` on the declared node of a planned create, and of an object the `--owned` filter keeps to the declared side. A plunge member's declared nodes carry the same words from its checked-in `engine-graph.json`.
 
+### The rows behind the word
+
+Beside `facts.ownership`, each node, instance nodes included, carries `facts.ownershipRows`: the rows its engine printed for that node, in the engine's own words. `ENGINE_OWNERSHIP_ROWS_FLOOR` in `@intentius/chant/engine-facts` names the first chant that has them.
+
+| field | holds | choudoufu source | plunge source |
+|---|---|---|---|
+| `boundBy` | how the plan bound the node | `live-plan` `bound[].source` | |
+| `identityValues` | the values that identify the bound object, by argument | `bound[].identity_values` | |
+| `omission` | `{ reason, detail }`: why the plan left the node out | `omissions[]` | |
+| `adopt` | `{ owner, address, command, matched }`: the marker values that adopt the live object, the engine's composed command, and on a content match the arguments it compared | `unowned[]` and `adoptable[]` | |
+| `gaps` | `[{ read, reason, detail }]`: what a read could not see. `listing` is `live-ls`'s `gaps[]`, with the rung as `reason`; `graph` is the engine graph's `meta.engineGraph.gaps` entry for the node | `live-ls` and `live-graph` | `graph --json` |
+| `listed` | on a bound node, whether the marker listing holds the object under the estate's marker | `live-ls` `items[]` | |
+
+Every field is optional, and a node with no rows carries no `ownershipRows`. Who holds a `foreign` node stays in `facts.markers.owner`. The `listing` rows and `listed` come from a `live-ls -json` run per live root, which a read makes when `CHANT_TERRAFORM_LIVE_LISTING=1` is set. An engine that prints `ownershipRows` on a node has them carried as printed.
+
 ## The document
 
 | Field | Holds |

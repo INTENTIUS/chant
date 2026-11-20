@@ -14,7 +14,7 @@ import {
   engineOwnershipOfDrift,
   type DriftRecord,
 } from "./drift-record";
-import { ENGINE_OWNERSHIP_FLOOR } from "./engine-facts";
+import { ENGINE_OWNERSHIP_FLOOR, ENGINE_OWNERSHIP_ROWS_FLOOR, engineOwnershipRowsOf, mergeOwnershipRows, withOwnershipRows } from "./engine-facts";
 import { carryEngineFacts, type IRNode } from "./graph-ir";
 import { mergeObservations, normalizeObservation, observation } from "./observation";
 import { NEXT_RELEASE } from "./release-floors";
@@ -80,5 +80,53 @@ describe("engineFacts on an observation (#5333)", () => {
       ["z", undefined, undefined],
     ]);
     expect(carryEngineFacts(nodes, undefined)).toBe(nodes);
+  });
+});
+
+describe("facts.ownershipRows (#5402)", () => {
+  it("keeps only the declared fields and shapes, and nothing when none is left", () => {
+    expect(
+      engineOwnershipRowsOf({
+        boundBy: "derived",
+        identityValues: { name: "/x", n: 3 },
+        omission: { reason: "ABSENT", detail: "not created" },
+        adopt: { owner: "e", address: "a.b", matched: [{ attribute: "bucket", value: "b" }, { value: "no attribute" }], extra: 1 },
+        gaps: [{ read: "listing", reason: "record", detail: "d" }, { read: "elsewhere", reason: "r" }, { read: "graph" }],
+        listed: true,
+        other: "dropped",
+      }),
+    ).toEqual({
+      boundBy: "derived",
+      identityValues: { name: "/x" },
+      omission: { reason: "ABSENT", detail: "not created" },
+      adopt: { owner: "e", address: "a.b", matched: [{ attribute: "bucket", value: "b" }] },
+      gaps: [{ read: "listing", reason: "record", detail: "d" }],
+      listed: true,
+    });
+    expect(engineOwnershipRowsOf({ omission: { detail: "no reason" }, adopt: {}, gaps: [] })).toBeUndefined();
+    expect(engineOwnershipRowsOf("bound")).toBeUndefined();
+  });
+
+  it("merges two sets for one node, later fields winning and gaps kept once each", () => {
+    const g = { read: "graph" as const, reason: "r", detail: "d" };
+    expect(mergeOwnershipRows({ boundBy: "marker", gaps: [g] }, { listed: true, gaps: [g, { read: "listing", reason: "record", detail: "" }] })).toEqual({
+      boundBy: "marker",
+      listed: true,
+      gaps: [g, { read: "listing", reason: "record", detail: "" }],
+    });
+    expect(mergeOwnershipRows(undefined, undefined)).toBeUndefined();
+  });
+
+  it("withOwnershipRows adds the rows beside the word, and leaves facts alone with none", () => {
+    const facts = { ownership: "pending" as const };
+    expect(withOwnershipRows(facts, undefined)).toBe(facts);
+    expect(withOwnershipRows(undefined, undefined)).toBeUndefined();
+    expect(withOwnershipRows(facts, { omission: { reason: "ABSENT", detail: "" } })).toEqual({ ownership: "pending", ownershipRows: { omission: { reason: "ABSENT", detail: "" } } });
+  });
+
+  it("the schema declares the field on EngineFacts, and the floor is the next release", () => {
+    const facts = (SCHEMA.$defs as unknown as Record<string, { properties: Record<string, unknown> }>).EngineFacts.properties;
+    expect(facts.ownershipRows).toMatchObject({ $ref: "#/$defs/EngineOwnershipRows" });
+    expect(ENGINE_OWNERSHIP_ROWS_FLOOR).toBe(NEXT_RELEASE);
   });
 });

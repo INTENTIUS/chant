@@ -414,6 +414,14 @@ CHANT_TERRAFORM_OBSERVE=plan CHANT_TERRAFORM_LIVE_PLAN_DIR=$(mktemp -d) \
   chant graph . --live --overlay --env prod --format ir --detail 3
 ```
 
+The graph also carries those rows per node, under `facts.ownershipRows`:
+`bound[].source` as `boundBy`, `identity_values` as `identityValues`, the
+omission, and the adoption an `unowned[]` or `adoptable[]` row offers, beside
+`live-graph`'s own gaps. With `CHANT_TERRAFORM_LIVE_LISTING=1`, each live root
+is also listed with `live-ls -estate=<estate> -json .`, and its `gaps[]` and
+whether it lists each bound object join the rows. See
+[the rows behind the word](/chant/reference/drift-record/#the-rows-behind-the-word).
+
 ## What has no answer at all
 
 Only `resource` and `data` blocks have rows in state. A `terraform`,

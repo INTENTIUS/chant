@@ -97,6 +97,169 @@ export interface EngineFacts {
   recordVersions?: EngineRecordVersions;
   /** ISO 8601 UTC, when this node's live facts were read. */
   observedAt?: string;
+  /** The rows behind `ownership` for this one node (#5402). Absent when the engine's documents hold none for it. */
+  ownershipRows?: EngineOwnershipRows;
+}
+
+/**
+ * Why a plan left a node out (#5402): choudoufu `live-plan`'s `omissions[]`
+ * row for the address, as printed.
+ */
+export interface EngineOmission {
+  /** The engine's own code: `ABSENT`, `UNOWNED`, `NEEDS_DISCOVERY`, `FAILED` and the rest. */
+  reason: string;
+  /** The engine's sentence for this node. */
+  detail: string;
+}
+
+/** One argument a content match compared, and the value both sides hold. */
+export interface EngineMatchedArgument {
+  attribute: string;
+  value: string;
+}
+
+/**
+ * How to adopt a live object that sits at a declared identity (#5402): the
+ * marker values that claim it for this member, choudoufu's `adopt_tofu_estate`
+ * and `adopt_tofu_address`.
+ */
+export interface EngineAdoption {
+  /** The owner marker value to write: the estate, or plunge's `<project>/<stack>`. */
+  owner?: string;
+  /** The address marker value to write, in the encoding the engine writes it. */
+  address?: string;
+  /** The one-line command the engine composed for the write, when it printed one. */
+  command?: string;
+  /** On a content match (choudoufu `adoptable[]`): the arguments the sweep compared, in its order. */
+  matched?: EngineMatchedArgument[];
+}
+
+/** Which of an engine's reads could not see a node. */
+export type EngineGapRead = "listing" | "graph";
+
+/**
+ * One thing a read could not see about a node (#5402). `listing` is
+ * choudoufu `live-ls`'s `gaps[]`: the tag listing can never list this
+ * instance, and `reason` is the rung that says why (`record`,
+ * `declaration-carried`). `graph` is the engine graph document's own
+ * `meta.engineGraph.gaps` entry for the node, from choudoufu or plunge.
+ */
+export interface EngineGap {
+  read: EngineGapRead;
+  reason: string;
+  detail: string;
+}
+
+/**
+ * The per-node rows an ownership engine prints beside its verdict (#5402),
+ * each with the engine's own words. chant fills them from the documents the
+ * engine prints: choudoufu's `live-plan -json` and, when asked, `live-ls
+ * -json`, and either engine's `meta.engineGraph.gaps`. An engine may also
+ * print them on a node's `facts`. Every field is optional, and a node with
+ * none carries no `ownershipRows`.
+ */
+export interface EngineOwnershipRows {
+  /** How the plan bound the node, in the engine's word (choudoufu `bound[].source`: `marker`, `record`, `derived`, `cache`). */
+  boundBy?: string;
+  /** The values that identify the bound object, by argument (choudoufu `bound[].identity_values`). */
+  identityValues?: Record<string, string>;
+  /** Why the plan left the node out. */
+  omission?: EngineOmission;
+  /** How to adopt the live object at the node's identity. */
+  adopt?: EngineAdoption;
+  /** What a read could not see. */
+  gaps?: EngineGap[];
+  /** Whether the engine's marker listing holds the object under this member's marker. Set on a bound node when the listing ran. */
+  listed?: boolean;
+}
+
+/** The first chant whose graph carries `facts.ownershipRows` (#5402). */
+export const ENGINE_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;
+
+const GAP_READS: ReadonlySet<string> = new Set<EngineGapRead>(["listing", "graph"]);
+
+const rowRecord = (v: unknown): Record<string, unknown> | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+const rowString = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+
+/** `gaps` as {@link EngineGap}s, keeping only entries of that shape. */
+export function engineGapsOf(value: unknown): EngineGap[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((g) => {
+    const r = rowRecord(g);
+    const read = rowString(r?.read);
+    const reason = rowString(r?.reason);
+    return r && read && GAP_READS.has(read) && reason ? [{ read: read as EngineGapRead, reason, detail: typeof r.detail === "string" ? r.detail : "" }] : [];
+  });
+}
+
+/**
+ * `ownershipRows` as an engine printed it on a node, keeping only the fields
+ * and shapes {@link EngineOwnershipRows} declares. Undefined when none is left.
+ */
+export function engineOwnershipRowsOf(value: unknown): EngineOwnershipRows | undefined {
+  const v = rowRecord(value);
+  if (!v) return undefined;
+  const out: EngineOwnershipRows = {};
+  const boundBy = rowString(v.boundBy);
+  if (boundBy) out.boundBy = boundBy;
+  const ids = rowRecord(v.identityValues);
+  if (ids) {
+    const values = Object.fromEntries(Object.entries(ids).filter((e): e is [string, string] => typeof e[1] === "string"));
+    if (Object.keys(values).length > 0) out.identityValues = values;
+  }
+  const omission = rowRecord(v.omission);
+  const reason = rowString(omission?.reason);
+  if (omission && reason) out.omission = { reason, detail: typeof omission.detail === "string" ? omission.detail : "" };
+  const adopt = rowRecord(v.adopt);
+  if (adopt) {
+    const matched = (Array.isArray(adopt.matched) ? adopt.matched : []).flatMap((m) => {
+      const r = rowRecord(m);
+      const attribute = rowString(r?.attribute);
+      return attribute ? [{ attribute, value: typeof r!.value === "string" ? r!.value : "" }] : [];
+    });
+    const a: EngineAdoption = {
+      ...(rowString(adopt.owner) ? { owner: rowString(adopt.owner) } : {}),
+      ...(rowString(adopt.address) ? { address: rowString(adopt.address) } : {}),
+      ...(rowString(adopt.command) ? { command: rowString(adopt.command) } : {}),
+      ...(matched.length > 0 ? { matched } : {}),
+    };
+    if (Object.keys(a).length > 0) out.adopt = a;
+  }
+  const gaps = engineGapsOf(v.gaps);
+  if (gaps.length > 0) out.gaps = gaps;
+  if (typeof v.listed === "boolean") out.listed = v.listed;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Two sets of rows for one node as one: `b`'s fields win, and the gaps of
+ * both are kept, each once. Undefined when both are.
+ */
+export function mergeOwnershipRows(a: EngineOwnershipRows | undefined, b: EngineOwnershipRows | undefined): EngineOwnershipRows | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const gaps: EngineGap[] = [];
+  const seen = new Set<string>();
+  for (const g of [...(a.gaps ?? []), ...(b.gaps ?? [])]) {
+    const key = `${g.read}\0${g.reason}\0${g.detail}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    gaps.push(g);
+  }
+  const { gaps: _a, ...restA } = a;
+  const { gaps: _b, ...restB } = b;
+  return { ...restA, ...restB, ...(gaps.length > 0 ? { gaps } : {}) };
+}
+
+/**
+ * `facts` with `rows` added under `ownershipRows`, merged with any the facts
+ * already carry. New facts when there were none; `facts` itself when `rows`
+ * is undefined.
+ */
+export function withOwnershipRows(facts: EngineFacts | undefined, rows: EngineOwnershipRows | undefined): EngineFacts | undefined {
+  if (!rows) return facts;
+  const merged = mergeOwnershipRows(facts?.ownershipRows, rows)!;
+  return { ...(facts ?? {}), ownershipRows: merged };
 }
 
 /**

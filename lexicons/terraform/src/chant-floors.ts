@@ -42,3 +42,13 @@ export const MODULE_CATALOG_FLOOR = "0.124.55";
  * reads with ids from its state (#5338).
  */
 export const TERRAFORM_HEALTH_DISRUPTION_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first terraform lexicon release that puts `facts.ownershipRows` on a
+ * choudoufu live root's nodes (#5402): `live-plan`'s `bound[].source`,
+ * `identity_values`, omission and adoption rows, `live-graph`'s
+ * `meta.engineGraph.gaps`, and with `CHANT_TERRAFORM_LIVE_LISTING=1`,
+ * `live-ls`'s `gaps[]` and `listed`. It needs `@intentius/chant` at
+ * `ENGINE_OWNERSHIP_ROWS_FLOOR` or later.
+ */
+export const TERRAFORM_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;

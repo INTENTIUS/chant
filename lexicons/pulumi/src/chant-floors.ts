@@ -46,3 +46,8 @@ export const PULUMI_PREVIEW_DISRUPTION_FLOOR = NEXT_RELEASE;
  * The first pulumi lexicon release whose `pulumi-up` reports its `StackReference` reads through `graphReads` (`./pulumi-up`), so `chant graph --components` and `chant workspace graph` draw an edge from a stack to each stack it reads, naming the output, and a node marked external for a stack nothing applies (#5331).
  */
 export const PULUMI_STACK_REFERENCE_GRAPH_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first pulumi lexicon release that puts `facts.ownershipRows` on a plunge member's nodes (#5402): each record's `meta.engineGraph.gaps` entry as `gaps` read `graph`, and any `ownershipRows` plunge prints on a node. It needs `@intentius/chant` at `ENGINE_OWNERSHIP_ROWS_FLOOR` or later.
+ */
+export const PULUMI_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;
