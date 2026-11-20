@@ -36,6 +36,16 @@ import type { PipelineDeclaration } from "./pipeline/spec";
 export const PIPELINE_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant with stages that follow several stages and stages that
+ * take one release at a time (#5353): a stage's `after` and `queue` in
+ * `.chant/pipeline.ts`, a cycle among stages refused at build, the stage
+ * log `components promote` writes at `_gates/<pipeline>/stages.jsonl`, and
+ * `stageQueues` in `chant workspace status --json`. A product
+ * feature-detects the keys on this name before it writes them.
+ */
+export const STAGE_GRAPH_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */
@@ -78,7 +88,30 @@ export {
   type StageArtifactValue,
   type StageReadsResult,
 } from "./pipeline/artifacts";
-export { pipelinePromoteGates, pipelinePromoteSource, promotedDigest, type PipelineGatesOutcome, type PipelinePromoteStop } from "./pipeline/promote";
+export {
+  pipelinePromoteGates,
+  pipelinePromoteSource,
+  pipelineStageEntry,
+  pipelineStageFinished,
+  promotedDigest,
+  type PipelineEntryOutcome,
+  type PipelineEntryRelease,
+  type PipelineGatesOutcome,
+  type PipelinePromoteStop,
+} from "./pipeline/promote";
+export {
+  gitStageLogPort,
+  memoryStageLogPort,
+  parseStageLines,
+  replacedIn,
+  stageLogPath,
+  stageQueueOf,
+  stagesInLog,
+  succeededIn,
+  type StageLine,
+  type StageLogPort,
+  type StageQueue,
+} from "./lifecycle/stage-log";
 export {
   checkPipelineFile,
   pipelineFromConfig,

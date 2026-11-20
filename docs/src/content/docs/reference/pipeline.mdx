@@ -44,6 +44,8 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `replanDependents` | the members whose dependents are planned again when an output they read changes: once a wave of the stage applied, its job runs `chant components replan` for the runs it applied. A stage's list, else `defaults.replanDependents`. Absent, no step runs |
 | `publish` | the [release artifacts](#release-artifacts) the stage publishes once it applied, by name: `{ member, output }` or `{ secret }`. Absent, it publishes none |
 | `reads` | the artifacts of earlier stages the stage reads, of the release it takes, keyed by the variable each reaches its deploy in: `{ stage, artifact }`. Absent, it reads none |
+| `after` | the stages a release applies in before this one opens for it. Absent, the stage before it in `stages`. The first stage takes none, and a cycle among stages fails the build with the stages named |
+| `queue` | `"replace"`: the stage takes one release at a time. A newer release waiting replaces an older one, and a release in the stage finishes before the next enters. Absent, each promote goes through on its own |
 
 ## What each stage becomes
 
@@ -80,6 +82,27 @@ With a pipeline at the default branch's tip, `chant components promote --to <sta
 A stage with `reads` refuses the promote with exit 1 before its gate when no `--release` is named, or when an upstream stage has not published a read artifact for that release. A stage with `publish` publishes once the promote under `--release` deployed; a publish it refuses fails the promote with exit 1 after the deploy.
 
 `chant workspace train promote <env>` refuses with exit 3 when a member's pipeline holds the stage.
+
+A stage with `after`, and a stage with `queue`, add these cases. A pipeline where some stage declares either keeps a log of its promotes at `_gates/<pipeline>/stages.jsonl` on `chant/lifecycle`.
+
+| Line | Written when |
+|---|---|
+| `waiting` | a release reaches a queued stage |
+| `replaced` | a newer release replaces one waiting; `by` names the newer one |
+| `entered` | the release passed the stage's gate and its deploy started |
+| `finished` | that deploy ended; `result` is `applied` or `failed` |
+
+| Case | Result |
+|---|---|
+| `--from` is not one of the stages `after` names | exit 1 (`pipeline-from-not-upstream`); `--from` defaults to the first it names |
+| a stage with `after`, promoted without `--release` | exit 1 (`pipeline-join-needs-release`) |
+| the release has not applied in each stage `after` names | exit 3 (`pipeline-upstream-waiting`), naming the stages missing; with `--allow-skip` each one's skip gate passes first. The first stage counts once its ledger holds a deploy of the release's commit |
+| a queued stage, with an older release waiting | the older release is replaced, and the `replaced` line names the newer one |
+| a queued stage, with a newer release waiting, or a release replaced there before | exit 1 (`pipeline-release-replaced`) |
+| a queued stage with another release in it | the gate is read, then exit 3 (`pipeline-stage-busy`) until that release's deploy finishes |
+| the release already in a queued stage | its deploy carries on without its gate read again |
+
+A release is newer than another when it was cut later; without a cut time, the one that reached the stage later is newer. `chant workspace status --json` reads the log into `stageQueues` on the member. Each entry has `inStage`, `waiting` and `replaced`; a replaced entry carries `by`, the release that replaced it.
 
 ## Commands
 

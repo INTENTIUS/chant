@@ -75,7 +75,7 @@ import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 import { actorFromEnv } from "../../actor";
 import { promoteBase, readPipelineAt } from "../../pipeline/read";
-import { pipelinePromoteGates, pipelinePromoteSource, promotedDigest } from "../../pipeline/promote";
+import { pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, promotedDigest } from "../../pipeline/promote";
 
 const PROMOTE_USAGE =
   "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest> [--plan-only]] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
@@ -1058,6 +1058,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   const pipeline = readPromotePipeline(project.projectPath, to);
   if (typeof pipeline === "number") return pipeline;
   let skipped: import("../../pipeline/spec").PipelineStage[] = [];
+  let upstreams: string[] | undefined;
   let from: string | undefined;
   if (pipeline) {
     const source = pipelinePromoteSource({ spec: pipeline, to, ...(args.migrateFrom ? { from: args.migrateFrom } : {}), ...(args.allowSkip ? { allowSkip: true } : {}), now: new Date() });
@@ -1067,6 +1068,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     }
     from = source!.from;
     skipped = source!.skipped;
+    upstreams = source!.upstreams;
   } else {
     // The member's `environments` array is its promotion order (#4030). It
     // defaults --from and refuses a skipped step; a member that declares none
@@ -1145,28 +1147,64 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     return 1;
   }
   // #5324: the skipped stages' gates, then the stage's own, bound to the release (or the digests promoted).
+  // #5353: a stage that follows several opens once the release applied in each, and a queued stage takes one release at a time.
+  let entered: import("../../lifecycle/stage-log").StageLine | undefined;
+  const { gitStageLogPort } = await import("../../lifecycle/stage-log");
+  const log = gitStageLogPort();
   if (pipeline && !args.dryRun) {
-    const gates = await pipelinePromoteGates({
+    const release = under ? await entryRelease(under) : undefined;
+    const first = pipeline.stages[0]!.name;
+    const firstStageCommits = upstreams?.includes(first) ? new Set((await readLedger(first)).filter((r) => r.env === first).map((r) => r.gitSha)) : undefined;
+    const gates = await pipelineStageEntry({
       spec: pipeline,
       to,
       skipped,
+      ...(upstreams ? { upstreams } : {}),
+      ...(args.allowSkip ? { allowSkip: true } : {}),
       digest: under?.release.releaseDigest ?? promotedDigest(plan.items),
-      ...(under ? { releaseDigest: under.release.releaseDigest } : {}),
+      ...(release ? { release } : {}),
+      ...(firstStageCommits ? { firstStageCommits } : {}),
       port: gitGateLedgerPort(),
+      log,
       ...(who.actor ? { actor: who.actor } : {}),
       ...(await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}))),
       now: new Date(),
     });
     if (!gates.passed) {
-      console.error(formatError({ message: `${gates.message}${gates.code ? ` [${gates.code}]` : ""}`, ...(gates.hint ? { hint: `Approve it with: ${gates.hint}` } : {}) }));
+      const hint = gates.hint ? (gates.code === "pipeline-gate-waiting" ? `Approve it with: ${gates.hint}` : gates.hint) : undefined;
+      console.error(formatError({ message: `${gates.message}${gates.code ? ` [${gates.code}]` : ""}`, ...(hint ? { hint } : {}) }));
       return gates.exitCode;
     }
     for (const line of gates.lines) console.error(formatInfo(line));
+    entered = gates.entered;
   }
   const { withStageReadVariables } = await import("../../pipeline/artifacts");
   const code = await withStageReadVariables(readVariables, () => deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under));
+  // #5353: a deploy still waiting at a component's gate stays in the stage; any other end is written.
+  if (entered && code !== GATED_EXIT_CODE) {
+    try {
+      await pipelineStageFinished(log, entered, code === 0 ? "applied" : "failed", new Date());
+    } catch (err) {
+      console.error(formatError({ message: `the deploy ended, but the stage log was not written: ${err instanceof Error ? err.message : String(err)}`, hint: "Run the same promote again: the release in the stage carries on and the line is written then." }));
+      return code === 0 ? 1 : code;
+    }
+  }
+  // #5356: the stage publishes its artifacts once the deploy applied, after the stage log says so.
   if (code !== 0 || !pipeline || args.dryRun || args.planOnly) return code;
   return publishAfterPromote(project.projectPath, pipeline, to, under);
+}
+
+/** The release a promote deploys, as the stage log names it (#5353): its label, commit and when it was first cut. */
+async function entryRelease(under: UnderRelease): Promise<import("../../pipeline/promote").PipelineEntryRelease> {
+  const { readCuts } = await import("../../lifecycle/release-store");
+  const cuts = await readCuts().then((r) => r.cuts, () => []);
+  const cut = cuts.find((c) => c.releaseDigest === under.release.releaseDigest);
+  return {
+    releaseDigest: under.release.releaseDigest,
+    commit: under.release.commit,
+    ...(under.label ? { label: under.label } : {}),
+    ...(cut ? { cutAt: cut.timestamp } : {}),
+  };
 }
 
 /**

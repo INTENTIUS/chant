@@ -77,7 +77,7 @@ chant components promote --to staging --release v1.4.0
 
 With a pipeline, `components promote` reads it at the default branch's tip:
 
-- `--from` defaults to the stage before `--to`.
+- `--from` defaults to the stage before `--to`, or to the first stage its `after` names.
 - A held stage, or one inside a freeze window, refuses with exit 3 and names the time it opens.
 - The stage's gate waits for an approval of the release's digest, unless its policy is `never`. The promote exits 3 and prints the `chant approve shop staging --env staging --plan <digest>` line; run the promote again once it is approved.
 - A promote that skips a stage is refused. With `--allow-skip` it passes only through each skipped stage's gate, `<stage>-skip`, and the skip is recorded on `_gates/shop/applied.jsonl`.
@@ -94,6 +94,23 @@ A stage publishes named values for the release it applied, and a later stage rea
 ```
 
 The merge publishes `dev`'s artifacts right after it cuts the release. `promote --to staging --release v1.4.0` reads `endpoint` from `dev`'s record of v1.4.0 into `TF_VAR_dev_endpoint` before it deploys, and refuses when `dev` has not published it for that release. `chant build` refuses a read that no earlier stage publishes. A secret is published as where it is kept (`{ secret: { awsSecretsManager: "..." } }`), and an output the engine marks sensitive is refused. Another repository reads them with `chant pipeline artifacts read --stage dev --from <dir>`. The [reference](/chant/reference/pipeline/#release-artifacts) has the rules.
+
+## Fan out to regions and join before production
+
+A stage follows the stage before it in `stages` unless it names its own with `after`. Name one stage in several `after` lists and a release fans out to each; name several stages in one `after` and the stage waits for the same release in each of them:
+
+```typescript
+stages: [
+  { name: "dev", waves: [{ name: "dev", runs: [{ target: "dev" }] }], gate: { policy: "never" } },
+  { name: "us", waves: [{ name: "us", runs: [{ target: "us" }] }], after: ["dev"] },
+  { name: "eu", waves: [{ name: "eu", runs: [{ target: "eu" }] }], after: ["dev"] },
+  { name: "prod", waves: [{ name: "prod", runs: [{ target: "prod" }] }], after: ["us", "eu"], queue: "replace" },
+],
+```
+
+`chant components promote --to prod --release v1.4.0` opens `prod` only once `v1.4.0` applied in `us` and in `eu`, and then through `prod`'s gate. Until then it exits 3 and names the stages missing. A stage that names `after` is promoted with `--release`, since the join reads the same release in each stage. A cycle, such as two stages that name each other, fails `chant build` with the stages named.
+
+`queue: "replace"` lets one release into the stage at a time. When `v1.5.0` reaches `prod` while `v1.4.0` still waits for its approval there, `v1.5.0` replaces it: the stage log records the replacement, and a later promote of `v1.4.0` into `prod` is refused. A release already in the stage finishes; one that arrives meanwhile exits 3 and goes in on its next promote once that deploy has ended. `chant workspace status prod` shows what is deploying in `prod` now, what waits for it, and which releases were replaced there.
 
 ## Let a wave of many targets go on past a few failures
 

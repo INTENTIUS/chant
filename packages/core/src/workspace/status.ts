@@ -61,7 +61,7 @@ import { readMemberPromotionOrder, type PromotionStep } from "./promotion-order"
 import { gateAdmissionFrom, releaseRuleFrom } from "./identity";
 import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
 import { scopeSource } from "./write-scope";
-import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
+import { GATE_REASON_CODES, readMemberGates, readMemberStageQueues, type GateLedgerReader, type StageLogReader, type StatusGate, type StatusGateLedger, type StatusStageQueue } from "./status-gates";
 import { trustQuorumJudge } from "../op/gate-quorum";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
 import { memberDecisionsReader, type DecisionKindReader } from "./status-decisions";
@@ -258,6 +258,13 @@ export interface StatusMember {
    * chant 0.124.29.
    */
   featureFlags: StatusFeatureFlag[] | null;
+  /**
+   * The stages of the member's pipeline that keep a stage log (#5353), for
+   * the environments asked for: the release in each, the releases waiting
+   * for it, and the waiting releases a newer one replaced. Absent when no
+   * stage log names those environments. Added in contract 1.
+   */
+  stageQueues?: StatusStageQueue[];
 }
 
 /** One feature flag of a member (#4024), as `status --json` lists it. */
@@ -429,6 +436,8 @@ export interface StatusQuery {
   readOutcomes?: OutcomeReader;
   /** Reads one member's gate ledger directory; git unless a test swaps it. */
   readGates?: GateLedgerReader;
+  /** Reads each pipeline's stage log under a gate ledger directory (#5353); git unless a test swaps it. */
+  readStageLogs?: StageLogReader;
   /** The instant a gate's expiry is measured against; now by default. */
   now?: string;
   /** Reads one member's stewards; the declaration and ledger reader unless a test swaps it. */
@@ -740,7 +749,9 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       const environments: StatusEnvironment[] = [];
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read, revokedOf, query.readOutcomes));
       const own = await hasMemberLedger(m, found.dir);
-      const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules, undefined, judge);
+      const gatesDir = own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR;
+      const gates = await readMemberGates(gatesDir, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules, undefined, judge);
+      const stageQueues = (await readMemberStageQueues(gatesDir, commit, found.dir, query.readStageLogs)).filter((q) => envs.includes(q.stage));
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       // The declaration's x- keys go back on the objects that hold them (#3595).
       const x = (pointer: string) => extensionsAt(declaration, pointer);
@@ -785,6 +796,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         promotionOrder: await (query.readPromotionOrder ?? readMemberPromotionOrder)(resolve(found.dir, m.dir)),
         releaseCuts: await readReleaseCuts(resolve(found.dir, m.dir), releaseRule),
         featureFlags: flags === null ? null : flags.filter((f) => f.member === m.name).map(({ member: _member, ...f }) => f),
+        ...(stageQueues.length > 0 ? { stageQueues } : {}),
         ...x(m.pointer),
       });
     }
@@ -1041,6 +1053,25 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
     const rows: string[][] = [["MEMBER", "RELEASE", "COMMIT", "CUT BY", "SIGNATURE"]];
     for (const m of cut) {
       for (const c of m.releaseCuts!) rows.push([m.name, c.label ?? c.releaseDigest.slice(0, 24), c.commit?.slice(0, 12) ?? "-", c.actor, c.signatureCheck.status]);
+    }
+    lines.push(...table(rows));
+  }
+  // #5353: each queued stage's release, the ones waiting, and the ones a newer release replaced.
+  const queued = doc.members.filter((m) => (m.stageQueues ?? []).length > 0);
+  if (queued.length > 0) {
+    lines.push("");
+    const name = (r: { digest: string; label: string | null }) => r.label ?? r.digest.slice(0, 24);
+    const rows: string[][] = [["MEMBER", "STAGE", "IN STAGE", "WAITING", "REPLACED"]];
+    for (const m of queued) {
+      for (const q of m.stageQueues!) {
+        rows.push([
+          m.name,
+          `${q.pipeline}/${q.stage}`,
+          q.inStage ? name(q.inStage) : "-",
+          q.waiting.length > 0 ? q.waiting.map(name).join(", ") : "-",
+          q.replaced.length > 0 ? q.replaced.map((r) => `${name(r)} by ${r.byLabel ?? r.by.slice(0, 24)}`).join(", ") : "-",
+        ]);
+      }
     }
     lines.push(...table(rows));
   }

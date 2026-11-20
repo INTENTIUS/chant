@@ -276,6 +276,11 @@
           "description": "The member's feature flags (#4024): each record of a declared flag kind whose member field names this member, sorted by id. A flag is a workspace record the member's build reads as one build-time parameter, with chant build --env <env>; its value in an environment is recorded on the build, and on a release's target, as a param whose source is flag:<id>. Named featureFlags because a release record's flags already holds legacy-digest. Empty when no flag names the member, and null when the flag records could not be read. Optional: written from chant 0.124.29, absent from older output.",
           "type": ["array", "null"],
           "items": { "$ref": "#/$defs/featureFlag" }
+        },
+        "stageQueues": {
+          "description": "Added in contract 1 by #5353. The stages of the member's pipeline that keep a stage log (_gates/<pipeline>/stages.jsonl on chant/lifecycle), for the environments asked for: the release in each, the releases waiting for it, and the waiting releases a newer one replaced. A pipeline keeps the log when a stage declares after or queue. Absent when no stage log names those environments.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/stageQueue" }
         }
       }
     },
@@ -964,6 +969,35 @@
               }
             }
           ]
+        }
+      }
+    },
+    "stageRelease": {
+      "type": "object",
+      "required": ["digest", "label", "at"],
+      "properties": {
+        "digest": { "type": "string", "description": "The digest the stage gate binds: the release's, or the promoted digests'." },
+        "label": { "type": ["string", "null"], "description": "The release's label, or null when it has none." },
+        "at": { "type": "string", "description": "When the line was written: the release reached, entered, or was replaced at the stage." }
+      }
+    },
+    "stageQueue": {
+      "type": "object",
+      "required": ["pipeline", "stage", "inStage", "waiting", "replaced"],
+      "properties": {
+        "pipeline": { "type": "string", "description": "The pipeline, the op its stage gates are recorded under." },
+        "stage": { "type": "string", "description": "The stage, which is its environment's name." },
+        "inStage": { "description": "The release whose deploy into the stage started and has not finished, or null.", "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/stageRelease" }] },
+        "waiting": { "type": "array", "description": "The releases waiting for the stage, oldest first.", "items": { "$ref": "#/$defs/stageRelease" } },
+        "replaced": {
+          "type": "array",
+          "description": "The waiting releases a newer one replaced, oldest first. A replaced release never enters the stage.",
+          "items": {
+            "allOf": [
+              { "$ref": "#/$defs/stageRelease" },
+              { "type": "object", "required": ["by", "byLabel"], "properties": { "by": { "type": "string", "description": "The digest of the release that replaced it." }, "byLabel": { "type": ["string", "null"] } } }
+            ]
+          }
         }
       }
     },

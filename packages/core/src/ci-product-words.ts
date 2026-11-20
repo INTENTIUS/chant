@@ -894,6 +894,23 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "a stage's `failureTolerance` in `.chant/pipeline.ts`, a wave's `failureTolerance`",
     products: [],
   },
+  // #5353: stages that follow several stages, and stages that take one release at a time.
+  {
+    key: "environments.<name>.after",
+    concept: "the stages a release applies in before the stage opens for it",
+    section: "stage",
+    value: "a list of environment names; the stage before it in `promotion` when unset",
+    chant: "a stage's `after` in `.chant/pipeline.ts`",
+    products: [],
+  },
+  {
+    key: "environments.<name>.queue",
+    concept: "how a stage takes releases: one at a time, a newer release waiting replacing an older one",
+    section: "stage",
+    values: ["replace"],
+    chant: "a stage's `queue` in `.chant/pipeline.ts`",
+    products: [],
+  },
   {
     key: "environments.<name>.approval_rules",
     concept: "the approval rules of one stage, in place of `approval_rules`",
