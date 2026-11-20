@@ -247,8 +247,8 @@
               "description": "ok: it ran and succeeded. failed: it ran and failed. skipped: it did not run, and skip says why. cached: a cache hit stood in for running it (#4015). gated: it stopped the run at a gate nobody has approved. waiting: it stopped the run at a decision point nobody has answered."
             },
             "skip": {
-              "enum": ["receipt", "resumed", "refused", "not-run", null],
-              "description": "With status skipped. receipt: the effect's receipt matched, so it had already applied. resumed: the run resumed at a later gate and carried this step's output from an earlier run. refused: it declined to go on, and message says why. not-run: an earlier step failed or stopped the run. Null when the writer does not know."
+              "enum": ["receipt", "resumed", "refused", "not-run", "environment", null],
+              "description": "With status skipped. receipt: the effect's receipt matched, so it had already applied. resumed: the run resumed at a later gate and carried this step's output from an earlier run. refused: it declined to go on, and message says why. not-run: an earlier step failed or stopped the run. environment: a gate step whose environments name others than the run's, added within contract 1 by #5401 and written by chant 0.124.103 and newer. Null when the writer does not know."
             },
             "durationMs": { "type": ["integer", "null"], "minimum": 0, "description": "How long it ran, or null when the writer did not time it." },
             "error": { "type": "string", "description": "With status failed, what failed." },

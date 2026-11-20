@@ -124,7 +124,7 @@ export interface ImportedComponentModule {
  * `exclude`/`include` globs and the skip marker (#2519). Scanned from outside
  * any project, every child project is read.
  */
-async function findComponentFiles(path: string): Promise<string[]> {
+export async function findComponentFiles(path: string): Promise<string[]> {
   return walkDiscovery({
     walker: "components",
     root: path,

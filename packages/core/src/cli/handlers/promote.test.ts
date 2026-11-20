@@ -1376,3 +1376,96 @@ describe("a step's target per environment on promote, rollback and redeploy (#53
     expect(appendReleaseRecordMock.mock.calls[0][0]).toMatchObject({ env: "prod", releaseDigest: release.releaseDigest });
   });
 });
+
+describe("a gate step applies only in the environments it names (#5401)", () => {
+  const templateOf = (env: string) => `{"env":"${env}"}\n`;
+  // The shape a product writes once: dev ungated, staging and prod behind one release gate.
+  const network: DriverComponent = {
+    name: "network",
+    deploy: [
+      {
+        phase: "Apply",
+        steps: [
+          { kind: "gate", gate: "release", environments: { staging: { description: "approve with chant approve release release --env staging" }, prod: {} } },
+          {
+            kind: "terraform-apply",
+            environments: Object.fromEntries(["dev", "staging", "prod"].map((e) => [e, { root: `envs/${e}/network`, template: `dist/${e}.json` }])),
+          },
+        ],
+      },
+    ],
+  };
+  const release = makeRelease({
+    member: null,
+    commit: "abc123".padEnd(40, "0"),
+    artifactDigests: [],
+    targets: ["dev", "staging", "prod"].map((env) => ({ env, templates: [{ component: "network", path: `dist/${env}.json`, digest: contentDigest(templateOf(env)) }], params: [] })),
+  });
+  const promoteTo = (to: string, more: Partial<ParsedArgs> = {}) => {
+    storedTemplate = templateOf(to);
+    return runComponentsPromote(ctx({ migrateFrom: to === "dev" ? "staging" : "dev", migrateTo: to, release: "v1.0.0", ...more }));
+  };
+
+  beforeEach(async () => {
+    const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
+    releaseGatePort = memoryGateLedgerPort();
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [network] });
+    releaseFixture = { release, label: "v1.0.0" };
+    knownReleases.set(release.releaseDigest, release);
+    // Each environment ran the component once; only the promote's source is read for it.
+    readReleaseLedgerMock.mockImplementation(async (env: string) => ({ records: [{ ...staging, component: "network", env }], malformed: 0 }));
+  });
+
+  test("in an environment the gate does not name, the promote applies with no gate, binds nothing, and records the skip", async () => {
+    expect(await promoteTo("dev")).toBe(0);
+    expect(ran).toEqual(["dev:terraform-apply"]);
+    expect(releaseGatePort!.appended).toEqual([]);
+    expect(storedChangeSets.size).toBe(0);
+    expect(errors.join("\n")).toContain('network: gate "release" is skipped in "dev"; it applies in staging, prod');
+    const record = appendReleaseRecordMock.mock.calls[0][0];
+    expect(record).toMatchObject({ component: "network", env: "dev", releaseDigest: release.releaseDigest, gatesSkipped: ["release"] });
+    expect(record.approver).toBeUndefined();
+    expect(record.admission).toBeUndefined();
+  });
+
+  test("the plan lists the skipped gate: --dry-run and --plan-only", async () => {
+    expect(await promoteTo("dev", { dryRun: true, json: true })).toBe(0);
+    expect(JSON.parse(logs.join("\n")).gatesSkipped).toEqual([{ component: "network", phase: "Apply", gate: "release", environments: ["staging", "prod"] }]);
+    logs.length = 0;
+    expect(await promoteTo("dev", { planOnly: true, json: true })).toBe(0);
+    expect(JSON.parse(logs.join("\n"))).toMatchObject({ env: "dev", gates: [], changeSet: null, gatesSkipped: [{ gate: "release", environments: ["staging", "prod"] }] });
+    logs.length = 0;
+    expect(await promoteTo("staging", { planOnly: true, json: true })).toBe(0);
+    const planned = JSON.parse(logs.join("\n"));
+    expect(planned).toMatchObject({ env: "staging", gates: ["release"] });
+    expect(planned.gatesSkipped).toBeUndefined();
+    expect(ran).toEqual([]);
+  });
+
+  test("in an environment the gate names, the gate binds the release and the change set, and its entry's description is the one shown", async () => {
+    expect(await promoteTo("staging")).toBe(3);
+    expect(ran).toEqual([]);
+    const [doc] = [...storedChangeSets.values()];
+    expect(doc).toMatchObject({ releaseDigest: release.releaseDigest, environment: "staging" });
+    expect(releaseGatePort!.appended).toEqual([
+      expect.objectContaining({ op: "release", gate: "release", environment: "staging", planDigest: doc.digest, releaseDigest: release.releaseDigest, description: "approve with chant approve release release --env staging" }),
+    ]);
+    expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+
+    await releaseGatePort!.appendResolution!({
+      op: "release", gate: "release", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(),
+      planDigest: doc.digest, environment: "staging", releaseDigest: release.releaseDigest,
+    });
+    expect(await promoteTo("staging")).toBe(0);
+    expect(ran).toEqual(["staging:terraform-apply"]);
+    const record = appendReleaseRecordMock.mock.calls[0][0];
+    expect(record).toMatchObject({ env: "staging", approver: "alice", admission: { op: "release", gate: "release" }, releaseDigest: release.releaseDigest });
+    expect(record.gatesSkipped).toBeUndefined();
+
+    // The staging approval binds staging: prod waits for its own.
+    ran.length = 0;
+    expect(await promoteTo("prod")).toBe(3);
+    expect(ran).toEqual([]);
+    expect(releaseGatePort!.appended.at(-1)).toMatchObject({ op: "release", gate: "release", environment: "prod", releaseDigest: release.releaseDigest });
+  });
+});

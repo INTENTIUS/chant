@@ -253,6 +253,25 @@
         "description": {
           "type": "string",
           "description": "Human-readable description of the action required to unblock this gate."
+        },
+        "environments": {
+          "description": "The environments the gate applies in: a list of names, or a map whose entries may set gate, description and timeout there. In any other environment the run skips the gate and records the skip. Omitted, the gate applies in every environment. chant build refuses a name the member does not declare.",
+          "oneOf": [
+            { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+            {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "gate": { "$ref": "#/$defs/GateName" },
+                  "description": { "type": "string" },
+                  "timeout": { "type": "string" }
+                }
+              }
+            }
+          ]
         }
       }
     },

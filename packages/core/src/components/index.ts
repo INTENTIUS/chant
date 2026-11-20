@@ -157,6 +157,15 @@ export {
   stepInputForEnvironment,
   componentForEnvironment,
   componentsForEnvironment,
+  GATE_ENVIRONMENTS_FLOOR,
+  GATE_ENVIRONMENT_KEYS,
+  type SkippedGate,
+  type SkippedGateAt,
+  type UnknownGateEnvironment,
+  gateEnvironmentNames,
+  gateForEnvironment,
+  skippedGatesOf,
+  unknownGateEnvironments,
 } from "./step-environments";
 export {
   ENVIRONMENT_SETS_FLOOR,

@@ -137,6 +137,8 @@ export interface StatusRelease {
   approver: string | null;
   /** The gate resolution that admitted the release (#4020): the gate and when it was resolved. Null for an ungated release and for one recorded before chant 0.124.28. */
   admission: { op: string; gate: string; resolvedAt: string } | null;
+  /** The component's gates that did not apply in this environment, since they name others (#5401). Absent when every gate applied and on records written before chant `GATE_ENVIRONMENTS_FLOOR`. */
+  gatesSkipped?: string[];
   /** The release this deploy was made from (#4043): the `releaseDigest` of `_releases/<releaseDigest>.json`. Null for a deploy that named no release and for one recorded before chant 0.124.29. */
   releaseDigest: string | null;
   /** The label that release was cut with (#4043), or null when it has none, when no release is named, or when the cut can't be read. Chant 0.124.29 and newer write it. */
@@ -673,6 +675,7 @@ async function readEnvironment(
       actor: r.actor,
       approver: r.approver ?? null,
       admission: r.admission ? { op: r.admission.op, gate: r.admission.gate, resolvedAt: r.admission.resolvedAt } : null,
+      ...(r.gatesSkipped?.length ? { gatesSkipped: [...r.gatesSkipped] } : {}),
       releaseDigest: r.releaseDigest ?? null,
       releaseLabel: (r.releaseDigest !== undefined ? labels.get(r.releaseDigest) : undefined) ?? null,
       flags: [...(r.flags ?? [])],

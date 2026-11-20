@@ -94,7 +94,12 @@ function isPhase(step: DriverStep | DriverGate | DriverPhase): step is DriverPha
   return typeof (step as { phase?: unknown }).phase === "string" && Array.isArray((step as DriverPhase).steps);
 }
 
-/** The name of every gate the compositions declare, nested phases included, sorted and distinct. */
+/**
+ * The name of every gate the compositions declare, nested phases included,
+ * sorted and distinct. A promote hands it components resolved for its
+ * environment (`componentForEnvironment`, ./step-environments.ts), so a gate
+ * whose `environments` names others is already out of its phase (#5401).
+ */
 export function gateNamesOf(components: readonly DriverComponent[]): string[] {
   const names = new Set<string>();
   const walk = (steps: DriverPhase["steps"]): void => {
