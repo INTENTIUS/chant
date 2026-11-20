@@ -102,6 +102,17 @@ export const CANARY_FLOOR = NEXT_RELEASE;
 export const VERIFY_ROLLBACK_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant whose `workspace status` shows each pipeline stage
+ * (#5342): `members[].pipeline` in `--json`, one entry per stage with the
+ * release it runs, its gate, the change risk the gate reads, its soak and
+ * the time left, the canary soaks that hold it, a pause and a rollback
+ * request, and `soak` on a soak gate's entry in `gates`; the text view adds
+ * one line per stage. A product or a dashboard feature-detects the fields
+ * on this name.
+ */
+export const STAGE_STATUS_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */

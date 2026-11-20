@@ -136,6 +136,8 @@ A promote under `--release` reads the change risk the release's cut carries at e
 
 A release is newer than another when it was cut later; without a cut time, the one that reached the stage later is newer. `chant workspace status --json` reads the log into `stageQueues` on the member. Each entry has `inStage`, `waiting` and `replaced`; a replaced entry carries `by`, the release that replaced it.
 
+`chant workspace status` also shows every stage of the pipeline in `pipeline.stages` on the member, and one text line per stage: the release it runs, its gate, the change risk the gate reads, its soak and the time left, the canary soaks that hold it, a pause and a rollback request. See [Pipeline stages](/chant/cli/workspace-status/#pipeline-stages).
+
 ## Pause and resume
 
 `chant stage pause <stage> --reason <text>` stops releases entering a stage, and `chant stage resume <stage> --reason <text>` lets them in again. Each writes a line naming who (`--actor`, else the CI or shell user) and why to `<stage>/stage.jsonl` on `chant/lifecycle`, and pushes it.
