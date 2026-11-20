@@ -179,3 +179,45 @@ describe("the alert agent", () => {
     expect(push.permissions).toEqual({ contents: "write", "pull-requests": "write", issues: "write" });
   });
 });
+
+// #5357: the failed-apply and scheduled agents, on workflow_dispatch and their schedule, with the settings' digest on every line.
+describe("the failed-apply and scheduled agents", () => {
+  const FAILED: ScheduledOpSpec = { name: "chant-apply-failed-agent", agent: { on: "apply-failed", maxRuns: 2 } };
+  const SCHEDULE: ScheduledOpSpec = { name: "chant-versions", trigger: { kind: "cron", schedule: "0 7 * * 1" }, agent: { on: "schedule", task: "Raise the provider pins.", maxRuns: 1 } };
+
+  test("are workflows of their own; a scheduled agent needs its cron", () => {
+    expect(gen(FAILED).doc.on).toEqual({ schedule: [{ cron: "*/15 * * * *" }], workflow_dispatch: {} });
+    expect(gen(SCHEDULE).doc.on).toEqual({ schedule: [{ cron: "0 7 * * 1" }], workflow_dispatch: {} });
+    expect(() => gen({ ...SCHEDULE, trigger: undefined })).toThrow(/cron trigger/);
+    expect(() => gen({ ...FAILED, trigger: { kind: "push" } })).toThrow(/failed-apply agent/);
+  });
+
+  test("the failed-apply agent's decision and land steps hold the relay key; the scheduled agent holds none", () => {
+    const f = gen(FAILED).doc;
+    const decide = f.jobs["chant-apply-failed-agent"]!.steps.find((s) => s.run?.includes("chant agent prepare"))!;
+    expect(decide.env?.CHANT_RELAY_KEY).toBe("${{ secrets.CHANT_RELAY_KEY }}");
+    expect(f.jobs["chant-apply-failed-agent"]!.steps.at(-1)!.env).toEqual({ ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" });
+    const s = gen(SCHEDULE).doc;
+    expect(JSON.stringify(s)).not.toContain("CHANT_RELAY_KEY");
+    expect(s.jobs["chant-versions"]!.env).toMatchObject({ CHANT_AGENT_ON: "schedule", CHANT_AGENT_TASK: "Raise the provider pins." });
+  });
+
+  test("every command line carries the settings' digest, and the checkout notes the default branch", () => {
+    for (const spec of [FAILED, SCHEDULE, COMMENT]) {
+      const d = gen(spec).doc;
+      const lines = Object.values(d.jobs).flatMap((j) => j.steps.map((s) => s.run ?? "")).filter((r) => r.includes("chant agent "));
+      expect(lines.length).toBeGreaterThanOrEqual(3);
+      for (const l of lines) expect(l).toMatch(/--digest sha256:[0-9a-f]{64}/);
+      expect(Object.values(d.jobs)[0]!.steps[0]!.run).toContain("git remote set-head origin --auto");
+    }
+  });
+
+  test("never apply, approve or merge", () => {
+    for (const spec of [FAILED, SCHEDULE]) {
+      const d = gen(spec).doc;
+      const all = Object.values(d.jobs).flatMap((j) => j.steps.map((s) => s.run ?? "")).join("\n");
+      expect(all).not.toMatch(/chant (run|approve)\b|gh pr merge|--admin|\bterraform apply\b|\bpulumi up\b/);
+      expect(d.jobs[`${spec.name}-push`]!.permissions).toEqual({ contents: "write", "pull-requests": "write", issues: "write" });
+    }
+  });
+});

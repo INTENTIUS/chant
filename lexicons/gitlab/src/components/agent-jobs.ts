@@ -26,6 +26,17 @@
  * facts themselves, with the relay key (`CHANT_RELAY_KEY` unless
  * `relayKeyEnv` names another variable).
  *
+ * A failed-apply agent and a scheduled agent (#5357) run in their own
+ * pipeline schedule, and in a pipeline of the default branch started by
+ * hand with the same selector. A scheduled agent holds no relay key: its
+ * fact is its own run.
+ *
+ * GitLab lets a pipeline variable replace a job's variable, so every
+ * command line carries the settings' digest (`--digest`), which a variable
+ * cannot replace, and both jobs note the remote's default branch
+ * (`origin/HEAD`) before the token leaves the remote: the commands refuse
+ * settings that are not the default branch's (#5357).
+ *
  * A workspace member's drift Op runs in the member's directory, so its
  * artifact holds `<member>/.chant/agent` (#4619). Both agent jobs run at
  * the repository root and take `dir`, that path, as their agent directory.
@@ -43,7 +54,10 @@ import {
   agentCommandLines,
   agentGitAuthLines,
   agentHeadFetchLine,
+  agentSettingsDigest,
   agentSettingsEnv,
+  AGENT_SIGNED_TRIGGERS,
+  isFactTrigger,
   GITLAB_AGENT_ASK_VAR,
   GITLAB_AGENT_PR_VAR,
   type AgentSettings,
@@ -65,6 +79,18 @@ export function gitlabAlertAgentRules(name: string, selector = "CHANT_SCHEDULED_
   ];
 }
 
+/**
+ * A failed-apply or scheduled agent's rules (#5357): its own schedule, or a
+ * pipeline of the default branch started by hand with the selector set.
+ */
+export function gitlabFactAgentRules(name: string, selector = "CHANT_SCHEDULED_OP"): Array<{ if: string }> {
+  const n = name.replace(/"/g, "");
+  return [
+    { if: `$CI_PIPELINE_SOURCE == "schedule" && $${selector} == "${n}"` },
+    { if: `$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${selector} == "${n}"` },
+  ];
+}
+
 export function gitlabAgentPushJobName(jobName: string): string {
   return `${jobName}-push`;
 }
@@ -76,6 +102,9 @@ export function gitlabAgentEnvironment(jobName: string): string {
 
 /** The remote without the job token GitLab put in its URL. */
 const PLAIN_REMOTE = 'git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"';
+/** The remote's default branch as `origin/HEAD`, fetched while the remote still holds the job token (#5357). */
+const BASE_FETCH =
+  'git remote set-head origin --auto >/dev/null 2>&1 && chant_base="$(git symbolic-ref --short refs/remotes/origin/HEAD)" && git fetch -q --no-tags origin "+refs/heads/${chant_base#origin/}:refs/remotes/$chant_base" || true';
 /** The ledger branch, for the run count and the record. */
 const LEDGER_FETCH = "git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true";
 
@@ -121,15 +150,17 @@ export interface GitlabAgentJobsInput {
 export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string, unknown>; push: Record<string, unknown> } {
   const s = i.settings;
   const dir = i.dir ?? AGENT_DIR;
-  const lines = agentCommandLines("gitlab", i.bin, dir);
+  // #5357: the settings' digest on every line, which a pipeline variable cannot replace.
+  const lines = agentCommandLines("gitlab", i.bin, dir, agentSettingsDigest(s));
   const comment = s.on === "comment";
-  const alert = s.on === "alert";
+  const alert = isFactTrigger(s.on);
+  const signed = AGENT_SIGNED_TRIGGERS.includes(s.on);
   const tags = gitlabTags(i.runner);
   const variables = { ...agentSettingsEnv(s), GIT_DEPTH: "0" };
   const rules = comment ? [{ if: GITLAB_AGENT_RULE }] : alert ? i.alertRules! : i.after!.rules.map((r) => ({ ...(r as Record<string, unknown>), when: "always" }));
   const head = comment ? [agentHeadFetchLine("gitlab", GITLAB_AGENT_PR_VAR)] : [];
   // #5329: the relay key under the name chant reads, when the project keeps it in another variable.
-  const ownKeyVar = alert && s.relayKeyEnv && s.relayKeyEnv !== AGENT_RELAY_KEY_ENV ? s.relayKeyEnv : undefined;
+  const ownKeyVar = signed && s.relayKeyEnv && s.relayKeyEnv !== AGENT_RELAY_KEY_ENV ? s.relayKeyEnv : undefined;
   const relayKey = ownKeyVar ? [`export ${AGENT_RELAY_KEY_ENV}="$${ownKeyVar}"`] : [];
   // A drift agent's job runs whatever the drift check found, and stops here when it found none.
   const driftGate = comment || alert ? [] : [`if [ "\${CHANT_AGENT_DRIFT:-0}" != "1" ]; then echo "no drift, so the agent does not run"; exit 0; fi`];
@@ -146,6 +177,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
       ...driftGate,
       ...head,
       LEDGER_FETCH,
+      BASE_FETCH,
       PLAIN_REMOTE,
       ...i.script,
       // No forge token reaches the model: the decision needs none on GitLab, and the push job checks the merge request.
@@ -153,7 +185,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
       ...relayKey,
       lines.prepare,
       // The model's step holds no relay key.
-      ...(alert ? [["unset", AGENT_RELAY_KEY_ENV, ...(ownKeyVar ? [ownKeyVar] : [])].join(" ")] : []),
+      ...(signed ? [["unset", AGENT_RELAY_KEY_ENV, ...(ownKeyVar ? [ownKeyVar] : [])].join(" ")] : []),
       lines.run,
     ],
     artifacts: { when: "always", paths: [dir], expire_in: AGENT_ARTIFACT_EXPIRY },
@@ -173,6 +205,7 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
       ...(comment ? [] : [`if [ ! -f ${dir}/${AGENT_DECISION_FILE} ]; then echo "the agent did not run"; exit 0; fi`]),
       ...head,
       LEDGER_FETCH,
+      BASE_FETCH,
       PLAIN_REMOTE,
       ...i.script,
       `export CHANT_GITLAB_TOKEN="$${tokenVar}"`,
@@ -191,7 +224,11 @@ export function gitlabAgentHeader(jobName: string, s: AgentSettings, tokenVar = 
       ? `#   ${jobName}: answers ${s.comment} from a pipeline of the default branch started with ${GITLAB_AGENT_PR_VAR}=<iid> and ${GITLAB_AGENT_ASK_VAR}=<ask>`
       : s.on === "alert"
         ? `#   ${jobName}: answers the alerts the relay recorded, in a pipeline its trigger token starts and in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}[-<member>], with the relay key in ${s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV}`
-        : `#   ${jobName}: after the drift check exits ${CHANT_EXIT.drift}, opens or updates a merge request from ${s.branch}`,
+        : s.on === "apply-failed"
+          ? `#   ${jobName}: answers the failed applies recorded under _alerts/, in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}[-<member>], with the relay key in ${s.relayKeyEnv ?? AGENT_RELAY_KEY_ENV}`
+          : s.on === "schedule"
+            ? `#   ${jobName}: runs its task in a schedule with CHANT_SCHEDULED_OP="${s.name}"; opens or updates a merge request from ${s.branch}`
+            : `#   ${jobName}: after the drift check exits ${CHANT_EXIT.drift}, opens or updates a merge request from ${s.branch}`,
     `#     ${gitlabAgentPushJobName(jobName)} pushes with ${tokenVar}: scope it to environment ${gitlabAgentEnvironment(jobName)}, protected and masked; the model's key is ${s.keyEnv}`,
     `#     the fetched head is ${AGENT_HEAD_REF}; runs are limited to ${s.maxRuns ?? "no fixed number of"} a day on the ledger` +
       (s.maxCostUsd !== undefined ? `, and to $${s.maxCostUsd} a day of recorded cost` : ""),

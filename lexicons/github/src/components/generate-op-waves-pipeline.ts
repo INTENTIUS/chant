@@ -192,6 +192,7 @@ import { OIDC_REQUEST_VARS, TRADE_SPEC_ENV, tradeLine, type CloudTradeSpec } fro
 import { GITHUB_DEFAULT_BRANCH_ENV, JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@intentius/chant/ci-job-guard";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { assertPipelineEvidence, evidenceKeyEnv, evidenceKeyless } from "@intentius/chant/ci-evidence-jobs";
+import { opWavesAgentFactsEnv } from "@intentius/chant/ci-agent-triggers";
 import {
   EVIDENCE_SOURCES_ENV,
   OP_WAVE_EVIDENCE_BASE_VAR,
@@ -443,7 +444,8 @@ export function buildGithubOpWavesDoc(
     if (policyStep) later.push({ name: opWavePolicyStepName(job.wave, wave.name), id: OP_WAVE_POLICY_STEP_ID, run: [...(add?.prelude ?? []), opWavePolicyCommand(job).join(" ")].join("\n") });
     // #4870: the key (or #4869 the keyless signing) on that step alone.
     const commandStep = describeJob(job.kind, job.wave, wave.name, job.share, job.group);
-    const commandEnv = { ...(signs ? evidenceKeyEnv(forge, options.evidence!) : {}), ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}), ...(commandToken?.env ?? {}) };
+    // #5357: with agentFacts, a failed wave records its facts for the failed-apply agent: the relay key on this step alone.
+    const commandEnv = { ...(signs ? evidenceKeyEnv(forge, options.evidence!) : {}), ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}), ...(commandToken?.env ?? {}), ...(opWavesAgentFactsEnv(forge, options.agentFacts) ?? {}) };
     later.push({
       name: commandStep,
       ...(policyStep ? { if: `\${{ !cancelled() && (success() || steps.${OP_WAVE_POLICY_STEP_ID}.outcome == 'failure') }}` } : {}),

@@ -143,10 +143,10 @@ import type {
 
 import { emitGitlabFile } from "./ci-jobs";
 import { assertReviewSplit, GITLAB_REVIEW_NOTES_VAR, gitlabReviewJobs, REVIEW_DIR, reviewNoteJobName } from "./review-jobs";
-import { AGENT_ALERT_SCHEDULE, AGENT_DIR, resolveAgentSpec } from "@intentius/chant/ci-agent";
+import { AGENT_ALERT_SCHEDULE, AGENT_DIR, isFactTrigger, resolveAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { TRIGGER_GUARD_RULE, triggerPipelineWarnings } from "./trigger-pipeline-jobs";
-import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabAlertAgentRules, gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
+import { gitlabAgentHeader, gitlabAgentJobs, gitlabAgentPushJobName, gitlabAlertAgentRules, gitlabFactAgentRules,gitlabDriftArtifacts, gitlabDriftRunLines } from "./agent-jobs";
 import { gitlabCommitHeader, gitlabCommitJobs, gitlabCommitPushJobName, gitlabFindingArtifacts, gitlabFindingRunLines } from "./commit-jobs";
 import { COMMIT_DIR, resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { assertScheduledOpCloud, scheduledOpUpdateJobName } from "@intentius/chant/scheduled-op-cloud";
@@ -354,12 +354,15 @@ export function generateGitlabOpPipeline(
       noteJobs.push(pushName);
       continue;
     }
-    // #5329: the alert agent is its own pair of jobs, in a pipeline the relay's trigger token starts and in its schedule.
-    if (spec.agent?.on === "alert") {
+    // #5329, #5357: a fact agent is its own pair of jobs: an alert agent's in a pipeline the relay's trigger token starts, every one's in its schedule.
+    if (spec.agent && isFactTrigger(spec.agent.on)) {
       const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
       const jobName = jobPrefix + ciJobName(spec.name);
-      const trigger = spec.trigger ?? { kind: "cron" as const, schedule: spec.schedule ?? AGENT_ALERT_SCHEDULE };
-      if (trigger.kind !== "cron") throw new Error(`${subject} sets an alert agent, which runs when the relay starts it and on a schedule; give it a cron trigger or none.`);
+      const given = spec.trigger ?? (spec.schedule ? { kind: "cron" as const, schedule: spec.schedule } : undefined);
+      if (spec.agent.on === "schedule" && !given) throw new Error(`${subject} sets a scheduled agent; give it a cron trigger, the schedule it runs on.`);
+      const trigger = given ?? { kind: "cron" as const, schedule: AGENT_ALERT_SCHEDULE };
+      const what = spec.agent.on === "alert" ? "an alert agent, which runs when the relay starts it and on a schedule" : spec.agent.on === "apply-failed" ? "a failed-apply agent, which runs on a schedule" : "a scheduled agent, which runs on its cron";
+      if (trigger.kind !== "cron") throw new Error(`${subject} sets ${what}; give it a cron trigger${spec.agent.on === "schedule" ? "" : " or none"}.`);
       anyCron = true;
       jobs.push({ jobName, op: spec.name, trigger, findingMode: "report" });
       opLines.push(...gitlabAgentHeader(jobName, settings, spec.agent.tokenEnv));
@@ -372,7 +375,7 @@ export function generateGitlabOpPipeline(
         script: [...setupScript, ...beforeScript],
         ...(spec.agent.tokenEnv ? { tokenEnv: spec.agent.tokenEnv } : {}),
         ...(words.bin ? { bin: words.bin } : {}),
-        alertRules: gitlabAlertAgentRules(spec.name, SELECTOR_VAR),
+        alertRules: spec.agent.on === "alert" ? gitlabAlertAgentRules(spec.name, SELECTOR_VAR) : gitlabFactAgentRules(spec.name, SELECTOR_VAR),
       });
       doc[jobName] = agent;
       const pushName = gitlabAgentPushJobName(jobName);

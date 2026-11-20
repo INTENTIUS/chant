@@ -98,7 +98,7 @@ import type {
 } from "@intentius/chant/lexicon";
 import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, opConcurrencyGroup, runSteps, UPLOAD_ARTIFACT } from "./ci-jobs";
 import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs";
-import { AGENT_ALERT_SCHEDULE, resolveAgentSpec } from "@intentius/chant/ci-agent";
+import { AGENT_ALERT_SCHEDULE, isFactTrigger, resolveAgentSpec, type OpAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
 import { agentJobName, agentPushJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
 import { commitJobName, commitPushJobName, findingRunOutputs, findingRunStep, githubCommitJobs } from "./commit-jobs";
@@ -419,13 +419,19 @@ function assertTriggerSupportsMode(name: string, mode: OpFindingMode, trigger: O
 }
 
 /**
- * The alert agent's schedule (#5329): the spec's cron trigger, else
- * {@link AGENT_ALERT_SCHEDULE}. The relay starts the workflow by hand
- * (`workflow_dispatch`); the schedule picks up a start that did not arrive.
+ * A fact agent's schedule (#5329, #5357): the spec's cron trigger, else
+ * {@link AGENT_ALERT_SCHEDULE} for an alert or failed-apply agent. The relay
+ * starts an alert agent's workflow by hand (`workflow_dispatch`); the
+ * schedule picks up a start that did not arrive, and a failed apply's fact.
+ * A scheduled agent names its own cron.
  */
 export function alertAgentTrigger(spec: ScheduledOpSpec): OpTrigger & { kind: "cron" } {
-  const trigger = spec.trigger ?? (spec.schedule ? { kind: "cron" as const, schedule: spec.schedule } : { kind: "cron" as const, schedule: AGENT_ALERT_SCHEDULE });
-  if (trigger.kind !== "cron") throw new Error(`Scheduled Op "${spec.name}" sets an alert agent, which runs when the relay starts it and on a schedule; give it a cron trigger or none.`);
+  const on = (spec.agent as OpAgentSpec | undefined)?.on;
+  const given = spec.trigger ?? (spec.schedule ? { kind: "cron" as const, schedule: spec.schedule } : undefined);
+  if (on === "schedule" && !given) throw new Error(`Scheduled Op "${spec.name}" sets a scheduled agent; give it a cron trigger, the schedule it runs on.`);
+  const trigger = given ?? { kind: "cron" as const, schedule: AGENT_ALERT_SCHEDULE };
+  const what = on === "schedule" ? "a scheduled agent, which runs on its cron" : on === "apply-failed" ? "a failed-apply agent, which runs on a schedule" : "an alert agent, which runs when the relay starts it and on a schedule";
+  if (trigger.kind !== "cron") throw new Error(`Scheduled Op "${spec.name}" sets ${what}; give it a cron trigger${on === "schedule" ? "" : " or none"}.`);
   return trigger;
 }
 
@@ -497,8 +503,8 @@ export function buildGithubOpPipelineDocs(
       });
       continue;
     }
-    // #5329: the alert agent is a workflow of its own, started by the relay's workflow_dispatch and by its schedule.
-    if (spec.agent?.on === "alert") {
+    // #5329, #5357: a fact agent (alert, failed apply, schedule) is a workflow of its own, on workflow_dispatch and its schedule.
+    if (spec.agent && isFactTrigger(spec.agent.on)) {
       const settings = resolveAgentSpec(spec.name, spec.agent, words.product);
       const jobName = ciJobName(spec.name);
       const trigger = alertAgentTrigger(spec);

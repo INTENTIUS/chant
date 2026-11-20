@@ -84,11 +84,13 @@ describe("the drift agent of a workspace member on GitLab", () => {
 
   test("the agent and push jobs read the member's own drift output", () => {
     expect(agent.script.some((l) => l.startsWith("cd "))).toBe(false);
-    expect(agent.script.find((l) => l.includes("agent prepare"))).toBe("chant agent prepare --forge gitlab --output stacks/app/.chant/agent");
-    expect(agent.script.at(-1)).toBe("chant agent run --forge gitlab --output stacks/app/.chant/agent");
+    // #5357: each line ends with the settings' digest.
+    const digest = / --digest sha256:[0-9a-f]{64}$/;
+    expect(agent.script.find((l) => l.includes("agent prepare"))).toMatch(new RegExp(`^chant agent prepare --forge gitlab --output stacks/app/\\.chant/agent${digest.source}`));
+    expect(agent.script.at(-1)).toMatch(new RegExp(`^chant agent run --forge gitlab --output stacks/app/\\.chant/agent${digest.source}`));
     expect(agent.artifacts?.paths).toEqual(["stacks/app/.chant/agent"]);
     expect(push.script[0]).toContain("stacks/app/.chant/agent/decision.json");
-    expect(push.script.at(-1)).toBe("chant agent land --forge gitlab --output stacks/app/.chant/agent");
+    expect(push.script.at(-1)).toMatch(new RegExp(`^chant agent land --forge gitlab --output stacks/app/\\.chant/agent${digest.source}`));
   });
 
   test("the money limit reaches both jobs and the file's header", () => {
@@ -125,5 +127,39 @@ describe("the alert agent on GitLab", () => {
 
   test("never applies, approves or merges", () => {
     expect([...agent.script, ...push.script].join("\n")).not.toMatch(/chant (run|approve)\b|merge_when_pipeline_succeeds|\bterraform apply\b|\bpulumi up\b/);
+  });
+});
+
+// #5357: the failed-apply and scheduled agents, in their schedule or a pipeline of the default branch started by hand.
+describe("the failed-apply and scheduled agents on GitLab", () => {
+  const failed = gen({ name: "chant-apply-failed-agent", agent: { on: "apply-failed" } });
+  const sched = gen({ name: "chant-versions", trigger: { kind: "cron", schedule: "0 7 * * 1" }, agent: { on: "schedule", task: "Raise the pins." } });
+
+  test("run in their schedule or a pipeline of the default branch started by hand, never from a trigger token", () => {
+    const rules = failed.doc["chant-apply-failed-agent"]!.rules!;
+    expect(rules).toEqual([
+      { if: '$CI_PIPELINE_SOURCE == "schedule" && $CHANT_SCHEDULED_OP == "chant-apply-failed-agent"' },
+      { if: '$CI_PIPELINE_SOURCE =~ /^(web|api)$/ && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CHANT_SCHEDULED_OP == "chant-apply-failed-agent"' },
+    ]);
+    expect(failed.yaml).not.toContain("trigger token");
+    expect(() => gen({ name: "x", agent: { on: "schedule", task: "t" } })).toThrow(/cron trigger/);
+  });
+
+  test("every command line carries the settings' digest, so a pipeline variable cannot widen the agent", () => {
+    for (const { doc } of [failed, sched]) {
+      const lines = Object.values(doc).flatMap((j) => j?.script ?? []).filter((l) => typeof l === "string" && l.includes("chant agent "));
+      expect(lines.length).toBeGreaterThanOrEqual(3);
+      for (const l of lines) expect(l).toMatch(/--digest sha256:[0-9a-f]{64}/);
+    }
+    const script = failed.doc["chant-apply-failed-agent"]!.script;
+    expect(script.findIndex((l) => l.includes("set-head origin"))).toBeLessThan(script.findIndex((l) => l.includes("git remote set-url origin")));
+  });
+
+  test("a scheduled agent holds no relay key; neither applies, approves or merges", () => {
+    expect(sched.yaml).not.toContain("CHANT_RELAY_KEY");
+    for (const { doc } of [failed, sched]) {
+      const all = Object.values(doc).flatMap((j) => j?.script ?? []).join("\n");
+      expect(all).not.toMatch(/chant (run|approve)\b|merge_when_pipeline_succeeds|\bterraform apply\b|\bpulumi up\b/);
+    }
   });
 });

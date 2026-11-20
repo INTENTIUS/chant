@@ -1220,6 +1220,16 @@ export interface OpWavesPipelineOptions
    */
   recordPlans?: OpWavesRecordPlansInputs;
   /**
+   * The failed-apply agent's facts (#5357): each wave job's command step of
+   * a pipeline that is not split gets `CHANT_AGENT_FACTS=apply-failed` and
+   * the relay key from `relayKeyEnv`'s secret (GitHub, Forgejo) or
+   * variable (GitLab), default `CHANT_RELAY_KEY`, so a failed wave records
+   * its facts for the agent beside its triage
+   * (`opWavesAgentFactsEnv`, ./ci-agent-triggers.ts). Absent: no fact is
+   * recorded.
+   */
+  agentFacts?: { relayKeyEnv?: string };
+  /**
    * The pipeline's runner identity (#4870): the secret (GitHub, Forgejo) or
    * CI/CD variable (GitLab) holding the runner key `.chant/trust.json`
    * lists. Each deciding wave job's `chant run wave` step gets it as

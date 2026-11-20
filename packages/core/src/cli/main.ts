@@ -1381,6 +1381,10 @@ Component release ledger + status:
                             runs the model command with no forge token, land
                             pushes the change, opens or updates the pull
                             request and records the run (--forge <kind>)
+  agent apply-failed       A product's apply job records a failed apply for
+                            the failed-apply agent (#5357), with
+                            CHANT_AGENT_FACTS=apply-failed and the relay key
+                            (--op <name> --from <log> [--member <m>])
   commit prepare|run|land  The commit jobs (#4722) the Op generator writes for
                             a spec's commit: prepare decides from the comment or
                             the failed check, the ledger's run count and the
@@ -2210,6 +2214,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "agent prepare", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "agent run", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "agent land", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
+  // #5357: a product's own apply job records a failed apply for the failed-apply agent.
+  { name: "agent apply-failed", handler: async (ctx) => (await import("./handlers/agent")).runAgentCommandLine(ctx) },
   { name: "commit prepare", handler: async (ctx) => (await import("./handlers/commit")).runCommitCommandLine(ctx) },
   { name: "commit run", handler: async (ctx) => (await import("./handlers/commit")).runCommitCommandLine(ctx) },
   { name: "commit land", handler: async (ctx) => (await import("./handlers/commit")).runCommitCommandLine(ctx) },

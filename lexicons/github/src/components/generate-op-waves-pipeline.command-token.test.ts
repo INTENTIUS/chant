@@ -88,3 +88,14 @@ describe("the wave jobs' command token on GitHub (#5044)", () => {
     expect(() => jobsOf({ ...base, commandToken: { permissions: { actions: "admin" } as never } })).toThrow(/give read or write/);
   });
 });
+
+describe("the wave jobs' failed-apply facts on GitHub (#5357)", () => {
+  test("with agentFacts, each command step turns them on and holds the relay key; without it, none does", () => {
+    const on = jobsOf({ ...base, agentFacts: { relayKeyEnv: "OPS_RELAY" } });
+    for (const name of ["wave-1-canary", "wave-2-wide-decide", "wave-2-wide-share-1"]) {
+      expect(commandOf(on[name]!).env, name).toMatchObject({ CHANT_AGENT_FACTS: "apply-failed", CHANT_RELAY_KEY: "${{ secrets.OPS_RELAY }}" });
+      for (const step of on[name]!.steps) if (step !== commandOf(on[name]!)) expect(step.env?.CHANT_RELAY_KEY, `${name}: ${step.name}`).toBeUndefined();
+    }
+    expect(JSON.stringify(jobsOf(base))).not.toContain("CHANT_AGENT_FACTS");
+  });
+});

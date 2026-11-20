@@ -178,6 +178,7 @@ import { JOB_GUARD_ENV, jobGuardLine, jobGuardSpec, opWaveJobLabel } from "@inte
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { resolveProductWords } from "@intentius/chant/ci-product-words";
 import { assertPipelineEvidence, evidenceIdTokens, evidenceKeyEnv, evidenceKeyless, GITLAB_EVIDENCE_ENVIRONMENT } from "@intentius/chant/ci-evidence-jobs";
+import { opWavesAgentFactsEnv } from "@intentius/chant/ci-agent-triggers";
 import {
   EVIDENCE_SOURCES_ENV,
   opWaveEvidenceLines,
@@ -466,6 +467,8 @@ export function generateGitlabOpWavesPipeline(spec: OpWavesSpec, options: OpWave
           ...(evidence?.commandMode ? { [WAVE_EVIDENCE_ENV]: evidence.commandMode } : {}),
           // #5335: with wave-refused: summary, the summary's settings; the model's key is the CI/CD variable they name.
           ...summaryEnv,
+          // #5357: with agentFacts, a failed wave records its facts for the failed-apply agent.
+          ...(opWavesAgentFactsEnv("gitlab", options.agentFacts) ?? {}),
         },
         rules: waveRules,
         ...(needs.length > 0 ? { needs } : {}),

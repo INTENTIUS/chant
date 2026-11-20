@@ -1921,8 +1921,16 @@ async function respondApply(ctx: CommandContext, p: Prepared, report: PrReport):
       console.error(formatWarning({ message: `no response was posted: ${given.error}` }));
       return;
     }
-    const { respondPrApply } = await import("../../ci-respond-run");
+    const { respondPrApply, triageOfPrReport } = await import("../../ci-respond-run");
     await respondPrApply(p.forge, report, given);
+    // #5357: with CHANT_AGENT_FACTS=apply-failed, a failed apply records its facts for the failed-apply agent, beside its triage.
+    const { agentFactsOn, recordApplyFailed } = await import("../../ci-agent-triggers");
+    const failed = agentFactsOn(process.env, "apply-failed") ? triageOfPrReport(report) : undefined;
+    if (failed) {
+      const { activeProductWords } = await import("../../ci-product-words");
+      const line = await recordApplyFailed(failed, { op: report.op, product: activeProductWords().product });
+      if (line) console.error(line);
+    }
   } catch (err) {
     console.error(formatWarning({ message: `the apply's responses were not posted: ${err instanceof Error ? err.message : String(err)}` }));
   }

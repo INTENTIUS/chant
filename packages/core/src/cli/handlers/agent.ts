@@ -19,8 +19,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   AGENT_DIR,
+  AGENT_SIGNED_TRIGGERS,
   AgentError,
+  agentDigestProblem,
   agentSettingsFromEnv,
+  checkAgentBase,
   landAgentChange,
   prepareAgentRun,
   runAgent,
@@ -34,7 +37,7 @@ import { pushLifecycle } from "../../lifecycle/git";
 import { resolveCiRun } from "../../lifecycle/release-ledger";
 import { COMMENT_ALLOW_TOKEN_ENV, type CommentAllowReads } from "../../ci-comment-allow";
 import { FORGE_KINDS, forgeFromEnv, forgeTargetFromEnv, type ForgeKind, type PrForge } from "../../pr-forge";
-import { formatError, formatInfo } from "../format";
+import { formatError, formatInfo, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
 const USAGE = "chant agent prepare|run|land --forge github|gitlab|forgejo [--output <dir>]";
@@ -77,8 +80,39 @@ function workDir(name: string): string {
   return join(process.env.RUNNER_TEMP || process.env.TMPDIR || tmpdir(), name);
 }
 
+/**
+ * `chant agent apply-failed --op <name> --from <log> [--member <m>] [--label <text>]`
+ * (#5357): a product's own apply job records its failure as a fact for the
+ * failed-apply agent, when `CHANT_AGENT_FACTS` names `apply-failed` and the
+ * job holds `CHANT_RELAY_KEY`. The log's tail is the error. It never fails
+ * the job: the apply's own exit code stands.
+ */
+async function recordApplyFailedLine(ctx: CommandContext): Promise<number> {
+  const words = activeProductWords();
+  const op = ctx.args.op;
+  if (!op || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(op)) return fail("agent apply-failed needs --op <name>, the apply that failed");
+  const { APPLY_FAILED_ERROR_MAX, recordApplyFailed } = await import("../../ci-agent-triggers");
+  let log = "";
+  if (ctx.args.migrateFrom) {
+    try {
+      log = readFileSync(resolve(ctx.args.migrateFrom), "utf8");
+    } catch (e) {
+      console.error(formatWarning({ message: `the apply's log could not be read: ${(e as Error).message}` }));
+    }
+  }
+  const error = log.length > APPLY_FAILED_ERROR_MAX ? log.slice(-APPLY_FAILED_ERROR_MAX) : log;
+  const members = ctx.args.members ?? [];
+  const line = await recordApplyFailed(
+    { label: ctx.args.label ?? `the ${words.verbs.apply[0]} of ${op}`, exitCode: 1, members: members.map((member) => ({ member, ...(error ? { error } : {}) })), ...(members.length === 0 && error ? { error } : {}) },
+    { op, product: words.product },
+  );
+  console.error(line ?? `${words.product}: CHANT_AGENT_FACTS does not name apply-failed, so nothing was recorded`);
+  return CHANT_EXIT.done;
+}
+
 export async function runAgentCommandLine(ctx: CommandContext): Promise<number> {
   const action = ctx.args.path;
+  if (action === "apply-failed") return recordApplyFailedLine(ctx);
   if (action !== "prepare" && action !== "run" && action !== "land") return fail(action ? `agent ${action} is not one of prepare, run or land` : "agent needs an action: prepare, run or land");
   const kind = ctx.args.forge;
   if (!kind || !(FORGE_KINDS as readonly string[]).includes(kind)) return fail(`--forge is one of ${FORGE_KINDS.join(", ")}`);
@@ -90,17 +124,26 @@ export async function runAgentCommandLine(ctx: CommandContext): Promise<number> 
   } catch (e) {
     return fail((e as Error).message);
   }
+  // #5357: the settings are the default branch's: the variables match the digest on the command line, and the job's commit is on the default branch.
+  const digestProblem = agentDigestProblem(settings, ctx.args.digest);
+  if (digestProblem) return fail(digestProblem);
+  if (ctx.args.digest === undefined) console.error(formatWarning({ message: `${words.product} agent: the command line carries no --digest, so the variables are not checked against the default branch's settings; generate the agent's workflow again` }));
+  if (action !== "run") {
+    const at = checkAgentBase(git, process.env, eventOf());
+    if (!at.ok) return fail(at.reason);
+  }
   const readRuns = async () => (await readRunLedger(settings.env, settings.name)).records;
   const forge = (): PrForge => forgeFromEnv(kind as ForgeKind);
-  // #5329: the alert facts under _alerts/ on the ledger branch the checkout fetched.
-  const readFacts = async () => (await import("../../agent-facts")).readAgentFacts("alert");
+  // #5329, #5357: the trigger's facts under _alerts/ on the ledger branch the checkout fetched. A schedule's fact is the run itself.
+  const readFacts = async () => (await import("../../agent-facts")).readAgentFacts(settings.on);
+  const signed = AGENT_SIGNED_TRIGGERS.includes(settings.on);
 
   try {
     if (action === "prepare") {
       // INTENTIUS/terragucci#1461: team membership is read with the pipeline's team token when it has one, else the job's.
       const teams = settings.commentAllow && settings.on === "comment" && kind !== "gitlab" ? await teamReadsFor(kind as "github" | "forgejo") : undefined;
-      const d = await prepareAgentRun({ settings, words, dir, env: process.env, event: eventOf(), forge: settings.on === "comment" && kind !== "gitlab" ? forge() : undefined, ...(teams ? { teams } : {}), readRuns, ...(settings.on === "alert" ? { readFacts } : {}), git, now: new Date() });
-      console.error(formatInfo(d.go ? `${words.product} agent: runs on ${d.sha?.slice(0, 12)}${d.pr ? ` for #${d.pr}` : ""}${d.facts ? ` for ${d.facts.length} alert${d.facts.length === 1 ? "" : "s"}${d.member ? ` of ${d.member}` : ""}` : ""}` : `${words.product} agent: does not run: ${d.reason}`));
+      const d = await prepareAgentRun({ settings, words, dir, env: process.env, event: eventOf(), forge: settings.on === "comment" && kind !== "gitlab" ? forge() : undefined, ...(teams ? { teams } : {}), readRuns, ...(signed ? { readFacts } : {}), git, now: new Date() });
+      console.error(formatInfo(d.go ? `${words.product} agent: runs on ${d.sha?.slice(0, 12)}${d.pr ? ` for #${d.pr}` : ""}${d.facts ? ` for ${d.facts.length} ${settings.on} fact${d.facts.length === 1 ? "" : "s"}${d.member ? ` of ${d.member}` : ""}` : ""}` : `${words.product} agent: does not run: ${d.reason}`));
       return CHANT_EXIT.done;
     }
     if (action === "run") {
@@ -123,7 +166,7 @@ export async function runAgentCommandLine(ctx: CommandContext): Promise<number> 
         git(["push", "-q", ...(lease ? [`--force-with-lease=${lease}`] : []), "origin", `HEAD:${ref}`], { cwd });
       },
       readRuns,
-      ...(settings.on === "alert" ? { readFacts } : {}),
+      ...(signed ? { readFacts } : {}),
       record: async (input) => {
         await appendRunRecord(input);
         await pushLifecycle();
