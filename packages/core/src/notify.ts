@@ -43,8 +43,9 @@ export const NOTIFY_SCHEMA_ID = "https://intentius.io/chant/schemas/notify/v1/no
  * What happened. The `ci.` events come from `chant ci tick` (#4645): a branch red after its retry, a bisect's culprit, the branch green again,
  * and a branch with no green commit for `staleAfter` hours (#4678);
  * and from `chant ci quarantine report` (#4677): a quarantined test passed in the scheduled run.
+ * `urgent` (#5355): a promote passed a stage's gate on its urgent rule.
  */
-export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale"] as const;
+export const NOTIFY_EVENTS = ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent"] as const;
 export type NotifyEventKind = (typeof NOTIFY_EVENTS)[number];
 
 /** Where the run is: the CI run's page, the forge, the repository and commit. */
@@ -198,6 +199,7 @@ const HEADLINE: Record<NotifyEventKind, string> = {
   "ci.green": "is green again",
   "ci.quarantine-passed": "passed a quarantined test",
   "ci.stale": "has no green commit",
+  urgent: "was promoted on its urgent rule",
 };
 
 /** The first line of every chat message: `<source>: <summary>`, or what happened to what when there is no summary. */

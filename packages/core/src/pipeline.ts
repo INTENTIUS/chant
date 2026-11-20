@@ -46,6 +46,11 @@ export const PIPELINE_FLOOR = NEXT_RELEASE;
 export const STAGE_GRAPH_FLOOR = NEXT_RELEASE;
 
 /**
+ * The first chant that pauses and resumes a pipeline stage and has its urgent path (#5355): `chant stage pause` and `resume` on the stage's ledger, a paused stage refusing promotion with exit 3, a stage's `pauseAfterRollback`, and a gate's `urgent` rule that `chant components promote --urgent` passes on one proven approval from its role, with the `urgent` notify event.
+ */
+export const STAGE_PAUSE_URGENT_FLOOR = NEXT_RELEASE;
+
+/**
  * The declaration, typed. It returns its argument: the fold reads the
  * argument's text, and a run that imports the file gets the same object.
  */
@@ -112,6 +117,31 @@ export {
   type StageLogPort,
   type StageQueue,
 } from "./lifecycle/stage-log";
+export {
+  pipelineUrgentGate,
+  pipelineUrgentUpstream,
+  urgentGateName,
+  urgentUpstreamStages,
+  urgentUpstreamStop,
+  type PipelineUrgentOutcome,
+} from "./pipeline/promote";
+export {
+  gitStageLedgerPort,
+  memoryStageLedgerPort,
+  parseStagePauseLines,
+  pauseLine,
+  releaseMissingIn,
+  resumeLine,
+  stagePaused,
+  stagePausedLine,
+  supersededBy,
+  waitingLine,
+  waitingReleases,
+  STAGE_LEDGER_FILE,
+  type StageLedgerPort,
+  type StagePauseLine,
+  type StageRelease,
+} from "./pipeline/stage-ledger";
 export {
   checkPipelineFile,
   pipelineFromConfig,

@@ -8,7 +8,7 @@
   "properties": {
     "schema": { "const": "chant.notify/v1" },
     "id": { "type": "string", "minLength": 1, "description": "The same for every send of one event about one digest (else drift fingerprint, else commit), so a receiver can drop a repeat; random when there is none. The delivery header carries it too." },
-    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale"], "description": "The ci. events come from chant ci tick (#4645, ci.stale #4678), and ci.quarantine-passed from chant ci quarantine report (#4677), and carry ci." },
+    "event": { "enum": ["waiting", "refused", "failed", "drift", "ci.red", "ci.culprit", "ci.green", "ci.quarantine-passed", "ci.stale", "urgent"], "description": "The ci. events come from chant ci tick (#4645, ci.stale #4678), and ci.quarantine-passed from chant ci quarantine report (#4677), and carry ci. urgent (#5355): a promote passed a stage's gate on its urgent rule." },
     "at": { "type": "string", "description": "When it was sent, ISO 8601 UTC." },
     "source": { "type": "string", "minLength": 1, "description": "The product that sent it: chant, terragucci, sql-yodeler." },
     "project": { "type": "string", "description": "What the run belongs to: the repository, or a name the product gives." },

@@ -75,10 +75,11 @@ import { withComponentEndpoint } from "../component-endpoint";
 import { redeployLine, releaseRollbackLine, rollbackTarget, unsettledComponents } from "../../lifecycle/mixed-environment";
 import { actorFromEnv } from "../../actor";
 import { promoteBase, readPipelineAt } from "../../pipeline/read";
-import { pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, promotedDigest } from "../../pipeline/promote";
+import { pipelinePromoteSource, pipelineStageEntry, pipelineStageFinished, pipelineUrgentUpstream, promotedDigest, urgentUpstreamStop, type PipelinePromoteStop } from "../../pipeline/promote";
+import { gitStageLedgerPort, pauseLine, releaseMissingIn, stagePaused, stagePausedLine, supersededBy, waitingLine, type StageLedgerPort } from "../../pipeline/stage-ledger";
 
 const PROMOTE_USAGE =
-  "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest> [--plan-only]] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
+  "chant components promote --to <env> [--from <env>] [--allow-skip] [--release <label|digest> [--plan-only]] [--urgent --reason <text>] [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--wave-gate <gate>] [--resume <file>] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> (--component <name> [--digest <sha256:...>] | --release <label|digest>) [--dry-run] [--json]";
 const REDEPLOY_USAGE =
@@ -1057,11 +1058,19 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   // stages, holds and freezes them, and gates each promotion and each skip.
   const pipeline = readPromotePipeline(project.projectPath, to);
   if (typeof pipeline === "number") return pipeline;
+  // #5355: the urgent path is a pipeline stage's rule, for one release, with a reason on the record.
+  if (args.urgent) {
+    const missing = !pipeline ? "--urgent passes a pipeline stage's urgent rule, and this member's pipeline has no stage " + JSON.stringify(to) : !args.release ? "--urgent promotes one release: it needs --release <label|digest>" : !args.reason ? "--urgent needs --reason <text>, which the stage's ledger records" : undefined;
+    if (missing) {
+      console.error(formatError({ message: missing, hint: PROMOTE_USAGE }));
+      return 1;
+    }
+  }
   let skipped: import("../../pipeline/spec").PipelineStage[] = [];
   let upstreams: string[] | undefined;
   let from: string | undefined;
   if (pipeline) {
-    const source = pipelinePromoteSource({ spec: pipeline, to, ...(args.migrateFrom ? { from: args.migrateFrom } : {}), ...(args.allowSkip ? { allowSkip: true } : {}), now: new Date() });
+    const source = pipelinePromoteSource({ spec: pipeline, to, ...(args.migrateFrom ? { from: args.migrateFrom } : {}), ...(args.allowSkip ? { allowSkip: true } : {}), ...(args.urgent ? { urgent: true } : {}), now: new Date() });
     if (source && "exitCode" in source) {
       console.error(formatError({ message: `${source.message}${source.code ? ` [${source.code}]` : ""}`, ...(source.hint ? { hint: source.hint } : {}) }));
       return source.exitCode;
@@ -1146,6 +1155,32 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     console.error(formatError({ message: plan.error, hint: PROMOTE_USAGE }));
     return 1;
   }
+  // #5355: a paused stage refuses with exit 3 and records the release that waited; a release a resume superseded is refused.
+  const stageDigest = under?.release.releaseDigest ?? promotedDigest(plan.items);
+  const stagePort = gitStageLedgerPort();
+  if (pipeline) {
+    const stopped = await pausedOrSuperseded({ spec: pipeline, to, port: stagePort, digest: stageDigest, label: under?.label ?? null, by: who.actor ?? "unknown", record: !args.dryRun });
+    if (stopped) {
+      console.error(formatError({ message: `${stopped.message}${stopped.code ? ` [${stopped.code}]` : ""}`, ...(stopped.hint ? { hint: stopped.hint } : {}) }));
+      return stopped.exitCode;
+    }
+  }
+  // #5355: the urgent path takes only a release that succeeded in every stage upstream of the target.
+  if (pipeline && args.urgent && under) {
+    const { readDeployOutcomes } = await import("../../lifecycle/deploy-outcome");
+    const components = plan.items.map((i) => i.component);
+    const missing = await pipelineUrgentUpstream({
+      spec: pipeline,
+      to,
+      missingIn: async (stage) =>
+        releaseMissingIn({ records: (await readLedger(stage)).filter((r) => r.env === stage), outcomes: await readDeployOutcomes(stage).catch(() => []), releaseDigest: under!.release.releaseDigest, commit: under!.release.commit, components }),
+    });
+    if (missing.length > 0) {
+      const stop = urgentUpstreamStop(under.label ?? under.release.releaseDigest, missing);
+      console.error(formatError({ message: `${stop.message} [${stop.code}]`, ...(stop.hint ? { hint: stop.hint } : {}) }));
+      return stop.exitCode;
+    }
+  }
   // #5324: the skipped stages' gates, then the stage's own, bound to the release (or the digests promoted).
   // #5353: a stage that follows several opens once the release applied in each, and a queued stage takes one release at a time.
   let entered: import("../../lifecycle/stage-log").StageLine | undefined;
@@ -1166,6 +1201,7 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
       ...(firstStageCommits ? { firstStageCommits } : {}),
       port: gitGateLedgerPort(),
       log,
+      ...(args.urgent ? { urgent: true } : {}),
       ...(who.actor ? { actor: who.actor } : {}),
       ...(await getHeadCommit().then((sha) => (sha ? { gitSha: sha } : {}), () => ({}))),
       now: new Date(),
@@ -1180,6 +1216,8 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     }
     for (const line of gates.lines) console.error(formatInfo(line));
     entered = gates.entered;
+    // #5355: an urgent entry is marked on the stage's ledger and told to the pipeline's notify.
+    if (gates.urgent && under) await recordUrgent({ spec: pipeline, to, port: stagePort, by: who.actor ?? "unknown", reason: args.reason!, release: { digest: under.release.releaseDigest, label: under.label }, approval: gates.urgent.approval, role: gates.urgent.role });
   }
   const { withStageReadVariables } = await import("../../pipeline/artifacts");
   const code = await withStageReadVariables(readVariables, () => deployPlan(ctx, "promote", plan, project, who.actor, promotionRecord, under));
@@ -1249,6 +1287,77 @@ async function promoteProof(projectPath: string): Promise<import("../../pipeline
 }
 
 /**
+ * The stop a stage's ledger puts on a promote (#5355): a pause, which exits 3
+ * and records the release as waiting (unless `record` is false, as on a dry
+ * run), or a resume that superseded this release. Undefined when it goes on.
+ */
+async function pausedOrSuperseded(input: { spec: import("../../pipeline/spec").PipelineSpec; to: string; port: StageLedgerPort; digest: string; label: string | null; by: string; record: boolean }): Promise<PipelinePromoteStop | undefined> {
+  const lines = await input.port.read(input.spec.name, input.to);
+  const pause = stagePaused(lines);
+  if (pause) {
+    if (input.record) await input.port.append(waitingLine({ pipeline: input.spec.name, stage: input.to, by: input.by, release: { digest: input.digest, label: input.label }, now: new Date() }));
+    return {
+      exitCode: 3,
+      code: "pipeline-stage-paused",
+      message: `${stagePausedLine(pause)}${input.record ? `; release ${input.label ?? input.digest} waits` : ""}`,
+      hint: `chant stage resume ${input.to} lets the newest waiting release in.`,
+    };
+  }
+  const resume = supersededBy(lines, input.digest);
+  if (resume) {
+    const admits = resume.admits ? resume.admits.label ?? resume.admits.digest : "a newer release";
+    return {
+      exitCode: 1,
+      code: "pipeline-release-superseded",
+      message: `release ${input.label ?? input.digest} waited while stage "${input.to}" was paused, and the resume at ${resume.timestamp} let ${admits} in instead`,
+      hint: `Promote ${admits}: chant components promote --to ${input.to} --release ${admits}`,
+    };
+  }
+  return undefined;
+}
+
+/** Mark an urgent promote on the stage's ledger and tell the pipeline's notify (#5355). */
+async function recordUrgent(input: {
+  spec: import("../../pipeline/spec").PipelineSpec;
+  to: string;
+  port: StageLedgerPort;
+  by: string;
+  reason: string;
+  release: { digest: string; label: string | null };
+  approval: import("../../lifecycle/gate-ledger").GateResolutionRecord;
+  role: string;
+}): Promise<void> {
+  const now = new Date();
+  const pushed = await input.port.append({
+    version: 1,
+    kind: "urgent",
+    pipeline: input.spec.name,
+    stage: input.to,
+    by: input.by,
+    reason: input.reason,
+    timestamp: now.toISOString(),
+    release: input.release,
+    approval: { by: input.approval.resolvedBy, at: input.approval.timestamp, role: input.role, ...(input.approval.note ? { note: input.approval.note } : {}) },
+  });
+  if (!pushed.pushed) console.error(formatWarning({ message: `the urgent promote is recorded locally and did not reach the remote${pushed.pushWarning ? `: ${pushed.pushWarning}` : ""}` }));
+  const { makeNotifyEvent, sendNotify } = await import("../../notify");
+  const name = input.release.label ?? input.release.digest;
+  await sendNotify(
+    input.spec.defaults?.notify,
+    makeNotifyEvent({
+      source: "chant",
+      event: "urgent",
+      project: input.spec.name,
+      environment: input.to,
+      summary: `release ${name} promoted into ${input.to} on its urgent rule, approved by ${input.approval.resolvedBy} (${input.role}), promoted by ${input.by}: ${input.reason}`,
+      digest: input.release.digest,
+      reason: input.reason,
+      detail: { urgent: true, stage: input.to, release: input.release, approvedBy: input.approval.resolvedBy, role: input.role, promotedBy: input.by },
+    }, { now }),
+  );
+}
+
+/**
  * The member's folded pipeline as the default branch has it (#5324), when it
  * has a stage `to`; undefined otherwise, and the member's `environments`
  * order applies as before. A pipeline at base that does not fold refuses
@@ -1311,9 +1420,36 @@ export async function runComponentsRollback(ctx: CommandContext): Promise<number
       "Roll back to a release cut from a green commit; `chant release list` marks the revoked releases.",
     );
     if (typeof under === "number") return under;
-    return deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord, under);
+    return afterRollback(ctx, project.projectPath, env, who.actor, { digest: under.release.releaseDigest, label: under.label }, await deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord, under));
   }
-  return deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord);
+  const back = item?.source.releaseDigest;
+  return afterRollback(ctx, project.projectPath, env, who.actor, back ? { digest: back, label: null } : undefined, await deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord));
+}
+
+/**
+ * A rollback that finished pauses its stage (#5355) when the member's
+ * pipeline at base sets `pauseAfterRollback` on it, and says so, so the next
+ * release waits for `chant stage resume`. A dry run, or a rollback that did
+ * not finish, pauses nothing. Returns the rollback's exit code.
+ */
+async function afterRollback(ctx: CommandContext, projectPath: string, env: string, actor: string | undefined, release: { digest: string; label: string | null } | undefined, exitCode: number): Promise<number> {
+  if (exitCode !== 0 || ctx.args.dryRun) return exitCode;
+  const base = promoteBase(projectPath);
+  const read = base ? readPipelineAt(base, projectPath) : undefined;
+  if (read?.status !== "folded") return exitCode;
+  const pipeline = read.spec;
+  const stage = pipeline.stages.find((s) => s.name === env);
+  if (!stage?.pauseAfterRollback) return exitCode;
+  const port = gitStageLedgerPort();
+  const line = pauseLine({ pipeline: pipeline.name, stage: env, by: actor ?? "unknown", lines: await port.read(pipeline.name, env), now: new Date(), cause: "rollback", ...(release ? { release } : {}) });
+  if ("refused" in line) {
+    console.error(formatInfo(`stage ${env} stays paused: ${line.refused}`));
+    return exitCode;
+  }
+  const pushed = await port.append(line);
+  console.error(formatInfo(`paused stage ${env} after the rollback: a promote into it exits 3 until chant stage resume ${env}`));
+  if (!pushed.pushed) console.error(formatWarning({ message: `the pause is recorded locally and did not reach the remote${pushed.pushWarning ? `: ${pushed.pushWarning}` : ""}` }));
+  return exitCode;
 }
 
 /**
@@ -1349,7 +1485,7 @@ async function runReleaseRollback(ctx: CommandContext, env: string, ref: string,
     console.error(formatError({ message: plan.error, hint: ROLLBACK_USAGE }));
     return 1;
   }
-  return deployPlan(ctx, "rollback", plan, project, actor, rollbackRecord, under);
+  return afterRollback(ctx, project.projectPath, env, actor, { digest: under.release.releaseDigest, label: under.label }, await deployPlan(ctx, "rollback", plan, project, actor, rollbackRecord, under));
 }
 
 export async function runComponentsRedeploy(ctx: CommandContext): Promise<number> {

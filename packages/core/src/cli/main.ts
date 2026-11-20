@@ -506,6 +506,12 @@ Pipeline:
                         --from reads another repository's chant/lifecycle
   pipeline release-of <commit>
                         Print the digest of the release cut from a commit
+  stage pause <stage> [--reason <text>]
+                        Pause a stage: a promote into it exits 3 and its
+                        release waits; one applying now finishes
+  stage resume <stage> [--reason <text>]
+                        Resume a paused stage; the newest release that
+                        waited is the one that enters
 
 Releases:
 ${releaseHelp()}
@@ -1495,13 +1501,17 @@ Component release ledger + status:
                              it applies; --wave-gate <gate> checks each wave
                              at <gate>-wave-<k>; a stop writes --resume <file>;
                              --plan-only plans and stores the release's change
-                             set and deploys nothing, #4037)
+                             set and deploys nothing, #4037; --urgent
+                             --release <label> --reason <text> passes a
+                             pipeline stage's gate on its urgent rule, #5355)
   components rollback <env> Redeploy an earlier release of an environment
                             from its recorded digest (--component <name>
                             [--digest <sha256:...>]; defaults to the release
                             before the current one; --dry-run prints the plan).
                             --release <label|digest> restores every component
-                            of that release through the release gate (#4035)
+                            of that release through the release gate (#4035);
+                            a pipeline stage with pauseAfterRollback is
+                            paused once it finishes (#5355)
   components redeploy <env> Redeploy the release an environment's ledger
                             records as current, after a deploy that failed
                             partway (--component <name> [--digest <sha256:...>];
@@ -2277,6 +2287,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "pipeline artifacts", handler: async (ctx) => (await import("./handlers/pipeline-artifacts")).runPipelineArtifacts(ctx) },
   { name: "pipeline release-of", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/pipeline-artifacts")).runPipelineReleaseOf(ctx) },
   { name: "pipeline", runsNoConfig: true, handler: async () => (await import("./handlers/pipeline")).runPipelineUnknown() },
+  // #5355: pause and resume a stage of the member's pipeline.
+  { name: "stage pause", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/stage")).runStagePause(ctx) },
+  { name: "stage resume", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/stage")).runStageResume(ctx) },
+  { name: "stage", runsNoConfig: true, handler: async () => (await import("./handlers/stage")).runStageUnknown() },
   { name: "workspace", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceUnknown(ctx) },
 ];
 
