@@ -542,14 +542,17 @@ export const readCostEstimate: (format: OpWaveCostFormat, stdout: string) => Cos
 /** The engine's plan document a capability's artifact names (`artifact.planJson`), when it names one that exists. */
 export const planJsonOf: (artifact: unknown, cwd: string) => string | undefined = planJsonPath;
 
-/** Price each run that changes something (#4545), with the pull request's estimator (`../cost-estimate.ts`, #5334). A run with no estimate says why. */
+/**
+ * Price each run that changes something (#4545), with the pull request's estimator (`../cost-estimate.ts`, #5334). A run with no estimate says why.
+ * A run's `env` is the one its product's run hooks gave it (#5433): `redactEnv` and `dropEnv` read their values there as well as in the job's.
+ */
 export function opWaveCosts(
   hold: OpWaveCostHold,
-  runs: ReadonlyArray<{ target: string; plan: string; artifact?: unknown; empty: boolean }>,
+  runs: ReadonlyArray<{ target: string; plan: string; artifact?: unknown; empty: boolean; env?: Record<string, string> }>,
   cwd: string,
   exec?: GatePolicyExec,
 ): OpWaveRunCost[] {
-  const priced = priceRuns(hold, runs.map((r) => ({ member: r.target, plan: r.plan, artifact: r.artifact, empty: r.empty })), cwd, exec);
+  const priced = priceRuns(hold, runs.map((r) => ({ member: r.target, plan: r.plan, artifact: r.artifact, empty: r.empty, ...(r.env ? { env: r.env } : {}) })), cwd, exec);
   return priced.map(({ member, ...rest }) => ({ target: member, ...rest }) as OpWaveRunCost);
 }
 

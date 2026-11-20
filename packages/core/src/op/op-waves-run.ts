@@ -1587,11 +1587,12 @@ function costVerdictOf(
   steps: ReadonlyMap<string, OpWaveStepPlan> | undefined,
   cwd: string,
   exec?: GatePolicyExec,
+  runEnv?: ReadonlyMap<string, Record<string, string>>,
 ) {
-  return opWaveCostVerdict(hold, waveCostsOf(hold, spec, k, members, steps, cwd, exec));
+  return opWaveCostVerdict(hold, waveCostsOf(hold, spec, k, members, steps, cwd, exec, runEnv));
 }
 
-/** Each run's estimate under a wave's cost hold (#4545). */
+/** Each run's estimate under a wave's cost hold (#4545), with the environment its run hooks gave it (#5433). */
 function waveCostsOf(
   hold: NonNullable<OpWaveHolds["cost"]>,
   spec: OpWavesSpec,
@@ -1600,8 +1601,12 @@ function waveCostsOf(
   steps: ReadonlyMap<string, OpWaveStepPlan> | undefined,
   cwd: string,
   exec?: GatePolicyExec,
+  runEnv?: ReadonlyMap<string, Record<string, string>>,
 ): OpWaveRunCost[] {
-  const runs = members.map((m) => ({ target: m.member, plan: opWavePlanPath(spec, k, m.member), artifact: steps?.get(m.member)?.artifact, empty: m.empty === true }));
+  const runs = members.map((m) => {
+    const env = runEnv?.get(m.member);
+    return { target: m.member, plan: opWavePlanPath(spec, k, m.member), artifact: steps?.get(m.member)?.artifact, empty: m.empty === true, ...(env ? { env } : {}) };
+  });
   return opWaveCosts(hold, runs, cwd, exec);
 }
 
@@ -1658,7 +1663,7 @@ async function runWaveHolds(
     ctx.riskQuorum = changeRiskQuorum(risk.record, holds.risk);
   }
   // #5334: the wave is priced once, before the policy, so each run's policy reads the estimate as input.cost.
-  const costs = holds.cost ? waveCostsOf(holds.cost, spec, k, members, ctx.steps, cwd, options.holdExec) : undefined;
+  const costs = holds.cost ? waveCostsOf(holds.cost, spec, k, members, ctx.steps, cwd, options.holdExec, ctx.runEnv) : undefined;
   if (holds.policy) {
     const missing = members.filter((m) => !parts?.has(m.member)).map((m) => m.member);
     if (missing.length > 0) return { failed: `wave ${k} (${wave.name}): holds.policy reads each run's change set, and the plans of ${missing.join(", ")} gave none, so nothing in it was applied` };
@@ -5574,9 +5579,11 @@ export async function recordOpWaveHeadPlans(options: RecordHeadPlansOptions): Pr
   for (let k = 1; ; k++) {
     const wave = spec.waves[k - 1] ?? last;
     const steps = new Map<string, OpWaveStepPlan>();
-    const { members, extras: planExtras, waves: found, changeSet } = await planWaveRuns({ spec, k, wave, cwd, exec, options, steps }, wave.runs, wave.discover === true);
+    // #5433: each run's environment from the run hooks, which the cost hold redacts as the wave job's does.
+    const runEnv = new Map<string, Record<string, string>>();
+    const { members, extras: planExtras, waves: found, changeSet } = await planWaveRuns({ spec, k, wave, cwd, exec, options, steps, runEnv }, wave.runs, wave.discover === true);
     // #4545: a cost hold's member is in the digest the merged wave decides, so the head's digest carries it too.
-    const cost = spec.holds?.cost ? costVerdictOf(spec.holds.cost, spec, k, members, steps, cwd, options.holdExec).member : undefined;
+    const cost = spec.holds?.cost ? costVerdictOf(spec.holds.cost, spec, k, members, steps, cwd, options.holdExec, runEnv).member : undefined;
     const extras = cost ? [...(planExtras ?? []), cost] : planExtras;
     // #4630: the facts a gate policy reads, so the approval status before merge says which waves will wait.
     plans.waves.push({
