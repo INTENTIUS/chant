@@ -115,6 +115,7 @@ import { gitOpWaveNewerCommit, opWaveDefaultBranch, opWaveStandDownReason, tipAp
 import { keyedSerial, mapLimited, type SerialSection } from "../parallelism";
 import {
   applyOpWaveStep,
+  opWaveCostEstimate,
   opWaveCosts,
   opWaveCostVerdict,
   opWaveHoldsAt,
@@ -129,6 +130,7 @@ import {
   applyOpWaveStepGroup,
   OP_WAVE_TOGETHER_MEMBER,
   type OpWaveHolds,
+  type OpWaveRunCost,
   type OpWaveStepApply,
   type OpWaveStepPlan,
 } from "./op-waves-capability";
@@ -1566,8 +1568,21 @@ function costVerdictOf(
   cwd: string,
   exec?: GatePolicyExec,
 ) {
+  return opWaveCostVerdict(hold, waveCostsOf(hold, spec, k, members, steps, cwd, exec));
+}
+
+/** Each run's estimate under a wave's cost hold (#4545). */
+function waveCostsOf(
+  hold: NonNullable<OpWaveHolds["cost"]>,
+  spec: OpWavesSpec,
+  k: number,
+  members: readonly OpWaveMember[],
+  steps: ReadonlyMap<string, OpWaveStepPlan> | undefined,
+  cwd: string,
+  exec?: GatePolicyExec,
+): OpWaveRunCost[] {
   const runs = members.map((m) => ({ target: m.member, plan: opWavePlanPath(spec, k, m.member), artifact: steps?.get(m.member)?.artifact, empty: m.empty === true }));
-  return opWaveCostVerdict(hold, opWaveCosts(hold, runs, cwd, exec));
+  return opWaveCosts(hold, runs, cwd, exec);
 }
 
 /**
@@ -1587,6 +1602,8 @@ async function runWaveHolds(
   // #4614: each run's ci.policy row, which the after-plan hooks and the run record read.
   const out: { holds: string[]; extras: WaveMember[]; rows: Map<string, OpRunPolicyRow>; policySource?: ResolvedGatePolicySource } = { holds: [], extras: [], rows: new Map<string, OpRunPolicyRow>() };
   if (!holds) return out;
+  // #5334: the wave is priced once, before the policy, so each run's policy reads the estimate as input.cost.
+  const costs = holds.cost ? waveCostsOf(holds.cost, spec, k, members, ctx.steps, cwd, options.holdExec) : undefined;
   if (holds.policy) {
     const missing = members.filter((m) => !parts?.has(m.member)).map((m) => m.member);
     if (missing.length > 0) return { failed: `wave ${k} (${wave.name}): holds.policy reads each run's change set, and the plans of ${missing.join(", ")} gave none, so nothing in it was applied` };
@@ -1600,7 +1617,7 @@ async function runWaveHolds(
     }
     let got: Awaited<ReturnType<typeof opWavePolicyVerdicts>>;
     try {
-      got = await opWavePolicyVerdicts({ spec, gate: opWaveGateName(spec, k), env: spec.labels?.Env ?? wave.name, base, head, cwd, ...(options.holdExec ? { exec: options.holdExec } : {}) }, parts!);
+      got = await opWavePolicyVerdicts({ spec, gate: opWaveGateName(spec, k), env: spec.labels?.Env ?? wave.name, base, head, cwd, ...(options.holdExec ? { exec: options.holdExec } : {}) }, parts!, holds.cost && costs ? opWaveCostEstimate(holds.cost, costs) : undefined);
     } catch (err) {
       return { failed: `wave ${k} (${wave.name}): ${err instanceof Error ? err.message : String(err)}, so nothing in it was applied` };
     }
@@ -1624,7 +1641,7 @@ async function runWaveHolds(
     }
   }
   if (holds.cost) {
-    const verdict = costVerdictOf(holds.cost, spec, k, members, ctx.steps, cwd, options.holdExec);
+    const verdict = opWaveCostVerdict(holds.cost, costs ?? []);
     out.extras.push(verdict.member);
     log(`wave ${k} (${wave.name}): cost ${verdict.monthlyDelta >= 0 ? "+" : ""}${verdict.monthlyDelta.toFixed(2)} ${verdict.currency} a month${verdict.unestimated.length ? `, ${verdict.unestimated.length} run${verdict.unestimated.length === 1 ? "" : "s"} not priced` : ""}`);
     if (verdict.hold) out.holds.push(verdict.hold);

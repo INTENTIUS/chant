@@ -70,8 +70,7 @@
  *   too. The terraform lexicon's preset is `terraformCostHold` (infracost).
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Capability, CapabilityPlan, CapabilityRegistry, DeployContext, GroupContext, GroupMember } from "../components/capability";
 import { isPlanMovedError } from "../components/capability";
@@ -79,13 +78,13 @@ import type { CapabilityTraceFacts } from "../otlp";
 import { composeChangeSet, type ChangeSetDocument, type ChangeSetPart } from "../change-set";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { groupDigest } from "../components/group-digest";
-import type { GatePolicyExec, GatePolicyRun } from "../gate-policy";
+import type { GatePolicyExec } from "../gate-policy";
 import type { ResolvedGatePolicySource } from "../policy-source";
 import type { WaveMember } from "../wave-engine";
 import type { OpWave, OpWaveRun, OpWavesSpec } from "./op-waves";
 import { resolvePlannedLock, type LockGrain, type PlannedLock } from "../lifecycle/lock-rows";
-
-import { OP_WAVE_COST_FORMATS, OP_WAVE_COST_MEMBER, type OpWaveCostFormat, type OpWaveCostHold, type OpWaveStep } from "./op-waves-capability-spec";
+import { costEstimateOf, planJsonOf as planJsonPath, policyCost, priceRuns, readCostEstimate as readEstimate, type CostEstimate, type CostFigures, type MemberCost } from "../cost-estimate";
+import { OP_WAVE_COST_MEMBER, type OpWaveCostFormat, type OpWaveCostHold, type OpWaveStep } from "./op-waves-capability-spec";
 
 export { OP_WAVE_COST_FORMATS, OP_WAVE_COST_MEMBER, opWaveHoldsAt, opWaveHoldsProblems, opWaveStepProblems } from "./op-waves-capability-spec";
 export type { OpWaveCostFormat, OpWaveCostHold, OpWaveHolds, OpWaveStep } from "./op-waves-capability-spec";
@@ -503,6 +502,8 @@ export interface OpWaveRunVerdict {
 
 /**
  * Run the workspace's `ci.policy` at `base` over each run's part (#4545).
+ * With a cost hold, each run's policy reads the wave's estimate and the
+ * run's own as `input.cost` (#5334).
  * Returns each run's verdict, or a line saying why no policy runs (the base
  * names none). Throws when the policy at base cannot be read while the
  * checkout names one, as the pull-request path does.
@@ -510,13 +511,14 @@ export interface OpWaveRunVerdict {
 export async function opWavePolicyVerdicts(
   at: { spec: Pick<OpWavesSpec, "name">; gate: string; env: string; base: string; head: string; cwd: string; exec?: GatePolicyExec },
   parts: ReadonlyMap<string, ChangeSetPart>,
+  cost?: CostEstimate,
 ): Promise<{ verdicts: Map<string, OpWaveRunVerdict>; source?: ResolvedGatePolicySource } | { note: string }> {
   const { prLoopPolicyAt, preparePrPolicyEngine, runPrPolicy } = await import("../components/pr-policy");
   const read = await preparePrPolicyEngine(prLoopPolicyAt(at.cwd, at.base));
   if (!read.settings) return { note: read.note ?? `holds.policy: the declaration at ${at.base.slice(0, 12)} names no ci.policy, so no policy runs` };
   const verdicts = new Map<string, OpWaveRunVerdict>();
   for (const [target, part] of parts) {
-    const verdict = runPrPolicy(read, { version: 1, stage: "apply", op: at.spec.name, gate: at.gate, env: at.env, pr: null, base: at.base, head: at.head, changeSet: composeChangeSet([part]) }, at.exec);
+    const verdict = runPrPolicy(read, { version: 1, stage: "apply", op: at.spec.name, gate: at.gate, env: at.env, pr: null, base: at.base, head: at.head, changeSet: composeChangeSet([part]), ...(cost ? { cost: policyCost(cost, target) } : {}) }, at.exec);
     if (!verdict) continue;
     const reason = verdict.result === "error" ? verdict.error : [...verdict.denials, ...verdict.holds].map((f) => f.message).filter(Boolean).join("; ") || undefined;
     verdicts.set(target, { result: verdict.result, rules: verdict.rules, holds: [...new Set(verdict.holds.map((h) => h.rule))].sort(), ...(reason ? { reason } : {}) });
@@ -524,69 +526,29 @@ export async function opWavePolicyVerdicts(
   return { verdicts, ...(read.source ? { source: read.source } : {}) };
 }
 
-/** One run's estimate: the monthly change, or why there is none. */
-export type OpWaveRunCost = { target: string; monthlyDelta: number; currency?: string } | { target: string; error: string };
+/** One run's estimate: the monthly change, or why there is none. The totals come with it when the estimate gives them (#5334). */
+export type OpWaveRunCost = ({ target: string } & CostFigures) | { target: string; error: string };
 
-/** The monthly change an estimate gives, in `format`. Throws when it gives none. */
-export function readCostEstimate(format: OpWaveCostFormat, stdout: string): { monthlyDelta: number; currency?: string } {
-  const doc = JSON.parse(stdout) as Record<string, unknown>;
-  const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : undefined);
-  if (format === "chant") {
-    const delta = num(doc.monthlyDelta);
-    if (delta === undefined) throw new Error("the estimate has no monthlyDelta");
-    return { monthlyDelta: delta, ...(typeof doc.currency === "string" ? { currency: doc.currency } : {}) };
-  }
-  // infracost breakdown --format json: diffTotalMonthlyCost, else totalMonthlyCost less pastTotalMonthlyCost.
-  const diff = num(doc.diffTotalMonthlyCost);
-  const total = num(doc.totalMonthlyCost);
-  const past = num(doc.pastTotalMonthlyCost);
-  const delta = diff ?? (total !== undefined ? total - (past ?? 0) : undefined);
-  if (delta === undefined) throw new Error("the infracost document has no diffTotalMonthlyCost or totalMonthlyCost");
-  return { monthlyDelta: delta, ...(typeof doc.currency === "string" ? { currency: doc.currency } : {}) };
-}
-
-const defaultHoldExec: GatePolicyExec = (argv, cwd): GatePolicyRun => {
-  const r = spawnSync(argv[0]!, argv.slice(1), { cwd, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
-  return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: `${r.stderr ?? ""}${r.error ? r.error.message : ""}` };
-};
+/** The figures an estimate gives, in `format` (`../cost-estimate.ts`, #5334). Throws when it gives no monthly change. */
+export const readCostEstimate: (format: OpWaveCostFormat, stdout: string) => CostFigures = readEstimate;
 
 /** The engine's plan document a capability's artifact names (`artifact.planJson`), when it names one that exists. */
-export function planJsonOf(artifact: unknown, cwd: string): string | undefined {
-  const p = (artifact as { planJson?: unknown } | undefined)?.planJson;
-  if (typeof p !== "string" || p === "") return undefined;
-  const path = p.startsWith("/") ? p : join(cwd, p);
-  return existsSync(path) ? path : undefined;
-}
+export const planJsonOf: (artifact: unknown, cwd: string) => string | undefined = planJsonPath;
 
-/** Price each run that changes something (#4545). A run with no estimate says why. */
+/** Price each run that changes something (#4545), with the pull request's estimator (`../cost-estimate.ts`, #5334). A run with no estimate says why. */
 export function opWaveCosts(
   hold: OpWaveCostHold,
   runs: ReadonlyArray<{ target: string; plan: string; artifact?: unknown; empty: boolean }>,
   cwd: string,
-  exec: GatePolicyExec = defaultHoldExec,
+  exec?: GatePolicyExec,
 ): OpWaveRunCost[] {
-  const format = hold.format ?? "infracost";
-  const out: OpWaveRunCost[] = [];
-  for (const run of runs) {
-    if (run.empty) continue;
-    const planJson = planJsonOf(run.artifact, cwd);
-    if (hold.command.some((a) => a.includes("{planJson}")) && !planJson) {
-      out.push({ target: run.target, error: "its plan names no plan document to price" });
-      continue;
-    }
-    const argv = hold.command.map((a) => a.replaceAll("{target}", run.target).replaceAll("{plan}", run.plan).replaceAll("{planJson}", planJson ?? ""));
-    const r = exec(argv, cwd);
-    if (r.status !== 0) {
-      out.push({ target: run.target, error: `${argv[0]} ${r.status === null ? "did not run" : `exited ${r.status}`}: ${(r.stderr || r.stdout).trim().split("\n").slice(-2).join(" ")}` });
-      continue;
-    }
-    try {
-      out.push({ target: run.target, ...readCostEstimate(format, r.stdout) });
-    } catch (err) {
-      out.push({ target: run.target, error: `the estimate cannot be read: ${err instanceof Error ? err.message : String(err)}` });
-    }
-  }
-  return out;
+  const priced = priceRuns(hold, runs.map((r) => ({ member: r.target, plan: r.plan, artifact: r.artifact, empty: r.empty })), cwd, exec);
+  return priced.map(({ member, ...rest }) => ({ target: member, ...rest }) as OpWaveRunCost);
+}
+
+/** A wave's estimates as the record a policy reads as `input.cost` (#5334), against the hold's `approveAbove`. */
+export function opWaveCostEstimate(hold: OpWaveCostHold, costs: readonly OpWaveRunCost[]): CostEstimate {
+  return costEstimateOf(hold, costs.map(({ target, ...rest }) => ({ member: target, ...rest }) as MemberCost));
 }
 
 /** What a wave's estimates come to: the sum, the digest member, and the hold line when it waits. */

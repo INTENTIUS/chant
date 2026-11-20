@@ -981,6 +981,40 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     also: ["environments.<name>.replan_dependents"],
     products: [],
   },
+  // #5334: the cost estimate, in the plan note, as the policy's input.cost, and as a hold.
+  {
+    key: "cost.command",
+    concept: "the estimator run over each member's plan document, which prints its monthly cost",
+    section: "stage",
+    value: "a command naming `{planJson}`, as argv or a command line",
+    chant: "`ci.cost.command` and `holds.cost.command`; the presets are `terraformCostHold` and `pulumiCostHold`",
+    products: ["terragucci"],
+  },
+  {
+    key: "cost.format",
+    concept: "what the estimator prints",
+    section: "stage",
+    values: ["infracost", "chant"],
+    chant: "`ci.cost.format` and `holds.cost.format`",
+    products: [],
+  },
+  {
+    key: "cost.currency",
+    concept: "the currency the amounts are in",
+    section: "stage",
+    pattern: "^[A-Z]{3}$",
+    value: "a three-letter currency code such as `USD`",
+    chant: "`ci.cost.currency` and `holds.cost.currency`",
+    products: [],
+  },
+  {
+    key: "cost.approve_above",
+    concept: "the monthly change above which a plan needs an approval of its own",
+    section: "stage",
+    value: "a monthly amount of 0 or more",
+    chant: "`ci.cost.approveAbove` and `holds.cost.approveAbove`",
+    products: ["terragucci"],
+  },
   // Apply
   {
     key: "apply.when",

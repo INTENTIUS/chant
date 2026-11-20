@@ -80,6 +80,40 @@ hold_iam contains msg if {
 }
 ```
 
+### The cost estimate
+
+With `ci.cost` in the declaration at base, `pr-plan` and `pr-apply` price the plan before the policy runs, and the policy reads the estimate as `input.cost` (`packages/core/src/cost-estimate.ts`). `command` runs once per member whose plan changes something. `{planJson}` is the plan document the member's step wrote: `terraform show -json` for `terraform-apply`, the preview JSON for `pulumi-up`. `{target}` is the member. The command prints infracost's JSON (`format: "infracost"`, the default) or `{ "monthlyDelta": <number>, "monthlyTotal"?, "pastMonthlyTotal"?, "currency"? }` (`format: "chant"`). The terraform lexicon's `terraformCostHold({ approveAbove })` and the pulumi lexicon's `pulumiCostHold({ approveAbove, command })` build the same object.
+
+```json
+{ "ci": { "cost": { "command": ["infracost", "breakdown", "--path", "{planJson}", "--format", "json", "--log-level", "error"], "approveAbove": 100 } } }
+```
+
+```json
+"cost": {
+  "estimator": "infracost",
+  "format": "infracost",
+  "currency": "USD",
+  "monthlyDelta": 142.5,
+  "members": [{ "member": "envs/prod/network", "monthlyDelta": 142.5, "monthlyTotal": 180, "pastMonthlyTotal": 37.5 }],
+  "unestimated": [],
+  "approveAbove": 100,
+  "over": true
+}
+```
+
+The note shows the same record, a row per member. A member the command could not price is listed with why, and the plan still plans. With `approveAbove`, a plan whose monthly change is over it, or that has a member with no estimate, is `over`, and it needs an approval of its own digest, as a hold rule asks. The estimate adds approvals and never removes one. With no `ci.cost` at base, no estimate runs.
+
+```rego
+package main
+
+hold_costly contains msg if {
+  input.cost.monthlyDelta > 500
+  msg := sprintf("adds %v %s a month", [input.cost.monthlyDelta, input.cost.currency])
+}
+```
+
+In an [Op waves](/chant/guide/op-waves/#policy-holds) job with both `holds.policy` and `holds.cost`, each run's policy reads the wave's estimate as `input.cost` and the run's own figures as `input.cost.member`.
+
 ## What each rule does
 
 Rules are counted by name, as conftest counts them (`packages/core/src/gate-policy.ts:88`).

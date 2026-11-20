@@ -52,6 +52,7 @@ import type { ChangeSetAction, ChangeSetDocument, ChangeSetEntry } from "./chang
 import { parsePulumiUrn, pulumiMayAppearParent } from "./pulumi-urn";
 import type { PrRequireOutcome } from "./pr-requires";
 import { renderMigrationLines, type PrMigrationFile } from "./pr-migrations";
+import { costEstimateLines, type CostEstimate } from "./cost-estimate";
 import { GITHUB_COMMENT_LIMIT, groupChangeSet, renderPlanSummaryMarkdown } from "./plan-summary";
 import { activeProductWords, approveLine, commentLine, isChantWords, overrideLine, productStatusContext, type CiProductWords } from "./ci-product-words";
 import type { CrossStackEdge } from "./control/edges";
@@ -625,6 +626,16 @@ export interface PrReport {
    */
   policy?: PrPolicyReport;
   /**
+   * The plan's cost estimate (#5334), with `ci.cost` at base: each
+   * member's monthly change from the command run over its plan document,
+   * the sum, and with `approveAbove` whether the plan needs an approval of
+   * its own digest. The same record the policy reads as `input.cost`.
+   * Absent when the base sets no `ci.cost`, or the stage reached no plan to
+   * price. Added within contract 1 by the chant that carries
+   * `COST_ESTIMATE_FLOOR` (`@intentius/chant/ci-product`).
+   */
+  cost?: CostEstimate;
+  /**
    * `pr-apply --before-merge` (#4301): the requires checks. Absent on every
    * other stage. Added within contract 1 by chant
    * {@link PR_REPORT_BEFORE_MERGE_FLOOR}.
@@ -1147,6 +1158,8 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     out.push("", `Hooks: ${passed} passed${other.length > 0 ? `; ${other.join("; ")}` : ""}.`);
   }
   out.push(...policyLines(report));
+  // #5334: the cost estimate, member by member.
+  if (report.cost) out.push(...costEstimateLines(report.cost, noun));
   out.push(...capabilityPolicyLines(report, words));
   out.push(...renderMigrationLines(report.migrations));
   if (report.selection.unclaimed.length > 0) {

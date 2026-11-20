@@ -1028,6 +1028,8 @@ With `cost`, chant runs `command` once for each run whose plan changes something
 
 In a pipeline that signs its checks (`evidence`), a wave with `holds.policy` plans in two places: the policy step (`--policy-only`, on GitLab the `<wave job>-policy` job) plans the wave and runs `ci.policy` over the plans, and the command step plans the wave again before it decides the gate and applies ([#4926](https://github.com/INTENTIUS/chant/issues/4926)). The maintainer decided to keep both plans ([#4982](https://github.com/INTENTIUS/chant/issues/4982)). The steps run in one job, after the change's code has run in it (its setup, its `before` steps, the engine's providers), so the plan files the policy step leaves behind could have been rewritten by the time the command step starts. The command step trusts none of them: it plans again, and applies what it planned itself. The policy step's result is what `policy:<wave>` is signed from, and the forge keeps that result where the later steps cannot change it.
 
+With `holds.policy` beside `holds.cost`, the wave is priced before the policy runs, and each run's policy reads the wave's estimate as `input.cost`: each run's monthly change, the sum, `approveAbove` and `over`, with the run's own figures as `input.cost.member`. A pull request's plan reads the same record from `ci.cost` ([Gate policy](/chant/guide/gate-policy/#the-cost-estimate)).
+
 The cost is a second plan of every run in the wave: twice the engine's plan time and twice the reads against the cloud's APIs and the state backend. A wave with no `holds.policy`, or a pipeline that signs nothing, plans once.
 
 ## Keep a product's gate names

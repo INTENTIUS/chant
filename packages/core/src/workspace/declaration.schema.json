@@ -236,6 +236,9 @@
         "policy": {
           "$ref": "#/$defs/ciPolicy"
         },
+        "cost": {
+          "$ref": "#/$defs/ciCost"
+        },
         "reportUrl": {
           "type": "string",
           "minLength": 1,
@@ -2061,6 +2064,18 @@
     "ciPolicy": {
       "type": "object",
       "description": "Gate-time policy on the pull-request jobs (#4294): a policy engine run over the change set, with the policy read at base. engine names the result shape the command prints, conftest (the default) or opa. path is the policy directory, relative to the declaration (default policy). namespace is the package to read. command replaces the engine's own argv, with {policy} for the policy directory exported from base and {input} for the input file. deny rules refuse the apply unless an override counts; hold rules make the plan wait for a person's approval; warn rules are advice. There is no unattended outcome. source (#4613) is { repo, ref, path? }: a shared repository whose ref the job fetches, read in place of path, with the commit read recorded on the report and the wave's decision; path inside it defaults to policy, and path beside source is refused. packs (#4613) is a list of { dir, config? }: CrossGuard packs every pulumi-up preview runs, copied from the declaration's directory at base, or from the top of source when it is set. Added in schema 1 by chant 0.124.41, so a declaration that uses it sets minReader to 0.124.41 or newer; source and packs were added in schema 1 by chant 0.124.55, so a declaration that sets either sets minReader to 0.124.55 or newer. install (#4774) is true to fetch conftest or opa at the release chant pins, checked against its recorded sha256, when the engine is not on PATH; it is refused beside command. Read by chant 0.124.77 and newer, so a declaration that sets install sets minReader to 0.124.77 or newer."
+    },
+    "ciCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "The estimator's argv, run once per member whose plan changes something. {planJson} is the plan document the member's capability wrote (terraform-apply's show -json, pulumi-up's preview JSON), {target} the member and {plan} its plan file." },
+        "format": { "enum": ["infracost", "chant"], "description": "What the command prints: infracost's JSON (the default), or { monthlyDelta, monthlyTotal?, pastMonthlyTotal?, currency? }." },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$", "description": "The currency the amounts are in. Default the estimate's, else USD." },
+        "approveAbove": { "type": "number", "minimum": 0, "description": "The monthly change above which the plan needs an approval of its own digest. A member with no estimate counts as over. Absent: the estimate only informs." }
+      },
+      "description": "The cost estimate of a pull request's plan (#5334), read from the declaration at base: chant components pr-plan and pr-apply run command over each member's plan document and put the estimate in the report and the note, and the policy reads it as input.cost. With approveAbove, a plan over it needs an approval of its own digest, so a green commit's plan does not apply under the approvals of the merges it carries. The estimate adds approvals and never removes one, and a failed estimate never fails the plan. The terraform lexicon's terraformCostHold and the pulumi lexicon's pulumiCostHold build the same object. Read by the chant release that carries COST_ESTIMATE_FLOOR (@intentius/chant/ci-product)."
     },
     "ciPhaseName": {
       "type": "string",
