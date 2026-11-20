@@ -73,8 +73,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
-    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB, and the passkey seal check (#4646) to about 63 KB.
+    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB, and the passkey seal check (#4646) to about 63 KB. The product words and proven approvers (#5349) bring it to about 66.5 KB.
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
-    expect(bytes).toBeLessThan(66 * 1024);
+    expect(bytes).toBeLessThan(67 * 1024);
   });
 });

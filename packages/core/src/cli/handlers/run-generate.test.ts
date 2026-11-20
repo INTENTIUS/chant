@@ -60,6 +60,45 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+describe("chant run --generate with approval rules (#5349)", () => {
+  const waves = {
+    name: "deploys",
+    op: "deploy",
+    plan: ["tool", "plan", "{target}", "--out", "{plan}"],
+    approvals: { quorum: [{ count: 1, roles: ["platform"] }, { count: 2 }] },
+    waves: [{ name: "prod", runs: [{ target: "prod-eu" }] }],
+  };
+
+  test("a rule no approver can meet is a warning, and the pipeline is still written", async () => {
+    const { generateOpWavesPipeline } = await import("../../op/generate-pipeline");
+    const result = await generateOpWavesPipeline(waves, "github", { specFile: "waves.json" }, dir);
+    expect(result.success).toBe(true);
+    expect(result.files?.length).toBeGreaterThan(0);
+    expect(result.warnings).toEqual([expect.stringMatching(/approvals.quorum\[1\] asks for 2 approvers/), expect.stringMatching(/approvals.quorum\[0\] needs a proven approver/)]);
+  });
+
+  test("with a signer in the signers file, only the count warning stays", async () => {
+    const { generateOpWavesPipeline } = await import("../../op/generate-pipeline");
+    const result = await generateOpWavesPipeline(waves, "github", { specFile: "waves.json" }, dir, { signersPath: ".chant/allowed_signers", signersNamed: true });
+    expect(result.warnings).toEqual([expect.stringMatching(/asks for 2 approvers/)]);
+  });
+
+  test("the CLI prints each warning and exits 0", async () => {
+    const specFile = join(dir, "waves.json");
+    writeFileSync(specFile, JSON.stringify(waves));
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(await runOp(ctx(["run", "--generate", "github", "--spec", "waves.json", "--output", join(dir, "out")]))).toBe(0);
+    } finally {
+      process.chdir(cwd);
+    }
+    const printed = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(printed).toMatch(/needs a proven approver/);
+    expect(printed).toMatch(/asks for 2 approvers/);
+  });
+});
+
 describe("chant run --generate <provider>", () => {
   test.each(["github", "gitlab", "forgejo"])(
     "%s: each file is the generator's own output under one marker line",

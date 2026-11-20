@@ -1055,6 +1055,15 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     chant: "`WaveSummarySpec.maxCostUsd` (`CHANT_WAVE_SUMMARY_MAX_COST_USD`)",
     products: [],
   },
+  {
+    key: "approval_rules.<rule>.proven",
+    concept: "a rule's count met only by approvers a seal or a review proves",
+    section: "stage",
+    value: "true or false",
+    chant: "`proven` of a quorum rule (`GateQuorumRule`, #5349)",
+    also: ["approval_rules[].proven"],
+    products: [],
+  },
   // Apply
   {
     key: "apply.when",

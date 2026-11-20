@@ -39,6 +39,7 @@ Add `approvals.quorum` to the [Op waves](/chant/guide/op-waves/) spec. Each rule
 | `count` | Distinct people the rule needs, at least 1. |
 | `roles` | Only a person `.chant/trust.json` at base gives one of these roles counts. |
 | `notAuthor` | One of the counted people is not the merged pull request's author. |
+| `proven` | Only people whose approval proves who they are count toward `count` ([Count proven approvers only](#count-proven-approvers-only)). Default `false`. |
 
 A wave takes every rule with a glob that matches one of its targets (`packages/core/src/op/gate-quorum.ts:110`). It applies once each of those rules is met by distinct people who approved its set digest (`packages/core/src/op/gate.ts:866`). A wave that takes no rule needs one approval. A person counts once, however many times they approve. An agent never counts (`packages/core/src/op/gate.ts:585`).
 
@@ -64,6 +65,42 @@ A role counts only when the approval proves who made it (`packages/core/src/op/g
 `notAuthor` needs a proven approver too (`packages/core/src/op/gate-quorum.ts:182`). The author is the merged pull request's author (`packages/core/src/op/op-waves-run.ts:1939`). When the job cannot find that pull request, nobody can show they are someone else, and the rule waits.
 
 Under `pr-review`, each approving reviewer is written to the ledger on their own line (`packages/core/src/op/op-waves-run.ts:1917`). Two reviewers on the pull request meet a `count` of 2.
+
+## Which modes prove the approver
+
+A wave's `approval` mode decides which `chant approve` lines of its digest it reads. A rule decides which of those count. A line is proven when the judge can tell who wrote it:
+
+| `approval` | Takes plain `chant approve` lines | Proves an approver by |
+|---|---|---|
+| `ledger` (default) | yes | a seal that verifies against the signers file at base |
+| `pr-review` | yes | a seal, the merged pull request's approving review, or a review a product recorded on the `reviewLedger` op |
+| `pull-request` | yes | a seal |
+| `sealed` | no, only sealed lines | a seal, which every counted line has |
+
+Under `ledger`, `pr-review` and `pull-request` a `count` without `roles` counts every human who approved the digest, proven or not (`packages/core/src/op/gate-quorum.ts`, `quorumRuleProgress`). Anyone who can push to `chant/lifecycle` can write two lines in two names and meet `count: 2` alone. A seal from `chant approve --sign` proves its approver under every mode, as long as the signers file at base lists their key.
+
+## Count proven approvers only
+
+Set `proven: true` on a rule to count only proven approvers toward its `count`:
+
+```json
+"approvals": {
+  "quorum": [{ "targets": ["prod-*"], "count": 2, "proven": true }]
+}
+```
+
+Plain lines still sit on the ledger, and the rule leaves them out. A wave that waits logs `needs 1 more proven` and the approve command it prints carries `--sign`. A rule with `roles` already counts proven approvers alone, so `proven` adds nothing there. Under `sealed`, every counted approval is sealed already. `proven` is off by default and is read from the spec at base, like the rest of the rule. A chant older than the release `PROVEN_APPROVERS_FLOOR` in `@intentius/chant/op` names refuses a rule with `proven`, so the wave applies nothing until the job runs a chant that reads it.
+
+`proven` is read on an Op waves spec's `approvals.quorum`. An Op gate's `approval.quorum` and `identity.gates.<gate>.quorum` refuse it. An `identity.gates` entry already counts sealed approvals alone.
+
+## Warnings when the pipeline is generated
+
+`chant run --generate` checks the rules when it writes the pipeline, and `generateOpWavesPipeline` returns the same lines as `warnings` (`opWavesQuorumFindings` in `@intentius/chant/op`). The pipeline is still written, and each rule works as before.
+
+- A rule with a `count` above 1, no `roles` and no `proven`, on a wave whose mode takes plain lines. Set `proven: true`, or move the wave to `approval: "sealed"`, to clear it.
+- A rule that needs a proven approver (`roles`, `notAuthor` or `proven`) on a wave where nothing can prove one: the signers file in the repository the generator runs in (`.chant/allowed_signers`, or the file `.chant/trust.json` names) lists no key or passkey, and the wave's mode is not `pr-review`. That wave would wait for an approval that can never count. Add the approvers' keys to the signers file and approve with `chant approve --sign`, or set the wave's approval to `pr-review`, so the merged pull request's review proves its reviewers.
+
+The second warning becomes a refusal in a later release. The switch is one constant, `UNPROVABLE_QUORUM_REFUSED` in `packages/core/src/op/op-waves-quorum-warnings.ts`, which is `false` today. Set to `true`, `generateOpWavesPipeline` refuses the spec with the same lines and writes nothing. A spec the generator gives this warning for today is the only kind that switch refuses.
 
 ## Approve a waiting wave
 

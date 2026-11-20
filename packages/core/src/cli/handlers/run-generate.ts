@@ -124,11 +124,13 @@ async function runOpWavesGenerate(ctx: CommandContext, provider: string, specPat
     console.error(formatError({ message: result.error ?? "Failed to generate the Op waves pipeline" }));
     return 1;
   }
+  // #5349: a count plain approval lines can meet is allowed, and said.
+  for (const w of result.warnings ?? []) console.error(formatWarning({ file: specPath, message: w }));
   const header = opPipelineHeader(provider, specPath);
   const outDir = args.output ?? DEFAULT_OP_PIPELINE_DIRS[provider] ?? ".";
   const files = (result.files ?? []).map((f) => ({ name: f.name, path: join(outDir, f.name), content: header + f.yaml }));
   if (args.format === "json") {
-    console.log(JSON.stringify({ files, jobs: result.jobs ?? [] }, null, 2));
+    console.log(JSON.stringify({ files, jobs: result.jobs ?? [], ...(result.warnings ? { warnings: result.warnings } : {}) }, null, 2));
     return 0;
   }
   for (const file of files) {

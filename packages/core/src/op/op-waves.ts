@@ -831,7 +831,8 @@ export interface OpWavesApprovals {
    * wave is judged by. A role, or `notAuthor`, counts only a proven
    * approver: a seal that verifies against the signers at base, or under
    * `pr-review` the merged pull request's review. `notAuthor` reads the
-   * author from that pull request. See `./gate-quorum.ts`.
+   * author from that pull request. A rule with `proven` (#5349) counts only
+   * proven approvers toward its `count`. See `./gate-quorum.ts`.
    */
   quorum?: GateQuorumRule[];
   /**
@@ -1108,8 +1109,8 @@ export function assertOpWavesSpec(spec: OpWavesSpec): void {
     for (const [key, value] of Object.entries(a as Record<string, unknown>)) {
       if (key === "quorum") {
         // #4290: approval rules, read at base like the policy.
-        if (!Array.isArray(value)) throw new Error(`${where}: approvals.quorum must be a list of rules, each { "targets"?, "count", "roles"?, "notAuthor"? }.`);
-        const problems = quorumProblems(value, "approvals.quorum", { notAuthor: true });
+        if (!Array.isArray(value)) throw new Error(`${where}: approvals.quorum must be a list of rules, each { "targets"?, "count", "roles"?, "notAuthor"?, "proven"? }.`);
+        const problems = quorumProblems(value, "approvals.quorum", { notAuthor: true, proven: true });
         if (problems.length > 0) throw new Error(`${where}: ${problems.join("; ")}.`);
         continue;
       }
