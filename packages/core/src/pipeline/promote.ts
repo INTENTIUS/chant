@@ -666,6 +666,7 @@ export async function pipelineUrgentGate(input: {
     gate,
     planDigest: digest,
     environment: stage.name,
+    ...(input.releaseDigest !== undefined ? { releaseDigest: input.releaseDigest } : {}),
     now,
     description: `urgent promote into stage ${stage.name} of the pipeline ${spec.name}: one proven approval from ${rule.role}`,
     ...(input.gitSha ? { gitSha: input.gitSha } : {}),

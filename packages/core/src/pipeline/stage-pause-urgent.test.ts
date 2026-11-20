@@ -200,6 +200,20 @@ describe("the urgent rule", () => {
     });
   }
 
+  test("an urgent approval bound to the release's digest passes, and one bound to another release's does not", async () => {
+    const release = r3.digest;
+    const judge: GateQuorumJudge = judgeOf({ "github:erin": ["sre-lead"] });
+    const bound = memoryGateLedgerPort({ resolutions: [line("github:erin", { releaseDigest: release })] });
+    const passed = await pipelineUrgentGate({ spec, to: "prod", digest, releaseDigest: release, port: { ...bound, quorumJudge: async () => judge }, now: at(1) });
+    expect(passed).toMatchObject({ passed: true, role: "sre-lead", approval: { resolvedBy: "github:erin" } });
+    expect(bound.applied).toEqual([expect.objectContaining({ gate: "prod-urgent", approvedBy: "github:erin" })]);
+
+    const other = memoryGateLedgerPort({ resolutions: [line("github:erin", { releaseDigest: r2.digest })] });
+    const waits = await pipelineUrgentGate({ spec, to: "prod", digest, releaseDigest: release, port: { ...other, quorumJudge: async () => judge }, now: at(1) });
+    expect(waits).toMatchObject({ passed: false, exitCode: 3, code: "pipeline-gate-waiting" });
+    expect(other.applied).toEqual([]);
+  });
+
   test("a rejection of the release stops an urgent promote before its approval is read, at the stage's gate or its urgent gate (#5354)", async () => {
     const plain = asPipelineSpec({ ...spec, stages: spec.stages.map((st) => (st.name === "prod" ? { ...st, gate: { urgent: { role: "sre-lead" } } } : st)) });
     const rejection = (gate: string): GateRejectionRecord => ({
@@ -216,14 +230,14 @@ describe("the urgent rule", () => {
       approver: { kind: "human" },
     });
     for (const gate of ["prod", "prod-urgent"]) {
-      const port = { ...memoryGateLedgerPort({ resolutions: [line("github:erin")], rejections: [rejection(gate)] }), quorumJudge: async () => judgeOf({ "github:erin": ["sre-lead"] }) };
+      const port = { ...memoryGateLedgerPort({ resolutions: [line("github:erin", { releaseDigest: digest })], rejections: [rejection(gate)] }), quorumJudge: async () => judgeOf({ "github:erin": ["sre-lead"] }) };
       const out = await pipelinePromoteGates({ spec: plain, to: "prod", skipped: [], digest, releaseDigest: digest, port, urgent: true, now: at(1) });
       expect(out).toMatchObject({ passed: false, exitCode: 8, code: "pipeline-release-rejected", message: expect.stringContaining(`shop ${gate}`) });
       // The proven urgent approval is never read, so nothing is spent.
       expect(port.applied).toEqual([]);
     }
     // A rejection of another release does not stop this one.
-    const other = { ...memoryGateLedgerPort({ resolutions: [line("github:erin")], rejections: [{ ...rejection("prod"), planDigest: r2.digest, releaseDigest: r2.digest }] }), quorumJudge: async () => judgeOf({ "github:erin": ["sre-lead"] }) };
+    const other = { ...memoryGateLedgerPort({ resolutions: [line("github:erin", { releaseDigest: digest })], rejections: [{ ...rejection("prod"), planDigest: r2.digest, releaseDigest: r2.digest }] }), quorumJudge: async () => judgeOf({ "github:erin": ["sre-lead"] }) };
     await expect(pipelinePromoteGates({ spec: plain, to: "prod", skipped: [], digest, releaseDigest: digest, port: other, urgent: true, now: at(1) })).resolves.toMatchObject({ passed: true, urgent: { role: "sre-lead" } });
   });
 
@@ -288,7 +302,7 @@ describe("the urgent rule", () => {
       const finished = (stage: string) => ({ version: 1 as const, kind: "finished" as const, op: "shop", stage, digest, timestamp: "2026-11-20T00:00:10Z", result: "applied" as const });
       const log = memoryStageLogPort([finished("eu"), finished("us")]);
       const release = { releaseDigest: digest, label: "v3", commit: "c".repeat(40) };
-      const port = { ...memoryGateLedgerPort({ resolutions: [line("github:erin")] }), quorumJudge: async () => judgeOf({ "github:erin": ["sre-lead"] }) };
+      const port = { ...memoryGateLedgerPort({ resolutions: [line("github:erin", { releaseDigest: digest })] }), quorumJudge: async () => judgeOf({ "github:erin": ["sre-lead"] }) };
       const out = await pipelineStageEntry({ spec: graph, to: "prod", skipped: [], upstreams: ["eu", "us"], digest, release, port, log, urgent: true, now: at(1) });
       expect(out).toMatchObject({ passed: true, urgent: { role: "sre-lead", approval: { resolvedBy: "github:erin" } }, entered: { kind: "entered", stage: "prod" } });
       expect(port.applied).toEqual([expect.objectContaining({ gate: "prod-urgent", approvedBy: "github:erin" })]);

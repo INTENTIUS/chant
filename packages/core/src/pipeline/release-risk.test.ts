@@ -234,7 +234,7 @@ describe("rejections and the urgent path come before any risk reading", () => {
   test("the urgent rule stands in for the gate before the risk is read", async () => {
     const base = shop({ risk: { approveAbove: 0.1, quorum: [{ count: 3 }] } });
     const spec = asPipelineSpec({ ...base, stages: base.stages.map((s) => (s.name === "prod" ? { ...s, gate: { ...s.gate, urgent: { role: "sre-lead" } } } : s)) });
-    const urgent = approval("github:erin", { gate: "prod-urgent", approver: { kind: "human" } });
+    const urgent = approval("github:erin", { gate: "prod-urgent", approver: { kind: "human" }, releaseDigest: DIGEST });
     const port: GateLedgerPort = { ...memoryGateLedgerPort({ resolutions: [urgent] }), quorumJudge: async () => (r) => ({ proven: r.resolvedBy === "github:erin", roles: r.resolvedBy === "github:erin" ? ["sre-lead"] : [] }) };
     const out = await pipelinePromoteGates({ spec, to: "prod", skipped: [], digest: DIGEST, releaseDigest: DIGEST, port, now, urgent: true, risk: HIGH });
     expect(out).toMatchObject({ passed: true, urgent: { role: "sre-lead" } });
