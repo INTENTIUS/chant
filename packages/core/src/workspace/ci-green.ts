@@ -58,7 +58,7 @@ import { execFileSync } from "node:child_process";
 import { greenBranches, laneOf, laneTagPrefixes, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type CiGreen, type CiPhase, type CiSource } from "./declaration";
 import { makeNotifyEvent, sendNotify, type NotifyFields } from "../notify";
 import { lifecycleRemoteOverride } from "../lifecycle/ledger-remote";
-import { isTransientForgeError, type CheckRun, type CiForge, type OpRunRef, type WorkflowRun } from "./ci-green-forge";
+import { isTransientForgeError, waitOnForge, type CheckRun, type CiForge, type OpRunRef, type WorkflowRun } from "./ci-green-forge";
 import type { OpRunRecord } from "../op/runtime";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import { fetchLifecycleStatus, listFilesInDir, listLedgerTrees, pushLifecycleStatus, writeLedgerFiles } from "../lifecycle/git";
@@ -1551,13 +1551,7 @@ export function lastGreen(req: { cwd: string; remote?: string; from?: string; br
 
 // ── verdict ──────────────────────────────────────────────────────────────────
 
-/** How long `ci verdict --wait` waits between reads of the check runs. */
-export const CI_VERDICT_INTERVAL_MS = 30_000;
-/** How many forge errors in a row (5xx, 429, no answer) `ci verdict --wait` looks past before it fails (#4729). */
-export const CI_VERDICT_FORGE_ERRORS = 8;
-/** The wait after the first forge error in a row (#4729); it doubles with each one after, up to {@link CI_VERDICT_BACKOFF_MAX_MS}. */
-export const CI_VERDICT_BACKOFF_MS = 15_000;
-export const CI_VERDICT_BACKOFF_MAX_MS = 120_000;
+export { CI_VERDICT_BACKOFF_MAX_MS, CI_VERDICT_BACKOFF_MS, CI_VERDICT_FORGE_ERRORS, CI_VERDICT_INTERVAL_MS } from "./ci-green-forge";
 
 /** `ci verdict --wait` stopped without a verdict (#4729): out of time, or the forge kept failing. */
 export class CiVerdictGaveUpError extends Error {
@@ -1610,10 +1604,7 @@ export async function ciVerdict(req: {
   const sleep = req.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = req.now ?? Date.now;
   const retries = req.wait ? (req.retries ?? green.mergeQueue?.retries ?? 0) : 0;
-  const deadline = req.wait && req.timeoutMs !== undefined ? now() + req.timeoutMs : Infinity;
   const note = req.onNote ?? (() => {});
-  let errors = 0;
-  let waitingOn = "the first read of the check runs";
   // Each workflow run re-run, at the attempt it was on when asked: until GitHub starts the new attempt, it isn't asked again.
   const asked = new Map<number, number>();
   const told = new Set<string>();
@@ -1622,39 +1613,32 @@ export async function ciVerdict(req: {
     told.add(line);
     note(line);
   };
-  const pause = async (ms: number) => {
-    const left = deadline - now();
-    if (left <= 0) throw new CiVerdictGaveUpError(`no verdict after ${minutes(req.timeoutMs!)}: ${waitingOn}`);
-    await sleep(Math.min(ms, left));
-  };
-  for (;;) {
-    let step: { done: { verdict: CommitVerdict; repeated?: VerdictRepeat } } | { verdict: CommitVerdict; waiting: boolean };
-    try {
-      step = await look();
-    } catch (err) {
-      if (!req.wait || !isTransientForgeError(err)) throw err;
-      errors++;
-      const message = err instanceof Error ? err.message : String(err);
-      if (errors >= CI_VERDICT_FORGE_ERRORS) throw new CiVerdictGaveUpError(`the forge failed ${errors} times in a row, the last: ${message}`);
-      const backoff = Math.min(CI_VERDICT_BACKOFF_MS * 2 ** (errors - 1), CI_VERDICT_BACKOFF_MAX_MS);
-      note(`the forge failed (${message}); looking again in ${Math.round(backoff / 1000)}s (${errors} of ${CI_VERDICT_FORGE_ERRORS - 1} looked past)`);
-      waitingOn = `the forge failing: ${message}`;
-      await pause(backoff);
-      continue;
-    }
-    errors = 0;
-    if ("done" in step) return { sha: req.sha, ...step.done };
-    if (!step.waiting) req.onPending?.(step.verdict);
-    await pause(CI_VERDICT_INTERVAL_MS);
+  if (!req.wait) {
+    const runs = (await req.forge.checkRuns(req.sha)).filter((r) => r.name !== MERGE_QUEUE_VERDICT_JOB);
+    return { sha: req.sha, verdict: evaluateCommit(green, runs) };
   }
+  const done = await waitOnForge<{ verdict: CommitVerdict; repeated?: VerdictRepeat }>({
+    what: "verdict",
+    first: "the first read of the check runs",
+    gaveUp: (message) => new CiVerdictGaveUpError(message),
+    ...(req.timeoutMs !== undefined ? { timeoutMs: req.timeoutMs } : {}),
+    sleep,
+    now,
+    onNote: note,
+    look: async () => {
+      const step = await look();
+      if ("done" in step) return step;
+      if (!step.waiting) req.onPending?.(step.verdict);
+      return { waitingOn: step.waitingOn };
+    },
+  });
+  return { sha: req.sha, ...done };
 
-  async function look(): Promise<{ done: { verdict: CommitVerdict; repeated?: VerdictRepeat } } | { verdict: CommitVerdict; waiting: boolean }> {
+  async function look(): Promise<{ done: { verdict: CommitVerdict; repeated?: VerdictRepeat } } | { verdict: CommitVerdict; waiting: boolean; waitingOn: string }> {
     const runs = (await req.forge.checkRuns(req.sha)).filter((r) => r.name !== MERGE_QUEUE_VERDICT_JOB);
     const verdict = evaluateCommit(green, runs);
-    if (!req.wait) return { done: { verdict } };
     if (verdict.verdict === "pending") {
-      waitingOn = `still waiting on ${verdict.phases.filter((p) => p.verdict === "pending").map((p) => p.phase).join(", ")}`;
-      return { verdict, waiting: false };
+      return { verdict, waiting: false, waitingOn: `still waiting on ${verdict.phases.filter((p) => p.verdict === "pending").map((p) => p.phase).join(", ")}` };
     }
     if (verdict.verdict !== "fail" || retries === 0 || !req.forge.workflowRun || !req.forge.rerunFailedJobs) return { done: { verdict } };
     // #4729: every failed run of a required phase, each job once.
@@ -1686,14 +1670,8 @@ export async function ciVerdict(req: {
       asked.set(wr.id, wr.attempt);
       waits.push(`the re-run of workflow run ${wr.name}`);
     }
-    waitingOn = `waiting for ${[...new Set(waits)].join(", ")}`;
-    return { verdict, waiting: true };
+    return { verdict, waiting: true, waitingOn: `waiting for ${[...new Set(waits)].join(", ")}` };
   }
-}
-
-function minutes(ms: number): string {
-  const m = ms / 60_000;
-  return `${Number.isInteger(m) ? m : m.toFixed(1)} minute${m === 1 ? "" : "s"}`;
 }
 
 // ── base ─────────────────────────────────────────────────────────────────────

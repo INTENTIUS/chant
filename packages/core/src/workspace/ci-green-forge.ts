@@ -105,6 +105,79 @@ export function isTransientForgeError(err: unknown): boolean {
   return err instanceof TypeError;
 }
 
+/** How long a forge wait waits between reads (#4644). */
+export const CI_VERDICT_INTERVAL_MS = 30_000;
+/** How many forge errors in a row (5xx, 429, no answer) a forge wait looks past before it fails (#4729). */
+export const CI_VERDICT_FORGE_ERRORS = 8;
+/** The wait after the first forge error in a row (#4729); it doubles with each one after, up to {@link CI_VERDICT_BACKOFF_MAX_MS}. */
+export const CI_VERDICT_BACKOFF_MS = 15_000;
+export const CI_VERDICT_BACKOFF_MAX_MS = 120_000;
+
+/** One read of a forge wait: done with an answer, or waiting, with what for. */
+export type ForgeWaitStep<T> = { done: T } | { waitingOn: string };
+
+/**
+ * Read the forge until `look` is done (#4729, #5438): the loop of `chant ci
+ * verdict --wait`, which `chant release cut --wait-checks` waits with too.
+ * Between reads it sleeps {@link CI_VERDICT_INTERVAL_MS}. An error
+ * `transient` says to look past (default {@link isTransientForgeError}) is
+ * looked past with a backoff, up to {@link CI_VERDICT_FORGE_ERRORS} in a
+ * row; any other error is thrown. Past `timeoutMs` it throws `gaveUp` with
+ * `no <what> after <n> minutes: <what it waited on>`.
+ */
+export async function waitOnForge<T>(req: {
+  look: () => Promise<ForgeWaitStep<T>>;
+  /** The answer waited for, for the timeout's message: `no <what> after ...`. */
+  what: string;
+  /** What the wait waits on before the first read answers. */
+  first: string;
+  /** The error to throw on giving up: out of time, or the forge failing too many times in a row. */
+  gaveUp: (message: string, why: "timeout" | "forge-errors") => Error;
+  timeoutMs?: number;
+  transient?: (err: unknown) => boolean;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  onNote?: (line: string) => void;
+}): Promise<T> {
+  const sleep = req.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = req.now ?? Date.now;
+  const transient = req.transient ?? isTransientForgeError;
+  const note = req.onNote ?? (() => {});
+  const deadline = req.timeoutMs !== undefined ? now() + req.timeoutMs : Infinity;
+  let errors = 0;
+  let waitingOn = req.first;
+  const pause = async (ms: number) => {
+    const left = deadline - now();
+    if (left <= 0) throw req.gaveUp(`no ${req.what} after ${waitMinutes(req.timeoutMs!)}: ${waitingOn}`, "timeout");
+    await sleep(Math.min(ms, left));
+  };
+  for (;;) {
+    let step: ForgeWaitStep<T>;
+    try {
+      step = await req.look();
+    } catch (err) {
+      if (!transient(err)) throw err;
+      errors++;
+      const message = err instanceof Error ? err.message : String(err);
+      if (errors >= CI_VERDICT_FORGE_ERRORS) throw req.gaveUp(`the forge failed ${errors} times in a row, the last: ${message}`, "forge-errors");
+      const backoff = Math.min(CI_VERDICT_BACKOFF_MS * 2 ** (errors - 1), CI_VERDICT_BACKOFF_MAX_MS);
+      note(`the forge failed (${message}); looking again in ${Math.round(backoff / 1000)}s (${errors} of ${CI_VERDICT_FORGE_ERRORS - 1} looked past)`);
+      waitingOn = `the forge failing: ${message}`;
+      await pause(backoff);
+      continue;
+    }
+    errors = 0;
+    if ("done" in step) return step.done;
+    waitingOn = step.waitingOn;
+    await pause(CI_VERDICT_INTERVAL_MS);
+  }
+}
+
+function waitMinutes(ms: number): string {
+  const m = ms / 60_000;
+  return `${Number.isInteger(m) ? m : m.toFixed(1)} minute${m === 1 ? "" : "s"}`;
+}
+
 export interface GithubCiForgeOptions {
   /** `$GITHUB_API_URL`: `https://api.github.com` or `<host>/api/v3`. */
   apiBase: string;

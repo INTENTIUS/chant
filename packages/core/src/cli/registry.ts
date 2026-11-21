@@ -419,6 +419,8 @@ export interface ParsedArgs {
   forgeRelease?: "prerelease" | "draft" | "delete";
   /** `chant release cut --override-green` (#4693): cut a commit that is not green under a person's override on the override ledger. */
   overrideGreen?: boolean;
+  /** `chant release cut --wait-checks [--timeout-minutes <n>]` (#5438): under release.green forge-checks, wait for the commit's pending checks. */
+  waitChecks?: boolean;
   /**
    * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
    * — post the note and the commit status on this forge, with the client
