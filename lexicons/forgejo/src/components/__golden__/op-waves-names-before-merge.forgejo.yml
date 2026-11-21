@@ -71,7 +71,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -263,7 +264,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -410,7 +412,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -606,7 +609,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -695,7 +699,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -869,7 +874,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -1065,7 +1071,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -1154,7 +1161,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -1243,7 +1251,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -1446,7 +1455,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
@@ -1662,7 +1672,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;

@@ -253,7 +253,7 @@ export function checkoutScript(history: boolean, ledger = false, opts: CheckoutO
   }
   if (!/^[A-Za-z0-9._-]+$/.test(head)) throw new Error(`checkoutScript's headName ${JSON.stringify(head)} is not a branch name`);
   const fetchLine = history
-    ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"`
+    ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"`
     : 'git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"';
   return [
     "set -eu",
@@ -275,6 +275,7 @@ export function checkoutScript(history: boolean, ledger = false, opts: CheckoutO
     "esac",
     "if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi",
     fetchLine,
+    ...(history ? ['git update-ref "$target" refs/chant/want'] : []),
     ...(ledger ? ["git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true"] : []),
     'case "$ref" in',
     '  refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;',

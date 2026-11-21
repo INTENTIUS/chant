@@ -207,3 +207,35 @@ describe("the checkout keeps no credentials (#4295)", () => {
     expect(config).not.toContain(Buffer.from(`x-access-token:${SECRET}`).toString("base64"));
   });
 });
+
+describe("the checkout on a branch or tag run (#5437)", () => {
+  for (const ref of ["refs/heads/main", "refs/tags/v1"]) {
+    test(`with history it fetches the commit beside the ref globs for ${ref}`, () => {
+      const top = scratch("chant-handover-checkout-ref-");
+      const origin = join(top, "acme", "estate");
+      const seed = join(top, "seed");
+      mkdirSync(origin, { recursive: true });
+      mkdirSync(seed);
+      const g = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf-8" }).trim();
+      g(origin, "init", "-q", "--bare");
+      g(seed, "init", "-q");
+      writeFileSync(join(seed, "a.txt"), "a\n");
+      g(seed, "add", "-A");
+      g(seed, "commit", "-q", "-m", "a");
+      const sha = g(seed, "rev-parse", "HEAD");
+      g(seed, "push", "-q", origin, "HEAD:refs/heads/main", "HEAD:refs/tags/v1");
+      const work = join(top, "work");
+      mkdirSync(work);
+      const file = join(top, "checkout.sh");
+      writeFileSync(file, checkoutScript(true) + "\n");
+      const r = spawnSync("sh", ["-e", file], {
+        cwd: work,
+        env: { ...BASE, GIT_CONFIG_GLOBAL: join(top, "gitconfig"), GITHUB_SERVER_URL: `file://${top}`, GITHUB_REPOSITORY: "acme/estate", GITHUB_REF: ref, GITHUB_SHA: sha },
+        encoding: "utf-8",
+      });
+      expect(r.stderr).toBe("");
+      expect(r.status).toBe(0);
+      expect(g(work, "rev-parse", "HEAD")).toBe(sha);
+    });
+  }
+});
