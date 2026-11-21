@@ -325,6 +325,12 @@ function entryKey(e: ChangeSetEntry): string {
   return `${e.member}\u0000${e.address}\u0000${e.deposed ?? ""}\u0000${e.action}`;
 }
 
+const byHole = (a: ChangeSetHole, b: ChangeSetHole): number =>
+  byString(a.address, b.address) || byString(a.type ?? "", b.type ?? "") || byString(a.reason, b.reason);
+
+/** A member's holes in the order the digest and the composed document list them (#5441). */
+const sortedHoles = (holes: ReadonlyArray<ChangeSetHole>): ChangeSetHole[] => [...holes].sort(byHole);
+
 const bySideEffect = (a: ChangeSetSideEffect, b: ChangeSetSideEffect): number =>
   byString(a.member, b.member) || byString(a.address, b.address) || byString(a.trigger ?? "", b.trigger ?? "");
 
@@ -352,9 +358,9 @@ export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "me
  * The document's digest: `computePlanDigest("change-set-document", …)` over
  * the set digest ({@link changeSetDigest}), each member's name, status and
  * holes, the entries (without their graph `node`) and the side effects.
- * Members are sorted by name and
- * entries and side effects by the keys {@link composeChangeSet} sorts them by,
- * so order makes no difference.
+ * Members are sorted by name, each member's holes by address, type and
+ * reason (#5441), and entries and side effects by the keys
+ * {@link composeChangeSet} sorts them by, so order makes no difference.
  *
  * A provisional member is left out, with its entries and side effects, as
  * the set digest leaves it out: no approval of the document covers it.
@@ -367,10 +373,22 @@ export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "me
 export function changeSetDocumentDigest(
   doc: Pick<ChangeSetDocument, "members" | "entries" | "sideEffects" | "releaseDigest" | "environment">,
 ): string {
+  return documentDigest(doc, sortedHoles);
+}
+
+/**
+ * The document digest with each member's holes put in order by `holes`:
+ * sorted for {@link changeSetDocumentDigest}, as listed for the digest a
+ * chant before `CHANGE_SET_SORTED_HOLES_FLOOR` (./lifecycle/change-set-store.ts) wrote.
+ */
+function documentDigest(
+  doc: Pick<ChangeSetDocument, "members" | "entries" | "sideEffects" | "releaseDigest" | "environment">,
+  holes: (holes: ReadonlyArray<ChangeSetHole>) => ReadonlyArray<ChangeSetHole>,
+): string {
   const provisional = new Set(doc.members.filter((m) => m.provisional === true).map((m) => m.member));
   const members = doc.members
     .filter((m) => !provisional.has(m.member))
-    .map((m) => ({ member: m.member, status: m.status, holes: m.holes, ...(m.group ? { group: { digest: m.group.digest, reads: [...m.group.reads].sort() } } : {}) }))
+    .map((m) => ({ member: m.member, status: m.status, holes: holes(m.holes), ...(m.group ? { group: { digest: m.group.digest, reads: [...m.group.reads].sort() } } : {}) }))
     .sort((a, b) => byString(a.member, b.member));
   // An entry's graph node (#4022), its block node (#4454) and its source
   // file (#4025) say where on the graph the change is, not what the plan
@@ -436,13 +454,14 @@ export interface ComposeChangeSetOptions {
 }
 
 /**
- * Join adapters' parts into one document: members sorted by name, entries
- * by member, address, deposed key and action, the summary, and the digest.
+ * Join adapters' parts into one document: members sorted by name, each
+ * member's holes by address, type and reason, entries by member, address,
+ * deposed key and action, the summary, and the digest.
  * Throws when two parts name the same member, or an entry names a member
  * other than its part's.
  */
 export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: ComposeChangeSetOptions = {}): ChangeSetDocument {
-  const members = parts.map((p) => p.member).sort((a, b) => byString(a.member, b.member));
+  const members = parts.map((p) => ({ ...p.member, holes: sortedHoles(p.member.holes) })).sort((a, b) => byString(a.member, b.member));
   const entries: ChangeSetEntry[] = [];
   for (const part of parts) {
     for (const e of part.entries) {
@@ -473,12 +492,17 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
  * Whether a document's digest is the one its members, entries and side
  * effects give ({@link changeSetDocumentDigest}). A document that names a
  * member twice has no digest and is not verified.
+ *
+ * A document stored by a chant before `CHANGE_SET_SORTED_HOLES_FLOOR` (./lifecycle/change-set-store.ts)
+ * hashed its holes in the order it lists them, so that digest verifies too
+ * (#5441). Either way the digest covers the same holes, entries and side
+ * effects.
  */
 export function verifyChangeSetDigest(
   doc: Pick<ChangeSetDocument, "digest" | "members" | "entries" | "sideEffects" | "releaseDigest" | "environment">,
 ): boolean {
   try {
-    return changeSetDocumentDigest(doc) === doc.digest;
+    return changeSetDocumentDigest(doc) === doc.digest || documentDigest(doc, (holes) => holes) === doc.digest;
   } catch {
     return false;
   }

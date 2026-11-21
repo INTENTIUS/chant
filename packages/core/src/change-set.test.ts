@@ -220,6 +220,57 @@ describe("the digest", () => {
     expect(verifyChangeSetDigest({ ...doc, members: [...doc.members, doc.members[0]] })).toBe(false);
   });
 
+  test("hashes each member's holes sorted, so two plans that list the same holes in another order share a digest (#5441)", () => {
+    const holes = [
+      { address: "urn:b", type: "aws:sqs/queue:Queue", reason: "pulumi printed refresh, same" },
+      { address: "urn:a", type: "aws:s3/bucket:Bucket", reason: "pulumi printed refresh, same" },
+      { address: "urn:a", type: "aws:s3/bucket:Bucket", reason: "pulumi printed frobnicate" },
+      { address: "urn:c", reason: "unobserved" },
+    ];
+    const withHoles = (list: typeof holes): ChangeSetPart => {
+      const p = warden();
+      return { ...p, member: { ...p.member, holes: list } };
+    };
+    const doc = composeChangeSet([lifecycle(), withHoles(holes)]);
+    const reversed = composeChangeSet([lifecycle(), withHoles([...holes].reverse())]);
+    expect(reversed.digest).toBe(doc.digest);
+    expect(reversed).toEqual(doc);
+    expect(doc.members.find((m) => m.member === "warden")!.holes.map((h) => `${h.address} ${h.reason}`)).toEqual([
+      "urn:a pulumi printed frobnicate",
+      "urn:a pulumi printed refresh, same",
+      "urn:b pulumi printed refresh, same",
+      "urn:c unobserved",
+    ]);
+    // A real change still moves it: a hole more, a hole fewer, or another reason.
+    expect(composeChangeSet([lifecycle(), withHoles(holes.slice(1))]).digest).not.toBe(doc.digest);
+    expect(composeChangeSet([lifecycle(), withHoles([...holes, { address: "urn:d", reason: "unobserved" }])]).digest).not.toBe(doc.digest);
+    expect(composeChangeSet([lifecycle(), withHoles([{ ...holes[0], reason: "pulumi printed refresh, update" }, ...holes.slice(1)])]).digest).not.toBe(doc.digest);
+  });
+
+  test("a document whose holes were already sorted hashes as before, and one stored with the digest an older chant gave its listed order still verifies (#5441)", () => {
+    const doc = composeChangeSet([lifecycle(), warden()]);
+    const holes = [
+      { address: "urn:b", reason: "unobserved" },
+      { address: "urn:a", reason: "unobserved" },
+    ];
+    const listedDigest = (members: typeof doc.members): string =>
+      computePlanDigest("change-set-document", {
+        set: changeSetDigest(members),
+        members: members.map((m) => ({ member: m.member, status: m.status, holes: m.holes })),
+        entries: doc.entries,
+        sideEffects: [],
+      });
+    const sorted = doc.members.map((m) => (m.member === "warden" ? { ...m, holes: [...holes].reverse() } : m));
+    expect(changeSetDocumentDigest({ ...doc, members: sorted })).toBe(listedDigest(sorted));
+    // As an older chant stored it: holes in print order, hashed in that order.
+    const listed = doc.members.map((m) => (m.member === "warden" ? { ...m, holes } : m));
+    const older = { ...doc, members: listed, digest: listedDigest(listed) };
+    expect(older.digest).not.toBe(changeSetDocumentDigest(older));
+    expect(verifyChangeSetDigest(older)).toBe(true);
+    expect(verifyChangeSetDigest({ ...older, digest: changeSetDocumentDigest(older) })).toBe(true);
+    expect(verifyChangeSetDigest({ ...older, members: listed.map((m) => (m.member === "warden" ? { ...m, holes: holes.slice(1) } : m)) })).toBe(false);
+  });
+
   test("leaves provisional members out, so approving the document never covers them", () => {
     const provisional = tofu();
     provisional.member = { ...provisional.member, provisional: true };

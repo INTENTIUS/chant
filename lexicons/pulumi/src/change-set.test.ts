@@ -149,6 +149,21 @@ describe("pulumi preview --json to a change-set part (#4453)", () => {
     expect(odd.member.holes).toEqual([{ address: urn("aws:s3/bucket:Bucket", "x"), type: "aws:s3/bucket:Bucket", reason: expect.stringMatching(/frobnicate/) }]);
   });
 
+  test("two previews that print the same unmapped steps in another order compose to one document and digest (#5441)", () => {
+    const steps = ["a", "b", "c"].flatMap((n) => [
+      { op: "refresh", urn: urn("aws:s3/bucket:Bucket", n) },
+      { op: "same", urn: urn("aws:s3/bucket:Bucket", n) },
+    ]);
+    const one = composeChangeSet([pulumiPreviewPart({ member: "site", preview: { steps } })]);
+    const reordered = [...steps.slice(4), ...steps.slice(0, 2), ...steps.slice(2, 4)];
+    const other = composeChangeSet([pulumiPreviewPart({ member: "site", preview: { steps: reordered } })]);
+    expect(one.members[0].holes.map((h) => h.address)).toEqual(["a", "b", "c"].map((n) => urn("aws:s3/bucket:Bucket", n)));
+    expect(other).toEqual(one);
+    expect(verifyChangeSetDigest(other)).toBe(true);
+    const fewer = composeChangeSet([pulumiPreviewPart({ member: "site", preview: { steps: steps.slice(2) } })]);
+    expect(fewer.digest).not.toBe(one.digest);
+  });
+
   test("a failed preview is a failed member with no digest; a document with no steps and no error is refused", () => {
     const failed = pulumiPreviewPart({ member: "site", preview: {}, error: "boom" });
     expect(failed.member).toMatchObject({ status: "failed", error: "boom", planDigest: null });
