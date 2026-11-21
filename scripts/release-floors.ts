@@ -7,13 +7,16 @@
  *   npx tsx scripts/release-floors.ts --rev <sha>      check a commit's tree
  *   npx tsx scripts/release-floors.ts --release <v>    count <v> as a release (the one being cut)
  *   npx tsx scripts/release-floors.ts --npm            also ask npm for the published versions
- *   npx tsx scripts/release-floors.ts --train-plan <f> count core's label in a release train's plan as a release;
- *                                                      with core not in the train, check nothing (#5154)
+ *   npx tsx scripts/release-floors.ts --train-plan <f> count each member's label in a release train's plan as a
+ *                                                      release of that package; with core not in the train,
+ *                                                      check nothing (#5154)
  *   npx tsx scripts/release-floors.ts --set <v>        set the next release's number
  *   npx tsx scripts/release-floors.ts --freeze <v> [--next <n>] [--rev <sha>]
  *                                                      after <v> shipped: its floors become literals (optional)
  *   npx tsx scripts/release-floors.ts --pack <cmd...>  run <cmd> (core's build) with every floor at the
  *                                                      version it ships with, then put the sources back
+ *   npx tsx scripts/release-floors.ts --lexicon <n> --pack <cmd...>
+ *                                                      the same for lexicon <n>'s build and its floors
  *
  * The one place the number is set is NEXT_RELEASE in
  * packages/core/src/release-floors.ts. Each floor constant added since the
@@ -26,8 +29,9 @@
  * no local build stamp. A floor is NEXT_RELEASE and every `export const
  * <NAME>_FLOOR = "<version>"` under packages/core/src and in each lexicon's
  * src/chant-floors.ts (#4916). A lexicon floor that names the next release
- * imports NEXT_RELEASE from `@intentius/chant/release-floors`, and
- * `--freeze` writes it as a literal the same way.
+ * imports NEXT_RELEASE from `@intentius/chant/release-floors` as a marker:
+ * it names the next release of that lexicon, not core's, and its value in
+ * the sources is never what ships (see the lexicon floors below).
  *
  * Packages have their own versions (#5138). A core floor is a version of
  * `@intentius/chant`, and a floor in a lexicon's src/chant-floors.ts is a
@@ -57,9 +61,20 @@
  * passes. `--release <v>` counts <v> the same way, for a cut, which checks
  * the commit it cuts before any stamp exists. `--train-plan <file>` reads
  * <v> from the plan `chant workspace train cut` hands `release.train.check`
- * (CHANT_TRAIN_PLAN, #5154): the label of the member `core`. A train that
+ * (CHANT_TRAIN_PLAN, #5154): the label of the member `core` for core's
+ * floors, and the label of `lexicon-<n>` for lexicon <n>'s. A train that
  * does not release core checks nothing, since its floors ship with the core
  * already published.
+ *
+ * A lexicon floor still NEXT_RELEASE resolves the same way as a core one,
+ * from that lexicon's releases: the oldest of the lexicon's releases whose
+ * commit already declared it in its src/chant-floors.ts, or else the
+ * lexicon's label in the train, the last `--release`, its stamp, or the
+ * patch after its newest release. A lexicon's `prepack` runs its build
+ * under `--lexicon <n> --pack`, which writes its floors as those literals
+ * and puts the file back, and core's `--pack` writes the floor table's
+ * lexicon rows the same way. So a lexicon floor never ships as core's
+ * version, and `--freeze` leaves lexicon floors alone.
  *
  * After a release ships, its floors stay at the version they shipped with
  * (#4501). The release tags say which: a core floor still NEXT_RELEASE
@@ -81,13 +96,11 @@
  * `--freeze <v>` writes those literals into the sources, for a tree that
  * reads plainly; the build no longer needs it. Run once <v> is published and
  * while NEXT_RELEASE is still <v>, it writes "<v>" in place of NEXT_RELEASE
- * in each floor constant that <v> shipped (dropping an import of
+ * in each core floor constant that <v> shipped (dropping an import of
  * NEXT_RELEASE the file no longer uses), drops those floors' entries from
  * NEXT_RELEASE_TEXT (the texts already carry "<v>"), and sets NEXT_RELEASE
- * to `--next`, or <v> with its patch number raised. A lexicon floor still
- * NEXT_RELEASE is not resolved from core's tags, so the check still fails
- * while one is NEXT_RELEASE and NEXT_RELEASE names a version that has a
- * release.
+ * to `--next`, or <v> with its patch number raised. <v> is a core release,
+ * so lexicon floors stay NEXT_RELEASE and resolve from their own releases.
  *
  * A floor shipped in <v> when it was already NEXT_RELEASE at <v>'s release
  * commit (#4540): the commit `release/npm/<v>`, `chant-v<v>` or core's member
@@ -139,19 +152,34 @@ interface Args {
   next?: string;
   /** `--train-plan <file>`: a train without core checks nothing. */
   trainWithoutCore?: boolean;
+  /** `--train-plan <file>`: each member's label, by member (`core`, `lexicon-<n>`). */
+  train: Map<string, string>;
   /** `--pack <cmd...>`: the command to run with the floors resolved. */
   pack?: string[];
+  /** `--lexicon <n>`: `--pack` resolves lexicon <n>'s floors instead of core's. */
+  lexicon?: string;
+}
+
+/** Each member's label in a `chant workspace train cut` plan (#5154), by member name. */
+export function labelsOfPlan(text: string): Map<string, string> {
+  const plan = JSON.parse(text) as { members?: Array<{ member?: unknown; label?: unknown }> };
+  const out = new Map<string, string>();
+  for (const m of plan.members ?? []) if (typeof m.member === "string" && typeof m.label === "string") out.set(m.member, m.label);
+  return out;
 }
 
 /** Core's label in a `chant workspace train cut` plan (#5154), or null when the train does not release core. */
 export function coreLabelOfPlan(text: string): string | null {
-  const plan = JSON.parse(text) as { members?: Array<{ member?: unknown; label?: unknown }> };
-  const core = (plan.members ?? []).find((m) => m.member === "core");
-  return typeof core?.label === "string" ? core.label : null;
+  return labelsOfPlan(text).get("core") ?? null;
+}
+
+/** The train member that releases a package: `core`, or `lexicon-<n>`. */
+function memberOf(lexicon?: string): string {
+  return lexicon ? `lexicon-${lexicon}` : "core";
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { release: [], npm: false };
+  const args: Args = { release: [], npm: false, train: new Map() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -168,9 +196,12 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--release") args.release.push(value());
     else if (a === "--npm") args.npm = true;
     else if (a === "--train-plan") {
-      const label = coreLabelOfPlan(readFileSync(value(), "utf-8"));
-      if (label === null) args.trainWithoutCore = true;
-      else args.release.push(label);
+      args.train = labelsOfPlan(readFileSync(value(), "utf-8"));
+      if (!args.train.has("core")) args.trainWithoutCore = true;
+    }
+    else if (a === "--lexicon") {
+      args.lexicon = value();
+      if (!/^[a-z0-9-]+$/.test(args.lexicon)) throw new Error(`${args.lexicon} is not a lexicon name`);
     }
     else if (a === "--set") args.set = value();
     else if (a === "--freeze") args.freeze = value();
@@ -178,7 +209,9 @@ function parseArgs(argv: string[]): Args {
     else throw new Error(`unknown argument ${a}`);
   }
   if (args.next && !args.freeze) throw new Error("--next goes with --freeze");
-  for (const v of [...args.release, ...[args.set, args.freeze, args.next].filter((v): v is string => v !== undefined)]) {
+  if (args.lexicon && !args.pack) throw new Error("--lexicon goes before --pack");
+  const floorLabels = [...args.train].filter(([member]) => member === "core" || member.startsWith("lexicon-")).map(([, label]) => label);
+  for (const v of [...args.release, ...floorLabels, ...[args.set, args.freeze, args.next].filter((v): v is string => v !== undefined)]) {
     if (!/^\d+\.\d+\.\d+$/.test(v)) throw new Error(`${v} is not a version`);
   }
   return args;
@@ -230,24 +263,6 @@ function floorFiles(rev: string | undefined): string[] {
   return git(rev ? ["ls-tree", "-r", "--name-only", rev, "--", "packages/core/src", "lexicons"] : ["ls-files", "--", "packages/core/src", "lexicons"])
     .split("\n")
     .filter((f) => (f.startsWith("packages/core/src/") && f.endsWith(".ts") && !f.endsWith(".test.ts")) || LEXICON_FLOORS_FILE.test(f));
-}
-
-/**
- * NEXT_RELEASE and each floor still set to it, as problem lines, when
- * NEXT_RELEASE names a version that has a release (#4501): those floors
- * shipped and must be literals before NEXT_RELEASE moves on. The check
- * passes it lexicon floors only; a core floor is resolved from the release
- * tags (#5260).
- */
-export function shippedSymbolic(next: string, named: Floor[], known: Set<string>, stamp?: string): string[] {
-  // A working tree stamped with NEXT_RELEASE is a local pack of that
-  // release: its own release/npm/<next> tag already exists, but the floors
-  // ship as NEXT_RELEASE in this pack and are frozen after it reaches npm.
-  if (stamp === next) return [];
-  if (!known.has(next)) return [];
-  return named
-    .filter((f) => f.symbolic)
-    .map((f) => `${f.file}: ${f.name} is NEXT_RELEASE, and ${next} has shipped; run \`just release-floors --freeze ${next}\``);
 }
 
 /**
@@ -319,10 +334,12 @@ export function staleFloorTests(tests: readonly { file: string; src: string }[],
  * The commit core's release <v> was cut from: the one its lockstep tag
  * (`release/npm/<v>`, `chant-v<v>`) or core's member tag
  * (`release/npm/core/<v>`) names. Another member's tag is not a core release
- * (#5135).
+ * (#5135). With `lexicon`, lexicon <n>'s release <v> instead: the lockstep
+ * tags, its member tag `release/npm/lexicon-<n>/<v>` or `lexicon-<n>-v<v>`.
  */
-export function releaseCommit(version: string, cwd = ROOT): string | undefined {
-  for (const tag of [`release/npm/${version}`, `chant-v${version}`, `release/npm/core/${version}`]) {
+export function releaseCommit(version: string, cwd = ROOT, lexicon?: string): string | undefined {
+  const own = lexicon ? [`release/npm/lexicon-${lexicon}/${version}`, `lexicon-${lexicon}-v${version}`] : [`release/npm/core/${version}`];
+  for (const tag of [`release/npm/${version}`, `chant-v${version}`, ...own]) {
     try {
       return git(["rev-parse", "--verify", "--quiet", `refs/tags/${tag}^{commit}`], cwd).trim() || undefined;
     } catch {
@@ -371,11 +388,16 @@ export function shippedIn(symbolic: readonly string[], releases: readonly string
   return out;
 }
 
-/** The floor names a commit declares under packages/core/src. */
-function declaredFloorsAt(commit: string): Set<string> {
+/** The files a package declares its floors in: core's sources, or a lexicon's src/chant-floors.ts. */
+function floorsPath(lexicon?: string): string {
+  return lexicon ? `lexicons/${lexicon}/src/chant-floors.ts` : "packages/core/src";
+}
+
+/** The floor names a commit declares under packages/core/src, or in lexicon <n>'s floors file. */
+function declaredFloorsAt(commit: string, lexicon?: string): Set<string> {
   let out = "";
   try {
-    out = git(["grep", "-h", "-o", "-E", "export const [A-Z0-9_]+_FLOOR = ", commit, "--", "packages/core/src"]);
+    out = git(["grep", "-h", "-o", "-E", "export const [A-Z0-9_]+_FLOOR = ", commit, "--", floorsPath(lexicon)]);
   } catch {
     // git grep exits 1 when nothing matches.
   }
@@ -391,14 +413,40 @@ function isAncestor(commit: string, of: string): boolean {
   }
 }
 
-/** The release each core floor still NEXT_RELEASE at `head` shipped in, from the checkout's release tags (#5260). */
-function shippedFromTags(symbolic: readonly string[], head: string): Map<string, string> {
+/**
+ * The release each floor still NEXT_RELEASE at `head` shipped in, from the
+ * checkout's release tags (#5260): core's floors from core's releases, or
+ * lexicon <n>'s from that lexicon's.
+ */
+function shippedFromTags(symbolic: readonly string[], head: string, lexicon?: string): Map<string, string> {
   if (symbolic.length === 0) return new Map();
-  const releases = [...releasedVersions(releaseTags())].sort((a, b) => compareVersions(b, a));
+  const releases = [...releasedVersions(releaseTags(), undefined, lexicon)].sort((a, b) => compareVersions(b, a));
   return shippedIn(symbolic, releases, (version) => {
-    const commit = releaseCommit(version);
-    return commit && isAncestor(commit, head) ? declaredFloorsAt(commit) : undefined;
+    const commit = releaseCommit(version, ROOT, lexicon);
+    return commit && isAncestor(commit, head) ? declaredFloorsAt(commit, lexicon) : undefined;
   });
+}
+
+/**
+ * Each lexicon floor still NEXT_RELEASE, as file -> (floor -> the lexicon
+ * version it ships with): the lexicon release that first declared it, or
+ * else `unshipped(lexicon)`, the version the lexicon's next release takes.
+ */
+function lexiconFloorVersions(declared: readonly Floor[], head: string, unshipped: (lexicon: string) => string): Map<string, Map<string, string>> {
+  const out = new Map<string, Map<string, string>>();
+  const byLexicon = new Map<string, Floor[]>();
+  for (const f of declared) if (f.lexicon && f.symbolic) byLexicon.set(f.lexicon, [...(byLexicon.get(f.lexicon) ?? []), f]);
+  for (const [lexicon, list] of byLexicon) {
+    const shipped = shippedFromTags(list.map((f) => f.name), head, lexicon);
+    const version = unshipped(lexicon);
+    for (const f of list) out.set(f.file, (out.get(f.file) ?? new Map()).set(f.name, shipped.get(f.name) ?? version));
+  }
+  return out;
+}
+
+/** The version a lexicon's next release packs at: its stamp, or else the patch after its newest release, or else `fallback`. */
+export function lexiconPackVersion(stamp: string | undefined, newestRelease: string | undefined, fallback: string): string {
+  return stamp ?? (newestRelease ? nextPatch(newestRelease) : fallback);
 }
 
 /** The newest version in a set, or undefined for none. */
@@ -538,11 +586,14 @@ function freeze(version: string, next: string | undefined, rev: string | undefin
         `fetch the tags (git fetch origin 'refs/tags/release/*:refs/tags/release/*' 'refs/tags/chant-v*:refs/tags/chant-v*') or pass --rev <sha>`,
     );
   }
-  const { freeze: shipped, keep } = splitFreeze(floors(reader(at), at, version), floors(read, undefined, version));
+  // <v> is a core release; a lexicon floor resolves from that lexicon's own releases.
+  const core = (list: Floor[]) => list.filter((f) => !f.lexicon);
+  const { freeze: shipped, keep } = splitFreeze(core(floors(reader(at), at, version)), core(floors(read, undefined, version)));
   const names = new Set(shipped);
   let frozen = 0;
   let droppedImport = false;
   for (const file of floorFiles(undefined)) {
+    if (LEXICON_FLOORS_FILE.test(file)) continue;
     const src = read(file);
     const out = freezeFloorSource(src, version, names);
     if (out === src) continue;
@@ -604,10 +655,48 @@ function packSources(version: string, shipped: ReadonlyMap<string, string>): Map
 }
 
 /**
+ * Each lexicon floors file with a floor still NEXT_RELEASE, written with
+ * every such floor as the lexicon version it ships with, as a map of file
+ * to text. `fallback` is the version a lexicon with no release packs at.
+ */
+function lexiconPackSources(fallback: string, only?: string): Map<string, string> {
+  const read = reader(undefined);
+  const declared = floors(read, undefined, nextRelease(read)).filter((f) => f.lexicon && (only === undefined || f.lexicon === only));
+  const versions = lexiconFloorVersions(declared, "HEAD", (lexicon) => lexiconPackVersion(localStamp(lexicon), newest(releasedVersions(releaseTags(), undefined, lexicon)), fallback));
+  const out = new Map<string, string>();
+  for (const [file, shipped] of versions) out.set(file, resolveFloorSource(read(file), shipped, fallback));
+  return out;
+}
+
+/**
+ * Run `command` with `files` written, and put every file in `restore` back
+ * as it was, whatever the command did.
+ */
+function runWith(files: ReadonlyMap<string, string>, restore: readonly string[], before: () => void, note: string, command: string[]): number {
+  const read = reader(undefined);
+  const saved = new Map<string, string>();
+  for (const file of new Set([...files.keys(), ...restore])) saved.set(file, read(file));
+  let status = 1;
+  try {
+    for (const [file, text] of files) writeFileSync(join(ROOT, file), text);
+    before();
+    // stderr: `npm pack --json` prints the JSON on stdout, after prepack's own output.
+    console.error(note);
+    const run = spawnSync(command[0]!, command.slice(1), { stdio: ["inherit", 2, "inherit"] });
+    if (run.error) throw run.error;
+    status = run.status ?? 1;
+  } finally {
+    for (const [file, text] of saved) writeFileSync(join(ROOT, file), text);
+  }
+  return status;
+}
+
+/**
  * `--pack <cmd...>` (#5260): core's prepack. Writes every core floor as the
  * version it ships with, NEXT_RELEASE as the version being packed, and the
- * floor table, runs the command (the build), and puts every file back as it
- * was, whatever the command did.
+ * floor table, with each lexicon floor's row at the lexicon version it ships
+ * with, runs the command (the build), and puts every file back as it was,
+ * whatever the command did.
  */
 function pack(command: string[]): number {
   const read = reader(undefined);
@@ -616,22 +705,27 @@ function pack(command: string[]): number {
   const shipped = shippedFromTags(symbolic, "HEAD");
   const version = packVersion(next, localStamp(), newest(releasedVersions(releaseTags())));
   const files = packSources(version, shipped);
-  const saved = new Map<string, string>();
-  for (const file of [...files.keys(), TABLE_FILE]) saved.set(file, read(file));
-  let status = 1;
-  try {
-    for (const [file, text] of files) writeFileSync(join(ROOT, file), text);
-    writeTable(ROOT);
-    const shown = [...shipped].map(([n, v]) => `${n} ${v}`);
-    // stderr: `npm pack --json` prints the JSON on stdout, after prepack's own output.
-    console.error(`release floors: packing with NEXT_RELEASE ${version}${shown.length > 0 ? `; shipped earlier: ${shown.join(", ")}` : ""}`);
-    const run = spawnSync(command[0]!, command.slice(1), { stdio: ["inherit", 2, "inherit"] });
-    if (run.error) throw run.error;
-    status = run.status ?? 1;
-  } finally {
-    for (const [file, text] of saved) writeFileSync(join(ROOT, file), text);
-  }
-  return status;
+  // The lexicons' floors files stay as they are; only the table reads them resolved.
+  const lexicons = lexiconPackSources(version);
+  const shown = [...shipped].map(([n, v]) => `${n} ${v}`);
+  return runWith(files, [TABLE_FILE], () => writeTable(ROOT, lexicons), `release floors: packing with NEXT_RELEASE ${version}${shown.length > 0 ? `; shipped earlier: ${shown.join(", ")}` : ""}`, command);
+}
+
+/**
+ * `--lexicon <n> --pack <cmd...>`: lexicon <n>'s prepack. Writes each of its
+ * floors still NEXT_RELEASE as the lexicon version it ships with (the
+ * release that first declared it, or the version being packed: the
+ * lexicon's stamp, or the patch after its newest release), runs the command
+ * (the build), and puts the file back.
+ */
+function packLexicon(lexicon: string, command: string[]): number {
+  const read = reader(undefined);
+  const files = lexiconPackSources(nextRelease(read), lexicon);
+  const resolved = [...files].flatMap(([file, src]) => {
+    const symbolic = new Set([...read(file).matchAll(/export const ([A-Z0-9_]+_FLOOR) = NEXT_RELEASE;/g)].map((m) => m[1]));
+    return [...src.matchAll(/export const ([A-Z0-9_]+_FLOOR) = "(\d+\.\d+\.\d+)";/g)].filter((m) => symbolic.has(m[1])).map((m) => `${m[1]} ${m[2]}`);
+  });
+  return runWith(files, [], () => undefined, `release floors: packing ${memberOf(lexicon)}${files.size > 0 ? ` with ${resolved.join(", ")}` : ", whose floors are literals"}`, command);
 }
 
 function set(version: string): void {
@@ -667,14 +761,17 @@ function check(args: Args): number {
 
   const known = released(args.npm);
   const stamp = args.rev ? undefined : localStamp();
+  // The version a package's release being cut takes: its train label, or the last --release.
+  const cuttingOf = (lexicon?: string): string | undefined => args.train.get(memberOf(lexicon)) ?? args.release.at(-1);
   const allowedCache = new Map<string, Set<string>>();
-  // #5138: a lexicon floor is checked against that lexicon's own releases and stamp.
+  // #5138: a lexicon floor is checked against that lexicon's own releases, label and stamp.
   const allowed = (lexicon?: string): Set<string> => {
     const key = lexicon ?? "";
     let set = allowedCache.get(key);
     if (!set) {
       const own = lexicon ? localStampOf(lexicon, args.rev) : stamp;
-      set = new Set([...(lexicon ? released(args.npm, lexicon) : known), ...args.release, ...(own ? [own] : [])]);
+      const label = args.train.get(memberOf(lexicon));
+      set = new Set([...(lexicon ? released(args.npm, lexicon) : known), ...args.release, ...(label ? [label] : []), ...(own ? [own] : [])]);
       allowedCache.set(key, set);
     }
     return set;
@@ -684,16 +781,23 @@ function check(args: Args): number {
   // last --release or the train's core label), or else as `--pack` would pack it.
   const declared = floors(read, args.rev, next);
   const symbolicCore = declared.filter((f) => f.symbolic && !f.lexicon).map((f) => f.name);
-  const shipped = shippedFromTags(symbolicCore, args.rev ?? "HEAD");
-  const cutting = args.release.at(-1);
+  const head = args.rev ?? "HEAD";
+  const shipped = shippedFromTags(symbolicCore, head);
+  const cutting = cuttingOf();
   const unshipped = cutting ?? packVersion(next, stamp, newest(releasedVersions(releaseTags())));
+  // A lexicon floor still NEXT_RELEASE names a release of that lexicon, read
+  // the same way from its own releases and its label in the train.
+  const lexiconVersions = lexiconFloorVersions(declared, head, (lexicon) => {
+    const newestRelease = newest(released(args.npm, lexicon));
+    return cuttingOf(lexicon) ?? lexiconPackVersion(localStampOf(lexicon, args.rev), newestRelease, unshipped);
+  });
   const named = [
     { name: "NEXT_RELEASE", file: CONSTANT_FILE, version: cutting ?? next },
-    ...declared.map((f) => (f.symbolic && !f.lexicon ? { ...f, version: shipped.get(f.name) ?? unshipped } : f)),
+    ...declared.map((f) =>
+      !f.symbolic ? f : f.lexicon ? { ...f, version: lexiconVersions.get(f.file)?.get(f.name) ?? next } : { ...f, version: shipped.get(f.name) ?? unshipped },
+    ),
   ];
   problems.push(...unreleasedFloors(named, allowed, args.npm));
-  // A lexicon floor is not resolved from core's tags, so it must still be frozen.
-  problems.push(...shippedSymbolic(next, declared.filter((f) => f.lexicon), known, stamp));
   if (args.npm && symbolicCore.length > 0) problems.push(...missingTags(newest(known), newest(releasedVersions(releaseTags()))));
   // #4792: the floor table a product reads lists every floor, at its version.
   const table = tableAgainst(ROOT, args.rev);
@@ -703,12 +807,18 @@ function check(args: Args): number {
   if (problems.length > 0) {
     console.error(`release floors ${where}: ${problems.length} problem(s)`);
     for (const p of problems) console.error(`  ${p}`);
-    const sources = [`${known.size} released versions`, ...(stamp ? [`local stamp ${stamp}`] : []), ...args.release.map((r) => `--release ${r}`)];
+    const labels = [...args.train].filter(([member]) => member === "core" || member.startsWith("lexicon-")).map(([member, label]) => `train ${member} ${label}`);
+    const sources = [`${known.size} released versions`, ...(stamp ? [`local stamp ${stamp}`] : []), ...args.release.map((r) => `--release ${r}`), ...labels];
     console.error(`  (checked against ${sources.join(", ")})`);
     return 1;
   }
   const fromTags = [...shipped].map(([n, v]) => `${n} ${v}`);
-  console.log(`release floors ${where}: ${named.length} floors and ${NEXT_RELEASE_TEXT.length} texts agree; NEXT_RELEASE is ${next}${fromTags.length > 0 ? `; on NEXT_RELEASE and shipped, packed at their release: ${fromTags.join(", ")}` : ""}`);
+  const lexiconFloors = [...lexiconVersions.values()].flatMap((m) => [...m].map(([n, v]) => `${n} ${v}`));
+  console.log(
+    `release floors ${where}: ${named.length} floors and ${NEXT_RELEASE_TEXT.length} texts agree; NEXT_RELEASE is ${next}` +
+      `${fromTags.length > 0 ? `; on NEXT_RELEASE and shipped, packed at their release: ${fromTags.join(", ")}` : ""}` +
+      `${lexiconFloors.length > 0 ? `; lexicon floors on NEXT_RELEASE, at their lexicon's release: ${lexiconFloors.join(", ")}` : ""}`,
+  );
   return 0;
 }
 
@@ -716,7 +826,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = parseArgs(process.argv.slice(2));
   if (args.set) set(args.set);
   else if (args.freeze) freeze(args.freeze, args.next, args.rev);
-  else if (args.pack) process.exit(pack(args.pack));
+  else if (args.pack) process.exit(args.lexicon ? packLexicon(args.lexicon, args.pack) : pack(args.pack));
   else if (args.trainWithoutCore) console.log("release floors: the train does not release core, so no core floor ships with it");
   else process.exit(check(args));
 }

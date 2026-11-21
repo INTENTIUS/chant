@@ -78,7 +78,9 @@ describe("lexicon packages ship compiled JS (#3981)", () => {
     const { scripts = {} } = manifest(name);
     expect(scripts.build, "build").toMatch(/\b(tsc|tsc7\.sh) -p tsconfig\.build\.json\b/);
     expect(scripts.build, "build must not delete dist/*.js (#433 did)").not.toMatch(/-delete|\brm\b|\.js\.map/);
-    expect(scripts.prepack?.split("&&").map((s) => s.trim()), "prepack").toContain("npm run build");
+    // A lexicon with floors runs the build under release-floors' pack, which writes them as the versions they ship with.
+    const runsBuild = (s: string) => s === "npm run build" || s === `tsx ../../scripts/release-floors.ts --lexicon ${name} --pack npm run build`;
+    expect(scripts.prepack?.split("&&").map((s) => s.trim()).filter(runsBuild), "prepack runs npm run build").toHaveLength(1);
   });
 
   test.each(LEXICONS)("%s: tsc compiles src/ to dist/ and the package publishes dist/ only", (name) => {

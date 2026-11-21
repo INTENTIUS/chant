@@ -9,7 +9,10 @@
  *
  * Only this file is read for the table (`scripts/floor-table.ts`). A floor
  * that names the next release imports `NEXT_RELEASE`, and the entries that
- * serve a part re-export its floor by name from `./index`.
+ * serve a part re-export its floor by name from `./index`. Here
+ * `NEXT_RELEASE` names the next pulumi lexicon release, not core's: this
+ * package's prepack builds with each such floor written as the lexicon
+ * release that ships it (`scripts/release-floors.ts --lexicon pulumi --pack`).
  */
 import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 

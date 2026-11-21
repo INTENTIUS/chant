@@ -252,9 +252,13 @@ function git(root: string, args: string[]): string {
  * The table the floors at `rev` (or in the working tree) make, and the
  * committed one, for a check. Files come from `git ls-files`, and from the
  * working tree's untracked ones too, so a floor in a file not yet added counts.
+ * `sources` replaces the text of the files it names: core's pack hands it
+ * the lexicons' floors files with each floor at the lexicon version it ships
+ * with (scripts/release-floors.ts `--pack`).
  */
-export function tableAgainst(root: string, rev?: string): { want: string; have: string | undefined } {
-  const read = rev ? (f: string) => git(root, ["show", `${rev}:${f}`]) : (f: string) => readFileSync(join(root, f), "utf-8");
+export function tableAgainst(root: string, rev?: string, sources?: ReadonlyMap<string, string>): { want: string; have: string | undefined } {
+  const readFile = rev ? (f: string) => git(root, ["show", `${rev}:${f}`]) : (f: string) => readFileSync(join(root, f), "utf-8");
+  const read = (f: string) => sources?.get(f) ?? readFile(f);
   const list = (paths: string[]) =>
     (rev ? git(root, ["ls-tree", "-r", "--name-only", rev, "--", ...paths]) : git(root, ["ls-files", "--cached", "--others", "--exclude-standard", "--", ...paths])).split("\n").filter(Boolean);
   const exportsOf = (dir: string) => JSON.parse(read(`${dir}/package.json`)) as { name: string; exports: Record<string, unknown> };
@@ -275,9 +279,9 @@ export function tableAgainst(root: string, rev?: string): { want: string; have: 
   return { want, have };
 }
 
-/** Write the table in the working tree; true when it changed. */
-export function writeTable(root: string): boolean {
-  const { want, have } = tableAgainst(root);
+/** Write the table in the working tree, with `sources` in place of the files it names; true when it changed. */
+export function writeTable(root: string, sources?: ReadonlyMap<string, string>): boolean {
+  const { want, have } = tableAgainst(root, undefined, sources);
   if (want === have) return false;
   writeFileSync(join(root, TABLE_FILE), want);
   return true;
