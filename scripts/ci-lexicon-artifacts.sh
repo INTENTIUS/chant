@@ -17,7 +17,11 @@
 # builds do not wait on each other.
 #
 # The steps run are the ones each lexicon's own prepack script names, in its
-# order, so this cannot drift from what `npm publish` runs.
+# order, so this cannot drift from what `npm publish` runs. A lexicon with
+# floors runs its build under `tsx ../../scripts/release-floors.ts --lexicon
+# <name> --pack npm run build`, which writes its floors as the versions they
+# ship with for the build; that is its `build` step, and it runs here the same
+# way.
 #
 # --steps limits the run to some of those steps (#3793). chant.yml builds
 # what the unit tests and typechecks read (`--steps generate,bundle`: the
@@ -42,14 +46,34 @@ export only
 wanted() { [ -z "$only" ] || [[ "$only" == *",$1,"* ]]; }
 
 # The npm scripts a lexicon's prepack runs, in order: "generate bundle validate build".
+# A step run under release-floors' pack for this lexicon prints as "floors:<step>".
 prepack_steps() {
   node -e '
     const p = require(process.argv[1]);
+    const lexicon = process.argv[2];
     const prepack = (p.scripts && p.scripts.prepack) || "";
-    const steps = prepack.split("&&").map((s) => s.trim().match(/^npm run ([\w:-]+)$/));
-    if (steps.some((m) => !m)) { console.error(`${p.name}: prepack is not a chain of npm run steps: ${prepack}`); process.exit(1); }
-    console.log(steps.map((m) => m[1]).join(" "));
-  ' "$PWD/$1/package.json"
+    const wrapped = new RegExp(`^tsx \\.\\./\\.\\./scripts/release-floors\\.ts --lexicon ${lexicon} --pack npm run ([\\w:-]+)$`);
+    const steps = prepack.split("&&").map((s) => {
+      const t = s.trim();
+      const plain = t.match(/^npm run ([\w:-]+)$/);
+      if (plain) return plain[1];
+      const floors = t.match(wrapped);
+      return floors ? `floors:${floors[1]}` : null;
+    });
+    if (steps.some((s) => !s)) { console.error(`${p.name}: prepack is not a chain of npm run steps: ${prepack}`); process.exit(1); }
+    console.log(steps.join(" "));
+  ' "$PWD/$1/package.json" "$(basename "$1")"
+}
+
+# Run one prepack step in a lexicon: `npm run <step>`, or for "floors:<step>"
+# the same under release-floors' pack, as the lexicon's prepack runs it.
+run_step() {
+  local dir="$1" step="$2"
+  if [[ "$step" == floors:* ]]; then
+    (cd "$dir" && npx tsx ../../scripts/release-floors.ts --lexicon "$(basename "$dir")" --pack npm run "${step#floors:}")
+  else
+    npm run --prefix "$dir" "$step"
+  fi
 }
 
 lexicons=()
@@ -80,14 +104,14 @@ rest_of_prepack() {
   steps=$(prepack_steps "$dir")
   {
     for step in $steps; do
-      [ "$step" = generate ] && continue
-      wanted "$step" || continue
-      npm run --prefix "$dir" "$step" || { echo "FAILED: npm run --prefix $dir $step"; return 1; }
+      [ "${step#floors:}" = generate ] && continue
+      wanted "${step#floors:}" || continue
+      run_step "$dir" "$step" || { echo "FAILED: $step in $dir"; return 1; }
     done
   } > "$logs/$name.log" 2>&1 || { echo "$name" >> "$logs/failed"; }
   echo "$name $(( $(date +%s) - t0 ))s" >> "$logs/times"
 }
-export -f rest_of_prepack prepack_steps wanted
+export -f rest_of_prepack prepack_steps run_step wanted
 export logs
 
 start=$(date +%s)
