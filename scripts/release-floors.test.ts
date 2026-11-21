@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import config from "../release/chant.config";
-import { compareVersions, coreLabelOfPlan, freezeFloorSource, freezeTextList, listReleaseTags, missingTags, nextPatch, packVersion, releaseCommit, releasedVersions, resolveFloorSource, shippedIn, shippedSymbolic, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
+import { compareVersions, coreLabelOfPlan, freezeFloorSource, freezeTextList, labelsOfPlan, lexiconPackVersion, listReleaseTags, missingTags, nextPatch, packVersion, releaseCommit, releasedVersions, resolveFloorSource, shippedIn, splitFreeze, staleFloorTests, unreleasedFloors } from "./release-floors";
 
 const root = join(import.meta.dirname, "..");
 
@@ -60,6 +60,12 @@ describe("release floors (#4503)", () => {
   it("reads core's label from a train's plan, and none from a train without core (#5154)", () => {
     expect(coreLabelOfPlan(JSON.stringify({ env: "npm", commit: "c", members: [{ member: "lexicon-aws", label: "0.125.2" }, { member: "core", label: "0.125.1" }] }))).toBe("0.125.1");
     expect(coreLabelOfPlan(JSON.stringify({ env: "npm", commit: "c", members: [{ member: "lexicon-aws", label: "0.125.2" }] }))).toBeNull();
+  });
+
+  it("reads each member's label from a train's plan, so a lexicon floor takes its own lexicon's label", () => {
+    // publish.yml run 44836189303: core at 0.124.110, the pulumi lexicon at 0.124.103.
+    const plan = { env: "npm", commit: "c", members: [{ member: "core", label: "0.124.110" }, { member: "lexicon-pulumi", label: "0.124.103" }, { member: "k8s-client", label: null }] };
+    expect(Object.fromEntries(labelsOfPlan(JSON.stringify(plan)))).toEqual({ core: "0.124.110", "lexicon-pulumi": "0.124.103" });
   });
 });
 
@@ -161,23 +167,6 @@ describe("release floors --freeze (#4501)", () => {
     expect(nextPatch("0.124.53")).toBe("0.124.54");
     expect(nextPatch("1.9.99")).toBe("1.9.100");
   });
-
-  it("fails while a floor is still NEXT_RELEASE after its version shipped", () => {
-    const named = [
-      { name: "NEXT_RELEASE", file: "packages/core/src/release-floors.ts", version: "0.124.53" },
-      { name: "GROUP_FLOOR", file: "packages/core/src/change-set.ts", version: "0.124.53", symbolic: true },
-      { name: "OLD_FLOOR", file: "packages/core/src/x.ts", version: "0.124.53" },
-    ];
-    expect(shippedSymbolic("0.124.53", named, releasedVersions([], ["0.124.52"]))).toEqual([]);
-    expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]))).toEqual([
-      "packages/core/src/change-set.ts: GROUP_FLOOR is NEXT_RELEASE, and 0.124.53 has shipped; run `just release-floors --freeze 0.124.53`",
-    ]);
-    // A local pack stamps the tree with the version it packs; that pack is
-    // the release, so its own tag doesn't make its floors "shipped" yet.
-    expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]), "0.124.53")).toEqual([]);
-    // A stamp for some other version doesn't excuse a shipped NEXT_RELEASE.
-    expect(shippedSymbolic("0.124.53", named, releasedVersions(["release/npm/0.124.53"]), "0.124.54").length).toBeGreaterThan(0);
-  });
 });
 
 describe("release floors --freeze, scoped to the release commit (#4540)", () => {
@@ -278,6 +267,11 @@ describe("release floors read member tags as that member's only (#5135)", () => 
       git("commit", "-q", "--allow-empty", "-m", "b");
       const b = git("rev-parse", "HEAD");
       for (const t of ["release/npm/core/0.125.0", "release/npm/lexicon-aws/0.126.0", "release/npm/k8s-client/0.127.0", "release-train/npm/1"]) git("tag", t);
+      // A lexicon's release commit is its own member tag or a lockstep label, never core's.
+      expect(releaseCommit("0.126.0", repo, "aws")).toBe(b);
+      expect(releaseCommit("0.124.50", repo, "aws")).toBe(a);
+      expect(releaseCommit("0.125.0", repo, "aws")).toBeUndefined();
+      expect(releaseCommit("0.126.0", repo, "terraform")).toBeUndefined();
       const tags = listReleaseTags(repo);
       // Lockstep labels and a lexicon's floors see only release/npm/<v>.
       expect([...releasedVersions(tags, undefined, "terraform")]).toEqual(["0.124.50"]);
@@ -318,6 +312,12 @@ describe("release floors resolve from the release tags, with no freeze between r
     expect(packVersion("0.124.103", undefined, "0.124.103")).toBe("0.124.104");
     expect(packVersion("0.124.105", undefined, "0.124.103")).toBe("0.124.105");
     expect(packVersion("0.124.1", undefined, undefined)).toBe("0.124.1");
+  });
+
+  it("packs a lexicon at its own stamp, else past its own newest release, never at core's NEXT_RELEASE", () => {
+    expect(lexiconPackVersion("0.124.103", "0.124.102", "0.124.110")).toBe("0.124.103");
+    expect(lexiconPackVersion(undefined, "0.124.102", "0.124.110")).toBe("0.124.103");
+    expect(lexiconPackVersion(undefined, undefined, "0.124.110")).toBe("0.124.110");
     expect(compareVersions("0.124.10", "0.124.9")).toBeGreaterThan(0);
   });
 

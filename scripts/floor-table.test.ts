@@ -20,6 +20,13 @@ describe("the floor table (#4792)", () => {
     expect(have, `${TABLE_FILE} is stale; run npx tsx scripts/floor-table.ts`).toBe(want);
   });
 
+  it("writes a lexicon floor's row from the source core's pack hands it, at that lexicon's version", () => {
+    const file = "lexicons/pulumi/src/chant-floors.ts";
+    const resolved = readFileSync(join(root, file), "utf-8").replace(/export const PULUMI_COST_HOLD_FLOOR = [^;]+;/, 'export const PULUMI_COST_HOLD_FLOOR = "9.8.7";');
+    const { want } = tableAgainst(root, undefined, new Map([[file, resolved]]));
+    expect(want).toContain('{ name: "PULUMI_COST_HOLD_FLOOR", version: "9.8.7", package: "@intentius/chant-lexicon-pulumi"');
+  });
+
   it("lists every exported floor under packages/core/src at the version its constant names", () => {
     const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "--", "packages/core/src"], { cwd: root, encoding: "utf-8" })
       .split("\n")

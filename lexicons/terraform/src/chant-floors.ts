@@ -13,7 +13,10 @@
  * part re-export its floor by name, so the table names those subpaths too.
  *
  * This file imports only NEXT_RELEASE, so an entry that must stay light
- * (./module-catalog) can re-export from it.
+ * (./module-catalog) can re-export from it. Here NEXT_RELEASE names the next
+ * terraform lexicon release, not core's: this package's prepack builds with
+ * each such floor written as the lexicon release that ships it
+ * (`scripts/release-floors.ts --lexicon terraform --pack`).
  */
 import { NEXT_RELEASE } from "@intentius/chant/release-floors";
 
