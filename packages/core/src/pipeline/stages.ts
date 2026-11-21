@@ -41,11 +41,16 @@ export function promotionOrderOf(spec: Pick<PipelineSpec, "stages">): PromotionS
   return spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
 }
 
-/** The hook a merge's first stage cuts its release with. */
+/**
+ * The hook a merge's first stage cuts its release with. It passes
+ * `--wait-checks` (#5438): under `release.green: forge-checks` the cut waits
+ * for the other push workflows still running on the merge commit, and the
+ * other gates ignore it.
+ */
 export function releaseCutHook(spec: Pick<PipelineSpec, "release">): OpWaveHook | undefined {
   if (spec.release?.cut === false) return undefined;
   const bin = spec.release?.bin ?? ["chant"];
-  return { name: "release-cut", command: [...bin, "release", "cut", spec.release?.label ?? "auto", "--yes"] };
+  return { name: "release-cut", command: [...bin, "release", "cut", spec.release?.label ?? "auto", "--yes", "--wait-checks"] };
 }
 
 /**

@@ -165,6 +165,12 @@ export type ReleaseCutCode =
 /** The first chant whose `chant release cut` runs `release.check`, shell lines that refuse the cut with `release-check-failed` before anything is recorded or tagged, in a dry run too (#5261). */
 export const RELEASE_CHECK_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose `chant release cut` takes `--wait-checks`, which waits for a commit's pending forge checks under `forge-checks`, and whose pipeline release-cut hook passes it (#5438). */
+export const RELEASE_CUT_WAIT_CHECKS_FLOOR = NEXT_RELEASE;
+
+/** `--wait-checks` ran out of time with checks still running (#5438). */
+class ChecksWaitTimeout extends Error {}
+
 export class ReleaseCutError extends Error {
   constructor(
     readonly code: ReleaseCutCode,
@@ -194,6 +200,21 @@ export interface CutRequest {
   green?: ReleaseGreenSource;
   /** Reads the forge's checks on the commit under `forge-checks` (#5149). Default: the forge the job or the origin remote names. */
   forgeChecks?: ForgeChecksReader;
+  /**
+   * Under `forge-checks`, read the checks again while any has not finished
+   * (#5438, `--wait-checks`), the way `chant ci verdict --wait` waits:
+   * forge errors that say to look again are looked past with a backoff, and
+   * past `timeoutMs` (default `RELEASE_CUT_WAIT_MINUTES`) the cut is
+   * refused with what it waited on. The other gates read nothing from the
+   * forge and ignore it. Absent, the checks are read once.
+   */
+  waitForChecks?: {
+    timeoutMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+    /** A line for each wait and each forge error looked past. */
+    onNote?: (line: string) => void;
+  };
   /**
    * The `release.publish` targets (#5149). A member with no environments is
    * cut as an artifact release, which records these in place of compile
@@ -558,20 +579,57 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     }
     passed = { source: "none" };
   } else if (gate === "forge-checks") {
-    const { forgeChecksReader, forgeChecksTarget, ForgeChecksUnavailableError } = await import("./release-green");
-    let verdict: Awaited<ReturnType<ForgeChecksReader>>;
+    const { checksPending, forgeChecksReader, forgeChecksTarget, ForgeChecksUnavailableError, RELEASE_CUT_WAIT_MINUTES } = await import("./release-green");
+    let verdict: Awaited<ReturnType<ForgeChecksReader>> | null;
     try {
       const read = req.forgeChecks ?? forgeChecksReader(await forgeChecksTarget(cwd, req.env ?? process.env), req.env ?? process.env);
-      verdict = await read(commit, green?.branch ?? trunkBranch(top));
+      const branch = green?.branch ?? trunkBranch(top);
+      const wait = req.waitForChecks;
+      if (!wait) verdict = await read(commit, branch);
+      else {
+        // #5438: the loop `chant ci verdict --wait` waits with.
+        const { waitOnForge } = await import("../workspace/ci-green-forge");
+        const timeoutMs = wait.timeoutMs ?? RELEASE_CUT_WAIT_MINUTES * 60_000;
+        verdict = await waitOnForge<Awaited<ReturnType<ForgeChecksReader>>>({
+          what: "finished checks",
+          first: "the first read of the checks",
+          gaveUp: (m, why) => (why === "forge-errors" ? new ForgeChecksUnavailableError(m) : new ChecksWaitTimeout(m)),
+          timeoutMs,
+          transient: (err) => err instanceof ForgeChecksUnavailableError && err.transient,
+          ...(wait.sleep ? { sleep: wait.sleep } : {}),
+          ...(wait.now ? { now: wait.now } : {}),
+          ...(wait.onNote ? { onNote: wait.onNote } : {}),
+          look: async () => {
+            const v = await read(commit, branch);
+            if (v.green || !checksPending(v)) return { done: v };
+            const open = v.checks.filter((c) => c.state === "pending").map((c) => `${c.name} (${c.status})`);
+            const line = `waiting on ${v.forge}: ${open.join(", ")}`;
+            wait.onNote?.(line);
+            return { waitingOn: `still waiting on ${open.join(", ")}` };
+          },
+        });
+      }
     } catch (err) {
       if (err instanceof ForgeChecksUnavailableError) throw new ReleaseCutError("release-forge-checks-unavailable", `no release was cut: ${err.message}`, err.fix);
-      throw err;
+      if (!(err instanceof ChecksWaitTimeout)) throw err;
+      verdict = null;
+      notGreen = {
+        message: `commit ${commit.slice(0, 12)} is not green: ${err.message}, so no release is cut from it`,
+        fix: "Cut again once its checks have finished, or wait longer with --timeout-minutes <n>.",
+        tag: `forge-checks/${commit}`,
+      };
     }
-    if (verdict.green) passed = { source: "forge-checks", forge: verdict.forge, checks: verdict.checks };
+    if (verdict === null) {
+      // The wait ran out of time; notGreen says on what.
+    } else if (verdict.green) passed = { source: "forge-checks", forge: verdict.forge, checks: verdict.checks };
     else {
       notGreen = {
         message: `commit ${commit.slice(0, 12)} is not green: ${verdict.why}, so no release is cut from it`,
-        fix: "Cut once its checks have passed, or check out a commit whose checks passed.",
+        fix: verdict.ownRunOnly
+          ? "Run the workflows that check the commit on push, or set release.green in chant.config.ts to \"chant\" (ci/green tags) for a commit whose checks are the release job's own."
+          : req.waitForChecks
+            ? "Cut once its checks have passed, or check out a commit whose checks passed."
+            : "Cut once its checks have passed (--wait-checks waits for the ones still running), or check out a commit whose checks passed.",
         tag: `forge-checks/${commit}`,
       };
     }

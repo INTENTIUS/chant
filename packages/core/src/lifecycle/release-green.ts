@@ -18,7 +18,16 @@
  *   The release workflow's own runs on the commit are left out (GitHub:
  *   every run of the workflow file the cut runs in; Forgejo: the cut's run;
  *   GitLab: pipelines started the way the cut's was, from the web or the
- *   API). The default otherwise.
+ *   API). A commit whose only checks are the cut's own run is refused with
+ *   a message that says so (#5438). The default otherwise.
+ *
+ *   `chant release cut --wait-checks` (#5438) reads the checks again while
+ *   any has not finished, the way `chant ci verdict --wait` waits (its
+ *   loop, `waitOnForge` in `../workspace/ci-green-forge.ts`), looking past forge errors (5xx, 429, no
+ *   answer) with a backoff, and refusing once its timeout is up
+ *   ({@link RELEASE_CUT_WAIT_MINUTES} unless `--timeout-minutes` says). The
+ *   pipeline's release-cut hook passes it, so the merge's cut waits for the
+ *   other push workflows on the merge commit.
  * - `none`: no gate. The cut prints a warning and records that it had none.
  *   Refused under the `supply-chain` or `verified-releases` security groups
  *   and under a `release` gate in `identity.gates`.
@@ -35,6 +44,9 @@
  */
 
 import type { ForgeFetch, ForgeKind, ForgeTarget } from "../pr-forge";
+
+/** How long `release cut --wait-checks` waits for pending checks when no `--timeout-minutes` is given (#5438). */
+export const RELEASE_CUT_WAIT_MINUTES = 60;
 
 /** `release.green`. */
 export const RELEASE_GREEN_SOURCES = ["chant", "forge-checks", "none"] as const;
@@ -61,13 +73,22 @@ export interface ForgeCheck {
 /** What the forge says of a commit's checks. */
 export type ForgeChecksVerdict =
   | { green: true; forge: ForgeKind; checks: string[] }
-  | { green: false; forge: ForgeKind; why: string; checks: ForgeCheck[] };
+  | {
+      green: false;
+      forge: ForgeKind;
+      why: string;
+      checks: ForgeCheck[];
+      /** #5438: the commit's only checks are the cut's own run, which the reader leaves out. */
+      ownRunOnly?: true;
+    };
 
 /** The forge could not be asked: none is known, a token is missing, or the forge answered with an error. */
 export class ForgeChecksUnavailableError extends Error {
   constructor(
     message: string,
     readonly fix?: string,
+    /** #5438: the forge answered 5xx or 429, or not at all, so asking again may answer; a wait looks past it. */
+    readonly transient = false,
   ) {
     super(message);
     this.name = "ForgeChecksUnavailableError";
@@ -88,16 +109,32 @@ export function checkState(status: string, conclusion?: string | null): ForgeChe
   return PASSED.has(word) ? "success" : "failure";
 }
 
+/** Whether a verdict that is not green is waiting on checks still running: one has not finished and none failed (#5438). */
+export function checksPending(verdict: ForgeChecksVerdict): boolean {
+  return !verdict.green && verdict.checks.some((c) => c.state === "pending") && !verdict.checks.some((c) => c.state === "failure");
+}
+
 /**
  * The verdict on `checks`: green when there is at least one, each passed,
- * and each of `required` is among them.
+ * and each of `required` is among them. `own` counts the checks of the
+ * cut's own run the reader left out, so a commit with no other check is
+ * refused with a message that names them (#5438).
  */
-export function judgeChecks(forge: ForgeKind, checks: ForgeCheck[], required: readonly string[]): ForgeChecksVerdict {
+export function judgeChecks(forge: ForgeKind, checks: ForgeCheck[], required: readonly string[], own = 0): ForgeChecksVerdict {
   const names = new Set(checks.map((c) => c.name));
   const missing = required.filter((r) => !names.has(r));
   const failed = checks.filter((c) => c.state === "failure");
   const pending = checks.filter((c) => c.state === "pending");
   const list = (cs: ForgeCheck[]) => cs.map((c) => `${c.name} (${c.status})`).join(", ");
+  if (checks.length === 0 && own > 0) {
+    return {
+      green: false,
+      forge,
+      checks,
+      ownRunOnly: true,
+      why: `the only ${own === 1 ? "check" : `${own} checks`} ${forge} reports on it ${own === 1 ? "belongs" : "belong"} to the cut's own run, which the cut leaves out, and no other workflow reported a check on the commit`,
+    };
+  }
   if (checks.length === 0) return { green: false, forge, checks, why: `${forge} reports no check on it` };
   if (failed.length > 0) return { green: false, forge, checks, why: `${failed.length === 1 ? "a check" : `${failed.length} checks`} did not pass on ${forge}: ${list(failed)}` };
   if (pending.length > 0) return { green: false, forge, checks, why: `${pending.length === 1 ? "a check has" : `${pending.length} checks have`} not finished on ${forge}: ${list(pending)}` };
@@ -163,7 +200,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
     try {
       res = await doFetch(url, { method: "GET", headers });
     } catch (err) {
-      throw new ForgeChecksUnavailableError(`${target.kind} could not be reached at ${api}: ${err instanceof Error ? err.message : String(err)}`);
+      throw new ForgeChecksUnavailableError(`${target.kind} could not be reached at ${api}: ${err instanceof Error ? err.message : String(err)}`, undefined, true);
     }
     if (!res.ok) {
       if (optional && [401, 403, 404].includes(res.status)) return undefined;
@@ -172,6 +209,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
         res.status === 401 || res.status === 403 || res.status === 404
           ? `The token from ${target.tokenSource} must read the repository's checks and statuses (GitHub: checks: read and statuses: read).`
           : undefined,
+        res.status >= 500 || res.status === 429,
       );
     }
     try {
@@ -193,6 +231,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           if (str(r.path) === workflowPath && r.id !== undefined) runId.add(String(r.id));
         }
       }
+      let own = 0;
       const runReadings: Reading[] = [];
       for (let page = 1; page <= 20; page++) {
         const got = await get(`${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`);
@@ -200,7 +239,11 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
         for (const r of runs) {
           const name = str(r.name);
           const url = str(r.details_url) ?? str(r.html_url);
-          if (!name || inRun(url, runId)) continue;
+          if (!name) continue;
+          if (inRun(url, runId)) {
+            own++;
+            continue;
+          }
           const status = str(r.status) ?? "unknown";
           const conclusion = str(r.conclusion) ?? null;
           const app = isObject(r.app) ? String(r.app.id ?? r.app.slug ?? "") : "";
@@ -219,7 +262,11 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
       for (const s of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses.filter(isObject) : []) {
         const name = str(s.context);
         const url = str(s.target_url);
-        if (!name || inRun(url, runId)) continue;
+        if (!name) continue;
+        if (inRun(url, runId)) {
+          own++;
+          continue;
+        }
         const state = str(s.state) ?? "unknown";
         statusReadings.push({ key: name, at: time(s.updated_at, s.created_at), id: num(s.id), check: { name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) } });
       }
@@ -236,7 +283,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           }
         }
       }
-      return judgeChecks("github", newestByName(checks), required);
+      return judgeChecks("github", newestByName(checks), required, own);
     };
   }
 
@@ -245,11 +292,16 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
     const repo = `/repos/${target.repo}`;
     return async (sha, branch) => {
       const combined = await get(`${repo}/commits/${sha}/status?limit=100`);
+      let own = 0;
       const readings: Reading[] = [];
       for (const s of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses.filter(isObject) : []) {
         const name = str(s.context);
         const url = str(s.target_url);
-        if (!name || inRun(url, runNumber)) continue;
+        if (!name) continue;
+        if (inRun(url, runNumber)) {
+          own++;
+          continue;
+        }
         const state = str(s.status) ?? str(s.state) ?? "unknown";
         readings.push({ key: name, at: time(s.updated_at, s.created_at), id: num(s.id), check: { name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) } });
       }
@@ -263,7 +315,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           for (const ctx of Array.isArray(p.status_check_contexts) ? p.status_check_contexts : []) if (typeof ctx === "string" && !required.includes(ctx)) required.push(ctx);
         }
       }
-      return judgeChecks("forgejo", newestByName(checks), required);
+      return judgeChecks("forgejo", newestByName(checks), required, own);
     };
   }
 
@@ -275,9 +327,14 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
     const got = await get(`${project}/pipelines?sha=${encodeURIComponent(sha)}&per_page=100&order_by=id&sort=desc`);
     const checks: ForgeCheck[] = [];
     const seen = new Set<string>();
+    let own = 0;
     for (const p of Array.isArray(got) ? got.filter(isObject) : []) {
       const id = p.id;
-      if (id === undefined || String(id) === pipelineId || (ownSource !== undefined && p.source === ownSource)) continue;
+      if (id === undefined) continue;
+      if (String(id) === pipelineId || (ownSource !== undefined && p.source === ownSource)) {
+        own++;
+        continue;
+      }
       // The newest pipeline of each source (push, merge_request_event, schedule, ...) speaks for it.
       const name = `pipeline (${str(p.source) ?? "unknown"})`;
       if (seen.has(name)) continue;
@@ -286,7 +343,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
       const url = str(p.web_url);
       checks.push({ name, state: status === "canceled" ? "failure" : checkState(status), status, ...(url ? { url } : {}) });
     }
-    return judgeChecks("gitlab", checks, []);
+    return judgeChecks("gitlab", checks, [], own);
   };
 }
 

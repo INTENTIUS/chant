@@ -7,7 +7,8 @@
  *       `--lane` or `release.lane` (#4692); `--yes` cuts, records,
  *       and tags the commit `release/<label>` locally;
  *       --sign signs the cut with the actor's ssh key (#4031); `--override-green`
- *       cuts a commit that is not green under a person's override (#4693); `--src`, `-o` and
+ *       cuts a commit that is not green under a person's override (#4693); `--wait-checks
+ *       [--timeout-minutes <n>]` waits for the commit's pending forge checks (#5438); `--src`, `-o` and
  *       `--lexicon` shape the build of a project with no components (#4046)
  *   release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
  *       publish a cut release (#4027) to the targets release.publish declares
@@ -509,6 +510,9 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
     return 1;
   };
+  if (!args.waitChecks && args.ciTimeoutMinutes !== undefined) {
+    return fail("usage", "--timeout-minutes goes with --wait-checks: without it the cut reads the commit's checks once", "chant release cut <label> --wait-checks --timeout-minutes <n>");
+  }
   const at = await import("../../lifecycle/release-at");
   let checkout: import("../../lifecycle/release-at").CommitCheckout | null = null;
   let stamped: import("../../lifecycle/release-version").Stamped | null = null;
@@ -744,6 +748,9 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.channel ? { channel: args.channel } : {}),
       ...(lane !== undefined ? { lane } : {}),
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
+      ...(args.waitChecks
+        ? { waitForChecks: { ...(args.ciTimeoutMinutes !== undefined ? { timeoutMs: args.ciTimeoutMinutes * 60_000 } : {}), onNote: (line: string) => console.error(line) } }
+        : {}),
       ...(Object.keys(images).length > 0 ? { images } : {}),
       ...(buildImages ? { buildImages } : {}),
       ...(buildArtifacts ? { buildArtifacts } : {}),

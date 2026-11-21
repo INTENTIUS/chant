@@ -109,6 +109,7 @@ const BOOLEAN_FLAGS = new Set([
   "--requested",
   "--allow-unsigned",
   "--override-green",
+  "--wait-checks",
   "--require-provenance",
   "--root-only",
   "--generated",
@@ -646,6 +647,9 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--override-green") {
       // `chant release cut --override-green` (#4693): cut a commit that is not green under a person's override.
       result.overrideGreen = true;
+    } else if (arg === "--wait-checks") {
+      // `chant release cut --wait-checks [--timeout-minutes <n>]` (#5438): wait for the commit's pending forge checks.
+      result.waitChecks = true;
     } else if (arg === "--replacement") {
       // `chant release deprecate|yank --replacement <label>` (#5163).
       result.replacement = args[++i];
@@ -1475,6 +1479,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.ciRetries = Number(raw);
     } else if (arg === "--timeout-minutes") {
       // `chant ci verdict --wait --timeout-minutes <n>` (#4729): give up with a message after n minutes, before the job's own timeout.
+      // `chant release cut --wait-checks --timeout-minutes <n>` (#5438): the same for the cut's wait on the commit's checks.
       const raw = args[++i];
       const n = raw === undefined ? NaN : Number(raw);
       if (raw === undefined || raw.trim() === "" || !Number.isFinite(n) || n <= 0) throw new Error(`--timeout-minutes needs a number of minutes above 0: --timeout-minutes <n>, got ${JSON.stringify(raw ?? "")}`);
