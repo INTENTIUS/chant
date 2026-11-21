@@ -27,6 +27,7 @@
 
 import { sortedJsonReplacer } from "../utils";
 import { CHANGE_SET_CONTRACT, CHANGE_SET_SCHEMA_ID, verifyChangeSetDigest, type ChangeSetDocument } from "../change-set";
+import { NEXT_RELEASE } from "../release-floors";
 import { ledgerDir, readBlobFromPath, readPathSha, RefCASConflictError, writeLedgerFiles, type LedgerLocation } from "./git";
 
 /** The directory on `chant/lifecycle` that holds stored change sets. */
@@ -36,6 +37,19 @@ export const CHANGE_SETS_DIR = "_change-sets";
 export function changeSetFile(digest: string): string {
   return `${digest.replace(/:/g, "_")}.json`;
 }
+
+/**
+ * The first chant whose document digest hashes each member's holes sorted by
+ * address, type and reason, and whose composed document lists them that way
+ * (#5441). An older chant hashed them in the order the planner listed them,
+ * which for pulumi is its print order and differs between two previews of
+ * one plan. A document whose holes were already in that order hashes as
+ * before. `verifyChangeSetDigest`, which every read of a stored document
+ * runs, still accepts the digest an older chant gave its listed order.
+ * Declared here, outside `../change-set`, so the change-set bundle stays
+ * free of the release-floors module.
+ */
+export const CHANGE_SET_SORTED_HOLES_FLOOR = NEXT_RELEASE;
 
 /** Thrown when a document can't be stored: it is not a change-set document, or its content does not hash to its digest. */
 export class ChangeSetStoreError extends Error {
