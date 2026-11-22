@@ -40,6 +40,7 @@ import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
 import { lastMemberReport, setLastMemberReport } from "./member-report";
+import { awsStateLocations } from "./state-locations";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
@@ -91,7 +92,9 @@ export const awsPlugin: LexiconPlugin = {
   },
   graphMeta() {
     const report = lastMemberReport();
-    return report ? { awsMember: report } : undefined;
+    if (!report) return undefined;
+    // Where the member's state lives (#5456), for `chant workspace state`.
+    return { awsMember: report, stateLocations: awsStateLocations(report) };
   },
   // The thin read's marker channel is the STACK's own tags (#1998), read off
   // the DescribeStacks call it already makes for the outputs.

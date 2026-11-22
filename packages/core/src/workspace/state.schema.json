@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json",
+  "title": "chant workspace state output",
+  "description": "What `chant workspace state --json` prints (#5456): for each workspace member and environment, where its state lives. Readers ignore fields they do not know; a field is only ever added within a version. The values come from each member's lexicon, which publishes them on its graph meta (`stateLocations`); chant computes none of them, and masks any value that carries a secret. A member whose lexicon publishes none has `published: false` and no states. Member reason codes and error codes are the closed list of `reason-codes.ts`, the ones `chant workspace graph` writes. Written by the chant that carries WORKSPACE_STATE_LOCATIONS_FLOOR.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "$defs": {
+    "scalar": { "type": ["string", "number", "boolean", "null"] },
+    "locationMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/scalar" }
+    },
+    "reach": {
+      "description": "Whether the read with the caller's credentials could reach the state. `unchecked` means finding the location read configuration only.",
+      "oneOf": [
+        { "type": "object", "required": ["status"], "properties": { "status": { "const": "reachable" } } },
+        { "type": "object", "required": ["status", "reason"], "properties": { "status": { "const": "unreachable" }, "reason": { "type": "string" } } },
+        { "type": "object", "required": ["status"], "properties": { "status": { "const": "unchecked" }, "reason": { "type": "string" } } }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "required": ["environment", "substrate", "backend", "lock", "reach"],
+      "properties": {
+        "environment": { "type": ["string", "null"], "description": "Null when the member declares no environment." },
+        "unit": { "type": "string", "description": "The part of the member the entry is for, when it has several: a Terraform root, a stack." },
+        "substrate": { "type": "string", "description": "The lexicon that read it: terraform, aws." },
+        "backend": {
+          "type": "object",
+          "required": ["kind", "location"],
+          "properties": {
+            "kind": { "type": "string", "description": "What holds the state: s3, gcs, azurerm, http, local, cloud, cloudformation-stack, choudoufu-record-store:s3." },
+            "location": { "$ref": "#/$defs/locationMap", "description": "Where, as the backend names it. A value that carries a secret is `***`, and a URL has no user or password." }
+          }
+        },
+        "lock": {
+          "oneOf": [
+            { "type": "null", "description": "The state is not locked." },
+            {
+              "type": "object",
+              "required": ["mechanism"],
+              "properties": { "mechanism": { "type": "string" }, "location": { "$ref": "#/$defs/locationMap" } }
+            }
+          ]
+        },
+        "reach": { "$ref": "#/$defs/reach" }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": ["member", "kind", "status", "reason", "published", "states"],
+      "properties": {
+        "member": { "type": "string" },
+        "kind": { "type": "string" },
+        "status": { "enum": ["read", "skipped", "failed"] },
+        "reason": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "required": ["code", "message"], "properties": { "code": { "type": "string" }, "message": { "type": "string" } } }
+          ]
+        },
+        "published": { "type": "boolean", "description": "Whether the member's lexicon publishes state locations. False for a member read that published none." },
+        "states": { "type": "array", "items": { "$ref": "#/$defs/state" }, "description": "One entry per environment and unit, sorted by environment, unit and backend kind." }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "at", "workspace", "environment", "members", "summary"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "at": { "type": ["string", "null"], "description": "The commit read, or null for the working tree." },
+        "workspace": {
+          "type": "object",
+          "required": ["name", "root"],
+          "properties": { "name": { "type": "string" }, "root": { "type": "string" }, "repo": { "type": ["string", "null"] } }
+        },
+        "environment": { "type": ["string", "null"], "description": "The --env the read was asked for, or null for every environment each member names." },
+        "members": { "type": "array", "items": { "$ref": "#/$defs/member" } },
+        "summary": {
+          "type": "object",
+          "required": ["members", "published", "locations", "unreachable"],
+          "properties": {
+            "members": { "type": "integer" },
+            "published": { "type": "integer" },
+            "locations": { "type": "integer" },
+            "unreachable": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "location": {} }
+        }
+      }
+    }
+  }
+}

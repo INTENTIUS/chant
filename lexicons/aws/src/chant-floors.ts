@@ -20,3 +20,8 @@ import { NEXT_RELEASE } from "@intentius/chant/release-floors";
  * The first aws lexicon release whose `cloudformation` workspace member reads deployed stacks: a `cloudformation-stacks.json` beside the member, `{ "stacks": ["<name>"], "region": "<region>" }`, draws each stack's processed template as nodes and edges, with `meta.awsMember.stacks` carrying each stack's status, outputs and resources with their physical ids, and a stack that cannot be read named with the credentials and region it needs (#5455).
  */
 export const AWS_STACK_MEMBER_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first aws lexicon release whose cloudformation and cdk members publish `stateLocations` on their graph meta, so `chant workspace state` says where a member's state lives: the stack and its region, `reachable` when the stack was read and `unreachable` with the reason when it was not (#5456).
+ */
+export const AWS_STATE_LOCATIONS_FLOOR = NEXT_RELEASE;

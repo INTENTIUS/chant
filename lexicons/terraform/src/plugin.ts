@@ -76,6 +76,9 @@ function looksLikeHcl(text: string): boolean {
  * HCL an estate already has rather than generating types for it. So `spec/`
  * and `codegen/` stay near-empty and there is no `upstreamPin`.
  */
+/** The state locations of the roots `buildRoots` read in this process, for `graphMeta` (#5456). */
+let lastStateLocations: readonly object[] | undefined;
+
 export const terraformPlugin: LexiconPlugin = {
   behaviourKinds: terraformBehaviourKinds,
   name: "terraform",
@@ -226,7 +229,11 @@ export const terraformPlugin: LexiconPlugin = {
     const namespace = (ctx.config as { terraform?: TerraformConfig }).terraform;
     // A `signalOnly` root (#4484) feeds change detection only, so it builds no entities here.
     const roots = ownRoots(namespace?.roots);
+    lastStateLocations = undefined;
     if (Object.keys(roots).length === 0) return { entities: new Map(), warnings: [] };
+    // Where each root's state lives (#5456), published by graphMeta below.
+    const { terraformStateLocations } = await import("./state-locations");
+    lastStateLocations = terraformStateLocations(ctx.projectRoot, roots, { binary: namespace?.binary });
     return renderTerraformRoots({
       projectRoot: ctx.projectRoot,
       roots,
@@ -234,6 +241,11 @@ export const terraformPlugin: LexiconPlugin = {
       callModuleType: namespace?.callModuleType,
       moduleRoot: namespace?.moduleRoot,
     });
+  },
+
+  /** Where each root's state lives, for `chant workspace state` (#5456). */
+  graphMeta() {
+    return lastStateLocations ? { stateLocations: lastStateLocations } : undefined;
   },
 
   /** `chant terraform pin-rollout` (#3189). */

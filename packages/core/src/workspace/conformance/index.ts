@@ -56,7 +56,7 @@ import { isDeepStrictEqual } from "node:util";
 import { READ_CONTRACT_VERSION } from "../reason-codes";
 
 /** The read-contract commands, as a reader names them. */
-export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites", "runs", "wip", "search", "search --capabilities", "drift"] as const;
+export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites", "runs", "wip", "search", "search --capabilities", "drift", "state"] as const;
 export type ReadContractCommand = (typeof READ_CONTRACT_COMMANDS)[number];
 
 /**
@@ -81,6 +81,8 @@ export const READ_CONTRACT_SCHEMAS: Record<ReadContractCommand, string> = {
   "search --capabilities": "capabilities.schema.json",
   // One member's drift record (behold#995, #4451), the drift document with the contract's head.
   drift: "drift.schema.json",
+  // Where each member's state lives, per environment (#5456).
+  state: "state.schema.json",
 };
 
 /** The flags that ask each command for its JSON document. A reader adds one of these and nothing else. */
@@ -98,6 +100,7 @@ export const READ_CONTRACT_JSON_FLAGS: Record<ReadContractCommand, readonly (rea
   search: [["--json"]],
   "search --capabilities": [["--json"]],
   drift: [[], ["--json"]],
+  state: [["--json"]],
 };
 
 /** The arguments the suite passes each read, on the reference workspace or the generated one. */
@@ -117,6 +120,8 @@ export const REFERENCE_READS: Record<ReadContractCommand, string[]> = {
   "search --capabilities": [],
   // The app member has no drift read on either workspace, so the read answers the no-drift-read error document and reaches no account.
   drift: ["--member", "app"],
+  // Every member of the workspace: those whose lexicon publishes no state location say `published: false`.
+  state: [],
 };
 
 /** One chant run: the arguments after `chant`, what it was given on stdin, and what it printed. */

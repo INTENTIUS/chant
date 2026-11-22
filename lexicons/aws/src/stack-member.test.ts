@@ -129,6 +129,25 @@ describe("deployed stacks as a member graph (#5455)", () => {
       status: "CREATE_COMPLETE",
     });
     expect(shared!.resources).toHaveLength(4);
+    // Where the state lives (#5456): the stack and its region, reachable when it was read.
+    expect(ir.meta?.stateLocations).toEqual([
+      {
+        environment: null,
+        unit: "shared-network",
+        substrate: "aws",
+        backend: { kind: "cloudformation-stack", location: { stack: "shared-network", region: "eu-west-1" } },
+        lock: { mechanism: "cloudformation-stack-update" },
+        reach: { status: "reachable" },
+      },
+      {
+        environment: null,
+        unit: "gone-stack",
+        substrate: "aws",
+        backend: { kind: "cloudformation-stack", location: { stack: "gone-stack", region: "eu-west-1" } },
+        lock: { mechanism: "cloudformation-stack-update" },
+        reach: { status: "unreachable", reason: "no stack named gone-stack in eu-west-1" },
+      },
+    ]);
     expect(gone).toMatchObject({ name: "gone-stack", read: false, reason: "no stack named gone-stack in eu-west-1", resources: [] });
     expect(err.join("\n")).toMatch(/stack "gone-stack" in eu-west-1 was not read: no stack named gone-stack in eu-west-1/);
 
@@ -185,5 +204,21 @@ describe("a stack that cannot be read", () => {
     const { exit, err } = await graphOf(dir);
     expect(exit).toBe(0);
     expect(err.join("\n")).toMatch(/was not read: .*at least one stack name/);
+  });
+});
+
+describe("state locations of a member with a template file (#5456)", () => {
+  test("names no stack, and says what to add", async () => {
+    const { ir, exit } = await graphOf(join(here, "testdata", "cfn-member"));
+    expect(exit).toBe(0);
+    expect(ir.meta?.stateLocations).toEqual([
+      {
+        environment: null,
+        substrate: "aws",
+        backend: { kind: "cloudformation-stack", location: { stack: null, region: null } },
+        lock: null,
+        reach: { status: "unchecked", reason: expect.stringContaining("cloudformation-stacks.json") },
+      },
+    ]);
   });
 });

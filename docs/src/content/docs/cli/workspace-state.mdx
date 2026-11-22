@@ -1,0 +1,84 @@
+---
+title: "chant workspace state"
+description: Where each member's state lives, per environment, read by each member's own lexicon
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace state [dir] [--member <name>] [--env <name>] [--at <rev>] [--json]
+```
+
+## Description
+
+For each member of the declaration, `workspace state` says where its state lives: the substrate that holds it, the backend and its location, how it is locked, and whether the read could reach it.
+
+chant computes none of this itself. Each member is read the way [`workspace graph`](/chant/cli/workspace-graph/) reads it, under the member's own chant, and the member's lexicon reads its own configuration and publishes the answer. The terraform lexicon reads the backend block of each root and the record store of a choudoufu live block. The aws lexicon reads the stacks a `cloudformation` member names. A member whose lexicon publishes no state location is listed with `published: false` and no states, and is never given a guessed one.
+
+| Option | Meaning |
+|---|---|
+| `--member <name>` | Only this member. Repeatable |
+| `--env <name>` | The environment to read. It is handed to every member's read, and the document keeps the entries of that environment and the ones that name none |
+| `--at <rev>` | Read the declaration and the members at a git revision |
+| `--json` | Print the document of the [read contract](/chant/reference/workspace-read-contract/) |
+
+The command exits 1 when the declaration can't be read or a member could not be read, as `workspace graph` does.
+
+## Output
+
+The document is described by `state.schema.json`, `$id` `https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json`.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json",
+  "contract": 1,
+  "chant": "0.124.104",
+  "at": null,
+  "workspace": { "name": "estate", "root": "." },
+  "environment": null,
+  "members": [
+    {
+      "member": "network",
+      "kind": "terraform",
+      "status": "read",
+      "reason": null,
+      "published": true,
+      "states": [
+        {
+          "environment": null,
+          "unit": "network",
+          "substrate": "terraform",
+          "backend": { "kind": "s3", "location": { "bucket": "acme-tfstate", "key": "network/terraform.tfstate", "region": "eu-west-1" } },
+          "lock": { "mechanism": "dynamodb", "location": { "table": "acme-tflock" } },
+          "reach": { "status": "unchecked", "reason": "the location is read from configuration; no bucket is called" }
+        }
+      ]
+    }
+  ],
+  "summary": { "members": 1, "published": 1, "locations": 1, "unreachable": 0 }
+}
+```
+
+| Field | Value |
+|---|---|
+| `members[].status` | `read`, `skipped` for a kind the per-member reads don't run, or `failed`, with `reason` |
+| `members[].published` | Whether the member's lexicon publishes state locations |
+| `states[].environment` | The environment, or `null` when the member declares none |
+| `states[].unit` | The part of the member the entry is for, when it has several: a Terraform root, a stack |
+| `states[].substrate` | The lexicon that read it |
+| `states[].backend` | `kind` (`s3`, `gcs`, `azurerm`, `http`, `local`, `cloud`, `cloudformation-stack`, `choudoufu-record-store:s3`) and `location`, the values the backend names |
+| `states[].lock` | `mechanism` and its `location`, or `null` when the state is not locked |
+| `states[].reach` | `reachable`, `unreachable` with a `reason`, or `unchecked` |
+
+A value that carries a secret is masked. A key that names a credential (a token, a password, an access or account key, a SAS) reads `***`, and a URL has no user or password.
+
+### What each lexicon publishes
+
+| Member | Backend kinds and locations |
+|---|---|
+| a `terraform` root | The backend block, with the `-backend-config` files and pairs applied over it: `s3` (bucket, key, region), with `s3-lockfile` or `dynamodb` as the lock; `gcs` (bucket, prefix); `azurerm` (storage account, container, key); `http`; `local`; `cloud`. A root with no backend block is `local`. A root with a choudoufu live block also has an entry for its record store. `reach` is `unchecked` |
+| a `cloudformation` member that names stacks | `cloudformation-stack`: the stack and its region. `reach` is `reachable` when the stack was read and `unreachable`, with the reason, when it was not |
+| a `cloudformation` member with a template file | `cloudformation-stack` with no stack name, and a reason saying to name the deployed stack in `cloudformation-stacks.json` |
+
+A member of another kind has `published: false`.

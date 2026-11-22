@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `plan-stale`, `run-event`, `delivery-metrics`, `merge-record`, `search` and `capabilities`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `state`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `plan-stale`, `run-event`, `delivery-metrics`, `merge-record`, `search` and `capabilities`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -59,6 +59,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant plan stale`](/chant/cli/plan/#plan-stale) | `--json`, floor chant 0.124.63 | `https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 | [`chant workspace metrics`](/chant/cli/workspace-metrics/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json` |
+| [`chant workspace state`](/chant/cli/workspace-state/#output) | `--json`, floor `WORKSPACE_STATE_LOCATIONS_FLOOR` | `https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json` |
 | [`chant workspace search`](/chant/cli/workspace-search/#output), and [`chant search`](/chant/cli/search/#--json) for one project | `--json`, floor chant 0.124.46 | `https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json` |
 | [`chant workspace search --capabilities`](/chant/reference/capabilities/#the-capabilities-document), and `chant search --capabilities` for one project | `--json`, floor chant 0.124.46 | `https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json` |
 | [`chant workspace drift --member <name>`](/chant/reference/drift-record/#reading-a-member-chant-workspace-drift), the drift document with `contract` beside `drift: "v1"`, or with `--stream` its NDJSON stream | always | `https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json` |

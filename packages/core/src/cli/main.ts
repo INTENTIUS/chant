@@ -1209,6 +1209,12 @@ Workspace (level 1, #2524):
                         member is searched alone, and a member that can't be
                         searched has a reason code. --at <rev> is the git
                         revision; --snapshot <ref> replays a recorded snapshot
+  workspace state [dir] [--member <name>] [--env <name>] [--at <rev>] [--json]
+                        Where each member's state lives, per environment: the
+                        substrate, backend, location, lock and whether the
+                        read could reach it. Each member's lexicon reads its
+                        own configuration, each member runs under its own
+                        chant, and a value that carries a secret is masked
   workspace graph --composites [--at <rev>] [--member <name>] [-o <file>]
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
@@ -2195,6 +2201,8 @@ export const commandRegistry: CommandDef[] = [
   // #2554 — a release train: one release of every chant member, pinned in the workspace ledger.
   { name: "workspace train", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-train")).runWorkspaceTrain(ctx) },
   { name: "workspace drift", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/drift-cli")).runWorkspaceDrift(ctx) },
+  // #5456 — where each member's state lives, per environment, from what each member's lexicon publishes on its graph.
+  { name: "workspace state", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/state-cli")).runWorkspaceState(ctx) },
   { name: "workspace search", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/search-cli")).runWorkspaceSearch(ctx) },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
