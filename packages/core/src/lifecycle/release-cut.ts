@@ -91,6 +91,7 @@ import {
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import type { ForgeChecksReader, ReleaseGreenSource } from "./release-green";
 import type { NpmPublishedLookup } from "./publish-npm";
+import { withoutChantWorkingFiles } from "./release-working-paths";
 
 /** The first chant that cuts from a lane's green tag and writes `lane` on the cut line (#4692). */
 export const RELEASE_CUT_LANE_FLOOR = "0.124.64";
@@ -669,7 +670,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
       `chant release cut <label> --actor <principal> --sign [<key file>], with a key ${releaseRule.rule.signers.signersPath} at base lists for that principal.`,
     );
   }
-  const dirty = tryGit(top, ["status", "--porcelain", "--untracked-files=no"]);
+  const dirty = withoutChantWorkingFiles(tryGit(top, ["status", "--porcelain", "--untracked-files=no"]) ?? "");
   if (dirty) {
     throw new ReleaseCutError(
       "release-worktree-dirty",

@@ -131,7 +131,7 @@ A member with a [pipeline](/chant/guide/pipeline/) has `pipeline` in the JSON: i
       "after": ["canary"],
       "release": { "releaseDigest": "sha256:…", "label": "v1.1.0", "gitSha": "…", "at": "2026-11-20T11:30:00.000Z", "components": ["api"], "mixed": false },
       "gate": { "name": "prod", "policy": "always", "state": "approved", "releaseDigest": "sha256:…", "label": "v1.1.0", "planDigest": "sha256:…", "recordedAt": "…", "approvals": 1, "needed": 1, "approve": "chant approve shop prod --env prod --plan sha256:…" },
-      "risk": { "releaseDigest": "sha256:…", "label": "v1.1.0", "score": 0.4, "level": "medium", "reads": true, "approveAbove": 0.5, "over": false, "overBy": [] },
+      "risk": { "releaseDigest": "sha256:…", "label": "v1.1.0", "score": 0.4, "level": "medium", "reads": true, "approveAbove": 0.5, "over": false, "overBy": [], "reasons": [{ "id": "blast-radius", "contribution": 0.3, "detail": "3 resources change" }] },
       "soak": null,
       "canaryHolds": [{ "stage": "canary", "state": "soaking", "due": "2026-11-20T13:00:00.000Z", "leftMs": 3600000, "holding": true }],
       "paused": null,

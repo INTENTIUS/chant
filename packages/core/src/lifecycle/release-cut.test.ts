@@ -275,6 +275,25 @@ describe("cutRelease", () => {
     });
   });
 
+  test("cuts a tree whose only changes are chant's working files, and refuses a tracked change beside them (#5444)", async () => {
+    await withTestDir(async (dir) => {
+      initRepo(dir);
+      mkdirSync(join(dir, ".chant", "op-waves", "w"), { recursive: true });
+      writeFileSync(join(dir, ".chant", "op-waves", "w", "plan.json"), "{}\n");
+      writeFileSync(join(dir, ".chant", "op-waves", "tracked.json"), "{}\n");
+      git(dir, "add", ".chant/op-waves/tracked.json");
+      git(dir, "commit", "-q", "-m", "tracked");
+      const sha = git(dir, "rev-parse", "HEAD");
+      green(dir, sha);
+      writeFileSync(join(dir, ".chant", "op-waves", "tracked.json"), "{\"edited\":true}\n");
+      const result = await cut(dir, fixtureCompiler(), "v1");
+      expect(result.cut).not.toBeNull();
+      writeFileSync(join(dir, "README.md"), "edited\n");
+      const err = await cut(dir, fixtureCompiler(), "v2").catch((e: unknown) => e);
+      expect((err as ReleaseCutError).code).toBe("release-worktree-dirty");
+    });
+  });
+
   test("two cuts of one commit give the same releaseDigest; the second is a no-op that keeps the label", async () => {
     await withTestDir(async (dir) => {
       const sha = initRepo(dir);

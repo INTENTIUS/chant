@@ -127,6 +127,40 @@ describe("a clean tree", () => {
       writeFileSync(join(dir, "README.md"), "changed\n");
       expect(() => checkCleanTree(dir, sha)).toThrow(/2 tracked file\(s\) with uncommitted changes/);
     }));
+
+  test("leaves out the working files chant wrote, whether .chant is tracked or not (#5444)", () =>
+    withTestDir(async (root) => {
+      const { dir, sha } = pushedRepo(root);
+      const put = (rel: string) => {
+        mkdirSync(join(dir, rel, ".."), { recursive: true });
+        writeFileSync(join(dir, rel), "{}\n");
+      };
+      // .chant is wholly untracked: git would print `.chant/` alone without --untracked-files=all.
+      put(".chant/op-waves/w/wave-1/plan.json");
+      put(".chant/sql/yodel/a.part.json");
+      put(".chant/pr/pr-plan.json");
+      put(".chant/fan-out.json");
+      put("member/.chant/op-waves/w/outcome.json");
+      expect(codeOf(() => checkCleanTree(dir, sha))).toBeUndefined();
+      // and with .chant holding a tracked file, where git prints each directory.
+      put(".chant/allowed_signers");
+      git(dir, "add", ".chant/allowed_signers");
+      git(dir, "commit", "-q", "-m", "signers");
+      const head = git(dir, "rev-parse", "HEAD");
+      expect(codeOf(() => checkCleanTree(dir, head))).toBeUndefined();
+      // a file a person adds under .chant still refuses, beside the working files.
+      put(".chant/notes.md");
+      expect(() => checkCleanTree(dir, head)).toThrow(/1 untracked file\(s\) such as \.chant\/notes\.md/);
+    }));
+
+  test("still refuses a user's untracked file beside chant's working files (#5444)", () =>
+    withTestDir(async (root) => {
+      const { dir, sha } = pushedRepo(root);
+      mkdirSync(join(dir, ".chant", "op-waves", "w"), { recursive: true });
+      writeFileSync(join(dir, ".chant", "op-waves", "w", "plan.json"), "{}\n");
+      writeFileSync(join(dir, "extra.component.ts"), "export const x = {};\n");
+      expect(() => checkCleanTree(dir, sha)).toThrow(/1 untracked file\(s\) such as extra\.component\.ts/);
+    }));
 });
 
 describe("the actor", () => {
