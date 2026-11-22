@@ -50,13 +50,8 @@ export { SqlLiteral, SqlTemplateError } from "../core/template";
 export type { AnyColumn, Column, ColumnTraits, KeyColumn, Named, NotNullColumn, UncheckedColumn, Unnamed } from "../core/typed";
 export { quoteIdent } from "./names";
 
-export const MYSQL_ENTITY_TYPES = {
-  database: "MySQL::Database",
-  table: "MySQL::Table",
-  view: "MySQL::View",
-} as const;
-
-export type MysqlEntityType = (typeof MYSQL_ENTITY_TYPES)[keyof typeof MYSQL_ENTITY_TYPES];
+export { MYSQL_ENTITY_TYPES, type MysqlEntityType } from "./entity-types";
+import { MYSQL_ENTITY_TYPES, type MysqlEntityType } from "./entity-types";
 
 // ── Values ─────────────────────────────────────────────────────────────
 
