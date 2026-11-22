@@ -75,6 +75,16 @@ moved docker/Dockerfile:1 node:22-bookworm-slim sha256:c3de60bf2f9d... -> sha256
 
 It reads the Dockerfiles `release.images` names, or the files given after `--repin`, and moves every `name:tag@sha256:<digest>` in them, `ARG` defaults included. A `FROM` by tag alone is left for a person to pin the first time. A run with nothing to move writes nothing and says so. `--check` writes nothing and exits 1 when a reference would move, and `--json` prints `moved`, `unchanged`, `failed` and `written`, so a scheduled job can open a pull request with the change. It reads with a pull-only token, using `OCI_USERNAME` and `OCI_PASSWORD` or the docker config's login for a private registry, and asks anonymously otherwise. A tag it can't resolve leaves its digest and exits 1.
 
+The same command moves Wolfi package versions, which a Chainguard CI image installs at exact versions. In the files it is given it finds two more shapes: a row of chant's `WOLFI_PACKAGE_PINS`, `apk("<name>", "<version>", "<date>")`, and a product's own `apk:<name>=<version>` entry. It reads Wolfi's index for x86_64 and aarch64 from `packages.wolfi.dev`, only when a file holds one of them, and moves each to the newest version both list, writing the day it moved on a row:
+
+```
+$ chant release images --repin src/image.ts
+moved src/image.ts:12 apk:python-3.13 3.13.9-r0 -> 3.13.9-r1
+1 reference(s) moved; 0 unchanged.
+```
+
+It does not rewrite the `apk add` line of a rendered Dockerfile, so render the Dockerfile again after it moves your source. A package the index no longer lists for both architectures keeps its version and exits 1. The pins hold the packages named; their dependencies come from the index on the day of the build.
+
 Outside a release, the docker lexicon's [DKRD021](/chant/lexicons/docker/lint-rules/#dkrd021--from-names-a-base-by-tag-not-by-digest) runs the same rule on generated Dockerfiles once a project turns it on.
 
 ## The scan before the stage
