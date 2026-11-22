@@ -4,11 +4,51 @@ description: 'The forges chant generates pipelines for, and the chant runner on 
 diataxis: reference
 ---
 
-| Forge | Generated with | Needs |
-|---|---|---|
-| GitHub | `--generate github` | The job's own token. On a change from a fork that token is read-only, so the note and status are not posted. |
-| GitLab | `--generate gitlab` | `CHANT_FORGE_TOKEN`, a project access token with the `api` scope, because a job token cannot write notes. |
-| Forgejo | `--generate forgejo` | The GitHub workflow in Forgejo's dialect. It uses the job's own token. |
+Each row is a forge or CI system chant renders for, or a way of running chant's jobs on your own host. A cell says what works. Where chant refuses, the cell says what the refusal asks for. What a forge or CI system does beyond what chant renders is not described here. [Forges, CI systems and wardens](/chant/concepts/forges-ci-and-wardens/) explains the terms and why each forge has a warden.
+
+## Pipelines and what they post
+
+| | Pull-request pipeline | Plan note and status | Comment commands | Token the jobs use |
+|---|---|---|---|---|
+| GitHub Actions | `--generate github` | The `plan-note` job posts the note and the `chant/plan` status. | `/chant apply` and a product's own commands, from `issue_comment` events. The commenter needs write access. | The job's own token. On a change from a fork it is read-only, so the note and status are not posted. |
+| GitLab CI | `--generate gitlab` | The `plan-note` job posts the note and sets the status. | GitLab starts no pipeline on a note. A product's note-poll job (`noteCommands`) answers them, and the apply before merge runs in a pipeline of the target branch started with `CHANT_APPLY_PR` set. | `CHANT_FORGE_TOKEN`, a project access token with the `api` scope, because a job token cannot write notes. |
+| Forgejo Actions | `--generate forgejo` | As GitHub, with the `--forge forgejo` client. | As GitHub, from `issue_comment` events. The job reads the event's `repository.permissions` for write access. | The job's own token. |
+| Prow with GitHub | `--generate prow` writes the Prow job config of one repository. | The plan presubmit holds no credential, so its note and status go into its report. Prow reports the job's result on the pull request. | None. The generator refuses `previewComment`, `actionJob`, `applyBeforeMerge`, `locks` and `noteCommands` by name. | The record and apply postsubmits read the GitHub token from a Secret on the trusted cluster. |
+| `ci serve --forge github` | No file. The host plans each open pull request head and records each new commit on the target branch. | Each job posts its own note and sets the `chant/pr-plan` and `chant/pr-apply` statuses. | None. `ci serve` polls and reads no comments. | `CHANT_FORGE_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN` from the host's environment. |
+| `ci serve --forge forgejo` | As GitHub. | As GitHub. | None. | The same variables, plus `GITHUB_SERVER_URL` and `GITHUB_API_URL` for the Forgejo host. |
+| `ci serve --forge git` | No pull requests. A change reaches the target branch through a land branch or a direct push. | No note and no status. `ci serve` says so once on stderr. | None. | None. The target's head comes from `git ls-remote`. |
+
+On GitLab, `ci serve` is refused: `--forge` takes `github`, `forgejo` or `git`. Review rules (`--require-review`) read the forge's approving reviews on GitHub, GitLab and Forgejo. Where there is no forge to ask, an approval is the `chant approve` record on `chant/lifecycle`, which every row accepts.
+
+## Cloud login, green commits and forge checks
+
+| | Cloud login with the job's OIDC token | `ci.green.source` | `chant ci forge-check` | `chant/lifecycle` protection in `release doctor` |
+|---|---|---|---|---|
+| GitHub Actions | The job needs `permissions: id-token: write`. A change from a fork gets none. | Check runs (the default), or `runs`. | Branch protection or a ruleset, the plan status, each apply environment, each apply runner group. | Read. |
+| GitLab CI | The job declares an `id_tokens` entry with an audience. | `runs`. The tick reads check runs from GitHub only, and refuses another forge's. | Protected branches, a passing pipeline for merge requests, protected environments, runners that take protected refs only. | Read. |
+| Forgejo Actions | Forgejo 15 with Forgejo Runner 12.5 or later serves one to a job with `enable-openid-connect: true`. An older Forgejo needs the cloud's `tokenFile` from the runner. | `runs`. | Each protected branch has a rule, and the default branch's rule checks the plan status. | Read. |
+| Prow with GitHub | A Prow job has no OIDC token. The postsubmits take their cloud identity from a service account the cluster binds, named in `prow.serviceAccounts`, and `identity` in the pull-request loop is refused. | `runs`. chant has no reader of Prow's own results. | Reads the GitHub repository, as for GitHub. It has no Prow-specific rows. | Read, on the GitHub remote. |
+| `ci serve --forge github` | None. The host has no CI OIDC token, and its jobs use the credentials in the `--secrets` file. | `runs`, signed with the host's runner key. `ci serve` runs the tick after each job when the workspace declares `ci.green`. | As GitHub. | Read. |
+| `ci serve --forge forgejo` | None, as above. | `runs`, ticked the same way. | As Forgejo. | Read. |
+| `ci serve --forge git` | None. | `runs`, ticked the same way. | None. A plain git server has no API to read. The policy is `.chant/trust.json`, enforced by the [ref gate](/chant/cli/workspace-ref-gate/)'s pre-receive hook. | None through an API. The hook refuses a rewrite or deletion of `chant/lifecycle` (`lifecycle-ref-rewritten`, `lifecycle-ref-deleted`). |
+
+`chant ci forge-check` also compares each cloud's trust (AWS, GCP, Azure and Pulumi Cloud) with what the pipeline's jobs need. That part does not depend on the forge. [Green commits](/chant/guide/green-commits/) sets `ci.green` up.
+
+## Releases and signing
+
+`chant release workflow --forge github|gitlab|forgejo` writes the release workflow. The scan before the stage, the pinned scanner and syft downloads, and the pull logins for `release.images` are in all three files and in a train's file. `release.signing` picks how a publish signs. The modes are described in [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures).
+
+| | Release workflow | Keyless | `kms` | `key` | Builder the SLSA statement names |
+|---|---|---|---|---|---|
+| GitHub Actions | `.github/workflows/chant-release.yml` | Public Sigstore from `id-token: write`, or a private Fulcio and Rekor. | Credentials go to the publish step alone, from repository secrets of the same names. | The key and its password go to the publish step alone, from repository secrets. | The workflow, in the build type `actions/attest-build-provenance` writes. |
+| GitLab CI | `.gitlab/chant-release.yml`, included from `.gitlab-ci.yml` | Public Sigstore from `SIGSTORE_ID_TOKEN`, or a private Fulcio and Rekor. | Works. CI/CD variables reach every job and cannot be limited to one, so the file names none. Mark them protected and scope them to the release environment. | As `kms`. | The project, its CI config and the ref, in a GitLab CI build type. |
+| Forgejo Actions | `.forgejo/workflows/chant-release.yml` | Only through a private Fulcio that trusts the instance. Public Sigstore issues no certificate for a Forgejo token, so `chant release workflow` refuses to write a keyless step and asks for `release.signing.kms`, `release.signing.key`, or `release.signing.fulcio` with `trustRoot`. | As GitHub. | As GitHub. | The server, the repository, the workflow and the run, in a Forgejo Actions build type. A Forgejo runner is never taken for GitHub. |
+| Prow with GitHub | None. chant writes no release workflow for Prow. | Refused. A run outside GitHub Actions and GitLab CI has no OIDC token cosign takes. | Signs wherever `chant release publish` runs. | Signs wherever `chant release publish` runs. | The workstation builder, since no forge's variables are set. |
+| `ci serve --release` on any `--forge` | The host runs the steps of the rendered publish job on each release tag, and a `ci/release/<sha>` request cuts a release of a green commit first. It takes the `refs/chant/lease/release` lease, so two hosts publish a tag once. | Refused when `ci serve` starts, because a host has no CI OIDC token. | Works. Credentials come from the `--secrets` file, for the publish step only. | Works, the same way. | The host, by its runner key's fingerprint. |
+
+With `supply-chain` on, a host that publishes must sign with `kms` or `key`, and `ci serve --release` refuses to start otherwise. It also refuses to start without a trusted runner key, and the key can be Ed25519 or ECDSA P-256 ([Signatures and crypto modules](/chant/reference/crypto-modules/)). `--require-provenance` is met on every row that signs with `kms` or `key` by the signed SLSA statement, since the run has no OIDC token.
+
+The warden for each forge is [github-warden](https://intentius.io/github-warden/), [gitlab-warden](https://intentius.io/gitlab-warden/) and [forgejo-warden](https://intentius.io/forgejo-warden/). Prow with GitHub is governed by github-warden. The chant-native git forge has no forge API and no warden; its policy is in the repository.
 
 [`chant ci forge-check`](/chant/cli/ci/#ci-forge-check) compares the forge's branch protection and each cloud's trust with what the pipeline needs. On GitLab and Forgejo, set `ci.green.source` to `runs`, because they have no check-run reader. [Green commits](/chant/guide/green-commits/).
 

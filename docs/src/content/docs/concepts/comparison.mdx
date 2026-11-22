@@ -48,7 +48,7 @@ Dagger runs the pipeline at run time. The forge's job starts the engine, and the
 
 Bazel is the reference for a hermetic step. An action runs in a sandbox and its cache key covers every input it declares. chant's steps don't declare their inputs today.
 
-A generated pull-request pipeline's jobs are typed values that each forge's generator wraps, and `chant ci run --local` runs the same values without reading YAML. [github-warden](https://github.com/INTENTIUS/github-warden) reads the job names chant generates and requires them as checks, which works because the jobs are the forge's own. Where a step needs a pinned toolchain, give it an `image` ([A shell step in a container](/chant/guide/ops-reference/#a-shell-step-in-a-container)). A Dagger runtime for Ops could plug into the `opRuntime` hook as a lexicon.
+A generated pull-request pipeline's jobs are typed values that each forge's generator wraps, and `chant ci run --local` runs the same values without reading YAML. [github-warden](https://github.com/INTENTIUS/github-warden) reads the job names chant generates and requires them as checks, which works because the jobs are the forge's own. [Forges, CI systems and wardens](/chant/concepts/forges-ci-and-wardens/) says what a warden is for and why each forge has one. Where a step needs a pinned toolchain, give it an `image` ([A shell step in a container](/chant/guide/ops-reference/#a-shell-step-in-a-container)). A Dagger runtime for Ops could plug into the `opRuntime` hook as a lexicon.
 
 ## Trade-offs
 

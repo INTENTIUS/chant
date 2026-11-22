@@ -326,6 +326,8 @@ The chant repo pins both by path and declares `examples/terraform-carve-out/terr
 
 ## Forge governance from the wardens
 
+[Forges, CI systems and wardens](/chant/concepts/forges-ci-and-wardens/) says what a warden is and why only forges have one.
+
 The three wardens, [github-warden](https://github.com/INTENTIUS/github-warden), [gitlab-warden](https://github.com/INTENTIUS/gitlab-warden) and [forgejo-warden](https://github.com/INTENTIUS/forgejo-warden), each ship a `forge-governance` kind as a data-only kinds file ([#3180](https://github.com/INTENTIUS/chant/issues/3180)). A repo that holds a warden policy declares the policy's directory as a member of that kind, so the forge state the warden keeps appears in `chant workspace ls` and `chant workspace graph` with the rest of the estate. It needs no new field: the kind uses a probe, `outputs` and a [`memberFile`](#a-members-own-file), and a workspace pins the one warden whose forge it governs.
 
 | Warden | Probe and member file | Outputs |

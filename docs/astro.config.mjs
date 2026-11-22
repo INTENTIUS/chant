@@ -549,6 +549,7 @@ export default defineConfig({
 								{ label: 'Build-Time Parameters', slug: 'concepts/build-time-parameters' },
 								{ label: 'Trunk and Releases', slug: 'concepts/trunk-and-releases' },
 								{ label: 'CI Products on chant', slug: 'concepts/ci-products' },
+								{ label: 'Forges, CI Systems and Wardens', slug: 'concepts/forges-ci-and-wardens' },
 								{ label: 'Where Values Come From', slug: 'concepts/where-values-come-from' },
 								{ label: 'Evaluation Pipeline', slug: 'concepts/evaluation-pipeline' },
 								{ label: 'State and Governance', slug: 'concepts/governance' },

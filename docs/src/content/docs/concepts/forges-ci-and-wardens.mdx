@@ -1,0 +1,96 @@
+---
+title: Forges, CI Systems and Wardens
+description: What a forge, a CI system and a cloud each hold, what a warden governs, why only forges have one, and how a team on a plain git server works with chant
+diataxis: explanation
+---
+
+chant draws a line between three things that people often call "CI". This page names them, says which part of the line a warden sits on, and walks through a team whose forge is a git server with one `chant ci serve` host. The per-forge feature table is in [Your forge](/chant/ci/your-forge/).
+
+## Forge, CI system and cloud
+
+The forge holds the repository, its pull requests, reviews and branch protection. The CI system runs the jobs. The cloud holds what the jobs deploy.
+
+Often one product is two of these. GitHub is a forge and GitHub Actions is its CI system. GitLab, Forgejo and Azure DevOps (Repos with Pipelines) are the same pairing. Prow is only a CI system: a GitHub repository can run its jobs on it. AWS CodePipeline and Google Cloud Build are only CI systems too, and they belong to a cloud.
+
+chant keeps the two apart in `chant.workspace.json` with `ci.forge` and `ci.system` ([forge and CI system](/chant/reference/workspace-declaration/#forge-and-ci-system)). The forge decides where a plan note, a commit status and a review live, and which token writes them. The CI system decides which pipeline file chant writes.
+
+## What a warden is
+
+A warden keeps a forge's organization and repository settings in a declared state, with guardrails and drift correction. Branch protection, required checks, teams and permissions are the usual contents. github-warden reads the job names chant generates and requires them as checks. Each warden appears in the workspace as a `forge-governance` member ([forge governance from the wardens](/chant/reference/workspace-kinds/#forge-governance-from-the-wardens)), so the settings a forge holds are drawn in `chant workspace graph` with the rest of the estate.
+
+The three wardens are [github-warden](https://intentius.io/github-warden/), [gitlab-warden](https://intentius.io/gitlab-warden/) and [forgejo-warden](https://intentius.io/forgejo-warden/).
+
+## Why only forges get one
+
+A warden exists for settings that no chant lexicon can declare, because they live in a forge's own API and not in a cloud's resource model. A GitHub ruleset, a GitLab protected branch and a Forgejo branch protection rule are of that kind.
+
+The cloud-hosted CI services are the other case. CodePipeline, CodeBuild, CodeConnections, Cloud Build triggers and Cloud Build worker pools are cloud resources, and the aws and gcp lexicons already type them (`AWS::CodePipeline::Pipeline`, `AWS::CodeBuild::Project`, `CloudBuildTrigger`, `CloudBuildWorkerPool`). A team declares and diffs them with the rest of its estate and governs them with IAM and the cloud's own policy, through each lexicon's `governance.ts`. A setting a lexicon is missing is a gap in that lexicon, and a warden would not fill it. Cloud-hosted git, such as CodeCommit or Secure Source Manager, is a cloud resource in the same way.
+
+The chant-native git forge has no forge API, so a warden would have nothing to reconcile. Its policy lives in the repository: `.chant/trust.json`, and the pre-receive hook the [ref gate](/chant/cli/workspace-ref-gate/) writes. A warden is needed only where a forge keeps policy in its own API.
+
+## Cloud-native CI services
+
+Today these services are declared as resources through the aws and gcp lexicons ([lexicons](/chant/lexicons/overview/)). chant does not render its pull-request or release pipeline for CodePipeline or Cloud Build, and it does not render one for Azure DevOps.
+
+## Pipelines, policy and resources are values in one estate
+
+The jobs of a pull-request pipeline, a forge's settings and a cloud's resources are all typed values that chant reads from TypeScript ([TypeScript as Data](/chant/concepts/typescript-as-data/)). The rows of the forge table are therefore generators over the same jobs: `--generate github`, `gitlab`, `forgejo` and `prow` wrap one set of job values in each system's file format, and `chant release workflow` does the same for the release.
+
+## A team on the chant-native git forge
+
+Some sites cannot use a hosted forge, such as air-gapped or regulated ones. The forge there is a git server, a hook and one `chant ci serve` host, with no forge API and no hosted CI. A team on GitHub, GitLab or Forgejo uses the rendered pipelines instead, and can still serve jobs from its own host.
+
+### Setup, once
+
+1. Run a git server, such as Soft Serve, or a bare repository over SSH.
+2. Install the ref gate's pre-receive hook on it with `chant workspace ref-gate install --hook pre-receive`. A push to `main` whose commit lacks the evidence `.chant/trust.json` at base requires is refused. The same hook refuses a force push or deletion of `chant/lifecycle`, the branch that holds the audit trail.
+3. On one host, make a runner key and propose it for trust: `chant ci serve --setup-key --trust`. The command pushes a branch with the `trust runner add` change. Merge it, signed as the policy asks. For a host whose crypto module approves ECDSA and not EdDSA, add `--key-type ecdsa-p256` ([Signatures and crypto modules](/chant/reference/crypto-modules/)).
+4. Declare `ci.green` in `chant.workspace.json`: the quick `preMerge` phases, the full phases that make a commit green, and `"source": "runs"`.
+5. Start the host: `chant ci serve --forge git --env <env> --land --build-command '<line>' --secrets <file>`.
+
+### A change
+
+1. A developer commits with a `Chant-Record: work:<id>` trailer, which links the commit to its work item.
+2. They push to a land branch: `git push origin HEAD:chant/land/<name>`.
+3. `ci serve` runs the pre-merge phases on it and fast-forwards `main` when they pass.
+4. On the new `main` commit it runs the record job and the full phases, then ticks the commit green from its own signed runs.
+5. Review is of the work item and of the change set a gate approves with `chant approve`. behold shows what is in flight: open work items, flags, and the green commits waiting at each gate.
+
+The [land branches](/chant/cli/ci/#land-branches) section of `chant ci` and [Land without a pull request](/chant/guide/land-without-a-pull-request/) have the flags and the failure cases.
+
+### A release
+
+A host has no CI OIDC token, so it cannot sign keylessly. It signs with a KMS key or a cosign key, and that signed SLSA statement is what `--require-provenance` accepts, so `supply-chain` can be on. In `chant.config.ts` of the member:
+
+```ts
+export default {
+  release: {
+    signing: { kms: "awskms:///alias/release-signing", publicKey: "keys/release.pub" },
+    publish: [{ type: "oci", image: "dist/api.oci.tar", repository: "registry.example/acme/api" }],
+  },
+};
+```
+
+With `key` in place of `kms`, the key is a file from the member or an `env://NAME` variable, and `publicKey` is required. Put the KMS credentials, or the key and its password, and the registry credentials in the host's `--secrets` file. The step that publishes gets them, and no other step does. [Publish targets](/chant/reference/publish-targets/#signing-with-a-kms-key) describes each mode.
+
+Start the host with `--release` to have it publish release tags:
+
+```sh
+chant ci serve --forge git --env prod --release --secrets /etc/chant/release.env
+```
+
+Once a commit is green, ask the host for a release from any clone:
+
+```sh
+chant ci run --at "$(git rev-parse HEAD)" --release --label 1.4.0
+```
+
+The request is a `ci/release/<sha>` tag. The host runs the gate and the cut of the release workflow, which refuse a commit that is not green, and pushes the release's tag. On a later poll it publishes that tag with the same steps the rendered workflow's publish job has: the pull logins, the doctor, the stamp, the images, the build, `release verify` under `verified-releases`, and `chant release publish`, which scans before it stages anything. cosign, grype and syft are installed from pinned, checksummed downloads into the host's state directory.
+
+Two things are different from a forge's workflow. The SLSA statement names the host, by its runner key's fingerprint, as the builder. And before it publishes a tag, the host takes the `refs/chant/lease/release` lease and looks for `refs/chant/released/<tag>`, so two hosts serving one repository publish a release once. The host refuses to start when a release signs keylessly, or when `supply-chain` is on and a release that publishes does not sign with `kms` or `key`. [Releases on a host](/chant/cli/ci/#releases) has the rest.
+
+A person with the registry credentials can still publish by hand with `chant release cut` and `chant release publish`, running the doctor and verify first. With `supply-chain` on, that publish needs `kms` or `key` too, since a workstation has no OIDC token.
+
+## Where it fits
+
+A site that must keep its source and its builds on its own hosts gets the same land, tick and release steps as a hosted forge, with the policy in the repository and the evidence signed by the host's key. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs, and whether `chant/lifecycle` is protected on a forge that has an API to ask.
