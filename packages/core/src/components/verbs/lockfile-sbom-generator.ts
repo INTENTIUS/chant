@@ -182,6 +182,107 @@ export function parseCargoLock(content: string): BomPackage[] {
   return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name) || (a.version ?? "").localeCompare(b.version ?? ""));
 }
 
+// ── one package's runtime dependencies in a package-lock.json ───────────────
+
+/** The fields of a package.json (or a lockfile entry) that name what a consumer installs with it. */
+export interface NpmDependencyFields {
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+}
+
+/** The package whose dependencies {@link parseNpmPackageDependencies} lists. */
+export interface NpmPackageRoot {
+  /** Its package.json. */
+  manifest: NpmDependencyFields & { name?: string };
+  /**
+   * Its directory relative to the lockfile's, `/`-separated (`""` when they
+   * are the same, `packages/core` for a workspace member). Without it the
+   * package is found by name among the lockfile's entries, else taken to sit
+   * at the lockfile's root.
+   */
+  location?: string;
+}
+
+/** What a consumer installs along with a package: `dependencies`, `optionalDependencies`, and each peer not marked optional. */
+function runtimeDependencyNames(fields: NpmDependencyFields): string[] {
+  const peers = Object.keys(fields.peerDependencies ?? {}).filter((n) => fields.peerDependenciesMeta?.[n]?.optional !== true);
+  return [...new Set([...Object.keys(fields.dependencies ?? {}), ...Object.keys(fields.optionalDependencies ?? {}), ...peers])];
+}
+
+/**
+ * The packages a consumer of one package gets when they install it (#5446):
+ * its `dependencies`, `optionalDependencies` and required peers, and theirs
+ * in turn, each resolved through the lockfile's `packages` map the way Node
+ * finds a module, from the package's own `node_modules` up to the root.
+ * A linked workspace member is followed to its directory and listed by its
+ * name and version. Development dependencies, and packages only other
+ * workspace members use, are not listed, since installing the package
+ * never installs them. An optional dependency the lockfile does not hold
+ * is skipped, as npm skips it.
+ *
+ * A v1 lockfile has no `packages` map to resolve through; for one, every
+ * entry not marked `dev` is listed.
+ */
+export function parseNpmPackageDependencies(content: string, root: NpmPackageRoot): BomPackage[] {
+  const lock: NpmPackageLock = JSON.parse(content);
+  if (!lock.packages) {
+    const prod = Object.fromEntries(Object.entries(lock.dependencies ?? {}).filter(([, p]) => p.dev !== true));
+    return parseNpmPackageLock(JSON.stringify({ ...lock, dependencies: prod }));
+  }
+  type Entry = NpmDependencyFields & { name?: string; version?: string; link?: boolean; resolved?: string };
+  const packages = lock.packages as Record<string, Entry>;
+  let start = root.location;
+  if (start === undefined && root.manifest.name) {
+    start = Object.entries(packages).find(([path, p]) => path !== "" && !path.includes("node_modules/") && !p.link && p.name === root.manifest.name)?.[0];
+  }
+  start ??= "";
+
+  /** Node's lookup: `<from>/node_modules/<name>`, then each directory above `from`, up to the lockfile's root. */
+  const resolve = (from: string, name: string): string | undefined => {
+    let dir = from;
+    for (;;) {
+      const at = dir === "" ? `node_modules/${name}` : `${dir}/node_modules/${name}`;
+      if (packages[at]) return at;
+      if (dir === "") return undefined;
+      const slash = dir.lastIndexOf("/");
+      dir = slash < 0 ? "" : dir.slice(0, slash);
+      if (dir.endsWith("/node_modules")) dir = dir.slice(0, -"/node_modules".length);
+      else if (dir === "node_modules") dir = "";
+    }
+  };
+
+  const seen = new Map<string, BomPackage>();
+  const visited = new Set<string>([start]);
+  const queue: Array<{ at: string; names: string[] }> = [{ at: start, names: runtimeDependencyNames(root.manifest) }];
+  while (queue.length > 0) {
+    const { at, names } = queue.shift()!;
+    for (const name of names) {
+      let path = resolve(at, name);
+      if (!path) continue;
+      let entry = packages[path]!;
+      if (entry.link && entry.resolved !== undefined) {
+        path = entry.resolved;
+        entry = packages[path] ?? {};
+      }
+      const deps = runtimeDependencyNames(entry);
+      const key = `${name}@${entry.version ?? ""}`;
+      const existing = seen.get(key);
+      if (existing) {
+        if (deps.length) existing.dependsOn = [...new Set([...(existing.dependsOn ?? []), ...deps])];
+      } else {
+        seen.set(key, { name, version: entry.version, type: "npm", purl: entry.version ? `pkg:npm/${encodeURIComponent(name)}@${entry.version}` : undefined, dependsOn: deps.length ? deps : undefined });
+      }
+      if (!visited.has(path)) {
+        visited.add(path);
+        queue.push({ at: path, names: deps });
+      }
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Each lockfile kind's parser and file name. */
 export const LOCKFILE_PARSERS = { npm: parseNpmPackageLock, maven: parsePomXml, cargo: parseCargoLock } as const;
 export const LOCKFILE_NAMES = { npm: "package-lock.json", maven: "pom.xml", cargo: "Cargo.lock" } as const;

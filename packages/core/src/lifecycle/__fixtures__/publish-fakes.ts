@@ -470,9 +470,9 @@ export function spdxDocument(name: string): string {
 }
 
 /** Write an npm package directory, with an `sbom.spdx.json` at its root unless `sbom` is false (#4049). */
-export function writePackage(dir: string, name: string, version: string, sbom = true): void {
+export function writePackage(dir: string, name: string, version: string, sbom = true, dependencies?: Record<string, string>): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version }, null, 2));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version, ...(dependencies ? { dependencies } : {}) }, null, 2));
   if (sbom) writeFileSync(join(dir, "sbom.spdx.json"), spdxDocument(name));
 }
 

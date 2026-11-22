@@ -14,7 +14,9 @@
  * - a `forge` target: the SBOM it attaches beside its assets (goreleaser and
  *   nfpm files among them);
  * - an `npm` target: the SBOM each package carries, or, for a package that
- *   carries none, one written from the member's lockfile.
+ *   carries none, one written from the member's lockfile with what
+ *   installing that package brings in, its development dependencies left
+ *   out, since no consumer installs them.
  *
  * Each SBOM goes through the same gate a component's `vuln-gate` step runs
  * (../components/verbs/vuln-gate.ts), with the project's `vulnPolicy`:

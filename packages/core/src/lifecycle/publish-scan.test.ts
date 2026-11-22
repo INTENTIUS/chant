@@ -113,7 +113,7 @@ describe("the scan before the stage", () => {
 
   test("an npm package with a critical CVE in its lockfile stops the publish before npm runs", async () => {
     const dir = temp();
-    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false);
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
     writeLockfile(dir);
     const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], { npm: join(dir, "no-npm-here") });
     const scanner = fakeReleaseScanner();
@@ -122,6 +122,19 @@ describe("the scan before the stage", () => {
     expect(err).toMatchObject({ code: "publish-scan-failed", step: "scan" });
     expect((err as Error).message).toContain("the lockfile of @acme/core@1.4.0: CVE-2026-50001 (critical) in left-pad 1.3.0, fixed in 1.3.1");
     expect(scanner.calls).toEqual(["scan lockfile"]);
+  });
+
+  test("a development dependency in the lockfile does not block: the SBOM lists what installing the package brings in", async () => {
+    const dir = temp();
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "is-odd": "^3.0.0" });
+    writeFileSync(
+      join(dir, "package-lock.json"),
+      JSON.stringify({ name: "acme", lockfileVersion: 3, packages: { "": { name: "acme", devDependencies: { "left-pad": "1.3.0" } }, "node_modules/left-pad": { version: "1.3.0", dev: true }, "node_modules/is-odd": { version: "3.0.1" } } }, null, 2),
+    );
+    const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], {});
+    const report = await scanBeforeStage({ targets, ctx: context(dir, null), scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [] } });
+    // The package itself and is-odd; left-pad 1.3.0, critical in the fake database, is not in it.
+    expect(report.subjects.map((s) => [s.name, s.packages, s.findings.length])).toEqual([["the lockfile of @acme/core@1.4.0", 2, 0]]);
   });
 
   test("a package that carries its own SBOM is scanned through it", async () => {
@@ -137,7 +150,7 @@ describe("the scan before the stage", () => {
 
   test("a VEX statement and the policy decide what blocks, as the vuln-gate step does", async () => {
     const dir = temp();
-    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false);
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
     writeLockfile(dir);
     const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], {});
     const vex = JSON.stringify({ "@context": "https://openvex.dev/ns/v0.2.0", statements: [{ vulnerability: { name: "CVE-2026-50001" }, status: "not_affected", justification: "vulnerable_code_not_in_execute_path" }] });
@@ -240,7 +253,7 @@ describe("what the scan found is kept with the release (#5446)", () => {
 
   test("a scanned line holds every finding with what the policy made of it, and a reader of the record accepts it", async () => {
     const dir = temp();
-    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false);
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
     writeLockfile(dir);
     const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], {});
     const scanner = { ...fakeReleaseScanner(), database: async () => ({ version: "v6.0.2", built: "2026-11-20T00:12:00Z" }) };

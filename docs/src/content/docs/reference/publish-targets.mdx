@@ -672,7 +672,7 @@ Each target attaches the release's provenance statement to what it publishes, an
 
 ### The SBOM
 
-An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Keep it in what npm packs: a package with a `files` list names it there. A package with none publishes without one. Under `supply-chain`, or when `sbom` names a file the package does not hold, it is refused with `publish-sbom-missing` in the plan, before anything is sent.
+An npm package must carry its SBOM at its root, in the directory or under `package/` in the `.tgz`, such as one that `npm sbom --omit dev --sbom-format spdx > packages/core/sbom.spdx.json` writes before packing. Without `--omit dev`, `npm sbom` lists the development dependencies too, and the scan before the stage blocks on what the SBOM lists. Keep it in what npm packs: a package with a `files` list names it there. A package with none publishes without one. Under `supply-chain`, or when `sbom` names a file the package does not hold, it is refused with `publish-sbom-missing` in the plan, before anything is sent.
 
 A wheel carries its SBOM in `.dist-info/sboms/`, as PEP 770 places it, written there by the build. Under `supply-chain`, a `pypi` target whose wheels carry none, or that publishes no wheel, is refused with `publish-sbom-missing`; an sdist has no place for one. A `cargo` target is refused under `supply-chain` too, since nothing it publishes can carry an SBOM. `sbom: false` on either target publishes without one; attach the SBOM to the release with a forge target instead.
 
