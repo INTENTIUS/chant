@@ -15,7 +15,7 @@ set -euo pipefail
 #   2. First run exits 0; the newest line of emulator/drills.jsonl has
 #      outcome passed, non-null rtoMs and rpoMs, tornDown true and every check ok.
 #   3. No `drill-` instance is left in the emulator.
-#   4. `chant workspace status --env emulator --json` lists the store with that drill.
+#   4. `chant workspace status emulator --json` lists the store with that drill.
 #   5. Second run (rto "1s") exits non-zero; its record has outcome missed
 #      with a shortfall.rtoMs, tornDown true, and again no `drill-` instance.
 #
@@ -153,7 +153,7 @@ no_scratch_left "teardown"
 
 # ── 4. workspace status shows the row ────────────────────────────────────────
 echo "=== 4. chant workspace status ==="
-chant workspace status --env emulator --json >"$WORK/status1.json" 2>"$WORK/status.err" || fail "status" "status failed: $(cat "$WORK/status.err")"
+chant workspace status emulator --json >"$WORK/status1.json" 2>"$WORK/status.err" || fail "status" "status failed: $(cat "$WORK/status.err")"
 [ "$(field "$WORK/status1.json" 'r.members[0].drills.some((d) => d.store === "orders" && d.outcome === "passed" && d.rtoMs !== null)')" = true ] \
   || fail "status" "status lists no passed drill of orders: $(cat "$WORK/status1.json")"
 
