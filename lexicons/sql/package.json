@@ -18,6 +18,7 @@
     "typescript",
     "sql",
     "clickhouse",
+    "mysql",
     "schema",
     "chant"
   ],
@@ -71,6 +72,12 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.124.34"
+    "@intentius/chant": "^0.124.34",
+    "mysql2": "^3.11.0"
+  },
+  "peerDependenciesMeta": {
+    "mysql2": {
+      "optional": true
+    }
   }
 }

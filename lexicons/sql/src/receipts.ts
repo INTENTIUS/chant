@@ -102,8 +102,11 @@ const isPostgresUrl = (url: string): boolean => /^postgres(ql)?:\/\//i.test(url)
 /** The dialect an environment's receipts are kept in: its profile's URL, else `sql.dialect`, else whichever server variable is set. */
 export function receiptDialect(config: Config | undefined, environment: string | undefined, env: Record<string, string | undefined>): "clickhouse" | "postgres" {
   const profile = environment !== undefined ? config?.sql?.profiles?.[environment] : undefined;
+  const noMysql = () => new Error(`effect() receipts are kept on a ClickHouse or Postgres server, and ${environment ?? "this environment"} binds a MySQL one`);
+  if (profile && /^mysql:\/\//i.test(profile.url)) throw noMysql();
   if (profile) return isPostgresUrl(profile.url) ? "postgres" : "clickhouse";
   const dialects = config?.sql?.dialect === undefined ? [] : Array.isArray(config.sql.dialect) ? config.sql.dialect : [config.sql.dialect];
+  if (dialects.length === 1 && dialects[0] === "mysql") throw noMysql();
   if (dialects.length === 1) return dialects[0] === "postgres" ? "postgres" : "clickhouse";
   if (!env.CLICKHOUSE_URL && env.POSTGRES_URL) return "postgres";
   return "clickhouse";

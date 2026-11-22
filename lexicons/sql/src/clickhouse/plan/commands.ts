@@ -2,7 +2,8 @@
  * `chant sql diff` and `chant sql plan`: the classified change between two
  * builds, or between a build and a live server. A Postgres build (its output
  * says `"dialect": "postgres"`) or a Postgres binding goes to
- * `../../postgres/plan/commands.ts`.
+ * `../../postgres/plan/commands.ts`, and a MySQL build to
+ * `../../mysql/plan/commands.ts`.
  *
  *     chant sql diff <before.json> <after.json> [--json] [--statements] [--topology <topology>]
  *     chant sql plan <env> <build.json> [--json]
@@ -109,6 +110,10 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
     return 1;
   }
   if (statements) return runDiffStatements(positional[0]!, positional[1]!, json, topology);
+  if (outputDialect(positional[1]!) === "mysql") {
+    const { diffMysqlBuildFiles, emitMysql } = await import("../../mysql/plan/commands");
+    return emitMysql(diffMysqlBuildFiles(positional[0]!, positional[1]!), json, `${positional[0]} -> ${positional[1]}`);
+  }
   if (outputDialect(positional[1]!) === "postgres") {
     const { diffPgBuildFiles, emitPg, projectMajor } = await import("../../postgres/plan/commands");
     return emitPg(diffPgBuildFiles(positional[0]!, positional[1]!, await projectMajor()), json, `${positional[0]} -> ${positional[1]}`);
@@ -155,6 +160,10 @@ export async function runPlan(ctx: CommandGroupContext): Promise<number> {
   if (positional.length !== 2) {
     console.error("usage: chant sql plan <env> <build.json> [--json]");
     return 1;
+  }
+  if (outputDialect(positional[1]!) === "mysql") {
+    const { planMysqlAgainstServer, emitMysql } = await import("../../mysql/plan/commands");
+    return emitMysql(await planMysqlAgainstServer(positional[0]!, positional[1]!), json, `${positional[1]} against ${positional[0]}`);
   }
   if (outputDialect(positional[1]!) === "postgres") {
     const { planPgAgainstServer, emitPg } = await import("../../postgres/plan/commands");

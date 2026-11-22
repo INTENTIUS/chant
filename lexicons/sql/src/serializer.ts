@@ -7,7 +7,7 @@
  *   must be created in, and each object filed under its export name (its
  *   identity in chant) with its type, its parsed definition, the references it
  *   makes and its DDL. Post-synth checks, planning and the applier read this.
- * - `clickhouse.sql` (or `postgres.sql`) beside it: every statement, in that
+ * - `clickhouse.sql` (or `postgres.sql`, `mysql.sql`) beside it: every statement, in that
  *   order, as it will be sent. Written verbatim.
  *
  * The order is the dependency order of the references: a view after the
@@ -42,6 +42,7 @@ import type { SerializeContext } from "@intentius/chant/serializer";
 import { isAttrRefLike } from "@intentius/chant/utils";
 import { isClickHouseObject, type ClickHouseObject } from "./clickhouse/entities";
 import { isPostgresObject, type PostgresObject } from "./postgres/entities";
+import { isMysqlObject, type MysqlObject } from "./mysql/entities";
 import { POSTGRES_LATEST_MAJOR } from "./spec/postgres-pin";
 import { applyOrder, lineageJson, referenceName, type LineageEdge } from "./core/references";
 import { sqlFileLineOf, sqlFileOf, sqlFileReferences } from "./sql-files";
@@ -84,6 +85,9 @@ export const CLICKHOUSE_DDL_FILE = "clickhouse.sql";
 /** The Postgres statements' file, beside the primary output. */
 export const POSTGRES_DDL_FILE = "postgres.sql";
 
+/** The MySQL statements' file, beside the primary output. */
+export const MYSQL_DDL_FILE = "mysql.sql";
+
 function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, string>, extra: readonly string[] = []): Record<string, unknown> {
   const props = { ...(obj.props as Record<string, unknown>) };
   delete props.source;
@@ -103,13 +107,13 @@ function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, 
 
 /** A props value with every entity and column reference in it written as its export name (`users`, `users.id`). */
 function postgresJsonValue(v: unknown, names: Map<Declarable, string>): unknown {
-  if (isPostgresObject(v) || isAttrRefLike(v)) return referenceName(v, names) ?? null;
+  if (isPostgresObject(v) || isMysqlObject(v) || isAttrRefLike(v)) return referenceName(v, names) ?? null;
   if (Array.isArray(v)) return v.map((x) => postgresJsonValue(x, names));
   if (v !== null && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, postgresJsonValue(x, names)]));
   return v;
 }
 
-function postgresObjectJson(name: string, obj: PostgresObject, names: Map<Declarable, string>, extra: readonly string[] = []): Record<string, unknown> {
+function postgresObjectJson(name: string, obj: PostgresObject | MysqlObject, names: Map<Declarable, string>, extra: readonly string[] = []): Record<string, unknown> {
   const props = { ...(obj.props as Record<string, unknown>) };
   delete props.source;
   const ddl = props.ddl;
@@ -152,6 +156,23 @@ function serializePostgres(
   };
 }
 
+/** A MySQL build: the objects in creation order, each as a Postgres object is written, and `mysql.sql` beside it. */
+function serializeMysql(objects: Map<string, MysqlObject>, entities: Map<string, Declarable>): SerializerResult {
+  const names = new Map<Declarable, string>();
+  for (const [name, entity] of entities) names.set(entity, name);
+  const extra = sqlFileReferences("mysql", objects);
+  const order = applyOrder(objects, names, extra);
+  const doc = { dialect: "mysql", applyOrder: order, objects: order.map((n) => postgresObjectJson(n, objects.get(n)!, names, extra.get(n))) };
+  const ddl = order.map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`).join("\n\n");
+  const warnings = unparsedWarnings(objects);
+  return {
+    primary: `${JSON.stringify(doc, null, 2)}\n`,
+    files: { [MYSQL_DDL_FILE]: `${ddl}\n` },
+    verbatimFiles: [MYSQL_DDL_FILE],
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
 export const sqlSerializer: Serializer = {
   name: "sql",
   rulePrefix: "SQL",
@@ -159,17 +180,25 @@ export const sqlSerializer: Serializer = {
   serialize(entities: Map<string, Declarable>, _outputs?: unknown, context?: SerializeContext): string | SerializerResult {
     const objects = new Map<string, ClickHouseObject>();
     const postgres = new Map<string, PostgresObject>();
+    const mysql = new Map<string, MysqlObject>();
     for (const [name, entity] of entities) {
       if (isClickHouseObject(entity)) objects.set(name, entity);
       else if (isPostgresObject(entity)) postgres.set(name, entity);
+      else if (isMysqlObject(entity)) mysql.set(name, entity);
     }
-    if (objects.size > 0 && postgres.size > 0) {
+    const held = [
+      ["ClickHouse", objects],
+      ["Postgres", postgres],
+      ["MySQL", mysql],
+    ].filter(([, m]) => (m as Map<string, unknown>).size > 0) as Array<[string, Map<string, unknown>]>;
+    if (held.length > 1) {
       throw new Error(
-        `sql: one build holds one dialect, and this one declares ClickHouse (${[...objects.keys()][0]}) and Postgres (${[...postgres.keys()][0]}) objects; ` +
+        `sql: one build holds one dialect, and this one declares ${held.map(([d, m]) => `${d} (${[...m.keys()][0]})`).join(" and ")} objects; ` +
           "declare each database in its own project",
       );
     }
     if (postgres.size > 0) return serializePostgres(postgres, entities, context?.config);
+    if (mysql.size > 0) return serializeMysql(mysql, entities);
     if (objects.size === 0) return "";
 
     const names = new Map<Declarable, string>();

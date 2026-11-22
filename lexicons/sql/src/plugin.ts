@@ -101,8 +101,8 @@ export const sqlPlugin: LexiconPlugin = {
    */
   intrinsics(): IntrinsicDef[] {
     return [
-      { name: "database", isTag: true, description: "A ClickHouse CREATE DATABASE, parsed into a database entity" },
-      { name: "table", isTag: true, description: "A ClickHouse or Postgres CREATE TABLE, parsed into a table entity" },
+      { name: "database", isTag: true, description: "A ClickHouse or MySQL CREATE DATABASE, parsed into a database entity" },
+      { name: "table", isTag: true, description: "A ClickHouse, Postgres or MySQL CREATE TABLE, parsed into a table entity" },
       {
         name: "view",
         isTag: true,
@@ -252,7 +252,7 @@ export const sqlPlugin: LexiconPlugin = {
     return sqlWorkspaceOutputs(entities, unread);
   },
 
-  /** One generator for both dialects: each IR resource's type says whose declarations it is. */
+  /** One generator for every dialect: each IR resource's type says whose declarations it is. */
   templateGenerator() {
     return sqlTemplateGenerator;
   },
@@ -272,9 +272,14 @@ export const sqlPlugin: LexiconPlugin = {
    */
   async describeResources(options) {
     const { dialectOfEntities } = await import("./live-dialect");
-    if (dialectOfEntities(options.entities) === "postgres") {
+    const dialect = dialectOfEntities(options.entities);
+    if (dialect === "postgres") {
       const { describeResources } = await import("./postgres/live/describe-resources");
       return describeResources(options);
+    }
+    if (dialect === "mysql") {
+      const { describeMysqlResources } = await import("./mysql/live/describe-resources");
+      return describeMysqlResources(options);
     }
     const { describeResources } = await import("./clickhouse/live/describe-resources");
     return describeResources(options);
@@ -294,9 +299,16 @@ export const sqlPlugin: LexiconPlugin = {
   /** Each declared object's live definition, in the declaration's own shape. */
   async observeResourcesDeep(options) {
     const { dialectOfEntities } = await import("./live-dialect");
-    if (dialectOfEntities(options.entities) === "postgres") {
+    const dialect = dialectOfEntities(options.entities);
+    if (dialect === "postgres") {
       const { observeResourcesDeep } = await import("./postgres/plan/deep");
       return observeResourcesDeep(options);
+    }
+    if (dialect === "mysql") {
+      // A MySQL object's properties are compared by `chant sql plan` and sql-apply, which read its SHOW CREATE.
+      const { deepObservation } = await import("@intentius/chant/deep-observation");
+      const detail = "the MySQL dialect reads presence here; chant sql plan compares a MySQL object's definition";
+      return deepObservation({}, Object.fromEntries(options.entityNames.map((n) => [n, { type: options.entities.get(n)?.entityType ?? "", reason: "unsupported-kind" as const, detail }])));
     }
     const { observeResourcesDeep } = await import("./clickhouse/plan/deep");
     return observeResourcesDeep(options);
@@ -313,7 +325,8 @@ export const sqlPlugin: LexiconPlugin = {
   async classifyDisruption(options) {
     const { classifyDisruption } = await import("./clickhouse/plan/disruption");
     const { classifyPgDisruption } = await import("./postgres/plan/disruption");
-    return { ...classifyDisruption(options), ...classifyPgDisruption(options) };
+    const { classifyMysqlDisruption } = await import("./mysql/plan/disruption");
+    return { ...classifyDisruption(options), ...classifyPgDisruption(options), ...classifyMysqlDisruption(options) };
   },
 
   /**

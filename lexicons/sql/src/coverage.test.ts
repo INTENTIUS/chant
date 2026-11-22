@@ -5,6 +5,8 @@ import { CLICKHOUSE_PROBES } from "./clickhouse/live/undeclarable";
 import { SQL_DIALECTS } from "./dialects";
 import { POSTGRES_ENTITY_TYPES } from "./postgres/entity-types";
 import { CLICKHOUSE_ENTITY_TYPES } from "./clickhouse/entities";
+import { MYSQL_PROBES } from "./mysql/live/undeclarable";
+import { MYSQL_ENTITY_TYPES } from "./mysql/entities";
 
 describe("the object coverage table (#3911)", () => {
   test.each(SQL_DIALECTS)("%s: every CREATE command a pinned server has is marked, and nothing else", (dialect) => {
@@ -36,6 +38,7 @@ describe("the object coverage table (#3911)", () => {
     const types = {
       postgres: { all: Object.values(POSTGRES_ENTITY_TYPES) as string[], notCreate: ["Postgres::Grant", "Postgres::DefaultPrivileges"] },
       clickhouse: { all: Object.values(CLICKHOUSE_ENTITY_TYPES) as string[], notCreate: ["ClickHouse::Grant"] },
+      mysql: { all: Object.values(MYSQL_ENTITY_TYPES) as string[], notCreate: [] as string[] },
     };
     for (const dialect of SQL_DIALECTS) {
       const entities = KIND_COVERAGE[dialect].filter((r) => r.status === "declared").map((r) => r.entity!);
@@ -54,7 +57,7 @@ describe("the object coverage table (#3911)", () => {
   });
 
   test("every refused or referenced kind has the live query that finds it, and every query a row", () => {
-    const probes = { postgres: POSTGRES_PROBES, clickhouse: CLICKHOUSE_PROBES };
+    const probes = { postgres: POSTGRES_PROBES, clickhouse: CLICKHOUSE_PROBES, mysql: MYSQL_PROBES };
     for (const dialect of SQL_DIALECTS) {
       const refused = KIND_COVERAGE[dialect].filter((r) => r.status === "refused" || r.status === "referenced").map((r) => r.kind);
       for (const kind of refused) expect(Object.keys(probes[dialect]), `${dialect} ${kind}`).toContain(kind);
@@ -95,6 +98,23 @@ describe("a statement's kind", () => {
     ["CREATE NAMED COLLECTION IF NOT EXISTS c AS url = 'x'", "named collection"],
   ])("clickhouse: %s is a %s", (sql, kind) => {
     expect(statementKind("clickhouse", sql)?.kind).toBe(kind);
+  });
+
+  test.each([
+    ["CREATE TABLE t (a INT) ENGINE = InnoDB", "table"],
+    ["CREATE TEMPORARY TABLE t (a INT)", "temporary table"],
+    ["CREATE TABLE t (a INT) PARTITION BY HASH (a) PARTITIONS 4", "partitioned table"],
+    ["CREATE SCHEMA shop", "schema"],
+    ["CREATE UNIQUE INDEX i ON t (a)", "index"],
+    ["CREATE FULLTEXT INDEX i ON t (body)", "index"],
+    ["CREATE ALGORITHM=MERGE DEFINER=`app`@`%` SQL SECURITY INVOKER VIEW v AS SELECT 1", "view"],
+    ["CREATE DEFINER=`app`@`localhost` TRIGGER t BEFORE INSERT ON t FOR EACH ROW SET NEW.a = 1", "trigger"],
+    ["CREATE DEFINER = 'app'@'%' PROCEDURE p() BEGIN SELECT 1; END", "stored procedure"],
+    ["CREATE AGGREGATE FUNCTION f RETURNS STRING SONAME 'f.so'", "loadable function"],
+    ["CREATE FUNCTION f(x INT) RETURNS INT DETERMINISTIC RETURN x + 1", "stored function"],
+    ["CREATE EVENT e ON SCHEDULE EVERY 1 DAY DO DELETE FROM t", "event"],
+  ])("mysql: %s is a %s (#5449)", (sql, kind) => {
+    expect(statementKind("mysql", sql)?.kind).toBe(kind);
   });
 
   test("a statement that is not a CREATE has no kind", () => {

@@ -20,6 +20,7 @@ import { diffStatements } from "./migration-statements";
 import { clickhouseRebuildPart, postgresMigrationPart, SQL_CLASS_DISRUPTION, sqlChangeAction, sqlVersionedPlanPart, type SqlPlanStep, type SqlVersionedPlan } from "./change-set";
 import { CHANGE_CLASSES } from "./clickhouse/plan/rules";
 import { PG_CHANGE_CLASSES } from "./postgres/plan/rules";
+import { MYSQL_CHANGE_CLASSES } from "./mysql/plan/rules";
 
 const REPO = join(import.meta.dirname, "..", "..", "..");
 const LIFECYCLE = JSON.parse(readFileSync(join(REPO, "packages", "core", "src", "__fixtures__", "change-set", "lifecycle-plan.floci.json"), "utf-8")) as LifecycleChangeSet;
@@ -120,10 +121,10 @@ describe("sqlVersionedPlanPart", () => {
 
 describe("the classes", () => {
   test("cost what the dialects' class tables say", () => {
-    for (const classes of [CHANGE_CLASSES, PG_CHANGE_CLASSES]) {
+    for (const classes of [CHANGE_CLASSES, PG_CHANGE_CLASSES, MYSQL_CHANGE_CLASSES]) {
       for (const [cls, disruption] of Object.entries(classes.disruption)) expect([cls, SQL_CLASS_DISRUPTION[cls]]).toEqual([cls, disruption]);
     }
-    expect(Object.keys(SQL_CLASS_DISRUPTION).sort()).toEqual([...new Set([...CHANGE_CLASSES.order, ...PG_CHANGE_CLASSES.order])].sort());
+    expect(Object.keys(SQL_CLASS_DISRUPTION).sort()).toEqual([...new Set([...CHANGE_CLASSES.order, ...PG_CHANGE_CLASSES.order, ...MYSQL_CHANGE_CLASSES.order])].sort());
   });
 
   test("a named action wins; drop, create and rebuild classes decide otherwise", () => {

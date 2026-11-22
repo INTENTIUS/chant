@@ -18,7 +18,6 @@ import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
 import {
   createSqlApplyCapability,
   createSqlMigrateCapability,
-  MYSQL_NO_APPLIER,
   sqlCapabilityPlugin,
   sqlMigrateFiles,
   wavePlanDestructive,
@@ -282,18 +281,19 @@ describe("sql-apply", () => {
     ...over,
   });
 
-  test("a mysql build has no planner or applier, and sql-apply says so before it plans or applies anything (#5449)", async () => {
+  test("a mysql build plans and applies through the MySQL planner and applier (#5449)", async () => {
     const path = build("mysql");
-    let called = 0;
+    const applied: string[] = [];
     const cap = createSqlApplyCapability({
-      plan: async () => (called++, plan()),
-      apply: async () => (called++, { applied: [], pruned: [], notAttempted: [] }),
+      plan: async (_input, dialect) =>
+        plan({ dialect, changes: [{ object: "users (table shop.users)", field: "columns.email", rule: "SQLMY201", class: "instant", after: "varchar(255)" }] }),
+      apply: async (input, dialect) => (applied.push(`${dialect}:${input.environment}`), { applied: ["MySQL::Table/table shop.users"], pruned: [], notAttempted: [] }),
     });
-    await expect(cap.plan!({ env: "prod", component: "db" }, { environment: "prod", build: path })).rejects.toThrow(/a mysql build has no planner or applier/);
-    await expect(cap.run({ env: "prod", component: "db", plans: { prod: { kind: "sql-apply", environment: "prod", dialect: "mysql", planDigest: "x" } } }, { environment: "prod", build: path })).rejects.toThrow(/mysql build has no planner/);
-    expect(called).toBe(0);
-    // The default planner and applier refuse it the same way.
-    await expect(createSqlApplyCapability().plan!({ env: "prod", component: "db" }, { environment: "prod", build: path })).rejects.toThrow(MYSQL_NO_APPLIER);
+    const planned = await cap.plan!({ env: "prod", component: "db" }, { environment: "prod", build: path });
+    expect(planned.changeSet?.entries.map((e) => [e.address, e.type, e.action, e.disruption])).toEqual([["users (table shop.users)", "MySQL::Object", "update", "in-place"]]);
+    const out = await cap.run({ env: "prod", component: "db", plans: { prod: planned.artifact } }, { environment: "prod", build: path });
+    expect(out.dialect).toBe("mysql");
+    expect(applied).toEqual(["mysql:prod"]);
   });
 
   test("plans the build against the server as one entry per object, and applies the decided plan", async () => {

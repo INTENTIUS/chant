@@ -5,12 +5,13 @@
  * The entities are hand-written: their shape is the DDL a tag parses, not a
  * schema document. Each is keyed by the kind's name and points at the entity
  * type the tag gives it. ClickHouse's kinds came first and keep their bare
- * names; Postgres's carry the dialect in the name, since both have a table
- * and a view.
+ * names; Postgres's and MySQL's carry the dialect in the name, since each
+ * has a table and a view.
  */
 
 import { CLICKHOUSE_ENTITY_TYPES } from "../clickhouse/entities";
 import { POSTGRES_ENTITY_TYPES } from "../postgres/entity-types";
+import { MYSQL_ENTITY_TYPES } from "../mysql/entities";
 
 const KINDS: Record<string, string> = {
   Database: CLICKHOUSE_ENTITY_TYPES.database,
@@ -57,6 +58,9 @@ const KINDS: Record<string, string> = {
   PostgresRole: POSTGRES_ENTITY_TYPES.role,
   PostgresGrant: POSTGRES_ENTITY_TYPES.grant,
   PostgresDefaultPrivileges: POSTGRES_ENTITY_TYPES.defaultPrivileges,
+  MysqlDatabase: MYSQL_ENTITY_TYPES.database,
+  MysqlTable: MYSQL_ENTITY_TYPES.table,
+  MysqlView: MYSQL_ENTITY_TYPES.view,
 };
 
 export function buildRegistry(): string {

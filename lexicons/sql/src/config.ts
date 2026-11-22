@@ -23,15 +23,17 @@
  * written in the config, or minted as a short-lived token (`password:
  * { token: "rds-iam" }`; `./token-source.ts`). An environment with no profile falls back to
  * `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`, or for
- * Postgres `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. A profile
- * whose `url` is `postgres://` or `postgresql://` is a Postgres server.
+ * Postgres `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`, or for
+ * MySQL `MYSQL_URL`, `MYSQL_USER` and `MYSQL_PASSWORD`. A profile whose `url`
+ * is `postgres://` or `postgresql://` is a Postgres server, and one whose
+ * `url` is `mysql://` a MySQL server.
  *
  * `dialect` names the database a project's schema is for. Declarations carry
  * their dialect in their own type (a ClickHouse table is `ClickHouse::Table`),
  * so the setting is for the things a declaration cannot answer: which dialect
  * a live environment is read as on import, and which dialect's checks run on
  * output that names none. It defaults to `clickhouse`, the first dialect.
- * `postgres` is the second (#3289). A list (`dialect: ["clickhouse",
+ * `postgres` is the second (#3289), and `mysql` the third (#5449). A list (`dialect: ["clickhouse",
  * "postgres"]`) is accepted for a workspace with members of more than one
  * dialect (#3047 question 1); one build still holds one dialect.
  *
@@ -82,7 +84,9 @@ export const sqlProfileSchema = z.strictObject({
    * Where the server is. ClickHouse: the base URL of its HTTP interface
    * (`http://clickhouse:8123`). Postgres: a connection URL
    * (`postgres://db.internal:5432/shop`), with no password in it; the scheme
-   * is what makes a profile a Postgres one.
+   * is what makes a profile a Postgres one. MySQL: a `mysql://` URL
+   * (`mysql://db.internal:3306/shop`), with no password in it; the database
+   * it names is where an unqualified declaration lives.
    */
   url: z.string(),
   /** The user, named by its environment variable. `default` when omitted. */
@@ -91,7 +95,7 @@ export const sqlProfileSchema = z.strictObject({
    * The password, named by its environment variable, or a token source that
    * mints a short-lived one when a connection needs it (#3685):
    * `{ token: "rds-iam" }`, `{ token: "cloud-sql-iam" }`, `{ token: "entra" }`
-   * (Postgres), or `{ token: "command", command: ["./mint.sh"] }`, whose
+   * (Postgres), or `{ token: "command", command: ["./mint.sh"] }` (any dialect), whose
    * standard output is the password. A token is minted again before it
    * expires. See `./token-source.ts`.
    */
@@ -99,10 +103,11 @@ export const sqlProfileSchema = z.strictObject({
   /**
    * The databases this environment's schema lives in. Import reads these and
    * nothing else; when omitted, every database except the server's own
-   * (`system`, `information_schema`, `INFORMATION_SCHEMA`).
+   * (ClickHouse: `system`, `information_schema`, `INFORMATION_SCHEMA`; MySQL:
+   * `mysql`, `information_schema`, `performance_schema`, `sys`).
    */
   databases: z.array(z.string()).optional(),
-  /** The database an unqualified declaration is created in. `default` when omitted. */
+  /** The database an unqualified declaration is created in. ClickHouse: `default` when omitted. MySQL: the database the url names when omitted. */
   defaultDatabase: z.string().optional(),
   /**
    * ClickHouse import (#3718): the SQL user-defined functions `chant import

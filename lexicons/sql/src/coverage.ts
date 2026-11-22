@@ -25,11 +25,14 @@
 
 import { CODECS, SKIP_INDEX_TYPES, TABLE_ENGINES, CLICKHOUSE_VERSION } from "./generated/clickhouse";
 import { POSTGRES_PINS } from "./spec/postgres-pin";
+import { MYSQL_PINS } from "./spec/mysql-pin";
 import type { SqlDialect } from "./dialects";
 import postgresKinds from "./coverage/postgres.json" with { type: "json" };
 import clickhouseKinds from "./coverage/clickhouse.json" with { type: "json" };
 import postgresCommands from "./coverage/postgres-commands.json" with { type: "json" };
 import clickhouseCommands from "./coverage/clickhouse-commands.json" with { type: "json" };
+import mysqlKinds from "./coverage/mysql.json" with { type: "json" };
+import mysqlCommands from "./coverage/mysql-commands.json" with { type: "json" };
 
 // ── Object kinds ───────────────────────────────────────────────────────
 
@@ -71,12 +74,15 @@ export interface KindRow {
 export const KIND_COVERAGE: Record<SqlDialect, readonly KindRow[]> = {
   postgres: postgresKinds.kinds as KindRow[],
   clickhouse: clickhouseKinds.kinds as KindRow[],
+  mysql: mysqlKinds.kinds as KindRow[],
 };
 
 /** The `CREATE` commands each pinned server has: per Postgres major, and the pinned ClickHouse release. */
 export const PINNED_COMMANDS: Record<SqlDialect, ReadonlyArray<{ version: string; commands: readonly string[] }>> = {
   postgres: Object.values(postgresCommands.majors),
   clickhouse: [{ version: clickhouseCommands.version, commands: clickhouseCommands.commands }],
+  // MySQL's list is the reference manual's, as its catalog is (`./spec/mysql-pin.ts`): no server source is read.
+  mysql: [{ version: mysqlCommands.version, commands: mysqlCommands.commands }],
 };
 
 /** A dialect's row for `kind`; throws for a kind the table does not have, so a probe cannot name one that is not there. */
@@ -135,7 +141,7 @@ const MODIFIERS = new Set(["OR", "REPLACE", "TRUSTED", "PROCEDURAL", "DEFAULT", 
  * `match` it matches; undefined for a statement no row covers.
  */
 export function statementKind(dialect: SqlDialect, sql: string): KindRow | undefined {
-  const bare = bareStatement(sql);
+  const bare = dialect === "mysql" ? mysqlBare(bareStatement(sql)) : bareStatement(sql);
   const words = bare.split(/[\s(]+/);
   if (words[0] !== "CREATE") return undefined;
   const rest = words.slice(1).filter((w, i, all) => !MODIFIERS.has(w) || all.slice(0, i).some((x) => !MODIFIERS.has(x)));
@@ -150,11 +156,27 @@ export function statementKind(dialect: SqlDialect, sql: string): KindRow | undef
   return forms.find((r) => r.match !== undefined && new RegExp(r.match, "i").test(bare)) ?? forms.find((r) => r.match === undefined);
 }
 
+/**
+ * A MySQL statement with what may stand between `CREATE` and the command
+ * taken out: `ALGORITHM = MERGE`, `DEFINER = \`app\`@\`%\``, `SQL SECURITY
+ * INVOKER`, and the `FULLTEXT`, `SPATIAL` and `AGGREGATE` before `INDEX` and
+ * `FUNCTION`.
+ */
+function mysqlBare(bare: string): string {
+  return bare
+    .replace(/\b(?:ALGORITHM|DEFINER)\s*=\s*(?:''|`[^`]*`|[^\s@]+)(?:\s*@\s*(?:''|`[^`]*`|\S+))?/g, " ")
+    .replace(/\bSQL\s+SECURITY\s+\w+/g, " ")
+    .replace(/\b(?:FULLTEXT|SPATIAL)\s+(?=INDEX\b)/g, "")
+    .replace(/\bAGGREGATE\s+(?=FUNCTION\b)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Whether the commands file was written for the pinned servers: a list for each pinned version, and for no other. */
 export function pinnedCommandsCurrent(dialect: SqlDialect): string[] {
   const have = PINNED_COMMANDS[dialect].map((p) => p.version);
-  const want = dialect === "postgres" ? POSTGRES_PINS.map((p) => p.version) : [CLICKHOUSE_VERSION];
-  const run = `run npx tsx scripts/sql-create-commands.ts ${dialect}`;
+  const want = dialect === "postgres" ? POSTGRES_PINS.map((p) => p.version) : dialect === "mysql" ? MYSQL_PINS.map((p) => p.version) : [CLICKHOUSE_VERSION];
+  const run = dialect === "mysql" ? "list the reference manual's CREATE statements for the pinned minor in src/coverage/mysql-commands.json" : `run npx tsx scripts/sql-create-commands.ts ${dialect}`;
   return [
     ...want.filter((v) => !have.includes(v)).map((v) => `${dialect} ${v} is pinned, and src/coverage/${dialect}-commands.json has no command list for it: ${run}`),
     ...have.filter((v) => !want.includes(v)).map((v) => `src/coverage/${dialect}-commands.json lists ${dialect} ${v}, which is no longer pinned: ${run}`),

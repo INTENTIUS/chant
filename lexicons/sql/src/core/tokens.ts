@@ -96,6 +96,10 @@ export interface LexicalRules {
   numbers?: "digit-names" | "sql";
   /** Identifiers may hold letters outside ASCII, as Postgres's do. */
   unicodeIdentifiers?: boolean;
+  /** `"..."` is a string literal, not a quoted identifier (MySQL, unless the session sets ANSI_QUOTES). */
+  doubleQuotedStrings?: boolean;
+  /** `#` starts a comment that runs to the end of the line (MySQL). */
+  hashComments?: boolean;
   /**
    * A multi-character operator cannot end in `+` or `-` unless it also holds
    * one of `~ ! @ # % ^ & | \` ?` (Postgres, "Lexical Structure"), so
@@ -144,7 +148,7 @@ export function tokenizeText(src: string, part: number, rules: LexicalRules): To
     if (/\s/.test(c)) {
       while (i < src.length && /\s/.test(src[i]!)) i++;
       push("ws", start, i);
-    } else if (c === "-" && src[i + 1] === "-") {
+    } else if ((c === "-" && src[i + 1] === "-") || (rules.hashComments && c === "#")) {
       while (i < src.length && src[i] !== "\n") i++;
       push("comment", start, i);
     } else if (c === "/" && src[i + 1] === "*") {
@@ -174,9 +178,9 @@ export function tokenizeText(src: string, part: number, rules: LexicalRules): To
       const q = src[i + 2]!;
       i = quoted(i + 2, q, false);
       push(q === "'" ? "string" : "qident", start, i);
-    } else if (c === "'" || rules.identQuotes.includes(c)) {
+    } else if (c === "'" || (rules.doubleQuotedStrings && c === '"') || rules.identQuotes.includes(c)) {
       i = quoted(i, c, rules.backslashEscapes);
-      push(c === "'" ? "string" : "qident", start, i);
+      push(c === "'" || (rules.doubleQuotedStrings && c === '"') ? "string" : "qident", start, i);
     } else if (rules.dollarQuotes && c === "$" && /[0-9]/.test(src[i + 1] ?? "")) {
       i++;
       while (i < src.length && /[0-9]/.test(src[i]!)) i++;
