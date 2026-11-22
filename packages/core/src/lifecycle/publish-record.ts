@@ -54,6 +54,12 @@ export interface PublishRecord {
   /** What the reveal needs, on a `staged` line; `{}` on a `revealed` one. */
   state: Record<string, string>;
   runId: string;
+  /**
+   * The ssh fingerprint (`SHA256:...`) of the runner key of the `chant ci
+   * serve` host that ran the publish (#5462), the key its SLSA statement
+   * names as the builder. Absent for a publish no host ran.
+   */
+  runnerKey?: string;
   timestamp: string;
 }
 

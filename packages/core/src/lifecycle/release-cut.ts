@@ -130,6 +130,8 @@ export type ReleaseCutCode =
   | "release-image-name-taken"
   | "release-image-build-failed"
   | "release-image-archive-in-dist"
+  /** #5462: under supply-chain, a release image builds from a base not pinned by digest. */
+  | "release-image-base-unpinned"
   /** #5151: `release.artifacts`, as ./release-artifacts.ts refuses it. */
   | "release-artifact-invalid"
   | "release-artifact-name-invalid"

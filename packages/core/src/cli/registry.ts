@@ -517,6 +517,8 @@ export interface ParsedArgs {
   ciBuildCommand?: string;
   /** `chant ci serve --land` (#4168 4.4) — fast-forward the target branch to each pushed `chant/land/<name>` branch whose `ci.green.preMerge` phases pass on it. */
   ciLand?: boolean;
+  /** `chant ci serve --release` (#5462): publish each release tag on this host. */
+  ciRelease?: boolean;
   /** `chant build --pr-loop --pr-build-command <line>` (#4088) — the build line to run in place of `chant build --env <env>`. */
   prBuildCommand?: string;
   /**

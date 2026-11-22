@@ -210,6 +210,41 @@ export function copyImageArchives(images: ReadonlyArray<{ archive: string }>, fr
 }
 
 /**
+ * Under the supply-chain group (#5462), refuse a `release.images` Dockerfile
+ * entry with a `FROM` not pinned by digest, before anything is built: the
+ * cut and `chant release images` call it, so a forge's release workflow and
+ * a `ci serve --release` host refuse the same release. Throws
+ * `ReleaseImageError` (`release-image-base-unpinned`); outside the group, or
+ * with every base pinned, does nothing. The bases are read as
+ * `workspace check` and the doctor read them (../../lifecycle/dockerfile-pins.ts).
+ */
+export async function refuseUnpinnedBases(images: readonly import("../../lifecycle/release-images").ReleaseImageDeclaration[], cwd: string): Promise<void> {
+  const { securityGroupsAt } = await import("../../workspace/security");
+  let groups: ReadonlySet<string>;
+  try {
+    groups = securityGroupsAt(cwd);
+  } catch {
+    return;
+  }
+  if (!groups.has("supply-chain")) return;
+  const { unpinnedFroms } = await import("../../lifecycle/dockerfile-pins");
+  const { ReleaseImageError } = await import("../../lifecycle/release-images");
+  const found: string[] = [];
+  for (const image of images) {
+    if (!("dockerfile" in image) || image.dockerfile === undefined) continue;
+    const abs = resolve(cwd, image.dockerfile);
+    if (!existsSync(abs)) continue;
+    for (const u of unpinnedFroms(readFileSync(abs, "utf-8"), image.args ?? {})) found.push(`${image.name}: ${image.dockerfile}:${u.line} FROM ${u.image}: ${u.why}`);
+  }
+  if (found.length === 0) return;
+  throw new ReleaseImageError(
+    "release-image-base-unpinned",
+    `the workspace opts into supply-chain, and a release image builds from a base not pinned by digest: ${found.join("; ")}`,
+    "Pin each FROM as name:tag@sha256:<digest>: chant release images --repin moves pins as their tags move, and docker buildx imagetools inspect <name:tag> prints the digest of a new one.",
+  );
+}
+
+/**
  * `release images --repin [<file>...] [--check] [--json]` (#5457): move each
  * image reference pinned by digest, `name:tag@sha256:<digest>` or an
  * `IMAGE_PINS` row, to the digest its tag names today, keeping the tag. The
@@ -305,7 +340,11 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
           if (!existsSync(abs)) throw new ReleaseImageError("release-image-no-archive", `image "${d.name}" has no archive at ${d.archive}`, "Hand this job the archives the cut built, or run without --no-build to build them again.");
           return { component: d.name, kind: "image" as const, path: d.archive, digest: ociArchiveDigest(abs) };
         })
-      : buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest, ...((await releaseVersionOf(cwd)) ? { versionArg: true } : {}) });
+      : await (async () => {
+          // #5462: under supply-chain a base not pinned by digest refuses the build.
+          await refuseUnpinnedBases(declared, cwd);
+          return buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest, ...((await releaseVersionOf(cwd)) ? { versionArg: true } : {}) });
+        })();
   } catch (err) {
     if (err instanceof ReleaseImageError) return fail(err.code, err.message, err.fix);
     throw err;
@@ -697,13 +736,15 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           try {
             // #5269: goreleaser would empty an archive in its dist before the cut records it.
             checkImagesOutsideGoreleaser(declaredImages, declaredArtifacts);
+            // #5462: under supply-chain a base not pinned by digest refuses the cut, before anything is built.
+            await refuseUnpinnedBases(declaredImages, cutCwd);
             const built = buildReleaseImages({ images: declaredImages, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, archiveDigest: ociArchiveDigest, ...(versionConfig ? { versionArg: true } : {}) });
             writeReleaseDigests(digestsFile, Object.fromEntries(built.map((a) => [a.component, a.digest])));
             return built;
           } catch (err) {
             const code = err instanceof ReleaseImageError ? err.code : (err as { code?: unknown }).code;
             const fix = err instanceof ReleaseImageError ? err.fix : undefined;
-            throw new ReleaseCutError(code === "release-image-name-taken" || code === "release-image-archive-in-dist" ? code : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
+            throw new ReleaseCutError(code === "release-image-name-taken" || code === "release-image-archive-in-dist" || code === "release-image-base-unpinned" ? code : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
           }
         }
       : undefined;

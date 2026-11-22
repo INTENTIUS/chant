@@ -28,7 +28,7 @@ chant ci run --at <sha>
 chant ci runs [--report-url <url>] [--json]
 chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [--apply-on-merge]
-                  [--build-command <line> [--land]] [ci run's job flags]
+                  [--build-command <line> [--land]] [--release] [ci run's job flags]
 chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
@@ -415,7 +415,7 @@ A JSON file is either a map of name to value, or a `secrets` map with a `jobs` a
 }
 ```
 
-A job the allowlist doesn't name gets every secret, so with no `jobs` both jobs get them all. The allowlist lives in the file on the host and not in the repository, so a pull request can't change what its own plan gets. Only the JSON form takes an allowlist.
+`jobs` may also name `release`: the secrets the step that publishes a release [`ci serve --release`](#releases) serves gets, such as a registry's credentials. A job the allowlist doesn't name gets every secret, so with no `jobs` both jobs get them all. The allowlist lives in the file on the host and not in the repository, so a pull request can't change what its own plan gets. Only the JSON form takes an allowlist.
 
 chant redacts every value in the file from what the run writes, whether the job got it or not. It also redacts the value of each variable in the job's environment whose name looks secret, which is a name with `TOKEN`, `SECRET`, `KEY` or `PASSWORD` in it. `GITHUB_TOKEN` is one, and so is a `--pass-env AWS_SECRET_ACCESS_KEY`. Each one then reads `***` in these places:
 
@@ -580,6 +580,26 @@ chant ci serve --forge github --repo acme/app --env prod --land \
 
 ```bash
 chant ci serve --forge git --env prod --land --build-command 'npm ci && npx chant run check'
+```
+
+### Releases
+
+`--release` publishes releases on this host. Each poll fetches the tags and takes each one the release workflow `chant release workflow` renders would run on: `release/<label>`, the tags a `release.tag` template makes (not its floating tag), or at a train's root `release-train/<env>/<id>`. The tags there on the first poll were published by whatever ran then, so `ci serve` notes them and runs none. Each new one is published once.
+
+To publish a tag, `ci serve` makes a fresh detached worktree of its commit and runs the steps of the rendered workflow's publish job there, in order: the install, the pull logins, the doctor when `release.workflow.doctor` asks for it, the stamp, the fetches of the `ci/*` tags and `chant/lifecycle`, the images, the build, `release artifacts`, `release verify` under `verified-releases`, and `chant release publish` with the flags the security groups add. For a train it runs `chant workspace train prepare` and `chant workspace train publish`. The steps are rendered from the same release config the workflow file is, read at the tag's commit, so the two hold the same steps. A config that can't be read at the tag before its install, because it imports a package, is read from the clone `ci serve` runs in, with a warning.
+
+A step runs as a forge runner runs it, under `bash -eo pipefail` in the job's working directory, with `RUNNER_TEMP`, `GITHUB_ENV`, `GITHUB_OUTPUT`, `GITHUB_PATH`, `GITHUB_REF_NAME` and `GITHUB_SHA` set, and what one step writes to `GITHUB_ENV` reaches the next. It gets the host's base variables and `--pass-env`, and never `GITHUB_ACTIONS` or another forge's run variables. The checkout is the worktree, and the toolchain set-up steps are the host's own toolchains, so Node and anything else the build needs must be installed on the host. A step that runs any other action, or a `release.workflow.builds` entry, which needs a runner of its own, fails the release with the reason.
+
+The tools the workflow installs are installed on the host instead: cosign when the release signs, and grype and syft when it scans. Each comes from the pins chant carries, checked against its SHA-256, and is cached under `tools/` in the state directory. A host that sets `CHANT_COSIGN`, `CHANT_GRYPE` or `CHANT_SYFT` uses its own. `ci serve --release` installs them before its first poll, so a host that can't download one, or runs on a platform chant pins none for, stops there and names the tool.
+
+`${{ secrets.NAME }}` in the release config reads the [secrets file](#secrets), as a forge reads the repository's secrets, in the step or job that names it. The step that publishes also gets the file's secrets for `release` (all of them, unless `jobs` lists `release`), such as `OCI_USERNAME` and `OCI_PASSWORD` for a registry. No other step gets them.
+
+The host has no CI OIDC token, so it signs with a key. `ci serve --release` refuses to start when a release signs keylessly, and under `supply-chain` when a release that publishes does not sign with `release.signing.kms` or `release.signing.key`. It also refuses to start without a trusted runner key. Every step gets the key's fingerprint in `CHANT_RELEASE_RUNNER_KEY_FINGERPRINT`, so the SLSA statement the publish signs names this host as its builder, and that statement meets `--require-provenance`. Each line the publish adds to `_releases/publishes.jsonl` names the runner key in `runnerKey` and the run `ci serve` gave it in `runId`.
+
+A release counts against `--max-jobs`. The state file keeps each tag under `release:<tag>` with how it ended, and the publish job's output, redacted, goes to `reports/releases/` in the state directory and to stderr. A failed release is run again with `--rerun-failed`, and the publish resumes from its record, so nothing that went out is sent again.
+
+```bash
+chant ci serve --forge git --env prod --release --secrets /etc/chant/release.env
 ```
 
 ### Re-runs and polling

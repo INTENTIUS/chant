@@ -1170,6 +1170,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
     } else if (arg === "--release-plan") {
       result.releasePlanFile = args[++i];
+    } else if (arg === "--release" && result.command === "ci" && (args[i + 1] === undefined || args[i + 1]!.startsWith("-"))) {
+      // `chant ci serve --release` (#5462): publish each release tag on this host.
+      result.ciRelease = true;
     } else if (arg === "--release") {
       // `chant components promote --release <label|digest>` (#4026)
       result.release = args[++i];

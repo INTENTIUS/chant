@@ -1208,36 +1208,60 @@ export function releaseWorkflowHeader(command: string): string {
   return `# ${GENERATED_MARKER}. Regenerate with: ${command} (in the workspace root)\n`;
 }
 
+/** Why the release workflow's input could not be read, with the hint the command prints. */
+export class ReleaseWorkflowInputError extends Error {
+  constructor(
+    message: string,
+    readonly hint?: string,
+  ) {
+    super(message);
+    this.name = "ReleaseWorkflowInputError";
+  }
+}
+
+/** What {@link releaseWorkflowInputAt} read: the input the workflow renders from, and what the command reports. */
+export interface ReleaseWorkflowRead {
+  /** The workspace root, real path. */
+  root: string;
+  repoRoot: string;
+  forge: ReleaseWorkflowForge;
+  release: import("../config").ChantConfig["release"];
+  tags: MemberTags;
+  input: ReleaseWorkflowInput;
+  /** A target signs (#5164, #5458). */
+  signs: boolean;
+  /** The publish scans before the stage (#5446). */
+  scans: boolean;
+  /** A train's members' release config (#5154), empty for one release. */
+  memberReleases: Array<NonNullable<import("../config").ChantConfig["release"]>>;
+}
+
 /**
- * `chant release workflow [--forge github|gitlab|forgejo] [--install <command>]
- * [--build <command>|--no-build] [--chant <command>] [--output <file>]`: write
- * the publish workflow for the workspace's forge, under its security groups.
+ * The input `chant release workflow` renders from, read at the workspace
+ * root above `dir` (#5462): the root's and a train's members' release
+ * config, the security groups, the tag template, signing, the scan and the
+ * pull logins. `chant ci serve --release` reads the same input, so the jobs
+ * it runs on its host are the ones the file holds. Throws
+ * {@link ReleaseWorkflowInputError}.
  */
-export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandContext): Promise<number> {
-  const { existsSync, mkdirSync, realpathSync, writeFileSync } = await import("node:fs");
-  const { dirname, join, relative, resolve, sep } = await import("node:path");
-  const { formatError, formatSuccess } = await import("../cli/format");
+export async function releaseWorkflowInputAt(
+  dir: string,
+  o: { forge?: string; install?: string; build?: string; chant?: string } = {},
+): Promise<ReleaseWorkflowRead> {
+  const { existsSync, realpathSync } = await import("node:fs");
+  const { join, relative, sep } = await import("node:path");
   const { findWorkspaceRoot } = await import("../project-root");
   const { gitTop } = await import("./tree");
   const { securityGroupsAt } = await import("./security");
-  const { shellArg } = await import("./member-pipeline");
-  const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]";
-  const { args } = ctx;
   // #5149: a project with only a chant.config.ts, and no chant.workspace.json, renders its release workflow too.
-  const found = findWorkspaceRoot(process.cwd());
-  const projectDir = found?.dir ?? (["chant.config.ts", "chant.config.json"].some((f) => existsSync(join(process.cwd(), f))) ? process.cwd() : null);
-  if (!projectDir) {
-    console.error(formatError({ message: "no chant.workspace.json between this directory and the git root, and no chant.config.ts or chant.config.json here", hint: usage }));
-    return 1;
-  }
+  const found = findWorkspaceRoot(dir);
+  const projectDir = found?.dir ?? (["chant.config.ts", "chant.config.json"].some((f) => existsSync(join(dir, f))) ? dir : null);
+  if (!projectDir) throw new ReleaseWorkflowInputError("no chant.workspace.json between this directory and the git root, and no chant.config.ts or chant.config.json here");
   const root = realpathSync(projectDir);
   const repoRoot = gitTop(root) ?? root;
-  const forge = (args.forge ??
+  const forge = (o.forge ??
     (existsSync(join(repoRoot, ".github", "workflows")) ? "github" : existsSync(join(repoRoot, ".forgejo", "workflows")) ? "forgejo" : existsSync(join(repoRoot, ".gitlab-ci.yml")) ? "gitlab" : "github")) as ReleaseWorkflowForge;
-  if (!(RELEASE_WORKFLOW_FORGES as readonly string[]).includes(forge)) {
-    console.error(formatError({ message: `--forge ${JSON.stringify(forge)} is not one of ${RELEASE_WORKFLOW_FORGES.join(", ")}`, hint: usage }));
-    return 1;
-  }
+  if (!(RELEASE_WORKFLOW_FORGES as readonly string[]).includes(forge)) throw new ReleaseWorkflowInputError(`--forge ${JSON.stringify(forge)} is not one of ${RELEASE_WORKFLOW_FORGES.join(", ")}`);
   const groups = securityGroupsAt(root);
   const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
   // #4656: release.workflow, release.images and release.lane in the root's chant.config.ts.
@@ -1246,8 +1270,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     const { loadChantConfig } = await import("../config");
     release = (await loadChantConfig(root)).config.release;
   } catch (err) {
-    console.error(formatError({ message: `chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
-    return 1;
+    throw new ReleaseWorkflowInputError(`chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`);
   }
   // #5150: release.tag decides the tags the workflow runs on, refused when another member's can make the same tag.
   let tags: MemberTags;
@@ -1257,8 +1280,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     await checkTagCollisions(root, tags);
   } catch (err) {
     const code = (err as { code?: unknown }).code;
-    console.error(formatError({ message: `${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`, hint: usage }));
-    return 1;
+    throw new ReleaseWorkflowInputError(`${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`);
   }
   // #5154: a train publishes its members' targets, so their credentials, tools and signing are the workflow's.
   const memberReleases: Array<NonNullable<typeof release>> = [];
@@ -1281,8 +1303,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
         }
         if (r?.artifacts && goreleaserDir === undefined && (await import("../lifecycle/release-artifacts")).usesGoreleaser(r.artifacts)) goreleaserDir = m.dir.split(sep).join("/");
       } catch (err) {
-        console.error(formatError({ message: `member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
-        return 1;
+        throw new ReleaseWorkflowInputError(`member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     // #5216: a member's files are built by its cut, in the train's cut job; #5237: or by the member's own release.workflow.builds, which builtBy names.
@@ -1293,8 +1314,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
         checkReleaseArtifacts(r.artifacts!, { builds: r.workflow?.builds ?? [] });
       } catch (err) {
         if (!(err instanceof ReleaseArtifactError)) throw err;
-        console.error(formatError({ message: `release.train: a member's ${err.message} [${err.code}]`, hint: err.fix ?? "Fix release.artifacts in the member's chant.config.ts." }));
-        return 1;
+        throw new ReleaseWorkflowInputError(`release.train: a member's ${err.message} [${err.code}]`, err.fix ?? "Fix release.artifacts in the member's chant.config.ts.");
       }
     }
   }
@@ -1320,11 +1340,10 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const { resolveScan } = await import("../lifecycle/publish-scan");
   const scans = [release, ...memberReleases].some((r) => resolveScan(r?.scan, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "npm"));
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
-  const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
+  const { TOOLCHAIN_MARKERS } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
   const node = projectFiles.includes("package.json");
   const { readerVersion } = await import("./declaration");
-  let text: string;
   // #5183: an artifact's builtBy names a job of release.workflow.builds, so a workflow without it is refused here, not at the cut.
   if ((release?.artifacts?.length ?? 0) > 0) {
     const { checkReleaseArtifacts, ReleaseArtifactError } = await import("../lifecycle/release-artifacts");
@@ -1332,22 +1351,21 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
       checkReleaseArtifacts(release!.artifacts!, { builds: release?.workflow?.builds ?? [] });
     } catch (err) {
       if (!(err instanceof ReleaseArtifactError)) throw err;
-      console.error(formatError({ message: `${err.message} [${err.code}]`, hint: err.fix ?? "Fix release.artifacts in chant.config.ts." }));
-      return 1;
+      throw new ReleaseWorkflowInputError(`${err.message} [${err.code}]`, err.fix ?? "Fix release.artifacts in chant.config.ts.");
     }
   }
-  try {
-  text = renderReleaseWorkflow({
+  const artifactsMod = await import("../lifecycle/release-artifacts");
+  const input: ReleaseWorkflowInput = {
     forge,
     projectFiles,
-    ...(node || args.ciInstall || release?.workflow?.install !== undefined ? {} : { install: null }),
-    ...(node || args.ciChant || release?.workflow?.chant !== undefined ? {} : { chant: `npx --yes @intentius/chant@${readerVersion()}` }),
+    ...(node || o.install || release?.workflow?.install !== undefined ? {} : { install: null }),
+    ...(node || o.chant || release?.workflow?.chant !== undefined ? {} : { chant: `npx --yes @intentius/chant@${readerVersion()}` }),
     groups,
     workspaceRoot,
     tags,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(placeReleaseImages(release!.images!, release!.artifacts ?? [])).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
-    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}), ...((await import("../lifecycle/release-artifacts")).usesNfpm(release!.artifacts!) ? { nfpm: true } : {}) } : {}),
+    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...(artifactsMod.usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}), ...(artifactsMod.usesNfpm(release!.artifacts!) ? { nfpm: true } : {}) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     green: await (async () => {
       const { resolveGreenSource } = await import("../lifecycle/release-green");
@@ -1373,15 +1391,45 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
           train: {
             env: release.train.env,
             ...(memberImages.length > 0 ? { images: true, imagePlatforms: releaseImagePlatforms(memberImages) } : {}),
-            ...(memberArtifacts.length > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(memberArtifacts) ? { goreleaser: true, ...(goreleaserDir ? { goreleaserDir } : {}) } : {}) } : {}),
+            ...(memberArtifacts.length > 0 ? { artifacts: true, ...(artifactsMod.usesGoreleaser(memberArtifacts) ? { goreleaser: true, ...(goreleaserDir ? { goreleaserDir } : {}) } : {}) } : {}),
             ...(memberBuilds.length > 0 ? { builds: memberBuilds } : {}),
           },
         }
       : {}),
-    ...(args.ciInstall ? { install: args.ciInstall } : {}),
-    ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
-    ...(args.ciChant ? { chant: args.ciChant } : {}),
-  });
+    ...(o.install ? { install: o.install } : {}),
+    ...(o.build ? { build: o.build } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
+    ...(o.chant ? { chant: o.chant } : {}),
+  };
+  return { root, repoRoot, forge, release, tags, input, signs, scans, memberReleases };
+}
+
+/**
+ * `chant release workflow [--forge github|gitlab|forgejo] [--install <command>]
+ * [--build <command>|--no-build] [--chant <command>] [--output <file>]`: write
+ * the publish workflow for the workspace's forge, under its security groups.
+ */
+export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandContext): Promise<number> {
+  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { dirname, join, relative, resolve, sep } = await import("node:path");
+  const { formatError, formatSuccess } = await import("../cli/format");
+  const { shellArg } = await import("./member-pipeline");
+  const { detectToolchains } = await import("./release-toolchains");
+  const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]";
+  const { args } = ctx;
+  let read: ReleaseWorkflowRead;
+  try {
+    read = await releaseWorkflowInputAt(process.cwd(), { ...(args.forge ? { forge: args.forge } : {}), ...(args.ciInstall ? { install: args.ciInstall } : {}), ...(args.buildCommand ? { build: args.buildCommand } : {}), ...(args.ciChant ? { chant: args.ciChant } : {}) });
+  } catch (err) {
+    if (!(err instanceof ReleaseWorkflowInputError)) throw err;
+    console.error(formatError({ message: err.message, hint: err.hint ?? usage }));
+    return 1;
+  }
+  const { root, repoRoot, forge, release, tags, signs, scans } = read;
+  const { groups } = read.input;
+  const projectFiles = read.input.projectFiles ?? [];
+  let text: string;
+  try {
+    text = renderReleaseWorkflow(read.input);
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: "Fix release.workflow in chant.config.ts." }));
     return 1;
