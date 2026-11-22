@@ -1,12 +1,15 @@
 {
-  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The cloudformation graph block (#3179) reads the template as data (src/workspace-member.ts). The cdk graph block reads the cloud assembly the app already synthesized (cdk.out, or the output cdk.json names) with the same template reader; chant never runs the app, and with no assembly the member says synthesized: false on meta.awsMember.",
+  "$comment": "Member kinds this lexicon supplies to a chant workspace (#3179). chant reads this file as data and never imports the lexicon. The cloudformation graph block (#3179) reads the template as data (src/workspace-member.ts); a member whose directory holds a cloudformation-stacks.json also reads those deployed stacks, read only (#5455). The cdk graph block reads the cloud assembly the app already synthesized (cdk.out, or the output cdk.json names) with the same template reader; chant never runs the app, and with no assembly the member says synthesized: false on meta.awsMember.",
   "schema": 1,
   "kinds": [
     {
       "name": "cloudformation",
-      "description": "a CloudFormation template: a YAML or JSON file with AWSTemplateFormatVersion or Resources at its top",
+      "description": "a CloudFormation template (a YAML or JSON file with AWSTemplateFormatVersion or Resources at its top), or deployed stacks named in a cloudformation-stacks.json",
       "precedence": 320,
       "probe": {
+        "anyFile": [
+          "cloudformation-stacks.json"
+        ],
         "anyDocument": {
           "in": [
             "*.yaml",

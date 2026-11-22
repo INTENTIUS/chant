@@ -35,6 +35,14 @@ function cases(forge: Forge, mode: Mode): Array<[string, Partial<ReleaseWorkflow
     ["artifacts with goreleaser", { artifacts: true, goreleaser: true }],
     ["signing", { signing: true }],
     ["signing with doctor off", { signing: true, pipeline: { doctor: false } }],
+    // #5458: a KMS key's credentials in the publish step alone; keyless through a private Fulcio (Forgejo's OIDC token), or public Sigstore, which Forgejo refuses.
+    ["signing with a KMS key", { groups: new Set<SecurityGroup>(["supply-chain"]), signing: true, signingEnv: ["VAULT_ADDR", "VAULT_TOKEN"] }],
+    ["signing keyless through a private Fulcio", { signing: true, keyless: "private" }],
+    ["signing keyless with public Sigstore", { signing: true, keyless: "public" }],
+    // #5446: grype and syft for the scan before the stage.
+    ["scan", { scan: true }],
+    // #5457: docker login to a registry the images pull their bases from.
+    ["pull login", { images: true, pullRegistries: [{ registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" }] }],
     ["lane", { lane: "fast" }],
     ["gate head", { pipeline: { gate: "head" } }],
     ["green forge-checks", { green: "forge-checks" }],
@@ -117,6 +125,13 @@ function trainCases(forge: Forge, trigger: "tag" | "dispatch"): Array<[string, P
     ["member root", { workspaceRoot: "release" }],
     ["supply-chain", { groups: new Set<SecurityGroup>(["supply-chain"]) }],
     ["signing", { signing: true }],
+    // #5458: the same signing modes in a train's jobs.
+    ["signing with a KMS key", { groups: new Set<SecurityGroup>(["supply-chain"]), signing: true, signingEnv: ["VAULT_ADDR", "VAULT_TOKEN"] }],
+    ["signing keyless through a private Fulcio", { signing: true, keyless: "private" }],
+    ["signing keyless with public Sigstore", { signing: true, keyless: "public" }],
+    ["scan", { scan: true }],
+    // #5457: docker login to a registry the images pull their bases from.
+    ["pull login", { pullRegistries: [{ registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" }], train: { env: "npm", images: true } }],
     ["lane", { lane: "fast" }],
     ["gate head", { pipeline: { gate: "head" } }],
     ["green forge-checks", { green: "forge-checks" }],

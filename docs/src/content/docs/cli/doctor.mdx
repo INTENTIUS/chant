@@ -18,6 +18,7 @@ chant doctor [path]
 
 | Check | What it verifies |
 |-------|-----------------|
+| `crypto-module` | Reports the Node and OpenSSL versions chant runs on and whether Node runs in FIPS mode; in FIPS mode, whether SHA-256, ECDSA P-256 and Ed25519 can be fetched there. A warning only when FIPS mode is on and SHA-256 or ECDSA P-256 can't be. See [Signatures and crypto modules](/chant/reference/crypto-modules/) |
 | `config-exists` | `chant.config.ts` or `chant.config.json` exists and parses |
 | `src-directory` | `src/` directory exists and contains `.ts` files |
 | `core-types` | `.chant/types/core/` exists and is populated |

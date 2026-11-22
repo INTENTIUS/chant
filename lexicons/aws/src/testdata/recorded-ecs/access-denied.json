@@ -1,0 +1,4 @@
+{
+  "__type": "com.amazon.coral.service#AccessDeniedException",
+  "message": "User: arn:aws:iam::111122223333:user/reader is not authorized to perform: ecs:ListTasks on resource: *"
+}

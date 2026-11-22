@@ -1,0 +1,31 @@
+<DescribeStacksResponse xmlns="http://cloudformation.amazonaws.com/doc/2010-05-15/">
+  <DescribeStacksResult>
+    <Stacks>
+      <member>
+        <StackId>arn:aws:cloudformation:eu-west-1:111122223333:stack/shared-network/7c1e3f40-0001-11ef-9a3d-0a1b2c3d4e5f</StackId>
+        <StackName>shared-network</StackName>
+        <Description>Shared VPC and log bucket</Description>
+        <Parameters>
+          <member>
+            <ParameterKey>CidrBlock</ParameterKey>
+            <ParameterValue>10.0.0.0/16</ParameterValue>
+          </member>
+        </Parameters>
+        <CreationTime>2026-03-02T09:14:51.230Z</CreationTime>
+        <StackStatus>UPDATE_COMPLETE</StackStatus>
+        <DisableRollback>false</DisableRollback>
+        <Outputs>
+          <member>
+            <OutputKey>VpcId</OutputKey>
+            <OutputValue>vpc-0a1b2c3d4e5f60718</OutputValue>
+          </member>
+          <member>
+            <OutputKey>LogBucket</OutputKey>
+            <OutputValue>shared-network-logs-eu-west-1</OutputValue>
+          </member>
+        </Outputs>
+        <Tags/>
+      </member>
+    </Stacks>
+  </DescribeStacksResult>
+</DescribeStacksResponse>

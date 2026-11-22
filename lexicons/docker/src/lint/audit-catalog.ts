@@ -22,6 +22,7 @@ export const dockerAuditCatalog: Record<string, RuleMeta> = {
   DKRD018: auditRule("DKRD018", "report-only", "guidance", "Relative WORKDIR", "Use an absolute WORKDIR path.", { category: "best-practice" }),
   DKRD019: auditRule("DKRD019", "report-only", "guidance", "ADD of a remote URL without --checksum", "Add --checksum=sha256:<digest> to ADD of an http(s) URL.", { category: "security" }),
   DKRD020: auditRule("DKRD020", "report-only", "guidance", "apt-get update in its own RUN", "Run apt-get update and apt-get install in the same RUN.", { category: "correctness" }),
+  DKRD021: auditRule("DKRD021", "report-only", "guidance", "FROM names a base by tag, not by digest", "Pin the base as name:tag@sha256:<digest>.", { category: "security" }),
 };
 
 // Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).

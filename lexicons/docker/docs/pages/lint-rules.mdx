@@ -200,3 +200,18 @@ RUN apt-get install -y --no-install-recommends curl
 # ✓
 RUN apt-get update && apt-get install -y --no-install-recommends curl
 ```
+
+### DKRD021 — FROM names a base by tag, not by digest
+**Severity:** warning | **Applies to:** Dockerfiles | **Off unless turned on**
+
+A base named by tag is whatever the registry serves under that tag on the day of the build, so two builds of the same commit can start from different images. Pin it by digest; the tag beside it stays for a reader. A `FROM` that names an earlier stage, `scratch`, or an `ARG` declared before the first `FROM` whose default is pinned passes. An `ARG` with no default is flagged, since nothing in the file pins it.
+
+```dockerfile
+# ✗
+FROM node:22
+
+# ✓
+FROM node:22@sha256:<digest>
+```
+
+The check is not in the lexicon's `recommended` preset, which `chant build` uses by default. Turn it on with `lint.presets: { docker: "all" }` or `lint.rules: { DKRD021: "warning" }` in `chant.config.ts`. Under the `supply-chain` security group, `chant workspace check` runs the same rule on each Dockerfile `release.images` names (`security-image-base-unpinned`).

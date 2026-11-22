@@ -38,6 +38,9 @@ import { getProvenance } from "@intentius/chant/provenance";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { isPostgresObject } from "./postgres/entities";
 import { isClickHouseObject, quoteIdentifier } from "./clickhouse/entities";
+import { isMysqlObject } from "./mysql/entities";
+import { mysqlColumnType } from "./mysql/row-types";
+import { quoteIdent as quoteMysqlIdent } from "./mysql/names";
 import { quoteIdent } from "./postgres/keywords";
 import { getTypedSlots, relationKey } from "./core/typed";
 import { sqlSerializer } from "./serializer";
@@ -82,6 +85,7 @@ export function sqlTypesState(
 export const SQL_TYPES_MODULE: Readonly<Record<SqlDialect, string>> = {
   postgres: "@intentius/chant-lexicon-sql/postgres",
   clickhouse: "@intentius/chant-lexicon-sql/clickhouse",
+  mysql: "@intentius/chant-lexicon-sql/mysql",
 };
 
 export interface RenderSqlTypesOptions {
@@ -260,6 +264,51 @@ function postgresEntries(objects: OutputObject[], major: number, entities: Reado
   return objects.filter((o) => PG_RELATIONS.has(o.type)).map((o) => entryOf(o.export)).filter((e): e is RelationEntry => e !== undefined);
 }
 
+// ── MySQL ───────────────────────────────────────────────────────────────
+
+const MYSQL_RELATIONS = new Set(["MySQL::Table", "MySQL::View"]);
+
+interface MysqlTableJson extends OutputObject {
+  columns: Array<{ name: string; type: string; nullable?: boolean }>;
+  primaryKey?: { columns: Array<{ column?: string }> };
+}
+
+function mysqlEntries(objects: OutputObject[], entities: ReadonlyMap<string, Declarable>, projectDir: string): RelationEntry[] {
+  const byExport = new Map(objects.map((o) => [o.export, o]));
+  const done = new Map<string, RelationEntry | undefined>();
+  const entryOf = (exportName: string): RelationEntry | undefined => {
+    if (done.has(exportName)) return done.get(exportName);
+    done.set(exportName, undefined);
+    const o = byExport.get(exportName);
+    const entity = entities.get(exportName);
+    if (!o || !entity || !MYSQL_RELATIONS.has(o.type)) return undefined;
+    let columns: ColumnEntry[];
+    if (o.type === "MySQL::Table") {
+      const t = o as MysqlTableJson;
+      const own = new Map(t.columns.map((c) => [c.name, c]));
+      const pk = new Set((t.primaryKey?.columns ?? []).map((p) => p.column));
+      const unread = opaqueColumns(o);
+      columns = runtimeColumns(entity).map((name) => {
+        const c = own.get(name);
+        if (!c) return UNKNOWN_COLUMN(name);
+        const ty = mysqlColumnType(c.type);
+        const entry: ColumnEntry = { name, sqlType: ty.sqlType, ts: ty.ts, nullable: !(c.nullable === false || pk.has(name)), cmp: ty.cmp };
+        return unread.has(name) ? opaque(entry) : entry;
+      });
+    } else {
+      columns = runtimeColumns(entity).map((name) => {
+        const via = passthrough(o, name, quoteMysqlIdent);
+        const source = via && entryOf(via.export)?.columns.find((c) => c.name === via.column);
+        return source ? { ...source, name } : UNKNOWN_COLUMN(name);
+      });
+    }
+    const entry: RelationEntry = { key: relationKey(o as { database?: string; name: string }), origin: originOf(entity, exportName, projectDir), columns, slots: new Map() };
+    done.set(exportName, entry);
+    return entry;
+  };
+  return objects.filter((o) => MYSQL_RELATIONS.has(o.type)).map((o) => entryOf(o.export)).filter((e): e is RelationEntry => e !== undefined);
+}
+
 // ── ClickHouse ──────────────────────────────────────────────────────────
 
 const CH_RELATIONS = new Set(["ClickHouse::Table", "ClickHouse::View", "ClickHouse::MaterializedView", "ClickHouse::Dictionary"]);
@@ -343,11 +392,16 @@ export function renderSqlTypes(entities: ReadonlyMap<string, Declarable>, opts: 
   const config = opts.config ?? {};
   const projectDir = opts.projectDir ?? process.cwd();
   const dialect = dialectOf(entities, config);
-  const sqlEntities = new Map([...entities].filter(([, e]) => isPostgresObject(e) || isClickHouseObject(e)));
+  const sqlEntities = new Map([...entities].filter(([, e]) => isPostgresObject(e) || isClickHouseObject(e) || isMysqlObject(e)));
   let entries: RelationEntry[] = [];
   if (sqlEntities.size > 0) {
     const doc = serializedObjects(entities, config);
-    entries = dialect === "postgres" ? postgresEntries(doc.objects, doc.postgresMajor ?? PINNED_MAJOR, entities, projectDir) : clickhouseEntries(doc.objects, entities, projectDir);
+    entries =
+      dialect === "postgres"
+        ? postgresEntries(doc.objects, doc.postgresMajor ?? PINNED_MAJOR, entities, projectDir)
+        : dialect === "mysql"
+          ? mysqlEntries(doc.objects, entities, projectDir)
+          : clickhouseEntries(doc.objects, entities, projectDir);
   }
   const byKey = new Map<string, RelationEntry>();
   for (const e of entries) if (!byKey.has(e.key)) byKey.set(e.key, e);

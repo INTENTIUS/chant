@@ -1,7 +1,7 @@
 /**
  * lexiconUpgrade — the upgrade-detection and PR-automation activity for
  * in-scope lexicons: every lexicon whose plugin declares `upstreamPin` (k8s,
- * k3s, gcp, docker, gitlab, cedar, sql, ...) plus the rolling ones (aws, azure,
+ * k3s, gcp, docker, gitlab, cedar, sql, azure, ...) plus the rolling ones (aws,
  * github, fly).
  *
  * Classifies the lexicon as pinned or rolling, calls the right check function,
@@ -15,7 +15,7 @@
  * breaking → major bump). Merging the PR carries the version change so
  * publish-on-merge can ship just that lexicon without a full monorepo release.
  *
- * Rolling lexicons (aws, azure, github) drift on their own cadence and are not
+ * Rolling lexicons (aws, github, fly) drift on their own cadence and are not
  * version-bumped here — they move to drift-issues per #546.
  *
  * Supply-chain note: this activity never executes spec-provided content.
@@ -53,7 +53,7 @@ export type SemverLabel = "minor" | "breaking";
 export interface LexiconUpgradeArgs {
   /**
    * Which lexicon to check. Determines pinned vs rolling dispatch:
-   *   ROLLING: aws, azure, github, fly
+   *   ROLLING: aws, github, fly
    *   PINNED: any other lexicon whose plugin declares `upstreamPin`
    *           (discovered at run time, as `chant dev pinned-upgrade` does)
    */
@@ -209,7 +209,7 @@ export function computeBumpedVersion(
 // they are a fixed list. Every other lexicon is pinned when its plugin declares
 // `upstreamPin` (cedar's CEDAR_WASM_VERSION, sql's ClickHouse version, k3s...):
 // discovered at run time, not listed here.
-const ROLLING_LEXICONS: ReadonlySet<string> = new Set<RollingLexicon>(["aws", "azure", "github", "fly"]);
+const ROLLING_LEXICONS: ReadonlySet<string> = new Set<RollingLexicon>(["aws", "github", "fly"]);
 
 /** Return true when the lexicon follows a rolling spec (no pinned constant). */
 export function isRolling(lexicon: SupportedLexicon): lexicon is RollingLexicon {
@@ -513,7 +513,7 @@ async function getRealApplyBump(): Promise<ApplyBumpFn> {
  *   digest) is report-only: the summary names the newer version and the
  *   manual step, and no branch, bump or PR is made.
  *
- * Rolling lexicons (aws, azure, github):
+ * Rolling lexicons (aws, github, fly):
  *   Calls checkRollingUpgrade. A PR is opened only when the surface changed
  *   AND validation passed. Surface unchanged = no action.
  *

@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace trust runner add <principal> --key <ssh-ed25519 line or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
+chant workspace trust runner add <principal> --key <ssh-ed25519 or ecdsa-sha2-nistp256 line, or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
 chant workspace trust runner remove <principal> [--by <principal>] [--expect <digest>] [--dry-run]
 ```
 
@@ -20,7 +20,7 @@ These commands write one runner entry of `.chant/trust.json` ([#3510](https://gi
 | `runner add <principal>` | Appends `{ "principal", "class", "key" }` to `runners`. With class `runner`, the default, it also adds the principal to `roles.runner`, which `ci tick`, `ci run` and `chant run --key` require. When the principal is already listed with the same key and class, the entry is left as it is and only a missing role is added |
 | `runner remove <principal>` | Removes the principal's entry from `runners`, and the principal from `roles.runner` |
 
-`--key` takes the public key as an `ssh-ed25519` line, or a path to the `.pub` that `ssh-keygen -t ed25519` writes. It also takes a path to an Ed25519 key in PEM, public or private, and uses its public half, so the key a runner signs with can be given as it is. A comment after the key is dropped. Any other key type is refused, since every reader of `runners` verifies Ed25519 signatures. `--class service` lists a hosted signer such as a lobby or a steward. A service signs agent-run statements and needs no role.
+`--key` takes the public key as an `ssh-ed25519` or `ecdsa-sha2-nistp256` line, or a path to the `.pub` that `ssh-keygen -t ed25519` or `ssh-keygen -t ecdsa -b 256` writes. It also takes a path to an Ed25519 or P-256 key in PEM, public or private, and uses its public half, so the key a runner signs with can be given as it is. A comment after the key is dropped. Any other key type is refused, since readers of `runners` verify Ed25519 and ECDSA P-256 signatures only. A chant older than the one that reads P-256 runner keys treats a trust config listing one as invalid, so every chant that reads the config needs to be that version or newer before a P-256 key is listed. `--class service` lists a hosted signer such as a lobby or a steward. A service signs agent-run statements and needs no role.
 
 The command edits `.chant/trust.json` in place and keeps everything else in it byte for byte. When there is no trust config yet, it writes a new one holding `schema`, `runners` and `roles`. The caller commits the change, as after [`member add`](/chant/cli/workspace-member/), since the command never does. Changing the trust config is a protected write, so when a signers file exists the commit that carries it must be signed by an admin at base, which [`chant workspace verify`](/chant/cli/workspace-verify/) checks. The readers take the runners from the branch tip or the commit they judge, never from the working tree, so a key listed here counts once the commit is on the branch.
 
@@ -61,7 +61,7 @@ Nothing is written when a write is refused, and `error.code` says why.
 | `write-usage-invalid` | No principal, no `--key` for `runner add`, a `--key` or `--class` for `runner remove`, a `--class` other than `runner` or `service`, or an `--expect` that is not a digest |
 | `trust-config-invalid` | `.chant/trust.json` is not JSON or does not match its schema |
 | `trust-conflict` | The file's digest is not the one `--expect` gives |
-| `runner-key-invalid` | `--key` is not an `ssh-ed25519` public key or an Ed25519 key in PEM |
+| `runner-key-invalid` | `--key` is not an `ssh-ed25519` or `ecdsa-sha2-nistp256` public key, or an Ed25519 or P-256 key in PEM |
 | `runner-key-is-signer` | The signers file lists the key or the principal: a runner key belongs to a service or CI identity, never to a person |
 | `runner-exists` | `runner add` names a principal listed with another key or class, or gives a key listed for another principal. Remove the entry first to change its key |
 | `runner-unknown` | `runner remove` names a principal with no runner entry |

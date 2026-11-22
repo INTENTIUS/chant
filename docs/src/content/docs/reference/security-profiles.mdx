@@ -1,0 +1,106 @@
+---
+title: Security Profiles
+description: The fedramp-moderate and cccs-medium security profiles, what each turns on and checks, and the controls their records produce evidence toward.
+diataxis: reference
+---
+
+A security profile is a name in the top-level `security` list of `chant.workspace.json`, beside the [security groups](/chant/reference/security-features/):
+
+```json
+{
+  "name": "acme",
+  "schema": 1,
+  "security": ["fedramp-moderate"],
+  "retention": { "changeSets": { "days": 90 }, "releases": { "days": 90 } }
+}
+```
+
+A profile does not make a system compliant or authorised. It turns on chant's security features and reports what is missing from the records they produce, and those records are evidence toward the controls named below. The system owner implements the controls, and an assessor decides whether each is met.
+
+A profile is named at the top level only, since its retention, gates and trust file cover the whole workspace. A member's own `security` list takes groups. A declaration that names a profile needs a chant that reads it, so it sets `minReader` to the release that carries `SECURITY_PROFILES_FLOOR`.
+
+## Profiles
+
+| Profile | Baseline | Groups it turns on | Retention at least | Scanner database at most | Check |
+|---|---|---|---|---|---|
+| `fedramp-moderate` | the FedRAMP Rev. 5 Moderate baseline (NIST SP 800-53 Rev. 5) | `verified-releases`, `supply-chain`, `who-ran-it`, `review-rules`, `isolated-runners` | 90 days | 24 hours | `WSP166` |
+| `cccs-medium` | the CCCS Medium cloud profile (ITSG-33, which follows NIST SP 800-53 Rev. 4) | `verified-releases`, `supply-chain`, `who-ran-it`, `review-rules`, `isolated-runners` | 90 days | 24 hours | `WSP167` |
+
+`fedramp-moderate` reads the FedRAMP Rev. 5 Moderate baseline, whose control ids are NIST SP 800-53 Rev. 5. `cccs-medium` reads the CCCS Medium cloud profile (ITSP.50.103 Annex B), whose ids come from ITSG-33 and follow SP 800-53 Rev. 4, so it has no SR family and no CM-14. The 90 days come from FedRAMP's AU-11 parameter (on-line for at least 90 days) and the 24 hours from its RA-5(2) parameter (within 24 hours prior to running scans). `cccs-medium` uses the same two numbers. Naming both profiles turns on the same groups, runs both checks, and takes the stricter number of each.
+
+Each profile does three things.
+
+- It turns on every security group. Each group's own check (`WSP161` to `WSP165`) reports what the group lacks, and every command that a group changes, such as `chant release publish` and `chant ci run`, behaves as it does under the group.
+- `chant lifecycle gc` keeps change sets and releases for at least the profile's days. A longer `retention` is kept. A shorter one is not used, and gc says so. Run events are not covered, since they live in one clone.
+- `chant release publish` and `chant workspace train publish` refuse a scan whose vulnerability database was built longer ago than the profile's hours, or whose build time the scanner does not report, with `publish-scan-db-stale`. The scan is recorded as `scan-failed` and nothing is staged. [`chant release scan`](/chant/cli/release/scan/) holds a rescan to the same bound: its line is written with `stale` saying why, and the rescan exits 1 with `release-scan-db-stale` and does not count as a passing scan at promote. `release.scan.dbMaxAgeHours` in `chant.config.ts` sets a shorter bound, and sets one without a profile.
+
+## Checks
+
+`chant workspace check` reports each profile's findings under its own check: `WSP166` for `fedramp-moderate` and `WSP167` for `cccs-medium`, warnings by default. Each finding's message ends with the control ids it bears on, taken from the profile's baseline.
+
+| Code | Reports | FedRAMP Moderate | CCCS Medium |
+|---|---|---|---|
+| `profile-retention-short` | `retention.changeSets.days` or `retention.releases.days` is unset or below the profile's days | AU-11 | AU-11 |
+| `profile-gate-not-human` | `identity.gates.release`, or a gate an apply job names, is missing, names no class, names a class an agent, runner or service principal holds, or sets `agentPassesAlone: true` | AC-5, CM-3(4) | AC-5, CM-3(4) |
+| `profile-scan-off` | a member's `chant.config.ts` sets `release.scan: false` | RA-5 | RA-5 |
+| `profile-scan-db-unbounded` | `release.scan.db` is set with no `dbMaxAgeHours`, or `dbMaxAgeHours` is above the profile's hours | RA-5(2) | RA-5(2) |
+| `profile-signing-off` | a member's `chant.config.ts` sets `release.signing: false` | SI-7, SR-11 | SA-10(1), SI-7 |
+| `profile-signing-module` | a member signs images or forge assets keylessly or with `key`, and its `chant.config.ts` names no `CHANT_COSIGN`, so the upstream cosign build makes the signature | SC-13 | SC-13 |
+| `profile-runner-key-eddsa` | `.chant/trust.json` lists an `ssh-ed25519` key under `runners` or `local.keys` | SC-13 | SC-13 |
+
+`kms` mode passes `profile-signing-module`, since the KMS makes the signature and its own certificate is the one to read. So does a `CHANT_COSIGN` build named in the release config's `env` or `setup`. [Signatures and crypto modules](/chant/reference/crypto-modules/) lists what makes each signature.
+
+Whether the forge refuses a force push to or a deletion of `chant/lifecycle` (AU-9) is a forge setting. `chant release doctor` reads it as `lifecycle-protected` under either profile, since a profile turns on `verified-releases` and `who-ran-it`.
+
+## Controls
+
+The table is printed from `SECURITY_CONTROLS` in `packages/core/src/workspace/security-controls.ts`, and a test compares the two. "yes" means the baseline selects the control, "-" that it does not, and "n/a" that the id is not in the catalogue the baseline uses. The Checks column names the `workspace check` codes, publish refusals and doctor checks that bear on the control. [`chant release evidence`](/chant/cli/release/evidence/) writes a release's records, or a period's, into a directory with an index by these ids, each control with the records that bear on it and what they do not show.
+
+| Control | Title | FedRAMP Moderate | CCCS Medium | Evidence | Checks |
+|---|---|---|---|---|---|
+| AC-5 | Separation of Duties | yes | yes | `ci.identity.cloud`, `_gates/<op>.jsonl`, `identity.gates.<gate>` with a `class`, `.chant/trust.json` | `profile-gate-not-human`, `security-review-not-required` |
+| AC-6 | Least Privilege | yes | yes | the plan job holds no forge token, `chant ci run --pass-env`, `--secrets`, `release.signing.kms` credentials reach the publish step only | none |
+| AU-2 | Event Logging | yes | yes | `_merges/<commit>.json`, `_change-sets/<digest>.json`, `_gates/<op>.jsonl`, `_releases/cuts.jsonl`, `_releases/publishes.jsonl`, `<env>/releases.jsonl`, `<env>/runs__<op>.jsonl` | none |
+| AU-3 | Content of Audit Records | yes | yes | the actor, time, commit or digest and outcome on each `chant/lifecycle` line, the plan digest on each approval, targets, destinations and digests on `_releases/publishes.jsonl` | none |
+| AU-6 | Audit Record Review | yes | yes | the gate audit over `_gates/*.jsonl`, the unrecorded writer audit, drift attribution | none |
+| AU-9 | Protection of Audit Information | yes | yes | append-only ledgers on `chant/lifecycle`, ssh-signed cuts, sealed approvals (`chant approve --sign`), DSSE-signed runner evidence, the `pre-receive` hook of `chant workspace ref-gate install` | `lifecycle-protected` |
+| AU-11 | Audit Record Retention | yes | yes | `retention` in `chant.workspace.json`, `chant lifecycle gc`, git history of `chant/lifecycle` | `profile-retention-short` |
+| AU-12 | Audit Record Generation | yes | yes | `chant components pr-record`, `chant approve`, `chant release cut`, `chant release publish`, `chant components promote`, `chant ci run` | none |
+| CA-7 | Continuous Monitoring | yes | yes | `chant lifecycle diff --live`, drift reads | none |
+| CM-2 | Baseline Configuration | yes | yes | the declared source at a commit, `_releases/<digest>.json` | none |
+| CM-2(2) | Automation Support for Accuracy and Currency | yes | yes | drift reads and snapshots, `chant release images --repin` | none |
+| CM-3 | Configuration Change Control | yes | yes | `_change-sets/<digest>.json`, `_gates/<op>.jsonl`, `_merges/<commit>.json`, `chant workspace ref-gate install` and `status` | none |
+| CM-3(2) | Testing, Validation, and Documentation of Changes | yes | - | `release.green`, the signed gate record of a verified cut | none |
+| CM-3(4) | Security and Privacy Representatives | yes | yes | `identity.gates.<gate>` with a `class`, sealed approvals on `_gates/<op>.jsonl` | `profile-gate-not-human`, `security-release-gate-missing` |
+| CM-3(6) | Cryptography Management | - | yes | `release.signing` in `chant.config.ts` | none |
+| CM-4 | Impact Analyses | yes | yes | the plan and its change set | none |
+| CM-5 | Access Restrictions for Change | yes | yes | runner-start statements (`chant ci runner-start verify`, `--require-runner-start`), the ref gate's refusals | `security-runner-start-no-key`, `security-runner-start-no-role`, `security-trust-unreadable` |
+| CM-5(1) | Automated Access Enforcement and Audit Records | yes | yes | the ref gate's refusals, `_gates/policy-override.jsonl`, `_gates/policy-override/applied.jsonl` | none |
+| CM-6 | Configuration Settings | yes | yes | lint and post-synth checks on every build, `chant audit`, DKRD021 | `security-image-base-unpinned` |
+| CM-8 | System Component Inventory | yes | yes | the SBOM of each release target, the image SBOM made from its layers, `chant workspace state` | `security-sbom-disabled`, `security-sbom-unsourced` |
+| IA-2 | Identification and Authentication | yes | yes | the identity form on each record (`signer`, `forge`, `role`, `name`), `identity.attribution: "identified"` | `security-attribution-any` |
+| RA-5 | Vulnerability Monitoring and Scanning (CCCS: Vulnerability Scanning) | yes | yes | `scanned` and `scan-failed` lines on `_releases/publishes.jsonl`, the `scan.json` referrer, `vulnPolicy`, `vuln-gate` steps | `profile-scan-off`, `scan-tool` |
+| RA-5(2) | Update Vulnerabilities to Be Scanned | yes | yes | the database version and build time on each scan record | `profile-scan-db-unbounded`, `publish-scan-db-stale`, `release-scan-db-stale` |
+| RA-5(3) | Breadth and Depth of Coverage | yes | yes | layer SBOMs listing OS packages | none |
+| SA-10 | Developer Configuration Management | yes | yes | `_releases/<digest>.json`, `_change-sets/<digest>.json`, `_merges/<commit>.json`, `ci/revoked/<sha>` tags | none |
+| SA-10(1) | Software and Firmware Integrity Verification | - | yes | `chant release verify <label>`, `chant release verify --sigstore`, `chant components promote --release` | `profile-signing-off` |
+| SA-11 | Developer Testing and Evaluation (CCCS: Developer Security Testing) | yes | yes | the green gate, check jobs and their reports | none |
+| SA-11(1) | Static Code Analysis | yes | yes | SARIF from the `sonar`, `mend` and `wiz` presets of `ci.hooks.check` in the check report | none |
+| SA-15 | Development Process, Standards, and Tools | yes | yes | tools pinned by SHA-256 (`tool-pins.ts`), actions pinned by commit (`action-pins.ts`), images pinned by digest (`image-pins.ts`) | none |
+| SC-12 | Cryptographic Key Establishment and Management | yes | yes | `.chant/allowed_signers`, runner keys and passkeys in `.chant/trust.json`, `release.signing.kms` or `key` | none |
+| SC-13 | Cryptographic Protection | yes | yes | `crypto` on `_releases/publishes.jsonl` lines, the runner key types in `.chant/trust.json`, the `release.signing` mode | `profile-signing-module`, `profile-runner-key-eddsa`, `crypto-module`, `signing-cosign-build` |
+| SI-2 | Flaw Remediation | yes | yes | `vulnPolicy` at publish, `chant release images --repin` | none |
+| SI-7 | Software, Firmware, and Information Integrity | yes | yes | content digests on every release and record, digest-pinned bases, Sigstore signatures and SLSA statements, `chant release verify` | `profile-signing-off` |
+| SI-7(1) | Integrity Checks | yes | yes | `chant release verify --sigstore` | none |
+| SR-3 | Supply Chain Controls and Processes | yes | n/a | bases pinned by digest, pull login for private base registries, Chainguard bases for CI product images, SLSA provenance naming the builder | `security-image-base-unpinned` |
+| SR-11 | Component Authenticity | yes | n/a | bases by digest, Sigstore signatures in keyless, `kms` or `key` mode | `profile-signing-off` |
+
+These controls are often named for pipelines and are in neither baseline. Neither profile reports anything toward them.
+
+| Control | Title | Why it is in neither |
+|---|---|---|
+| AU-10 | Non-repudiation | High only in NIST; not in FedRAMP Moderate or CCCS Medium. Signed cuts and sealed approvals bear on it where a system selects it. |
+| CM-14 | Signed Components | In no NIST baseline, and not in the ITSG-33 catalogue. |
+| SR-4 | Provenance | In no NIST baseline. The SLSA statements bear on it where a system tailors it in. |
+| SI-7(15) | Code Authentication | High only. |
+| SA-12 | Supply Chain Protection | In the ITSG-33 catalogue but not selected in the CCCS Medium cloud profile. |

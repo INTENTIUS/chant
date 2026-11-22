@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/release-evidence/v1/release-evidence.schema.json",
+  "title": "chant release evidence index",
+  "description": "index.json of a directory chant release evidence wrote (#5465): the records of one release or a period, each file with its SHA-256, and one entry per control of chant's control table naming the records that are evidence toward it and what they do not show. It is chant's own format. An assessor decides whether a control is met; the index does not say that one is.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "contract", "statement", "generatedAt", "chant", "member", "scope", "lifecycle", "releases", "files", "controls", "outsideBothBaselines", "notIncluded", "problems"],
+  "$defs": {
+    "kind": {
+      "enum": [
+        "release",
+        "cut",
+        "publish",
+        "scan",
+        "rescan",
+        "crypto",
+        "runner-key",
+        "signature-record",
+        "sbom-record",
+        "deploy",
+        "merge",
+        "change-set",
+        "gate",
+        "sealed-approval",
+        "override",
+        "run",
+        "trust",
+        "signers",
+        "declaration",
+        "verify",
+        "sigstore-verify",
+        "referrer-sbom",
+        "referrer-scan",
+        "referrer-attestation",
+        "referrer-signature",
+        "forge-asset"
+      ]
+    },
+    "lines": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "description": "The 1-based line numbers of a .jsonl file that carry the kind and bear on the scope. The whole file is copied, so every line's seal still verifies." },
+    "baseline": { "enum": ["selected", "not-selected", "not-in-catalogue"] },
+    "controlRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "shows"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "#/$defs/kind" },
+        "lines": { "$ref": "#/$defs/lines" },
+        "shows": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/workspace/release-evidence/v1/release-evidence.schema.json" },
+    "contract": { "const": 1 },
+    "statement": { "type": "string", "minLength": 1, "description": "What the export is, and that an assessor decides." },
+    "generatedAt": { "type": "string", "minLength": 1, "description": "When the export was written, ISO 8601." },
+    "chant": { "type": "string", "description": "The chant version that wrote it." },
+    "member": { "type": ["string", "null"], "description": "The workspace member whose records these are, or null outside a workspace." },
+    "scope": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "ref"], "properties": { "kind": { "const": "release" }, "ref": { "type": "string", "minLength": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "since", "until"], "properties": { "kind": { "const": "period" }, "since": { "type": "string" }, "until": { "type": "string" } } }
+      ]
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "commit", "prefix"],
+      "properties": {
+        "ref": { "const": "chant/lifecycle" },
+        "commit": { "type": ["string", "null"], "description": "The tip of chant/lifecycle every lifecycle file was read from." },
+        "prefix": { "type": "string", "description": "The member's prefix on the branch: empty, or _members/<member>/ per level." }
+      }
+    },
+    "releases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["releaseDigest", "label", "commit", "cutAt", "verify", "verifyFile"],
+        "properties": {
+          "releaseDigest": { "type": "string" },
+          "label": { "type": ["string", "null"] },
+          "commit": { "type": "string" },
+          "cutAt": { "type": ["string", "null"] },
+          "verify": { "enum": ["verified", "unsigned", "unverified", "error"] },
+          "verifyFile": { "type": "string" },
+          "sigstore": { "enum": ["verified", "failed", "none"] },
+          "sigstoreFile": { "type": "string" }
+        }
+      }
+    },
+    "noReleases": { "type": "string", "description": "Present when no release is in scope, saying so." },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "bytes", "source", "records"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "source": {
+            "oneOf": [
+              { "type": "object", "additionalProperties": false, "required": ["lifecycle"], "properties": { "lifecycle": { "type": "object", "additionalProperties": false, "required": ["path", "blob"], "properties": { "path": { "type": "string" }, "blob": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" } } } } },
+              { "type": "object", "additionalProperties": false, "required": ["commit", "path"], "properties": { "commit": { "type": "string" }, "path": { "type": "string" } } },
+              { "type": "object", "additionalProperties": false, "required": ["registry", "digest"], "properties": { "registry": { "type": "string" }, "digest": { "type": "string" } } },
+              { "type": "object", "additionalProperties": false, "required": ["assets", "name"], "properties": { "assets": { "type": "string" }, "name": { "type": "string" } } },
+              { "type": "object", "additionalProperties": false, "required": ["produced"], "properties": { "produced": { "type": "string" } } }
+            ]
+          },
+          "records": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "$ref": "#/$defs/kind" }, "lines": { "$ref": "#/$defs/lines" } } }
+          }
+        }
+      }
+    },
+    "controls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "baselines", "found", "records", "notShown", "checks"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "cccsTitle": { "type": "string" },
+          "baselines": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fedramp-moderate", "cccs-medium"],
+            "properties": { "fedramp-moderate": { "$ref": "#/$defs/baseline" }, "cccs-medium": { "$ref": "#/$defs/baseline" } }
+          },
+          "fedrampParameter": { "type": "string" },
+          "found": { "type": "boolean", "description": "True when a record in this export bears on the control." },
+          "records": { "type": "array", "items": { "$ref": "#/$defs/controlRecord" } },
+          "absent": { "type": "string", "description": "With nothing found: a sentence saying so, and where the control's evidence lives." },
+          "notShown": { "type": "string", "description": "What the records do not show." },
+          "checks": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["codes", "doctor"],
+            "properties": { "codes": { "type": "array", "items": { "type": "string" } }, "doctor": { "type": "array", "items": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "outsideBothBaselines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "note", "found", "records"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "note": { "type": "string" },
+          "found": { "type": "boolean" },
+          "records": { "type": "array", "items": { "$ref": "#/$defs/controlRecord" } }
+        }
+      }
+    },
+    "notIncluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["what", "why"],
+        "properties": { "what": { "type": "string" }, "why": { "type": "string" }, "run": { "type": "string" } }
+      }
+    },
+    "problems": { "type": "array", "items": { "type": "string" } }
+  }
+}

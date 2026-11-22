@@ -97,13 +97,56 @@ export function parseSchemaPath(
  * carries only deploymentStacks, and resourceGroups, deployments and tags
  * last appear in 2025-04-01. Pin both so a resource group is a kind, which
  * an index import of a subscription needs.
+ *
+ * The bump to d15606ff (#5454) added the providers whose newest file became a
+ * delta. Upstream retired the per-service files (`Microsoft.Network.NRP`,
+ * `.DNS`, `.privateDns`, `.FrontDoor`, `Microsoft.ContainerService.Aks`,
+ * `Microsoft.DBforMySQL.Legacy`, `Microsoft.RecoveryServices.SiteRecovery`
+ * and others) into the provider's own file, and the newest dates of
+ * Network, ApiManagement, DocumentDB, ContainerService, Cache, ServiceFabric
+ * and a dozen more carry only the resources that changed. Each entry lists the
+ * newest file first and then the older dates that still define a resource the
+ * previous pin generated, found by comparing the resource names of the two
+ * pins' files. A resource upstream removed outright (Kusto
+ * `clusters_dataConnections`, ProviderHub, Sovereign landing zones) is not
+ * pinnable and stays gone.
+ *
+ * Microsoft.Security also carries the Defender for Cloud DevOps connector
+ * that the Azure DevOps and compliance work leans on (#5454 item 4). No file
+ * the newest-first pick reads defines it: `securityConnectors` last appears in
+ * 2026-08-01-preview (no GA date has it), and `securityConnectors_devops`
+ * with its azureDevOpsOrgs, projects and repos children last appears in a GA
+ * file at 2025-03-01. Both dates join the pin in newest-first order; neither
+ * defines a resource the other Security dates already define.
  */
 export const PROVIDER_VERSION_OVERRIDES: Record<string, readonly string[]> = {
+  "Microsoft.Advisor": ["2026-10-01", "2026-08-01-preview"],
+  "Microsoft.AlertsManagement": ["2025-05-25-preview", "2025-03-01-preview", "2024-03-01-preview", "2023-04-01-preview", "2023-03-01"],
+  "Microsoft.ApiManagement": ["2026-09-01-preview", "2025-09-01-preview"],
+  "Microsoft.App": ["2026-07-01", "2026-03-02-preview"],
   "Microsoft.Authorization": ["2022-04-01", "2026-06-01", "2022-07-01-preview"],
   "Microsoft.AzureStackHCI": ["2026-05-01-preview", "2026-04-01-preview"],
+  "Microsoft.Cache": ["2026-10-01-preview", "2025-08-01-preview"],
   "Microsoft.Compute": ["2026-03-01"],
+  "Microsoft.ContainerInstance": ["2026-09-01-preview", "2026-07-01"],
+  "Microsoft.ContainerRegistry": ["2026-09-01-preview", "2025-03-01-preview"],
+  "Microsoft.ContainerService": ["2026-09-02-preview", "2026-06-02-preview", "2025-09-02-preview", "2025-07-01"],
+  "Microsoft.DBforPostgreSQL": ["2026-10-01", "2023-03-02-preview"],
+  "Microsoft.DeviceUpdate": ["2026-11-02-preview", "2023-07-01"],
+  "Microsoft.DocumentDB": ["2026-06-15-preview", "2026-04-01-preview"],
+  "Microsoft.HorizonDb": ["2026-10-01-preview", "2026-05-01-preview"],
+  "Microsoft.Insights": ["2026-03-01", "2023-06-01"],
+  "Microsoft.Logic": ["2026-04-01-preview", "2019-05-01"],
   "Microsoft.Management": ["2023-04-01"],
+  "Microsoft.Monitor": ["2026-09-03-preview", "2026-05-01-preview"],
+  "Microsoft.Network": ["2026-10-01-preview", "2026-04-01", "2026-03-01", "2025-05-01", "2023-07-01-preview", "2020-01-01", "2018-08-01"],
+  "Microsoft.RecoveryServices": ["2026-11-01", "2026-08-31-preview"],
+  "Microsoft.RedHatOpenShift": ["2026-10-01", "2025-07-25"],
   "Microsoft.Resources": ["2025-07-01", "2025-04-01"],
+  "Microsoft.ResourceGraph": ["2026-05-01-preview", "2024-04-01"],
+  "Microsoft.Security": ["2026-09-16-preview", "2026-08-01-preview", "2026-04-01-preview", "2025-03-01"],
+  "Microsoft.ServiceFabric": ["2026-05-01-preview", "2023-11-01-preview"],
+  "Microsoft.Sql": ["2026-08-01-preview", "2014-04-01"],
   "Microsoft.Subscription": ["2021-10-01"],
 };
 

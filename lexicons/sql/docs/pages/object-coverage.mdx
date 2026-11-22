@@ -1,12 +1,12 @@
 ---
 title: "Object Coverage"
 label: "Object Coverage"
-description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, referenced, refused with a reason, or out of scope, and what import does with each"
+description: "Every kind of object each pinned Postgres, ClickHouse and MySQL server can create, marked declared, referenced, refused with a reason, or out of scope, and what import does with each"
 diataxis: reference
 order: 3
 ---
 
-{/* Written by src/codegen/coverage-page.ts from src/coverage/postgres.json and src/coverage/clickhouse.json. Edit the tables, then run npm run docs. */}
+{/* Written by src/codegen/coverage-page.ts from src/coverage/postgres.json, src/coverage/clickhouse.json and src/coverage/mysql.json. Edit the tables, then run npm run docs. */}
 
 Each row is a `CREATE` command a pinned server has, or one form of a command where chant treats the forms apart (`CREATE TYPE ... AS ENUM` is declared, `CREATE TYPE ... AS RANGE` is not). The commands come from the servers' own sources at each pinned version (`scripts/sql-create-commands.ts`), and a test fails when a pinned server has a command with no row here, so a new server release cannot add a kind nobody looked at.
 
@@ -104,6 +104,32 @@ Pinned release: 26.8.15.10. 12 declared, 1 referenced, 6 refused, 1 out of scope
 | `CREATE WINDOW VIEW` | window view | refused | a window view is experimental, and the pinned server refuses it under its default query analyzer |
 | `CREATE WORKLOAD` | workload | refused | a workload is server-level scheduling, configured with the server, not a schema object |
 
+## MySQL
+
+MySQL 8.0.40, and Aurora MySQL 3. 5 declared, 5 refused, 9 out of scope. MySQL's commands are the reference manual's `CREATE` statements at that release, as its column types are; no server source is read.
+
+| Command | Kind | Status | Declared by, or why not |
+|---|---|---|---|
+| `CREATE DATABASE` | database | declared | `MySQL::Database` |
+| `CREATE EVENT` | event | refused | an event runs SQL on a schedule; chant declares no scheduled work |
+| `CREATE FUNCTION` | stored function | refused | a stored function's body is a program, and chant declares no MySQL routines |
+| `CREATE FUNCTION` (loadable (SONAME)) | loadable function | out of scope | a loadable function is a library installed on the server, not a schema object |
+| `CREATE INDEX` | index | declared | `MySQL::Table`: an index is part of its table: SHOW CREATE TABLE prints it, and the table's declaration holds it. A CREATE INDEX in a file of DDL is read into its table |
+| `CREATE LOGFILE GROUP` | logfile group | out of scope | a logfile group belongs to NDB Cluster's storage, not to a schema |
+| `CREATE PROCEDURE` | stored procedure | refused | a stored procedure's body is a program, and chant declares no MySQL routines |
+| `CREATE RESOURCE GROUP` | resource group | out of scope | a resource group is server-level thread scheduling, not a schema object |
+| `CREATE ROLE` | role | out of scope | accounts and roles are the server's, and the MySQL dialect declares no access |
+| `CREATE SCHEMA` | schema | declared | `MySQL::Database`: CREATE SCHEMA is a synonym of CREATE DATABASE |
+| `CREATE SERVER` | federated server | out of scope | a server definition holds another server's credentials, which are the environment's |
+| `CREATE SPATIAL REFERENCE SYSTEM` | spatial reference system | out of scope | a spatial reference system is server-wide data, not a schema object |
+| `CREATE TABLE` | table | declared | `MySQL::Table` |
+| `CREATE TABLE` (TEMPORARY) | temporary table | out of scope | a temporary table lives in one session |
+| `CREATE TABLE` (PARTITION BY) | partitioned table | refused | chant does not plan partition changes, so a partitioned table is not declared |
+| `CREATE TABLESPACE` | tablespace | out of scope | a tablespace is storage the server's operator manages, not a schema object |
+| `CREATE TRIGGER` | trigger | refused | a trigger's body is a program, and chant declares no MySQL triggers |
+| `CREATE USER` | user | out of scope | accounts are the server's, and the MySQL dialect declares no access |
+| `CREATE VIEW` | view | declared | `MySQL::View` |
+
 ## Declaring a refused kind
 
-A kind becomes declarable in three steps: a tag that declares it, the catalog reader reading it (`src/postgres/live/catalog.ts`, `src/clickhouse/live/catalog.ts`), and its row flipped to `declared` with the entity type, its reason taken out. The row's flip is what stops import refusing the kind. After moving a pin, run `npx tsx scripts/sql-create-commands.ts` and give each new command a row.
+A kind becomes declarable in three steps: a tag that declares it, the catalog reader reading it (`src/postgres/live/catalog.ts`, `src/clickhouse/live/catalog.ts`, `src/mysql/live/catalog.ts`), and its row flipped to `declared` with the entity type, its reason taken out. The row's flip is what stops import refusing the kind. After moving a pin, run `npx tsx scripts/sql-create-commands.ts` and give each new command a row.

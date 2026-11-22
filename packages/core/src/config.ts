@@ -13,6 +13,7 @@ import { evaluateProjectConfig } from "./config-sandbox";
 import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
 import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
 import { PublishDeclarationSchema, type PublishDeclaration } from "./lifecycle/publish-declaration";
+import { SigningConfigSchema } from "./lifecycle/signing-config";
 
 // The environment and ownership helpers that read a config already loaded
 // live in ./config-environments.ts, which loads nothing, so a bundle that
@@ -91,6 +92,11 @@ const LexiconEntrySchema = z.union([
   }).strict(),
 ]);
 
+/** A registry a release image's bases are pulled from that needs a login (#5457). */
+const ReleaseImagePullSchema = z
+  .object({ registry: z.string().min(1), usernameEnv: z.string().min(1), passwordEnv: z.string().min(1) })
+  .strict();
+
 export const ChantConfigSchema = z.object({
   lexicons: z.array(LexiconEntrySchema).optional(),
   capabilities: z.array(z.string().min(1)).optional(),
@@ -131,7 +137,7 @@ export const ChantConfigSchema = z.object({
       .array(
         z.union([
           // #4876: `platforms`, what the command builds, for the release workflow's QEMU setup.
-          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1), platforms: z.array(z.string().min(1)).min(1).optional() }).strict(),
+          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1), platforms: z.array(z.string().min(1)).min(1).optional(), pull: z.array(ReleaseImagePullSchema).min(1).optional() }).strict(),
           // #4819: chant builds the Dockerfile as the reproducible OCI archive itself.
           z
             .object({
@@ -145,6 +151,8 @@ export const ChantConfigSchema = z.object({
               args: z.record(z.string(), z.string()).optional(),
               // #5269: OCI labels on the image.
               labels: z.record(z.string(), z.string()).optional(),
+              // #5457: registries the bases are pulled from that need a login.
+              pull: z.array(ReleaseImagePullSchema).min(1).optional(),
             })
             .strict(),
         ]),
@@ -227,13 +235,10 @@ export const ChantConfigSchema = z.object({
     sources: z.array(z.string().min(1)).min(1).optional(),
     // #5150: the tag a cut makes, as a template, and the floating tag a publish moves.
     tag: z.union([z.string().min(1), z.object({ name: z.string().min(1), floating: z.string().min(1).optional() }).strict()]).optional(),
-    // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false.
-    signing: z
-      .union([
-        z.boolean(),
-        z.object({ identity: z.string().min(1).optional(), issuer: z.string().min(1).optional() }).strict(),
-      ])
-      .optional(),
+    // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false. #5458: keyless or a key.
+    signing: SigningConfigSchema.optional(),
+    // #5446: the vulnerability scan before the stage; on under the supply-chain group unless false.
+    scan: z.union([z.boolean(), z.object({ db: z.string().min(1).optional(), imageScanner: z.literal("wiz").optional(), dbMaxAgeHours: z.number().positive().optional(), schedule: z.string().regex(/^\S+(?: \S+){4}$/, "a cron expression of five fields, such as \"0 5 * * 1\"").optional() }).strict()]).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
     version: z.object({
       packages: z.array(z.string().min(1)).min(1).optional(),
@@ -660,10 +665,25 @@ export interface ChantConfig {
      * to name the certificate identity (a regular expression) and OIDC issuer
      * `chant release verify --sigstore` expects, signs images and forge assets
      * keylessly with the CI job's OIDC token and adds SLSA provenance. On by
-     * default under the `supply-chain` group; `false` turns it off there. See
-     * ./lifecycle/publish-signing.ts.
+     * default under the `supply-chain` group; `false` turns it off there.
+     * `{ key, publicKey }` signs with a cosign key instead (#5458). See
+     * ./lifecycle/signing-config.ts and ./lifecycle/publish-signing.ts.
      */
-    signing?: import("./lifecycle/publish-signing").SigningConfig;
+    signing?: import("./lifecycle/signing-config").SigningConfig;
+    /**
+     * The vulnerability scan before the stage (#5446): `true`, or `{ db }` to
+     * read the scanner's database from that directory without updating it.
+     * `{ imageScanner: "wiz" }` scans each image with the Wiz CLI in place of
+     * grype (#5451). Every image a target pushes, scanned through an SBOM of its layers, and
+     * every SBOM the publish attaches goes through the gate `vulnPolicy`
+     * configures, and a blocking finding stops the publish before anything is
+     * pushed. On by default under the `supply-chain` group; `false` turns it
+     * off there. `{ dbMaxAgeHours }` refuses a publish whose scanner database
+     * was built longer ago than that (`publish-scan-db-stale`, #5464); under a
+     * security profile the shorter of it and the profile's hours applies. See
+     * ./lifecycle/publish-scan.ts.
+     */
+    scan?: import("./lifecycle/publish-scan").ReleaseScanConfig;
     /**
      * The members of this workspace root release as a train (#5154): `chant
      * workspace train cut <env>` picks the members `chant release changed`

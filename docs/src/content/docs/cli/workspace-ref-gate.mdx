@@ -58,7 +58,7 @@ The rules are `refs` in `.chant/trust.json`, read at base like the rest of the t
 | `status` | The commit status `status` sets and the forge should require. Default `chant/ref-gate`. |
 | `overrides` | How an override is judged: `sealed` needs a seal that verifies against the signers file at base, `ledger` doesn't. Default `sealed` when the signers file exists at base, else `ledger`. |
 
-When several rules match a ref, their checks add up, and a check any of them blocks is blocked. A ref no rule matches is admitted. A deletion is admitted: the remote or the forge protects deletions on its own. A policy at base that can't be read refuses every update with `trust-policy-unreadable`.
+When several rules match a ref, their checks add up, and a check any of them blocks is blocked. A ref no rule matches is admitted. A deletion of another ref is admitted: the remote or the forge protects deletions on its own. The exception is chant's own branch, `chant/lifecycle`, which holds the audit trail. Whatever `refs` lists, and with no policy at all, the `pre-receive` hook and `pre-push` refuse a deletion of it (`lifecycle-ref-deleted`) and an update whose old tip is not an ancestor of the new one (`lifecycle-ref-rewritten`), which is what a force push makes. Nothing in chant needs either: `chant lifecycle gc` prunes with a new commit. Creating the branch and adding lines on top of its tip are admitted. A policy at base that can't be read refuses every update with `trust-policy-unreadable`.
 
 ## Evidence
 
@@ -101,6 +101,8 @@ chant workspace ref-gate install --hook pre-receive --git-dir /srv/git/infra.git
 # In a checkout:
 chant workspace ref-gate install --hook pre-push
 ```
+
+On a forge the remote's hook is the forge's own, so protect `chant/lifecycle` there too: a ruleset or branch protection that blocks force pushes and deletions on GitHub, a protected branch with force push off on GitLab, a branch protection rule with force push off on Forgejo. [`chant release doctor`](/chant/cli/release/doctor/) reads that setting, read-only, under `verified-releases` or `who-ran-it` (`lifecycle-protected`).
 
 The hook runs `chant workspace ref-gate <hook>` with git's arguments and input. `--chant <command>` names another command for chant, such as `npx chant`. `install` replaces a hook it wrote and leaves any other hook as it is.
 
@@ -167,6 +169,8 @@ With `--json` each subcommand that decides prints a document that `ref-gate.sche
 |---|---|
 | `ref-evidence-missing` | No evidence for the check is attached to the pushed commit. |
 | `ref-evidence-stale` | The evidence verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
+| `lifecycle-ref-deleted` | The update deletes `chant/lifecycle`. |
+| `lifecycle-ref-rewritten` | The update moves `chant/lifecycle` to a commit that does not descend from its old tip. |
 | `ref-update-invalid` | The hook's standard input is not what git hands a pre-receive or pre-push hook. |
 | `trust-policy-unreadable` | The policy at base can't be read; every update is refused. |
 

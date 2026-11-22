@@ -42,6 +42,7 @@
  * | WSP152 | a member's generated pipeline targets the branch `ci.branches` routes it to (#4325) |
  * | WSP153 | an Op gate's approval block that `identity.gates` does not set at base (#4404) |
  * | WSP161 to WSP165 | the security groups the declaration opts into: what each still lacks (#4168 step 7) |
+ * | WSP166, WSP167 | the security profiles `fedramp-moderate` and `cccs-medium`: what each looks for beyond the groups (#5464) |
  */
 
 import { realpathSync } from "node:fs";
@@ -64,6 +65,7 @@ import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
 import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
 import { SECURITY_CHECKS } from "./checks/security";
+import { PROFILE_CHECKS_WSP } from "./checks/security-profiles";
 import { CI_WORKFLOW_CHECKS } from "./checks/ci-workflow";
 import { CI_BRANCH_CHECKS } from "./checks/ci-branch";
 import { GATE_APPROVAL_CHECKS } from "./checks/gate-approval";
@@ -431,6 +433,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...GATE_APPROVAL_CHECKS,
   // The security groups the declaration opts into (#4168 step 7), WSP161 to WSP165.
   ...SECURITY_CHECKS,
+  // The security profiles the declaration names (#5464), WSP166 and WSP167.
+  ...PROFILE_CHECKS_WSP,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));

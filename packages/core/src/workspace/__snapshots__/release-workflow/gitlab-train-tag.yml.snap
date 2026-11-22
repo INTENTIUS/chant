@@ -118,6 +118,133 @@ chant-release-publish:
     - "git config user.email \"chant-release@localhost\""
     - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
 
+# ==== signing with a KMS key ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release-train\/npm\//
+  variables:
+    GIT_DEPTH: "0"
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --require-provenance --yes"
+
+# ==== signing keyless through a private Fulcio ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release-train\/npm\//
+  variables:
+    GIT_DEPTH: "0"
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== signing keyless with public Sigstore ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release-train\/npm\//
+  variables:
+    GIT_DEPTH: "0"
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== scan ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release-train\/npm\//
+  variables:
+    GIT_DEPTH: "0"
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype && export CHANT_GRYPE=/tmp/grype/grype"
+    - "mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft && export CHANT_SYFT=/tmp/syft/syft"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
+# ==== pull login ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release-train\/npm\//
+  variables:
+    GIT_DEPTH: "0"
+  resource_group: chant-release
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - "export CHANT_RELEASE_TRAIN=\"${CHANT_RELEASE_TRAIN:-${CHANT_TRAIN_CUT:-${CI_COMMIT_TAG#release-train/npm/}}}\""
+    - "if [ -z \"$CHANT_RELEASE_TRAIN\" ]; then echo \"no release train was cut or named, so there is nothing to publish\"; exit 0; fi"
+    - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
+    - "git checkout --detach FETCH_HEAD"
+    - "npm ci"
+    - "printf '%s' \"$CGR_PASSWORD\" | docker login cgr.dev --username \"$CGR_USERNAME\" --password-stdin"
+    - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
+    - "git fetch origin chant/lifecycle:chant/lifecycle"
+    - "npx chant workspace train prepare npm \"$CHANT_RELEASE_TRAIN\""
+    - "npm run build"
+    - "npx chant workspace train artifacts npm \"$CHANT_RELEASE_TRAIN\""
+    - "git config user.name \"chant release\""
+    - "git config user.email \"chant-release@localhost\""
+    - "npx chant workspace train publish npm \"$CHANT_RELEASE_TRAIN\" --yes"
+
 # ==== lane ====
 chant-release-publish:
   rules:

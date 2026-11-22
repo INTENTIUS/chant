@@ -193,6 +193,12 @@ export interface ParsedArgs {
   sigstore?: boolean;
   /** `chant release verify --sigstore --assets <dir>` (#5164): the directory holding the forge release's downloaded assets. */
   assets?: string;
+  /** `chant release evidence --referrers` (#5465): fetch each image's referrers from its registry, by the digests the publish recorded. */
+  referrers?: boolean;
+  /** `chant release evidence --since <date> --until <date>` (#5465): the end of the period, exclusive; now when absent. */
+  until?: string;
+  /** `chant release scan --deployed [<env>]` (#5466): scan every release the latest deploy record of each environment (or of `<env>`) names. */
+  deployed?: string | true;
   /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
   source?: string;
   /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */
@@ -517,6 +523,8 @@ export interface ParsedArgs {
   ciBuildCommand?: string;
   /** `chant ci serve --land` (#4168 4.4) — fast-forward the target branch to each pushed `chant/land/<name>` branch whose `ci.green.preMerge` phases pass on it. */
   ciLand?: boolean;
+  /** `chant ci serve --release` (#5462): publish each release tag on this host. */
+  ciRelease?: boolean;
   /** `chant build --pr-loop --pr-build-command <line>` (#4088) — the build line to run in place of `chant build --env <env>`. */
   prBuildCommand?: string;
   /**
@@ -687,6 +695,8 @@ export interface ParsedArgs {
   runsOn?: Record<string, string>;
   /** `chant release images --no-build` (#4657): check the archives already on disk instead of building them. */
   noBuild?: boolean;
+  /** `chant release images --repin` (#5457): move each pinned image reference to the digest its tag names today. */
+  repin?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha>` (#2651): the region the intent graph is over. Empty with `--record`. */
@@ -735,7 +745,7 @@ export interface ParsedArgs {
   branch?: string;
   /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. Also `chant ci init --workflow <name>` (#4168 step 6), the prescribed workflow to set up. */
   ciWorkflows?: string[];
-  /** `chant ci init --security <group>`, repeatable (#4168 step 6): a security group to turn on. */
+  /** `chant ci init --security <group|profile>`, repeatable (#4168 step 6): a security group, or a security profile (#5464), to turn on. */
   securityGroups?: string[];
   /** `chant ci run plan|apply --commit <sha>` (#4094): the commit the job runs at. Default `HEAD`. */
   commit?: string;
@@ -809,6 +819,8 @@ export interface ParsedArgs {
   oneRelease?: boolean;
   /** `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the principal the runner key is listed for. */
   ciPrincipal?: string;
+  /** `chant ci serve|run --setup-key --key-type ed25519|ecdsa-p256` (#5470): the kind of runner key `--setup-key` makes. */
+  runnerKeyType?: string;
   /** `chant workspace trust runner add <principal> --class runner|service` (#3510): the runner entry's class. */
   runnerClass?: string;
   /**
@@ -835,7 +847,7 @@ export interface ParsedArgs {
   prefix?: string;
   /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
   require?: string;
-  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). Also `chant ci tick --key` (#4031): the runner key the tick signs its tags with. */
+  /** `chant workspace evidence sign --key` (a runner's Ed25519 or P-256 PEM) and `signers sign --key` (an ssh private key) (#2553). Also `chant ci tick --key` (#4031): the runner key the tick signs its tags with. */
   key?: string;
   /** `chant workspace evidence sign --check-id <id>` (#2553): the check the evidence is for. */
   checkId?: string;
@@ -1058,7 +1070,7 @@ export interface ParsedArgs {
   plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
   op?: string;
-  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
+  /** `chant release evidence --since <date>` (#5465) — the start of the period, inclusive. `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
   since?: string;
   /** `chant ci verdict --wait` (#4644) — read again until no required phase is pending. */
   ciWait?: boolean;

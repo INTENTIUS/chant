@@ -56,7 +56,8 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-import { packageSbom } from "./publish-attachments";
+import { memberSbom, packageSbom } from "./publish-attachments";
+import { sbomDocumentOf } from "./publish-scan";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName } from "./publish-train-names";
@@ -664,6 +665,21 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     credentialEnv: [],
     key: publishTargetKey(decl),
     plan,
+    /** #5446: the SBOM each package carries, else one written from the member's lockfile. */
+    async scanSubjects(ctx) {
+      const subjects: import("./publish-scan").ScanSubject[] = [];
+      for (const pkg of readChecked(ctx)) {
+        const id = `${pkg.name}@${pkg.version}`;
+        if (pkg.sbom) {
+          const bytes = isDir(pkg.abs) ? readFileSync(join(pkg.abs, pkg.sbom), "utf-8") : execFileSync("tar", ["-xzOf", pkg.abs, `package/${pkg.sbom}`], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+          subjects.push({ target: this.name, name: `${pkg.sbom} of ${id}`, sbom: sbomDocumentOf(bytes, "carried"), ...(pkg.digest ? { digest: pkg.digest } : {}) });
+          continue;
+        }
+        const written = memberSbom({ ...ctx, requireSbom: false }, undefined, id, this.name);
+        if (written) subjects.push({ target: this.name, name: `the lockfile of ${id}`, sbom: sbomDocumentOf(written.bytes, "lockfile"), ...(pkg.digest ? { digest: pkg.digest } : {}) });
+      }
+      return subjects;
+    },
     async stage(ctx) {
       const pkgs = readChecked(ctx);
       const items: PublishItem[] = [];

@@ -84,6 +84,13 @@ export async function runLifecycleGc(ctx: CommandContext): Promise<number> {
       return 1;
     }
     policy = resolveRetention(source.declaration.retention);
+    // #5464: a security profile keeps change sets and releases for at least its days.
+    const { profilesOf, retentionUnderProfiles } = await import("../../workspace/security-profiles");
+    const under = retentionUnderProfiles(policy, profilesOf(source.declaration));
+    policy = under.policy;
+    for (const r of under.raised) {
+      if (!args.json) console.error(formatWarning({ message: `retention.${r.kind}.days is ${r.declared}, and the ${r.profile} security profile keeps them ${r.kept} days, so gc keeps them ${r.kept}` }));
+    }
     green = source.declaration.ci?.green ?? null;
   }
 

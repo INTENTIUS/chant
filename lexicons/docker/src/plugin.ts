@@ -21,6 +21,9 @@ import { dockerCompletions } from "./lsp/completions";
 import { dockerHover } from "./lsp/hover";
 import { DockerTemplateParser, DockerTemplateGenerator } from "./import/adapter";
 
+/** Post-synth checks a build reports only when the project turns them on. */
+const OPT_IN_CHECKS = new Set(["DKRD021"]);
+
 export const dockerPlugin: LexiconPlugin = {
   name: "docker",
   auditCatalog: () => dockerAuditCatalog,
@@ -39,6 +42,17 @@ export const dockerPlugin: LexiconPlugin = {
 
   postSynthChecks() {
     return postSynthCheckList;
+  },
+
+  /**
+   * `recommended` (what `chant build` reports by default) is every check but
+   * the opt-in ones (DKRD021, a FROM not pinned by digest); `all` adds them.
+   * A project turns one on with `lint.presets: { docker: "all" }`, or by
+   * naming it in `lint.rules` (`{ DKRD021: "warning" }`).
+   */
+  lintPresets() {
+    const all = postSynthCheckList.map((c) => c.id);
+    return { recommended: all.filter((id) => !OPT_IN_CHECKS.has(id)), all };
   },
 
   intrinsics(): IntrinsicDef[] {

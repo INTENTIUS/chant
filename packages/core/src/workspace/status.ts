@@ -67,6 +67,8 @@ import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type Stew
 import { memberDecisionsReader, type DecisionKindReader } from "./status-decisions";
 import { gitTop, workingTree } from "./tree";
 import { readStageViews, stageRows, type StageLedgerReader, type StatusPipeline } from "./status-stages";
+import { drillRows, readMemberDrills, type StatusDrill } from "./status-drills";
+import { formatSpan } from "../lifecycle/drill-record";
 import type { ReleaseCut } from "../lifecycle/release-store";
 import { handToRootChant } from "./which-chant";
 
@@ -282,6 +284,13 @@ export interface StatusMember {
    * fold. Added in contract 1.
    */
   pipeline?: StatusPipeline;
+  /**
+   * The newest restore drill of each store the member has drilled in the
+   * environment asked for (#5450): whether it met its targets, the RTO and
+   * RPO it measured and its checks. Sorted by store. Absent when none is
+   * recorded. Added in contract 1.
+   */
+  drills?: StatusDrill[];
 }
 
 /** One feature flag of a member (#4024), as `status --json` lists it. */
@@ -479,6 +488,8 @@ export interface StatusQuery {
   readDecisionKind?: DecisionKindReader;
   /** Reads one stage's own ledger, `<stage>/stage.jsonl` (#5342); git unless a test swaps it. */
   readStageLedger?: StageLedgerReader;
+  /** Reads one member's drill ledger, `<env>/drills.jsonl` (#5450), by its path on the branch; git unless a test swaps it. */
+  readDrillLedger?: StageLedgerReader;
 }
 
 /** The member's folded pipeline, or undefined when it has none or it does not fold (#5342). */
@@ -844,6 +855,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         : own
           ? (await readMemberStageQueues(gatesDir, commit, found.dir, query.readStageLogs)).filter((q) => envs.includes(q.stage))
           : [];
+      const drills = await readMemberDrills({ prefix: own ? `${MEMBERS_DIR}/${m.name}/` : "", env: query.env, commit, cwd: found.dir, ...(query.readDrillLedger ? { read: query.readDrillLedger } : {}) }).catch(() => ({ drills: [], malformed: 0 }));
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       // The declaration's x- keys go back on the objects that hold them (#3595).
       const x = (pointer: string) => extensionsAt(declaration, pointer);
@@ -890,6 +902,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         featureFlags: flags === null ? null : flags.filter((f) => f.member === m.name).map(({ member: _member, ...f }) => f),
         ...(stageQueues.length > 0 ? { stageQueues } : {}),
         ...(pipeline ? { pipeline } : {}),
+        ...(drills.drills.length > 0 ? { drills: drills.drills } : {}),
         ...x(m.pointer),
       });
     }
@@ -1197,6 +1210,11 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
   if (doc.members.some((m) => m.pipeline && m.pipeline.stages.length > 0)) {
     lines.push("");
     lines.push(...table(stageRows(doc.members)));
+  }
+  // #5450: the newest restore drill of each store.
+  if (doc.members.some((m) => (m.drills ?? []).length > 0)) {
+    lines.push("");
+    lines.push(...table(drillRows(doc.members, formatSpan)));
   }
   const flagged = doc.members.filter((m) => (m.featureFlags ?? []).length > 0);
   if (flagged.length > 0) {

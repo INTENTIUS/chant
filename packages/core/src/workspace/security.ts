@@ -13,8 +13,11 @@
  *   `chant release cut` refuses `release.green: "none"` (#5149).
  * - `supply-chain`: a publish without OIDC provenance warns, a target
  *   with no SBOM source is refused (`publish-sbom-missing`), the OCI and
- *   forge targets sign with Sigstore (`release.signing`, #5164), and `chant
- *   release cut` refuses `release.green: "none"` (#5149).
+ *   forge targets sign with Sigstore (`release.signing`, #5164), a publish
+ *   scans what it puts out before anything is pushed (`release.scan`,
+ *   #5446), a Dockerfile `release.images` names is checked for a `FROM`
+ *   not pinned by digest (#5457), and `chant release cut` refuses
+ *   `release.green: "none"` (#5149).
  * - `who-ran-it`: `chant ci tick` refuses to tag without a runner key.
  * - `review-rules`: `chant components pr-apply` counts an approval only from
  *   someone who approved the pull request on the forge, as
@@ -24,6 +27,11 @@
  *   refuses to start without a provisioner's runner-start statement for the
  *   job (#4147), as `--require-runner-start` does, and a generated
  *   pull-request pipeline passes the flag. A `--local` run is exempt.
+ *
+ * A security profile (`fedramp-moderate`, `cccs-medium`, #5464,
+ * ./security-profiles.ts) in the top-level list turns on every group and
+ * adds checks of its own; {@link securityGroupsOf} expands it, so a reader
+ * that asks for a group needs to know nothing of profiles.
  *
  * Each feature still turns on alone: `identity.gates.release`,
  * `--require-provenance`, `--require-review`, `ci.green.signedSince`.
@@ -36,10 +44,14 @@ import { relative, sep } from "node:path";
 import type { Declaration } from "./declaration";
 import { memberHolding } from "./record-assets";
 import { scopeSource, type ScopeSource } from "./write-scope";
+import { groupsOfEntry, SECURITY_PROFILES, type SecurityProfile } from "./security-profiles";
 
 export const SECURITY_GROUPS = ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners"] as const;
 
 export type SecurityGroup = (typeof SECURITY_GROUPS)[number];
+
+/** What the declaration's top-level `security` may name: a group, or a profile (#5464) that turns groups on. A member's own list names groups only. */
+export type SecurityEntry = SecurityGroup | SecurityProfile;
 
 /**
  * The groups `declaration` turns on for `member` (a member name): the
@@ -48,7 +60,8 @@ export type SecurityGroup = (typeof SECURITY_GROUPS)[number];
  */
 export function securityGroupsOf(declaration: Pick<Declaration, "security" | "members"> | null | undefined, member: string | null = null): ReadonlySet<SecurityGroup> {
   const own = member === null ? [] : (declaration?.members?.find((m) => m.name === member)?.security ?? []);
-  return new Set([...(declaration?.security ?? []), ...own]);
+  // #5464: a profile turns on its groups.
+  return new Set([...(declaration?.security ?? []), ...own].flatMap((e) => groupsOfEntry(e)));
 }
 
 /** The member of `source`'s declaration whose directory holds `cwd`, or null. */
@@ -89,6 +102,8 @@ export interface SecurityFeature {
   group: SecurityGroup | null;
   /** The `workspace check` reason codes that report it missing under its group. */
   codes: readonly string[];
+  /** The security profiles that turn it on (#5464) when it has no group: a profile turns on every group, so a feature with a group is on under each profile too. */
+  profiles?: readonly SecurityProfile[];
 }
 
 /**
@@ -102,10 +117,18 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Promote verifies the release", byDefault: "off: `chant release verify` on demand", setting: "`chant release verify`", group: "verified-releases", codes: [] },
   // #5149: a cut with no green gate.
   { feature: "Cut refuses `release.green: \"none\"`", byDefault: "off: cuts with a warning and records `green: none`", setting: "`identity.gates.release`", group: "verified-releases", codes: [] },
+  // #5469: the audit branch can't be rewritten or deleted.
+  { feature: "Remote refuses a rewrite or deletion of `chant/lifecycle`", byDefault: "off: chant's own pushes are client-checked and a plain force push is not stopped", setting: "the `pre-receive` hook of `chant workspace ref-gate install`, or branch protection on the forge, which `chant release doctor` reads", group: "verified-releases", codes: [] },
   { feature: "SBOM on every target", byDefault: "off: a target with no SBOM source publishes without one", setting: "`sbom` on the target", group: "supply-chain", codes: ["security-sbom-disabled", "security-sbom-unsourced"] },
   { feature: "OIDC provenance", byDefault: "off: a plan field", setting: "`--require-provenance`", group: "supply-chain", codes: ["security-publish-no-provenance"] },
   { feature: "Cut needs a green gate", byDefault: "off: `release.green: \"none\"` cuts with a warning", setting: "`release.green` other than `none`", group: "supply-chain", codes: [] },
-  { feature: "Sigstore signatures and SLSA provenance on images and forge assets", byDefault: "off: nothing is signed", setting: "`release.signing`", group: "supply-chain", codes: [] },
+  { feature: "Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key", byDefault: "off: nothing is signed", setting: "`release.signing` (`kms` for a KMS key, `key` for a cosign key, `fulcio`, `rekor` and `trustRoot` for a private Sigstore instance)", group: "supply-chain", codes: [] },
+  // #5446: images and attached SBOMs scanned before the stage, with the vulnPolicy gate.
+  { feature: "Vulnerability scan before anything is pushed", byDefault: "off: a publish pushes without scanning", setting: "`release.scan`", group: "supply-chain", codes: [] },
+  // #5467: promote checks what the publish recorded.
+  { feature: "Promote checks the image signatures and the scan record", byDefault: "off: promote deploys a release whatever its publish recorded", setting: "none: the group turns it on", group: "supply-chain", codes: [] },
+  // #5457: release.images Dockerfiles start from bases pinned by digest.
+  { feature: "Release image bases pinned by digest", byDefault: "off: a `FROM` by tag builds from whatever the tag names that day", setting: "pin each `FROM` as `name:tag@sha256:<digest>`", group: "supply-chain", codes: ["security-image-base-unpinned"] },
   { feature: "SBOM and verify steps on components", byDefault: "off", setting: "a `generate-sbom` or `verify` step", group: "supply-chain", codes: ["security-component-no-sbom", "security-component-no-verify"] },
   { feature: "Signed green tags and runs", byDefault: "off: every tag counts", setting: "`ci.green.signedSince`", group: "who-ran-it", codes: ["security-signed-since-unset"] },
   { feature: "Trusted runner keys", byDefault: "off", setting: "`.chant/trust.json` with a runner role", group: "who-ran-it", codes: ["security-runner-untrusted"] },
@@ -114,6 +137,12 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Identified attribution", byDefault: "off: `any`", setting: "`identity.attribution: \"identified\"`", group: "review-rules", codes: ["security-attribution-any"] },
   { feature: "Signed approvals", byDefault: "off", setting: "`identity.gates.<gate>`", group: "review-rules", codes: ["security-gate-unsigned"] },
   { feature: "Apply jobs require a runner-start statement", byDefault: "off", setting: "`--require-runner-start`", group: "isolated-runners", codes: ["security-runner-start-no-key", "security-runner-start-no-role", "security-trust-unreadable"] },
+  // #5464: what a security profile adds beyond the groups.
+  { feature: "`chant lifecycle gc` keeps change sets and releases for at least the profile's days", byDefault: "off: `retention` may be any number of days", setting: "`retention` in `chant.workspace.json`", group: null, codes: ["profile-retention-short"], profiles: SECURITY_PROFILES },
+  { feature: "Release and apply gates take approvals from people", byDefault: "off: a gate may name any class or none", setting: "`identity.gates.<gate>` with `class: \"human\"`", group: null, codes: ["profile-gate-not-human"], profiles: SECURITY_PROFILES },
+  { feature: "Publish refuses a scanner database older than a bound", byDefault: "off: the scan reads whatever database it has", setting: "`release.scan.dbMaxAgeHours`", group: null, codes: ["profile-scan-off", "profile-scan-db-unbounded"], profiles: SECURITY_PROFILES },
+  { feature: "Signatures made in a crypto module the team names", byDefault: "off: the upstream cosign build signs", setting: "`release.signing.kms`, or `CHANT_COSIGN` in the release config", group: null, codes: ["profile-signing-off", "profile-signing-module"], profiles: SECURITY_PROFILES },
+  { feature: "ECDSA P-256 runner keys", byDefault: "off: Ed25519 and P-256 keys are both taken", setting: "`chant ci serve --setup-key --key-type ecdsa-p256`", group: null, codes: ["profile-runner-key-eddsa"], profiles: SECURITY_PROFILES },
   { feature: "Secrets file", byDefault: "off", setting: "`--secrets`", group: null, codes: [] },
   { feature: "Env allowlist and log redaction", byDefault: "on: `ci run`'s contract, a listed exception", setting: "`--pass-env`", group: null, codes: [] },
   // #4295: the plan job's steps never hold a forge token; the plan-note job posts. Part of the generated pipeline, so nothing turns it on.
@@ -124,6 +153,9 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
 
 /** The reference page's table of {@link SECURITY_FEATURES}, as markdown. */
 export function securityFeatureTable(): string {
-  const rows = SECURITY_FEATURES.map((f) => `| ${f.feature} | ${f.byDefault} | ${f.setting} | ${f.group ? `\`${f.group}\`` : "none"} | ${f.codes.map((c) => `\`${c}\``).join(", ") || "none"} |`);
-  return ["| Feature | Default | Turns it on alone | Group | Checked as |", "|---|---|---|---|---|", ...rows].join("\n");
+  const rows = SECURITY_FEATURES.map((f) => {
+    const on = f.group ? `\`${f.group}\`` : f.profiles?.length ? f.profiles.map((p) => `\`${p}\``).join(", ") : "none";
+    return `| ${f.feature} | ${f.byDefault} | ${f.setting} | ${on} | ${f.codes.map((c) => `\`${c}\``).join(", ") || "none"} |`;
+  });
+  return ["| Feature | Default | Turns it on alone | Group or profile | Checked as |", "|---|---|---|---|---|", ...rows].join("\n");
 }

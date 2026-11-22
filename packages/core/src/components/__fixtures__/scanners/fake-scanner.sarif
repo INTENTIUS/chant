@@ -1,0 +1,14 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "tool": { "driver": { "name": "fake-iac-scanner", "version": "1.0.0", "rules": [{ "id": "FAKE-001", "shortDescription": { "text": "Bucket allows public reads" } }] } },
+      "results": [
+        { "ruleId": "FAKE-001", "level": "error", "message": { "text": "Bucket allows public reads\nSet the ACL to private." }, "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "infra/bucket.tf" }, "region": { "startLine": 12 } } }] },
+        { "ruleId": "FAKE-002", "level": "warning", "message": { "text": "Logging is off" }, "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "infra/bucket.tf" }, "region": { "startLine": 3 } } }] },
+        { "ruleId": "FAKE-003", "level": "note", "message": { "text": "Tag missing" } }
+      ]
+    }
+  ]
+}

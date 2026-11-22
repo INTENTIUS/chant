@@ -286,3 +286,6 @@ export const COMMENT_ALLOW_FLOOR = "0.124.98";
 
 /** The first chant with `chant release changed`, the members to release at a commit with their dependency closure, and `release.legacyTags` in `chant.config.ts` (#5134). */
 export const RELEASE_CHANGED_FLOOR = "0.124.100";
+
+/** The first chant whose `productImageStages` takes `base` (#5445): `"debian"` as before, `"chainguard"` for `cgr.dev/chainguard/node:latest-dev` and `wolfi-base` pinned by digest in `IMAGE_PINS`, or `{ registry, node?, wolfiBase? }` for a Chainguard org's own registry, with packages from apk through `CI_IMAGE_PACKAGE_NAMES`, each at an exact version from `WOLFI_PACKAGE_PINS` or a product's own `apk:<name>=<version>` entry (a bare `apk:<name>` chant pins no version for is refused), a final user that is not root (`CI_IMAGE_CHAINGUARD_USER`, also in `CHANT_IMAGE_USER`), the base's family and reference in the OCI labels, and a `derivedImageDockerfile` that runs its steps as root and sets the image's user back after them. */
+export const CI_IMAGE_BASE_FLOOR = NEXT_RELEASE;

@@ -16,7 +16,7 @@ import type { SqlDialect } from "../dialects";
 export interface UndeclarableObject {
   /** The coverage table's kind: `aggregate`, `composite type`. */
   kind: string;
-  /** The Postgres schema or ClickHouse database it is in; absent for a database-wide or server-wide object. */
+  /** The Postgres schema or ClickHouse or MySQL database it is in; absent for a database-wide or server-wide object. */
   schema?: string;
   /** Its name, with what identifies it besides: an aggregate's argument types, a rule's table, a cast's types. */
   name: string;
@@ -39,7 +39,7 @@ export class UndeclarableObjectsError extends Error {
     const n = objects.length;
     super(
       [
-        `the ${dialect === "postgres" ? "Postgres" : "ClickHouse"} server has ${n === 1 ? "an object" : `${n} objects`} of a kind chant cannot declare, so the import would leave ${n === 1 ? "it" : "them"} out:`,
+        `the ${dialect === "postgres" ? "Postgres" : dialect === "mysql" ? "MySQL" : "ClickHouse"} server has ${n === 1 ? "an object" : `${n} objects`} of a kind chant cannot declare, so the import would leave ${n === 1 ? "it" : "them"} out:`,
         ...objects.map((o) => `  - ${describeUndeclarable(o)}`),
         "Why, by kind:",
         ...kinds.map((k) => `  - ${k}: ${kindRow(dialect, k).reason ?? "not declared"}`),

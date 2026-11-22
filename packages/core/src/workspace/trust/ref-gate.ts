@@ -63,7 +63,7 @@ export const REF_GATE_STATUS = "chant/ref-gate";
 const ZERO = /^0+$/;
 
 /** Why the gate cannot decide at all. Each is in `reason-codes.ts` and `ref-gate.schema.json`. */
-export const REF_GATE_ERROR_CODES = ["not-a-git-repository", "revision-unknown", "trust-policy-unreadable", "ref-update-invalid"] as const satisfies readonly ReasonCode[];
+export const REF_GATE_ERROR_CODES = ["not-a-git-repository", "revision-unknown", "trust-policy-unreadable", "ref-update-invalid", "lifecycle-ref-deleted", "lifecycle-ref-rewritten"] as const satisfies readonly ReasonCode[];
 export type RefGateErrorCode = (typeof REF_GATE_ERROR_CODES)[number];
 
 /** Why a required check has no current evidence. The envelope codes are those of `evidence verify`. */
@@ -363,11 +363,35 @@ export interface RefGateInput {
   now?: string;
 }
 
+/**
+ * Why an update of `chant/lifecycle` is refused whatever `refs` lists
+ * (#5469), or null. The branch holds the audit trail, and nothing in chant
+ * deletes it or rewrites it: `lifecycle gc` prunes with a new commit. So a
+ * deletion is refused, and so is an update whose old tip is not an ancestor
+ * of the new one, which a force push makes.
+ */
+export function lifecycleRefRefusal(repo: string, update: RefUpdate): { code: "lifecycle-ref-deleted" | "lifecycle-ref-rewritten"; message: string } | null {
+  if (update.ref !== LIFECYCLE_REF) return null;
+  if (update.new === null) {
+    return { code: "lifecycle-ref-deleted", message: `${LIFECYCLE_REF} holds the audit trail and is never deleted; chant lifecycle gc prunes it with a new commit` };
+  }
+  if (update.old === null) return null;
+  const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", update.old, update.new], { cwd: repo, encoding: "utf-8" });
+  if (ancestor.status === 0) return null;
+  return {
+    code: "lifecycle-ref-rewritten",
+    message: `${LIFECYCLE_REF} is append-only, and ${update.old.slice(0, 8)} is not an ancestor of ${update.new.slice(0, 8)}, so this update rewrites its history; fetch it, add the new lines on top of its tip and push again`,
+  };
+}
+
 /** Decide one ref update against the policy at base. Never throws for a policy or an envelope it can't read: it refuses. */
 export function decideRefUpdate(input: RefGateInput): RefDecision {
   const { repo, update } = input;
   const head = { ref: update.ref, old: update.old, new: update.new, base: input.base };
   const refuse = (code: RefGateErrorCode, message: string): RefDecision => ({ ...head, decision: "refuse", status: null, checks: [], error: { code, message } });
+  // #5469: chant's own branch is protected whatever the policy lists, and with no policy at all.
+  const protectedRef = lifecycleRefRefusal(repo, update);
+  if (protectedRef) return refuse(protectedRef.code, protectedRef.message);
   if (input.base === null) return { ...head, decision: "admit", status: null, checks: [] };
   const policy = policyAtBase(repo, { commit: input.base, from: "flag" });
   if (policy.problems.length > 0) return refuse("trust-policy-unreadable", `the policy at base ${input.base.slice(0, 8)} cannot be read, so the gate refuses every update: ${policy.problems.join("; ")}`);

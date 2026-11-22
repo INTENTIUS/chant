@@ -84,6 +84,19 @@ On its next poll `ci serve` runs the phases on the branch's head. When they pass
 
 A new push to the same land branch is tried on the next poll. The same head is never tried twice.
 
+## Release from the host
+
+The same server can publish what you release. With `--release` it publishes each new release tag in a worktree of the tag, with the steps the publish job of [`chant release workflow`](/chant/cli/release/workflow/) holds, so a release cut on your machine with `chant release cut <label> --yes` is published by the host once the tag reaches the remote:
+
+```bash
+chant ci serve --forge git --env prod --land --build-command 'npm ci && npx chant run check' \
+  --release --secrets /etc/chant/release.env
+```
+
+To have the host cut the release as well, push a request from any clone once the commit is green: `chant ci run --at <sha> --release --label <label>`. The host runs the release workflow's gate and cut for it, then publishes the tag the cut pushed. Two hosts serving one repository take turns on a lease and publish each release once.
+
+The host signs with a key, since it has no CI OIDC token: set `release.signing.kms` or `release.signing.key`, and give the key's variables and the registry credentials in the secrets file. See [Releases](/chant/cli/ci/#releases) in the `ci serve` reference for the steps, the tools and what the record names.
+
 ## Run the phases on your machine
 
 Without a server, run each pre-merge phase's Op before you push to trunk:

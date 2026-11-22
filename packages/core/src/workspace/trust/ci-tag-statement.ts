@@ -11,7 +11,7 @@
  *
  * The statement reuses what runner evidence (#2553, ws-069) and the agent-run
  * statement (#3192, ws-090) already use: an in-toto Statement v1 in a DSSE
- * envelope (./dsse.ts), signed with an Ed25519 key that `.chant/trust.json`
+ * envelope (./dsse.ts), signed with an Ed25519 or ECDSA P-256 key that `.chant/trust.json`
  * at base lists under `runners`. The key's principal must also hold the
  * `runner` role there, since a tag says CI ran. A key the signers file lists
  * is never a runner key (./policy.ts).

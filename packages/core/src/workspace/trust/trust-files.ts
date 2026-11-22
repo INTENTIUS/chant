@@ -177,7 +177,8 @@ export function renderAllowedSigners(signers: Signer[]): string {
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const FULL_COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-const SSH_ED25519 = /^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$/;
+/** A runner or local evidence key line (#5470): `ssh-ed25519` or `ecdsa-sha2-nistp256`, base64, no comment. */
+export const RUNNER_KEY_LINE = /^(ssh-ed25519|ecdsa-sha2-nistp256) [A-Za-z0-9+/]+={0,2}$/;
 const SSH_KEY = /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,2}$/;
 
 /** A repository-relative path: no `..`, not absolute, `/` separators. */
@@ -222,9 +223,9 @@ export function trustConfigProblems(raw: unknown): string[] {
     "runners",
     optional(raw.runners, (a) =>
       Array.isArray(a) &&
-      a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "runner" || e.class === "service") && typeof e.key === "string" && SSH_ED25519.test(e.key)),
+      a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "runner" || e.class === "service") && typeof e.key === "string" && RUNNER_KEY_LINE.test(e.key)),
     ),
-    "runner keys: a principal, a class and an ssh-ed25519 key",
+    "runner keys: a principal, a class and an ssh-ed25519 or ecdsa-sha2-nistp256 key",
   );
   const httpUrl = (v: unknown): boolean => typeof v === "string" && /^https?:\/\/[^\s]+$/.test(v);
   check(
@@ -294,7 +295,7 @@ export function trustConfigProblems(raw: unknown): string[] {
     "local",
     optional(raw.local, (l) =>
       isObject(l) && only(l, ["keys", "checks"]) &&
-      optional(l.keys, (a) => Array.isArray(a) && a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "person" || e.class === "agent") && typeof e.key === "string" && SSH_ED25519.test(e.key))) &&
+      optional(l.keys, (a) => Array.isArray(a) && a.every((e) => isObject(e) && only(e, ["principal", "class", "key"]) && nonEmpty(e.principal) && (e.class === "person" || e.class === "agent") && typeof e.key === "string" && RUNNER_KEY_LINE.test(e.key))) &&
       optional(l.checks, (a) =>
         Array.isArray(a) &&
         a.every(

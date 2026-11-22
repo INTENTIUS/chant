@@ -1289,3 +1289,72 @@ describe("the dispatch label input's description matches what the cut accepts", 
     });
   }
 });
+
+describe("the scan before the stage installs its pinned tools (#5446)", () => {
+  const pinned = (text: string, tool: "grype" | "syft") => {
+    const p = TOOL_PINS[tool].platforms["linux/amd64"]!;
+    return text.includes(p.url) && text.includes(p.sha256);
+  };
+
+  for (const forge of FORGES) {
+    for (const trigger of ["tag", "dispatch"] as const) {
+      test(`${forge}, ${trigger}: grype and syft by SHA-256 in the jobs that run chant release, with no release.workflow entry`, () => {
+        const text = renderReleaseWorkflow({ forge, groups: new Set(["supply-chain"]), scan: true, pipeline: { trigger } });
+        expect(pinned(text, "grype")).toBe(true);
+        expect(pinned(text, "syft")).toBe(true);
+        expect(text).toContain(forge === "gitlab" ? "export CHANT_GRYPE=/tmp/grype/grype" : "CHANT_GRYPE=$RUNNER_TEMP/grype/grype");
+        expect(text).toContain(forge === "gitlab" ? "export CHANT_SYFT=/tmp/syft/syft" : "CHANT_SYFT=$RUNNER_TEMP/syft/syft");
+        // Without the scan, nothing is installed.
+        expect(renderReleaseWorkflow({ forge, groups: new Set(["supply-chain"]), pipeline: { trigger } })).not.toContain("grype");
+      });
+    }
+
+    test(`${forge}: a train's jobs install them too`, () => {
+      const text = renderReleaseWorkflow({ forge, groups: new Set(["supply-chain"]), scan: true, pipeline: { trigger: "dispatch" }, train: { env: "npm" } });
+      expect(pinned(text, "grype")).toBe(true);
+      expect(pinned(text, "syft")).toBe(true);
+    });
+  }
+
+  test("a config that brings its own scanner keeps it", () => {
+    const text = renderReleaseWorkflow({ forge: "github", groups: new Set(), scan: true, pipeline: { env: { CHANT_GRYPE: "/opt/grype" } } });
+    expect(pinned(text, "grype")).toBe(false);
+    expect(pinned(text, "syft")).toBe(true);
+  });
+});
+
+describe("the pull login for release.images (#5457)", () => {
+  const cgr = { registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" };
+  const secretRef = (v: string) => `"\${{ secrets.${v} }}"`;
+
+  for (const forge of FORGES) {
+    for (const trigger of ["tag", "dispatch"] as const) {
+      test(`${forge}, ${trigger}: logs in to cgr.dev with a static username and password before the build`, () => {
+        const text = renderReleaseWorkflow({ forge, groups: new Set(), images: true, pullRegistries: [cgr], pipeline: { trigger } });
+        expect(text).toContain("docker login cgr.dev");
+        expect(text).toContain("--password-stdin");
+        if (forge === "gitlab") {
+          expect(text).not.toContain("secrets.CGR");
+        } else {
+          expect(text).toContain(`CGR_USERNAME: ${secretRef("CGR_USERNAME")}`);
+          expect(text).toContain(`CGR_PASSWORD: ${secretRef("CGR_PASSWORD")}`);
+        }
+        // With no pull registry there is no login.
+        expect(renderReleaseWorkflow({ forge, groups: new Set(), images: true, pipeline: { trigger } })).not.toContain("docker login");
+      });
+    }
+
+    test(`${forge}: a train's jobs log in too`, () => {
+      const text = renderReleaseWorkflow({ forge, groups: new Set(), pullRegistries: [cgr], pipeline: { trigger: "dispatch" }, train: { env: "npm", images: true } });
+      expect(text).toContain("docker login cgr.dev");
+      if (forge !== "gitlab") expect(text).toContain(`CGR_PASSWORD: ${secretRef("CGR_PASSWORD")}`);
+    });
+  }
+
+  test("release.workflow.env that sets a variable keeps it", () => {
+    const text = renderReleaseWorkflow({ forge: "github", groups: new Set(), pullRegistries: [cgr], pipeline: { env: { CGR_PASSWORD: "${{ secrets.CHAINGUARD_TOKEN }}" } } });
+    expect(text).toContain('CGR_PASSWORD: "${{ secrets.CHAINGUARD_TOKEN }}"');
+    expect(text).not.toContain(`CGR_PASSWORD: ${secretRef("CGR_PASSWORD")}`);
+    expect(text).toContain(`CGR_USERNAME: ${secretRef("CGR_USERNAME")}`);
+  });
+});

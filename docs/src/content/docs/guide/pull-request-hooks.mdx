@@ -74,6 +74,27 @@ The check job runs `chant ci check --base <rev> [<target>...]`, or a product cal
 
 A check hook's environment holds no forge token and no cloud credentials, and the OIDC request variables are dropped as well (`checkHookEnv`). It reads the change and nothing else. Its environment adds `CHANT_HOOK=check`, `CHANT_CHECK=1`, `CHANT_RUNS` and `CHANT_HOOKS_BASE`. The report is `check-hooks.json` under `--output` (default `.chant/check`). Each row names a hook call and its target and gives the call's result and exit code. The product copies the rows into its own check report. The command exits 1 when a hook failed and 0 when every hook passed or none is declared.
 
+### Scanner presets
+
+`checkHookPreset` from `@intentius/chant/components/check-hooks` returns the `ci.hooks.check` entry for a scanner a team already runs: `sonar`, `mend` or `wiz`. A product's `init` hands it to `writeCiHook`, and the entry can be pasted into the declaration as it is:
+
+```ts
+import { checkHookPreset, writeCiHook } from "@intentius/chant/components/check-hooks";
+
+writeCiHook(root, "check", checkHookPreset("wiz"));
+writeCiHook(root, "check", checkHookPreset("mend", { args: ["dep", "--scope", "acme//api"] }));
+```
+
+An entry is `sh -c <script> <name> <arguments>`. The script refuses to run the tool, and exits 78 so the check fails, when a credential is unset. The job installs the vendor's CLI itself and sets the credentials from its secrets. The credentials pass `checkHookEnv`, which drops only the forge token, the OIDC request variables and cloud credentials.
+
+| Preset | Runs | Credentials | Writes |
+|---|---|---|---|
+| `sonar` | `sonar-scanner -Dsonar.qualitygate.wait=true`, so the hook fails when the quality gate does | `SONAR_TOKEN`; `SONAR_HOST_URL` for a SonarQube server | `sonar.status.json` with the gate's result and the dashboard link |
+| `mend` | `mend dep`, or the arguments given | `MEND_EMAIL`, `MEND_USER_KEY`; `MEND_URL` for a regional server | `mend.status.json` with the CLI's result |
+| `wiz` | `wizcli iac scan --path .`, after `wizcli auth` | `WIZ_CLIENT_ID`, `WIZ_CLIENT_SECRET` | `wiz-iac.sarif` |
+
+Any check hook can write findings the same way. The runner gives each hook `CHANT_FINDINGS`, a directory under the report directory (`.chant/check/findings`). After the hooks ran it reads every `*.sarif` file there and every `*.status.json` file, which holds `{ "tool", "status": "passed" | "failed", "url"?, "note"? }` for a tool that writes no SARIF. `check-hooks.json` carries a summary of each as `findings`, and the check report's markdown (`--summary`) lists them under Findings: the counts by level, the first few findings with their location, and the link to the tool's own report when there is one. A file in the directory that is neither form is named as unread, not counted as clean. A declaration that uses the presets sets `minReader` to chant `0.124.103` or newer.
+
 A product's `init` adds a hook with `writeCiHook(root, "check", hook)`, which writes `ci.hooks.check` in the declaration and keeps the file's formatting, replacing a hook of the same name so that `init` can run again. A declaration that uses `check` sets `minReader` to chant `0.124.55` or newer.
 
 ## What a hook sees

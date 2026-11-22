@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `plan-stale`, `run-event`, `delivery-metrics`, `merge-record`, `search` and `capabilities`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `state`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set`, `plan-summary`, `pr-report`, `run-statement`, `ci-last-green`, `ci-list`, `ci-run-index`, `releases`, `change-set-show`, `plan-stale`, `run-event`, `delivery-metrics`, `merge-record`, `search` and `capabilities`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -59,6 +59,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant plan stale`](/chant/cli/plan/#plan-stale) | `--json`, floor chant 0.124.63 | `https://intentius.io/chant/schemas/workspace/plan-stale/v1/plan-stale.schema.json` |
 | [a run's event stream](#run-events), one event per line | as each event happens | `https://intentius.io/chant/schemas/workspace/run-event/v1/run-event.schema.json` |
 | [`chant workspace metrics`](/chant/cli/workspace-metrics/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/delivery-metrics/v1/delivery-metrics.schema.json` |
+| [`chant workspace state`](/chant/cli/workspace-state/#output) | `--json`, floor `WORKSPACE_STATE_LOCATIONS_FLOOR` | `https://intentius.io/chant/schemas/workspace/state/v1/state.schema.json` |
 | [`chant workspace search`](/chant/cli/workspace-search/#output), and [`chant search`](/chant/cli/search/#--json) for one project | `--json`, floor chant 0.124.46 | `https://intentius.io/chant/schemas/workspace/search/v1/search.schema.json` |
 | [`chant workspace search --capabilities`](/chant/reference/capabilities/#the-capabilities-document), and `chant search --capabilities` for one project | `--json`, floor chant 0.124.46 | `https://intentius.io/chant/schemas/workspace/capabilities/v1/capabilities.schema.json` |
 | [`chant workspace drift --member <name>`](/chant/reference/drift-record/#reading-a-member-chant-workspace-drift), the drift document with `contract` beside `drift: "v1"`, or with `--stream` its NDJSON stream | always | `https://intentius.io/chant/schemas/workspace/drift/v1/drift.schema.json` |
@@ -364,6 +365,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `security-publish-no-provenance` | finding, `check` | `WSP162`: under supply-chain, a pipeline file runs release publish without --require-provenance. |
 | `security-component-no-sbom` | finding, `check` | `WSP162`: under supply-chain, a member's components have no generate-sbom step. |
 | `security-component-no-verify` | finding, `check` | `WSP162`: under supply-chain, a member's components have no verify step. |
+| `security-image-base-unpinned` | finding, `check` | `WSP162`: under supply-chain, a Dockerfile a member's release.images names starts FROM a base not pinned by digest. |
 | `security-signed-since-unset` | finding, `check` | `WSP163`: under who-ran-it, ci.green sets no signedSince, or there is no ci.green block. |
 | `security-runner-untrusted` | finding, `check` | `WSP163`: under who-ran-it, .chant/trust.json lists no runner key. |
 | `security-tick-no-key` | finding, `check` | `WSP163`: under who-ran-it, a pipeline file runs ci tick with no runner key. |
@@ -373,6 +375,13 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `security-runner-start-no-key` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
 | `security-runner-start-no-role` | finding, `check` | `WSP165`: under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
 | `security-trust-unreadable` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
+| `profile-retention-short` | finding, `check` | `WSP166` or `WSP167`: under a security profile, `retention.changeSets.days` or `retention.releases.days` is unset or below the profile's days. |
+| `profile-gate-not-human` | finding, `check` | `WSP166` or `WSP167`: under a security profile, the release gate or a gate an apply job names is missing from `identity.gates`, names no class, names a class an agent, runner or service principal holds, or sets `agentPassesAlone`. |
+| `profile-scan-off` | finding, `check` | `WSP166` or `WSP167`: under a security profile, a `chant.config.ts` sets `release.scan: false`. |
+| `profile-scan-db-unbounded` | finding, `check` | `WSP166` or `WSP167`: under a security profile, `release.scan.db` is set with no `dbMaxAgeHours`, or `dbMaxAgeHours` is above the profile's hours. |
+| `profile-signing-off` | finding, `check` | `WSP166` or `WSP167`: under a security profile, a `chant.config.ts` sets `release.signing: false`. |
+| `profile-signing-module` | finding, `check` | `WSP166` or `WSP167`: under a security profile, a `chant.config.ts` signs images or forge assets keylessly or with a cosign key and names no `CHANT_COSIGN` build. |
+| `profile-runner-key-eddsa` | finding, `check` | `WSP166` or `WSP167`: under a security profile, `.chant/trust.json` lists an Ed25519 key under `runners` or `local.keys`. |
 | `ci-workflow-green-undeclared` | finding, `check` | `WSP151`: under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut. |
 | `ci-workflow-no-pre-merge` | finding, `check` | `WSP151`: under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves. |
 | `ci-workflow-apply-in-green` | finding, `check` | `WSP151`: under ci.workflow, a phase in ci.green.require matches an apply job, which would wait on its own verdict. |
@@ -406,10 +415,12 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `evidence-payload-type` | error, `evidence verify` | The envelope's payload type is not `application/vnd.in-toto+json`. |
 | `evidence-statement-invalid` | error, `evidence verify` | The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define. |
 | `evidence-runner-mismatch` | error, `evidence verify` | The statement names a runner other than the one whose key signed it. |
-| `runner-key-invalid` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is not an Ed25519 private key in PEM. For `trust runner add`, it is not an `ssh-ed25519` public key or an Ed25519 key in PEM. |
+| `runner-key-invalid` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is not an Ed25519 or ECDSA P-256 private key in PEM. For `trust runner add`, it is not an `ssh-ed25519` or `ecdsa-sha2-nistp256` public key or an Ed25519 or P-256 key in PEM. |
 | `runner-key-is-signer` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is a person's key in the signers file, or `trust runner add` names a signer. Evidence and run statements are signed by a service or CI identity. |
 | `runner-key-unlisted` | error, `evidence sign` and `runs sign` | The policy at base lists no runner with the key. |
 | `ref-update-invalid` | error, `ref-gate pre-receive` and `pre-push` | The hook's standard input is not the lines git hands a pre-receive or pre-push hook. |
+| `lifecycle-ref-deleted` | error, `ref-gate pre-receive` and `pre-push` | The update deletes `chant/lifecycle`, which holds the audit trail and is never deleted; `chant lifecycle gc` prunes it with a new commit. |
+| `lifecycle-ref-rewritten` | error, `ref-gate pre-receive` and `pre-push` | The update moves `chant/lifecycle` to a commit that does not descend from its old tip, which a force push does; the branch is append-only. |
 | `ref-evidence-missing` | check verdict, `ref-gate` | No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit ([#4867](https://github.com/INTENTIUS/chant/issues/4867)). |
 | `ref-evidence-stale` | check verdict, `ref-gate` | Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
 | `bump-invalid` | error, `release-changed` | `--bump-member` is not `<member>=major\|minor\|patch`, or names a member the declaration does not have. |

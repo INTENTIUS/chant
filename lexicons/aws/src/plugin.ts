@@ -40,6 +40,7 @@ import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
 import { lastMemberReport, setLastMemberReport } from "./member-report";
+import { awsStateLocations } from "./state-locations";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
 import { awsCompletions } from "./lsp/completions";
@@ -76,14 +77,24 @@ export const awsPlugin: LexiconPlugin = {
     setLastMemberReport(undefined);
     const member = (ctx.config as { aws?: { member?: { kind?: "cloudformation" | "cdk"; dir: string; label?: string } } }).aws?.member;
     if (!member) return { entities: new Map() };
-    const { readCloudFormationMember } = await import("./workspace-member");
-    const read = readCloudFormationMember({ member });
+    const { readCloudFormationMember, readDeployedStacks } = await import("./workspace-member");
+    // A member that names deployed stacks (#5455) reads them first; the
+    // templates in its directory and the deployed ones draw into one graph.
+    let named: Awaited<ReturnType<typeof readDeployedStacks>>;
+    try {
+      named = await readDeployedStacks(member);
+    } catch (e) {
+      return { entities: new Map(), warnings: [`cloudformation member "${member.label ?? member.dir}" was not read: ${(e as Error).message}`] };
+    }
+    const read = readCloudFormationMember({ member, ...(named ? { deployed: named.deployed, stackReports: named.reports } : {}) });
     setLastMemberReport(read.report);
-    return { entities: read.entities, warnings: read.warnings };
+    return { entities: read.entities, warnings: [...(named?.warnings ?? []), ...read.warnings] };
   },
   graphMeta() {
     const report = lastMemberReport();
-    return report ? { awsMember: report } : undefined;
+    if (!report) return undefined;
+    // Where the member's state lives (#5456), for `chant workspace state`.
+    return { awsMember: report, stateLocations: awsStateLocations(report) };
   },
   // The thin read's marker channel is the STACK's own tags (#1998), read off
   // the DescribeStacks call it already makes for the outputs.
@@ -812,6 +823,15 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     if (ccNotes.length > 0) notes = [...(notes ?? []), ...ccNotes];
     const withProperties = stampProviderDefaults(stampRegion(cc.resources, options.region));
 
+    // The tasks of each declared ECS service, as runtime nodes it owns (#5448).
+    // A read that fails leaves a note and no node, never a hole in what the stack answered.
+    const { observeEcsTasks } = await import("./ecs-tasks");
+    const serviceRefs = Object.entries(withProperties)
+      .filter(([, m]) => m.type === "AWS::ECS::Service" && m.physicalId?.startsWith("arn:"))
+      .map(([entity, m]) => ({ entity, arn: m.physicalId! }));
+    const ecsTasks = serviceRefs.length > 0 ? await observeEcsTasks(serviceRefs, { client }) : { resources: {}, notes: [] };
+    if (ecsTasks.notes.length > 0) notes = [...(notes ?? []), ...ecsTasks.notes];
+
     // The own-property read is still a CLI shell-out while the stack reads are
     // not (#1206), so the two halves can now fail independently. When the
     // enrichment could not run at all, the resources it would have described are
@@ -839,7 +859,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         };
       }
       return observation(
-        { ...described, ...identity.resources, ...receiptObs.resources },
+        { ...described, ...ecsTasks.resources, ...identity.resources, ...receiptObs.resources },
         { ...holes, ...receiptObs.unobserved },
         identity.queried,
         notes,
@@ -851,7 +871,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole — unless the identity fallback saw it live (#1647).
     return observation(
-      { ...withProperties, ...identity.resources, ...receiptObs.resources },
+      { ...withProperties, ...ecsTasks.resources, ...identity.resources, ...receiptObs.resources },
       receiptHoles,
       identity.queried,
       notes,

@@ -206,6 +206,84 @@ chant-release-publish:
     - git fetch origin chant/lifecycle:chant/lifecycle
     - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
 
+# ==== signing with a KMS key ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - curl -fsSL -o "/tmp/cosign" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign" | sha256sum -c - && chmod +x "/tmp/cosign" && export CHANT_COSIGN=/tmp/cosign
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --require-provenance --yes
+
+# ==== signing keyless through a private Fulcio ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - curl -fsSL -o "/tmp/cosign" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign" | sha256sum -c - && chmod +x "/tmp/cosign" && export CHANT_COSIGN=/tmp/cosign
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== signing keyless with public Sigstore ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - curl -fsSL -o "/tmp/cosign" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign" | sha256sum -c - && chmod +x "/tmp/cosign" && export CHANT_COSIGN=/tmp/cosign
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== scan ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - mkdir -p "/tmp/grype" && curl -fsSL -o "/tmp/grype/grype.tar.gz" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo "bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz" | sha256sum -c - && tar -xzf "/tmp/grype/grype.tar.gz" -C "/tmp/grype" grype && export CHANT_GRYPE=/tmp/grype/grype
+    - mkdir -p "/tmp/syft" && curl -fsSL -o "/tmp/syft/syft.tar.gz" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo "1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  /tmp/syft/syft.tar.gz" | sha256sum -c - && tar -xzf "/tmp/syft/syft.tar.gz" -C "/tmp/syft" syft && export CHANT_SYFT=/tmp/syft/syft
+    - npm run build
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
+# ==== pull login ====
+chant-release-publish:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^release\//
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - npm ci
+    - printf '%s' "$CGR_PASSWORD" | docker login cgr.dev --username "$CGR_USERNAME" --password-stdin
+    - git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+    - git fetch origin chant/lifecycle:chant/lifecycle
+    - npx chant release images "${CI_COMMIT_TAG#release/}" -o "/tmp/chant-release-digests.json"
+    - export CHANT_RELEASE_DIGESTS="/tmp/chant-release-digests.json"
+    - npm run build
+    - npx chant release publish "${CI_COMMIT_TAG#release/}" --yes
+
 # ==== lane ====
 chant-release-publish:
   rules:

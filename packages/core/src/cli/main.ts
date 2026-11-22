@@ -460,14 +460,15 @@ CI:
                         --build-command runs <line> once per ci/build/<sha>
                         tag, in a fresh worktree of the commit, with
                         CHANT_BUILD_COMMIT and CHANT_BUILD_PHASES set
-  ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
-                        Make the host's runner key (Ed25519, mode 0600) in the
-                        state directory when there is none and print its public
+  ci serve|run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+                        Make the host's runner key (Ed25519, or ECDSA P-256
+                        with --key-type ecdsa-p256; mode 0600) in the state
+                        directory when there is none and print its public
                         key. --trust commits its runner entry on a branch of its
                         own and pushes it for review; the target branch is never
                         written
   ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge
-              [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
+              [--forge github|gitlab|forgejo] [--security <group|profile>]... [--yes]
                         Set the workspace up for a prescribed delivery workflow:
                         print what it would write as a diff, then write it on
                         --yes or a yes at the prompt and run the generators. A
@@ -1044,7 +1045,7 @@ Workspace (level 1, #2524):
                         threshold of the old one. A commit an agent run made
                         is attested by the run's signed statement; with
                         attested-runs, only those commits must be
-  workspace trust runner add <principal> --key <ssh-ed25519 line or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
+  workspace trust runner add <principal> --key <ssh-ed25519 or ecdsa-sha2-nistp256 line, or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
   workspace trust runner remove <principal> [--by <principal>] [--expect <digest>] [--dry-run]
                         List a runner's key under runners in .chant/trust.json,
                         granting a runner the runner role, or take both away,
@@ -1209,6 +1210,12 @@ Workspace (level 1, #2524):
                         member is searched alone, and a member that can't be
                         searched has a reason code. --at <rev> is the git
                         revision; --snapshot <ref> replays a recorded snapshot
+  workspace state [dir] [--member <name>] [--env <name>] [--at <rev>] [--json]
+                        Where each member's state lives, per environment: the
+                        substrate, backend, location, lock and whether the
+                        read could reach it. Each member's lexicon reads its
+                        own configuration, each member runs under its own
+                        chant, and a value that carries a secret is masked
   workspace graph --composites [--at <rev>] [--member <name>] [-o <file>]
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
@@ -2061,6 +2068,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   // #4049: check a release's signature offline.
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
+  // #5466: scan a published or deployed release again and record it.
+  { name: "release scan", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseScan(ctx) },
+  // #5465: the records of a release or a period, with an index by control id, and the check of such an export.
+  { name: "release evidence", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release-evidence")).runReleaseEvidence(ctx) },
   // #4657: build a release's images again in its publish job, checked against the digests it records.
   { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
   { name: "release artifacts", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseArtifacts(ctx) },
@@ -2195,6 +2206,8 @@ export const commandRegistry: CommandDef[] = [
   // #2554 — a release train: one release of every chant member, pinned in the workspace ledger.
   { name: "workspace train", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/release-train")).runWorkspaceTrain(ctx) },
   { name: "workspace drift", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/drift-cli")).runWorkspaceDrift(ctx) },
+  // #5456 — where each member's state lives, per environment, from what each member's lexicon publishes on its graph.
+  { name: "workspace state", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/state-cli")).runWorkspaceState(ctx) },
   { name: "workspace search", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/search-cli")).runWorkspaceSearch(ctx) },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },

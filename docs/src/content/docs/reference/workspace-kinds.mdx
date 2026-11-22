@@ -326,6 +326,8 @@ The chant repo pins both by path and declares `examples/terraform-carve-out/terr
 
 ## Forge governance from the wardens
 
+[Forges, CI systems and wardens](/chant/concepts/forges-ci-and-wardens/) says what a warden is and why only forges have one.
+
 The three wardens, [github-warden](https://github.com/INTENTIUS/github-warden), [gitlab-warden](https://github.com/INTENTIUS/gitlab-warden) and [forgejo-warden](https://github.com/INTENTIUS/forgejo-warden), each ship a `forge-governance` kind as a data-only kinds file ([#3180](https://github.com/INTENTIUS/chant/issues/3180)). A repo that holds a warden policy declares the policy's directory as a member of that kind, so the forge state the warden keeps appears in `chant workspace ls` and `chant workspace graph` with the rest of the estate. It needs no new field: the kind uses a probe, `outputs` and a [`memberFile`](#a-members-own-file), and a workspace pins the one warden whose forge it governs.
 
 | Warden | Probe and member file | Outputs |
@@ -504,7 +506,7 @@ Eight kinds cover the files a platform repository holds besides Terraform ([#317
 | `flux-kustomization` | `@intentius/chant-lexicon-k8s` | 350 | a YAML file with `apiVersion: kustomize.toolkit.fluxcd.io/*` and `kind: Kustomization`. kustomize's own `kustomization.yaml` uses another apiVersion and isn't claimed |
 | `kustomize` | `@intentius/chant-lexicon-k8s` | 340 | `kustomization.yaml`, `kustomization.yml` or `Kustomization` |
 | `helm-chart` | `@intentius/chant-lexicon-helm` | 330 | `Chart.yaml`, which the kind also checks (`apiVersion`, `name`, `version`) |
-| `cloudformation` | `@intentius/chant-lexicon-aws` | 320 | a `.yaml`, `.yml`, `.json` or `.template` file with `AWSTemplateFormatVersion` or `Resources` at its top. YAML short-form tags such as `!Ref` are allowed |
+| `cloudformation` | `@intentius/chant-lexicon-aws` | 320 | a `.yaml`, `.yml`, `.json` or `.template` file with `AWSTemplateFormatVersion` or `Resources` at its top, or a `cloudformation-stacks.json` that names deployed stacks. YAML short-form tags such as `!Ref` are allowed |
 | `cdk` | `@intentius/chant-lexicon-aws` | 315 | `cdk.json`, which the kind also checks (`app`) |
 | `pulumi` | `@intentius/chant-lexicon-pulumi` | 310 | `Pulumi.yaml`, which the kind also checks (`name`, `runtime`). The kind was in `@intentius/chant-lexicon-terraform` until [#4453](https://github.com/INTENTIUS/chant/issues/4453); a workspace that reads Pulumi members pins the pulumi lexicon |
 | `manifests` | `@intentius/chant-lexicon-k8s` | 305 | a YAML file with an `apiVersion` and a `kind`, whatever their values. Every kind above outranks it, so a directory with a `kustomization.yaml`, a `Chart.yaml` or an Argo CD document goes to that kind |
@@ -518,13 +520,30 @@ Eight kinds cover the files a platform repository holds besides Terraform ([#317
 | `argo-app` | an `Application`, `ApplicationSet` or `AppProject` per document, as a node, and an Argo CD cluster Secret cut down to its `name` and `server`; with `chart` sources, the [chart and values nodes](/chant/cli/workspace-graph/#helm-charts-and-values-files) they name | nothing; the manifests are read as data |
 | `flux-kustomization` | a Flux `Kustomization` per document, as a node | nothing |
 | `manifests` | a node per document with an `apiVersion` and a `kind`, including custom resources the k8s lexicon has no class for, with its `spec` at `--detail 3`. A file that does not parse, or holds `{{ ... }}` template syntax, is named in the member's warnings and the other files are still read. A directory that a `kustomization.yaml` in the workspace lists in `resources` is left to the kustomize member (`coveredBy` on `meta.k8sMember`), so its objects are not drawn twice | nothing |
-| `cloudformation` | a node per resource; an edge per `Ref`, `Fn::GetAtt`, `Fn::Sub` reference and `DependsOn` between resources of the template | nothing |
+| `cloudformation` | a node per resource; an edge per `Ref`, `Fn::GetAtt`, `Fn::Sub` reference and `DependsOn` between resources of the template. With a `cloudformation-stacks.json`, the same for each deployed stack it names, as [below](#deployed-cloudformation-stacks) | nothing for a template file. Deployed stacks need AWS credentials and a region |
 | `kustomize` | the objects `kustomize build` renders, as nodes; with `helmCharts`, the kustomization, its chart and its values files, read as data. The charts render only with `CHANT_K8S_ENABLE_HELM=1`, and a chart missing from the chart home is pulled only with `CHANT_K8S_FETCH_CHARTS=1` (network); otherwise the member says `rendered: false` and why | `kustomize`, or `kubectl`, for the rendered objects; `helm` for charts |
 | `helm-chart` | the objects `helm template` renders, as nodes | `helm` |
 | `cdk` | the same as `cloudformation`, over the templates in the app's cloud assembly (`cdk.out`, or the `output` of `cdk.json`) | an assembly the app already synthesized. chant does not run the app |
 | `pulumi` | the resources of the stack's `pulumi stack export`, as nodes: the export the last `pulumi-up` apply wrote to the index store (`refs/chant/snapshots` by default, secrets stripped), else the one checked in beside `Pulumi.yaml` as `stack-export.json`; an edge per `dependencies` entry and `parent` between them. A node's id is `<member>/<qualified type>::<name>`, the URN without its stack and project, such as `web/aws:s3/bucket:Bucket::assets`; a change set or drift record over the same stack uses the same rule (`@intentius/chant/pulumi-urn`). Provider resources and the root `pulumi:pulumi:Stack` are left out, and inputs are not copied | an apply through `pulumi-up`, or an export the member has checked in. The graph read does not run the program or `pulumi`; the member's [change set](/chant/reference/change-set/#pulumi-plans) and drift run `pulumi preview` and `pulumi refresh --preview-only` |
 
 A node's id is `<member>/<kind><name>`, such as `web/deploymentWeb`. A member whose render or assembly is missing is still listed, with no nodes, and its graph says why under `meta`: `k8sMember` for kustomize (`rendered: false`), `helmMember` for helm (`rendered: false`), `awsMember` for cdk (`synthesized: false`), `pulumiMember` for pulumi (`exported: false`), each with a `reason`. A render the tool ran and refused, such as a broken overlay, fails the member with `command-failed`.
+
+### Deployed CloudFormation stacks
+
+A `cloudformation` member reads a template in its directory, or a stack another pipeline deployed whose template is not in the repository. For the second form the member's directory holds a `cloudformation-stacks.json`:
+
+```json
+{ "stacks": ["shared-network"], "region": "eu-west-1" }
+```
+
+| Field | Value |
+|---|---|
+| `stacks` | One or more stack names |
+| `region` | The stacks' region. Without it the read uses `AWS_REGION`, then `AWS_DEFAULT_REGION` |
+
+For each stack the read makes three calls: `DescribeStacks`, `GetTemplate` (the processed stage, so the resources a transform adds are in it) and `DescribeStackResources`. They only read, and need `cloudformation:DescribeStacks`, `cloudformation:GetTemplate` and `cloudformation:DescribeStackResources` for the credentials the AWS CLI's chain finds. The template goes through the reader a template file uses, so the nodes and edges are the same ones. A directory may hold templates and a `cloudformation-stacks.json` together, and the nodes of several templates are named `<member>/<stack or file>/<LogicalId>`.
+
+`meta.awsMember.stacks` has one entry per stack: `name`, `region`, `read`, `status` (the `StackStatus`), `outputs`, and `resources`, each with the `node` it is drawn as, its `logicalId`, `type`, `physicalId` and `status`. A stack that cannot be read has `read: false` and a `reason`, such as `no stack named <name> in <region>`, or the AWS error followed by the credentials, calls and region the read needs. The other stacks are still read and the graph does not fail. A `cloudformation-stacks.json` that is not `{ "stacks": [...], "region": "..." }` is reported in the member's warnings and the member draws nothing from it.
 
 ## Overlapping probes
 

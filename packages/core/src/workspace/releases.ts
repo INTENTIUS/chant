@@ -29,6 +29,7 @@ import { latestPerComponent, listReleaseEnvironments, readReleaseLedger } from "
 import { readAllReleases, readCuts, type Release, type ReleaseCut } from "../lifecycle/release-store";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { readerVersion } from "./declaration";
+import { newestScans, type NewestScan } from "../lifecycle/release-rescan";
 import { checkReleaseSignature, type GateAdmissionRule, type ReleaseSignatureCheck } from "./identity-gate-rule";
 import { readRevokedCommits, revocationOf, type ReleaseRevocation } from "../lifecycle/release-revocation";
 
@@ -50,6 +51,8 @@ export interface ReleaseEntry extends Omit<Release, "version"> {
   environments: Array<{ env: string; components: string[] }>;
   /** The revoked tag on its commit (#4033), or null when the commit is not revoked. */
   revoked: ReleaseRevocation | null;
+  /** The newest scan line of its publish record (#5466): the publish's own scan or the latest `chant release scan`. Absent when the record holds none. */
+  scan?: NewestScan;
 }
 
 export type ReleasesDocument =
@@ -101,6 +104,7 @@ export async function releasesDocument(req: { cwd: string }): Promise<ReleasesDo
       }
     }
 
+    const scans = await newestScans(loc);
     const rule = await releaseRule(req.cwd);
     const revoked = await readRevokedCommits(req.cwd).catch(() => new Map<string, ReleaseRevocation>());
     const entries: ReleaseEntry[] = releases.map(({ version: _v, ...release }) => {
@@ -113,6 +117,7 @@ export async function releasesDocument(req: { cwd: string }): Promise<ReleasesDo
           .map(([env, components]) => ({ env, components }))
           .sort((a, b) => (a.env < b.env ? -1 : 1)),
         revoked: revocationOf(release, revoked),
+        ...(scans.has(release.releaseDigest) ? { scan: scans.get(release.releaseDigest)! } : {}),
       };
     });
     const latest = (e: ReleaseEntry): string => e.cuts.map((c) => c.timestamp).sort().at(-1) ?? "";

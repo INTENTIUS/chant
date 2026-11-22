@@ -11,7 +11,7 @@
  * | Id | Group | Codes |
  * |---|---|---|
  * | WSP161 | `verified-releases` | `security-signers-missing`, `security-release-gate-missing`, `security-publish-allows-unsigned` |
- * | WSP162 | `supply-chain` | `security-sbom-disabled`, `security-sbom-unsourced`, `security-publish-no-provenance`, `security-component-no-sbom`, `security-component-no-verify` |
+ * | WSP162 | `supply-chain` | `security-sbom-disabled`, `security-sbom-unsourced`, `security-publish-no-provenance`, `security-component-no-sbom`, `security-component-no-verify`, `security-image-base-unpinned` |
  * | WSP163 | `who-ran-it` | `security-signed-since-unset`, `security-runner-untrusted`, `security-tick-no-key` |
  * | WSP164 | `review-rules` | `security-review-not-required`, `security-attribution-any`, `security-gate-unsigned` |
  * | WSP165 | `isolated-runners` | `security-runner-start-no-key`, `security-runner-start-no-role`, `security-trust-unreadable` |
@@ -28,11 +28,24 @@ import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from 
 import type { Declaration, Member } from "../declaration";
 import type { ReasonCode } from "../reason-codes";
 import { securityGroupsOf, type SecurityGroup } from "../security";
+import { groupsOfEntry } from "../security-profiles";
 import { joinPath, type WorkspaceTree } from "../tree";
 import { runnerStartReadiness } from "../ci-runner-start";
 import type { RecordSource } from "../record-source";
 import { readTrustPolicy, type TrustPolicy } from "../trust/policy";
 import { DEFAULT_SIGNERS_PATH, TRUST_CONFIG_PATH } from "../trust/trust-files";
+import { unpinnedFroms } from "../../lifecycle/dockerfile-pins";
+
+/**
+ * The Dockerfiles a member's `release.images` names, read from its
+ * `chant.config.ts` as text: each `dockerfile: "<path>"` value, relative to
+ * the member. A path built at run time is not read.
+ */
+export function releaseImageDockerfiles(config: string): string[] {
+  const out = new Set<string>();
+  for (const m of config.matchAll(/\bdockerfile\s*:\s*(["'`])([^"'`$]+)\1/g)) out.add(m[2]!.replace(/^\.\//, ""));
+  return [...out];
+}
 
 /** The read contract's codes for the security findings, carried as `code` on each. */
 export const SECURITY_FINDING_CODES = [
@@ -44,6 +57,7 @@ export const SECURITY_FINDING_CODES = [
   "security-publish-no-provenance",
   "security-component-no-sbom",
   "security-component-no-verify",
+  "security-image-base-unpinned",
   "security-signed-since-unset",
   "security-runner-untrusted",
   "security-tick-no-key",
@@ -63,22 +77,24 @@ export const WSP_SECURITY_WHO_RAN_IT = "WSP163";
 export const WSP_SECURITY_REVIEW_RULES = "WSP164";
 export const WSP_SECURITY_ISOLATED_RUNNERS = "WSP165";
 
-const memberDir = (dir: string) => (dir === "." ? "" : dir);
+export const memberDir = (dir: string) => (dir === "." ? "" : dir);
 
 /** The members under `group`: every member when the top level names it, else those that name it themselves. */
 function membersUnder(declaration: Declaration, group: SecurityGroup): Member[] {
   return declaration.members.filter((m) => securityGroupsOf(declaration, m.name).has(group));
 }
 
-/** Whether the declaration names `group` anywhere. */
+/** Whether the declaration turns `group` on anywhere: by name, or through a profile (#5464). */
 function declares(declaration: Declaration, group: SecurityGroup): boolean {
-  return declaration.security.includes(group) || declaration.members.some((m) => m.security.includes(group));
+  return securityGroupsOf(declaration).has(group) || declaration.members.some((m) => m.security.includes(group));
 }
 
-/** Where the group is named, for the finding's pointer: the top level, else the first member naming it. */
+/** Where the group is turned on, for the finding's pointer: the top level by name, else a profile there, else the first member naming it. */
 function groupPointer(declaration: Declaration, group: SecurityGroup): string {
   const top = declaration.security.indexOf(group);
   if (top >= 0) return `/security/${top}`;
+  const profile = declaration.security.findIndex((e) => groupsOfEntry(e).includes(group));
+  if (profile >= 0) return `/security/${profile}`;
   const m = declaration.members.find((e) => e.security.includes(group));
   return m ? `${m.pointer}/security/${m.security.indexOf(group)}` : "/security";
 }
@@ -141,7 +157,7 @@ function lockfileAbove(tree: WorkspaceTree, dir: string): boolean {
 }
 
 /** The trust policy in the tree read: `.chant/trust.json` and the signers file it names. */
-function treePolicy(tree: WorkspaceTree): TrustPolicy {
+export function treePolicy(tree: WorkspaceTree): TrustPolicy {
   const source: RecordSource = {
     label: tree.label,
     list: (dir) => tree.list(dir)?.filter((e) => e.type === "file").map((e) => e.name),
@@ -163,9 +179,9 @@ function finding(check: WorkspaceCheck, code: SecurityCode, message: string, at:
   };
 }
 
-const RELEASE_PUBLISH = /\bchant\b.*\brelease\s+publish\b/;
+export const RELEASE_PUBLISH = /\bchant\b.*\brelease\s+publish\b/;
 const CI_TICK = /\bchant\b.*\bci\s+tick\b|main\.ts\s+ci\s+tick\b/;
-const PR_APPLY = /\bcomponents\s+pr-apply\b|\bci\s+run\s+apply\b/;
+export const PR_APPLY = /\bcomponents\s+pr-apply\b|\bci\s+run\s+apply\b/;
 
 export const SECURITY_CHECKS: readonly WorkspaceCheck[] = [
   {
@@ -196,7 +212,7 @@ export const SECURITY_CHECKS: readonly WorkspaceCheck[] = [
   {
     id: WSP_SECURITY_SUPPLY_CHAIN,
     name: "security-supply-chain",
-    description: "Under the supply-chain group: every publish target attaches an SBOM it has a source for, publish jobs require OIDC provenance, and components generate an SBOM and verify what they deploy.",
+    description: "Under the supply-chain group: every publish target attaches an SBOM it has a source for, publish jobs require OIDC provenance, components generate an SBOM and verify what they deploy, and release images start from bases pinned by digest.",
     severity: "warning",
     configurable: true,
     check(ctx) {
@@ -213,6 +229,15 @@ export const SECURITY_CHECKS: readonly WorkspaceCheck[] = [
           if (off >= 0) out.push(finding(this, "security-sbom-disabled", `member ${m.name}'s chant.config.ts sets sbom: false on a publish target, so what it publishes carries no SBOM`, { pointer, entity: m.name, treeFile: configPath, line: off + 1 }));
           else if (!/\bsbom\s*:\s*["'`]/.test(config) && !lockfileAbove(ctx.tree, memberDir(m.dir))) {
             out.push(finding(this, "security-sbom-unsourced", `member ${m.name} publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock in its directory or above it, so publish would refuse it as publish-sbom-missing`, { pointer, entity: m.name, treeFile: configPath }));
+          }
+        }
+        // #5457: each Dockerfile release.images names starts from bases pinned by digest.
+        for (const dockerfile of config === null ? [] : releaseImageDockerfiles(config)) {
+          const path = joinPath(memberDir(m.dir), dockerfile);
+          const text = read(ctx.tree, path);
+          if (text === null) continue;
+          for (const u of unpinnedFroms(text)) {
+            out.push(finding(this, "security-image-base-unpinned", `member ${m.name}'s release image ${dockerfile} starts FROM ${u.image} on line ${u.line}: ${u.why}`, { pointer, entity: m.name, treeFile: path, line: u.line }));
           }
         }
         const components = componentFiles(ctx.tree, memberDir(m.dir));

@@ -287,6 +287,13 @@ aws-teardown-e2e:
     @scripts/human-gate.sh aws-teardown-e2e
     bash test/aws-teardown-e2e.sh
 
+# Restore drill (#5450): a RestoreDrillOp restores an RDS snapshot into a drill- scratch
+# instance on Floci, checks it, tears it down and records RTO and RPO; a second run with
+# rto 1s must miss and still tear down (Floci in Docker; on-demand, needs Docker, the aws CLI and node)
+restore-drill-emulator-e2e:
+    @scripts/human-gate.sh restore-drill-emulator-e2e
+    bash test/restore-drill-emulator-e2e.sh
+
 # Worked example for the @intentius/chant/testing live-stack harness (#1224):
 # deployStack into a nonce'd test env on Floci, assert output + live stack,
 # destroy in afterAll — including the teardown-survives-a-failing-test fixture

@@ -74,6 +74,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-cache",
   "--discover",
   "--no-build",
+  "--repin",
   "--sandbox",
   "--yes",
   "--confirm-prod",
@@ -672,6 +673,22 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant release verify --sigstore --assets <dir>` (#5164): where the forge release's assets were downloaded.
       result.assets = args[++i];
       if (!result.assets || result.assets.startsWith("-")) throw new Error("--assets needs a directory: --assets dist/release");
+    } else if (arg === "--referrers") {
+      // `chant release evidence --referrers` (#5465): fetch each image's referrers from its registry, by digest.
+      result.referrers = true;
+    } else if (arg === "--until") {
+      // `chant release evidence --since <date> --until <date>` (#5465): the end of the period, exclusive.
+      result.until = args[++i];
+      if (!result.until || result.until.startsWith("-")) throw new Error("--until needs a date: --until 2026-11-01");
+    } else if (arg === "--deployed") {
+      // `chant release scan --deployed [<env>]` (#5466): scan the releases the environments run, or one environment's.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        result.deployed = next;
+        i++;
+      } else {
+        result.deployed = true;
+      }
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
     } else if (arg === "--green") {
@@ -908,9 +925,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.branch = args[++i];
       if (!result.branch || result.branch.startsWith("-")) throw new Error("--branch needs a branch name: --branch <branch>");
     } else if (arg === "--security") {
-      // `chant ci init --security <group>`, repeatable (#4168 step 6): a security group to turn on.
+      // `chant ci init --security <group|profile>`, repeatable (#4168 step 6, #5464): a security group or profile to turn on.
       const group = args[++i];
-      if (!group || group.startsWith("-")) throw new Error("--security needs a group: --security verified-releases|supply-chain|who-ran-it|review-rules|isolated-runners");
+      if (!group || group.startsWith("-")) throw new Error("--security needs a group or a profile: --security verified-releases|supply-chain|who-ran-it|review-rules|isolated-runners|fedramp-moderate|cccs-medium");
       result.securityGroups = [...(result.securityGroups ?? []), group];
     } else if (arg === "--workflow") {
       // `chant ci workflow --workflow <name>`, repeatable (#3573)
@@ -1169,6 +1186,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
     } else if (arg === "--release-plan") {
       result.releasePlanFile = args[++i];
+    } else if (arg === "--release" && result.command === "ci" && (args[i + 1] === undefined || args[i + 1]!.startsWith("-"))) {
+      // `chant ci serve --release` (#5462): publish each release tag on this host.
+      result.ciRelease = true;
     } else if (arg === "--release") {
       // `chant components promote --release <label|digest>` (#4026)
       result.release = args[++i];
@@ -1228,6 +1248,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--repin") {
+      result.repin = true;
     } else if (arg === "--no-build") {
       result.noBuild = true;
     } else if (arg === "--no-cache") {
@@ -1317,6 +1339,10 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--unsigned") {
       // `chant ci serve --unsigned` (#4099): serve without a runner key listed at the target's head.
       result.unsigned = true;
+    } else if (arg === "--key-type") {
+      // `chant ci serve|run --setup-key --key-type ed25519|ecdsa-p256` (#5470): the kind of runner key to make.
+      result.runnerKeyType = args[++i];
+      if (!result.runnerKeyType || result.runnerKeyType.startsWith("-")) throw new Error("--key-type needs the kind of runner key: --key-type ed25519|ecdsa-p256");
     } else if (arg === "--principal") {
       // `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the runner's principal.
       result.ciPrincipal = args[++i];

@@ -9,6 +9,7 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { describeCryptoModule } from "../../crypto-module";
 import { formatBold, formatError, formatSuccess } from "../format";
 import type { CommandContext } from "../registry";
 import type { DoctorReport, DoctorStatus } from "../../lifecycle/release-doctor";
@@ -64,6 +65,8 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   const lines = [
     `Release doctor, from ${where}${e.from === "cut" ? ", the cut job" : ""}: OIDC ${e.oidc ? "yes" : "no"}; the release workflow is ${e.releaseWorkflow ?? "not known"}${e.repository ? ` in ${e.repository}` : ""}`,
   ];
+  // #5470: the crypto module this run's digests and signatures use.
+  if (report.crypto) lines.push(`crypto: ${describeCryptoModule(report.crypto)}`);
   for (const t of report.targets) {
     lines.push(formatBold(t.name));
     for (const c of t.checks) {
@@ -87,12 +90,19 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   let publish: import("../../lifecycle/publish-declaration").PublishDeclaration[];
   let declaredGreen: import("../../lifecycle/release-green").ReleaseGreenSource | undefined;
   let signing: import("../../lifecycle/publish-signing").SigningConfig | undefined;
+  let scan: import("../../lifecycle/publish-scan").ReleaseScanConfig | undefined;
+  let scanner: "grype" | "trivy" | undefined;
+  let images: import("../../lifecycle/release-images").ReleaseImageDeclaration[] = [];
   try {
     const { loadChantConfig } = await import("../../config");
-    const release = (await loadChantConfig(cwd)).config.release;
+    const config = (await loadChantConfig(cwd)).config;
+    const release = config.release;
     publish = release?.publish ?? [];
     declaredGreen = release?.green;
     signing = release?.signing;
+    scan = release?.scan;
+    scanner = config.vulnPolicy?.scanner;
+    images = release?.images ?? [];
   } catch (err) {
     console.error(formatError({ message: `release.publish in chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)} [doctor-config-invalid]`, hint: USAGE }));
     return 1;
@@ -107,7 +117,7 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   } catch {
     groups = new Set();
   }
-  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), ...(from === "cut" ? { from } : {}), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), groups });
+  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), ...(from === "cut" ? { from } : {}), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), ...(scan !== undefined ? { scan } : {}), ...(scanner ? { scanner } : {}), ...(images.length > 0 ? { images } : {}), groups });
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
   } else if (report.targets.length === 0) {

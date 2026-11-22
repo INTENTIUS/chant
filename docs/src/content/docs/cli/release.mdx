@@ -17,9 +17,14 @@ chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [-
 chant release doctor [--from cut] [--json]
 chant release publish <label|digest> [--yes] [--allow-unsigned] [--require-provenance] [--json]
 chant release verify <label|digest> [--sigstore [--assets <dir>]] [--json]
+chant release evidence <label|digest> -o <dir> [--sign [<key file>]] [--referrers] [--sigstore] [--assets <dir>] [--json]
+chant release evidence --since <date> [--until <date>] -o <dir> [--sign [<key file>]] [--referrers] [--sigstore] [--assets <dir>] [--json]
+chant release evidence --check <dir> [--json]
 chant release stamp <label> [--json]
 chant release tag <label|digest|tag> [--json]
 chant release artifacts <label|digest> [--no-build] [--from <dir>] [-o <dir>] [--json]
+chant release images <label|digest> [--no-build] [-o <file>] [--json]
+chant release images --repin [<file>...] [--check] [--json]
 chant release init [--yes] [--force] [--one-release] [--forge github|gitlab|forgejo] [--json]
 chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]
 chant release deprecate <label|digest> [--yes] [--reason <text>] [--replacement <label>] [--actor <name>] [--sign [<key file>]] [--json]
@@ -47,6 +52,7 @@ Each subcommand has a page of its own.
 | <span id="release-cut"></span>[release cut](/chant/cli/release/cut/) | Cuts a release of the member in the current directory from a green commit: compiles every environment, records the release and tags the commit. |
 | <span id="release-deprecate-yank-and-restore"></span>[release deprecate, yank and restore](/chant/cli/release/status/) | Records a status for a published release and acts on each target that can: deprecate, yank, or restore. |
 | <span id="release-doctor"></span>[release doctor](/chant/cli/release/doctor/) | Asks each `release.publish` target whether a publish from here can succeed, before anything is cut. |
+| <span id="release-evidence"></span>[release evidence](/chant/cli/release/evidence/) | Writes the records of a release, or of a period, into a directory with an index by control id and the SHA-256 of every file, and checks such a directory. |
 | <span id="release-export"></span>[release export](/chant/cli/release/export/) | Writes the files a release recorded for one environment, each checked against its digest. |
 | <span id="release-init"></span>[release init](/chant/cli/release/init/) | Sets up `chant release` in a project: its `release` block in `chant.config.ts`, the release workflow, and the registry steps to take by hand. |
 | <span id="release-list"></span>[release list](/chant/cli/release/list/) | Lists every release of the member, newest cut first, with its cuts and where it runs. |

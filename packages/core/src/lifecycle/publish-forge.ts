@@ -63,6 +63,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { memberSbom, releaseProvenance } from "./publish-attachments";
+import { sbomDocumentOf } from "./publish-scan";
 import { SIGSTORE_BUNDLE_SUFFIX, SLSA_BUNDLE_FILE, SLSA_PROVENANCE_PREDICATE, slsaProvenanceStatement } from "./publish-signing";
 import { releaseVersion } from "./publish-homebrew";
 import { readCredential, type Credential } from "./publish-credentials";
@@ -182,7 +183,7 @@ interface Asset {
   bytes: Uint8Array;
   digest: string;
   /** Set on the SBOM and the provenance statement chant attaches (#4049). */
-  attachment?: "sbom" | "provenance";
+  attachment?: "sbom" | "provenance" | "scan";
 }
 
 /** A Sigstore bundle the stage signs and uploads beside the files (#5164). */
@@ -726,6 +727,12 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
         what: `${forge} release ${tag} stays deleted`,
         refused: { code: "release-status-forge-deleted", message: `${forge} has no release ${tag}, published or draft, so a yank deleted it and there is nothing to publish again`, fix: `Make the release again by hand from tag ${tag}, or cut a new release.` },
       }];
+    },
+    /** #5446: the SBOM the release carries beside its assets, as the stage writes it. */
+    async scanSubjects(ctx) {
+      const tag = decl.tag ?? ctx.releaseTag ?? ctx.release.releaseDigest;
+      const sbom = memberSbom(ctx, decl.sbom, `${decl.repo}@${tag}`, `the ${decl.forge} target`);
+      return sbom ? [{ target: this.name, name: `${sbom.name} of ${decl.forge} ${decl.repo} ${tag}`, sbom: sbomDocumentOf(sbom.bytes, "attached") }] : [];
     },
     async plan(ctx) {
       const { tag, assets, signatures, section } = setup(ctx);

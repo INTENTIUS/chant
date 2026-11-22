@@ -46,10 +46,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
-import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE, cosignSignStatement, slsaProvenanceStatement } from "./publish-signing";
+import { join, resolve } from "node:path";
+import { IMAGE_SBOM_FILE, imageSbom, memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
+import type { SbomDocument } from "../components/verbs/sbom-generator";
+import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, COSIGN_VULN_PREDICATE, CYCLONEDX_PREDICATE, SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE, SPDX_PREDICATE, cosignSignStatement, slsaProvenanceStatement, type InTotoStatement } from "./publish-signing";
+import { IN_TOTO_STATEMENT_TYPE } from "./publish-attachments";
+import { pinnedFroms, type PinnedBase } from "./dockerfile-pins";
 import { readCredential, type Credential } from "./publish-credentials";
+import { findingsAttachment, sbomDocumentOf, vulnAttestationPredicate } from "./publish-scan";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
@@ -224,6 +228,8 @@ class RegistryAnswer extends Error {
  */
 export class Registry {
   private auth: string | null = null;
+  /** The actions a Bearer token is asked for: `pull,push` for a publish, `pull` for a read such as a re-pin (#5457). */
+  actions = "pull,push";
   constructor(
     private readonly repo: OciRepository,
     private readonly fetch: PublishFetch,
@@ -266,7 +272,7 @@ export class Registry {
     if (!params.realm) this.fail("the registry", 401, "with a Bearer challenge that names no realm");
     const u = new URL(params.realm);
     if (params.service) u.searchParams.set("service", params.service);
-    u.searchParams.set("scope", `repository:${this.repo.name}:pull,push`);
+    u.searchParams.set("scope", `repository:${this.repo.name}:${this.actions}`);
     const res = await this.fetch(u.toString(), { method: "GET", headers: basic ? { authorization: basic } : {} });
     const text = await res.text();
     if (!res.ok) this.fail("the token service", res.status, text);
@@ -341,6 +347,16 @@ export class Registry {
     const bytes = new Uint8Array(await res.arrayBuffer());
     const mediaType = res.headers.get("content-type")?.split(";")[0]?.trim() || ((JSON.parse(Buffer.from(bytes).toString("utf-8")) as { mediaType?: string }).mediaType ?? IMAGE_MANIFEST);
     return { mediaType, bytes, digest: res.headers.get("docker-content-digest") ?? bytesDigest(bytes) };
+  }
+
+  /** The blob `digest` holds, checked against its digest, or null when the registry has none (#5466). */
+  async getBlob(digest: string): Promise<Uint8Array | null> {
+    const res = await this.request("GET", `/v2/${this.repo.name}/blobs/${digest}`);
+    if (res.status === 404) return null;
+    if (res.status !== 200 || !res.arrayBuffer) this.fail(`reading blob ${digest}`, res.status, await res.text());
+    const bytes = new Uint8Array(await res.arrayBuffer!());
+    if (bytesDigest(bytes) !== digest) throw new PublishTargetError("publish-oci-blob-corrupt", `blob ${digest} from ${this.repo.base} does not match its digest`);
+    return bytes;
   }
 
   /** Put a manifest. True when the registry answered with `OCI-Subject`, so its referrers API lists a manifest with a subject. */
@@ -425,6 +441,23 @@ export function bundleReferrerManifest(bundle: Attachment, predicateType: string
 /** The media type of the empty config an artifact manifest names. */
 const EMPTY_CONFIG = { mediaType: "application/vnd.oci.empty.v1+json", bytes: new Uint8Array(Buffer.from("{}")) };
 const IMAGE_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+
+/** One thing the stage signs and pushes as a bundle referrer of the image (#5468). */
+interface SignedStatement {
+  predicateType: string;
+  name: string;
+  attachment: "signature" | "attestation";
+  statement(): InTotoStatement;
+}
+
+const subjectOf = (s: { name: string; digest: string }) => ({ name: s.name, digest: { [s.digest.split(":")[0]!]: s.digest.split(":")[1]! } });
+
+/** The statement `cosign attest --type spdxjson` or `cyclonedx` writes: the SBOM document is the predicate. */
+function sbomStatement(subject: { name: string; digest: string }, document: string): InTotoStatement {
+  const predicate = JSON.parse(document) as Record<string, unknown>;
+  const cyclonedx = predicate.bomFormat === "CycloneDX";
+  return { _type: IN_TOTO_STATEMENT_TYPE, subject: [subjectOf(subject)], predicateType: cyclonedx ? CYCLONEDX_PREDICATE : SPDX_PREDICATE, predicate };
+}
 
 /** One referrer of the image: an attached file and the artifact manifest that names the image as its subject. */
 interface Referrer {
@@ -558,12 +591,41 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
       digest,
     };
   };
-  /** The SBOM and the provenance statement, each with the artifact manifest that refers to the image. */
-  const referrers = (ctx: PublishContext, layout: LayoutImage): Referrer[] => {
+  /**
+   * #5446: whether the image's SBOM is the one made from its layers: the
+   * publish scans (so syft is there and checked) and the declaration names
+   * no SBOM file and does not turn it off.
+   */
+  const fromLayers = (ctx: PublishContext): boolean => decl.sbom === undefined && !!ctx.scan;
+  /** #5446: the SBOM made from the image's layers, made once per image in a run; the scan and the stage share it. */
+  const layerSboms = new Map<string, Promise<SbomDocument>>();
+  const layerSbom = (ctx: PublishContext, digest: string): Promise<SbomDocument> => {
+    let made = layerSboms.get(digest);
+    if (!made) {
+      made = ctx.scan!.scanner.imageSbom(memberFile(ctx.cwd, decl.image));
+      layerSboms.set(digest, made);
+    }
+    return made;
+  };
+  /** The image's SBOM: the file the declaration names, else the one made from its layers when the publish scans, else one from the member's lockfile. */
+  const sbomOf = async (ctx: PublishContext, layout: LayoutImage): Promise<Attachment | null> => {
+    const image = `${decl.repository}@${layout.top.digest}`;
+    if (!fromLayers(ctx)) return memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`);
+    return imageSbom(ctx, (await layerSbom(ctx, layout.top.digest)).bytes, image, layout.top.digest);
+  };
+  /** #5446: the findings referrer, once the scan before the stage ran in this publish. */
+  const findingsOf = (ctx: PublishContext, digest: string): Attachment | null => {
+    const f = ctx.scanReport ? findingsAttachment(ctx.scanReport, digest) : null;
+    return f ? { kind: "scan", ...f, digest: bytesDigest(f.bytes) } : null;
+  };
+  /** The SBOM, the provenance statement and the scan's findings, each with the artifact manifest that refers to the image. */
+  const referrers = async (ctx: PublishContext, layout: LayoutImage, opts: { sbom: boolean } = { sbom: true }): Promise<Referrer[]> => {
     const subject = { mediaType: layout.top.mediaType, digest: layout.top.digest, size: layout.top.bytes.byteLength };
     const files = [
-      memberSbom(ctx, decl.sbom, `${decl.repository}@${layout.top.digest}`, `oci ${decl.repository}`),
+      opts.sbom ? await sbomOf(ctx, layout) : null,
       releaseProvenance(ctx, [{ name: `${decl.repository}@${layout.top.digest}`, digest: layout.top.digest }]),
+      // #5446: what the scan before the stage found in the image, beside its SBOM.
+      findingsOf(ctx, layout.top.digest),
     ].filter((a): a is Attachment => a !== null);
     return files.map((attachment) => {
       const manifest = referrerManifest(attachment, subject);
@@ -571,12 +633,58 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     });
   };
   const referrerItem = (r: Referrer): PublishItem => ({ name: r.attachment.name, destination: `${decl.repository}@${r.digest}, a referrer of the image`, digest: r.digest, attachment: r.attachment.kind });
-  /** #5164: the cosign signature and SLSA provenance of the image, which a stage signs when the publish signs. */
-  const signatures = [
-    { predicateType: COSIGN_SIGN_PREDICATE, name: "cosign signature", attachment: "signature" as const },
-    { predicateType: SLSA_PROVENANCE_PREDICATE, name: "SLSA provenance", attachment: "attestation" as const },
-  ];
-  const signatureItem = (ctx: PublishContext, s: (typeof signatures)[number], image: string, digest?: string): PublishItem => ({
+  /**
+   * #5468: the base images the image's Dockerfile names by digest, from the
+   * `release.images` entry whose archive this target pushes. None when no
+   * entry is a Dockerfile one for it, or its Dockerfile is not there.
+   */
+  const baseImagesOf = (ctx: PublishContext): PinnedBase[] => {
+    const abs = resolve(memberFile(ctx.cwd, decl.image));
+    for (const entry of ctx.releaseImages ?? []) {
+      if (!("dockerfile" in entry) || !entry.dockerfile) continue;
+      if (resolve(ctx.cwd, entry.archive ?? `dist/images/${entry.name}.tar`) !== abs) continue;
+      const file = resolve(ctx.cwd, entry.dockerfile);
+      return existsSync(file) ? pinnedFroms(readFileSync(file, "utf-8"), entry.args ?? {}) : [];
+    }
+    return [];
+  };
+  /**
+   * #5164, #5468: what the stage signs when the publish signs: the cosign
+   * signature, SLSA provenance that names the Dockerfile's pinned bases, and,
+   * as `cosign attest` writes them, the SBOM (SPDX or CycloneDX predicate) and
+   * the scan's findings (cosign's vulnerability predicate). `planning` leaves
+   * out reading what the stage makes: the SBOM made from the layers is SPDX.
+   */
+  const signedStatements = async (ctx: PublishContext, layout: LayoutImage, planning: boolean): Promise<SignedStatement[]> => {
+    const name = `${decl.repository}@${layout.top.digest}`;
+    const subject = { name, digest: layout.top.digest };
+    const out: SignedStatement[] = [
+      { predicateType: COSIGN_SIGN_PREDICATE, name: "cosign signature", attachment: "signature", statement: () => cosignSignStatement({ name: decl.repository, digest: layout.top.digest }) },
+      { predicateType: SLSA_PROVENANCE_PREDICATE, name: "SLSA provenance", attachment: "attestation", statement: () => slsaProvenanceStatement(ctx, [subject], { bases: baseImagesOf(ctx) }) },
+    ];
+    if (planning && fromLayers(ctx)) {
+      out.push({ predicateType: SPDX_PREDICATE, name: "SBOM attestation", attachment: "attestation", statement: () => sbomStatement(subject, "{}") });
+    } else {
+      const sbom = await sbomOf(ctx, layout);
+      if (sbom) {
+        const cyclonedx = sbomDocumentOf(sbom.bytes, "attached").format === "cyclonedx";
+        out.push({ predicateType: cyclonedx ? CYCLONEDX_PREDICATE : SPDX_PREDICATE, name: "SBOM attestation", attachment: "attestation", statement: () => sbomStatement(subject, Buffer.from(sbom.bytes).toString("utf-8")) });
+      }
+    }
+    if (ctx.scanReport || (planning && ctx.scan)) {
+      out.push({
+        predicateType: COSIGN_VULN_PREDICATE,
+        name: "scan attestation",
+        attachment: "attestation",
+        statement: () => {
+          const predicate = ctx.scanReport ? vulnAttestationPredicate(ctx.scanReport, layout.top.digest) : null;
+          return { _type: IN_TOTO_STATEMENT_TYPE, subject: [subjectOf(subject)], predicateType: COSIGN_VULN_PREDICATE, predicate: predicate ?? {} };
+        },
+      });
+    }
+    return out;
+  };
+  const signatureItem = (ctx: PublishContext, s: Pick<SignedStatement, "predicateType" | "name" | "attachment">, image: string, digest?: string): PublishItem => ({
     name: s.name,
     destination: digest ? `${decl.repository}@${digest}, a referrer of the image` : `${decl.repository}, a referrer of the image, signed when staged`,
     ...(digest ? { digest } : {}),
@@ -591,7 +699,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     const subject = { mediaType: layout.top.mediaType, digest: layout.top.digest, size: layout.top.bytes.byteLength };
     const existing = await registry.referrers(layout.top.digest);
     const items: PublishItem[] = [];
-    for (const s of signatures) {
+    for (const s of await signedStatements(ctx, layout, false)) {
       const found = existing.find((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE && m.annotations?.[BUNDLE_PREDICATE_ANNOTATION] === s.predicateType);
       if (found) {
         ctx.log(`${layout.top.digest} already has a ${s.name}; it is not signed again`);
@@ -599,9 +707,8 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
         continue;
       }
       const name = `${decl.repository}@${layout.top.digest}`;
-      const statement = s.predicateType === COSIGN_SIGN_PREDICATE ? cosignSignStatement({ name: decl.repository, digest: layout.top.digest }) : slsaProvenanceStatement(ctx, [{ name, digest: layout.top.digest }]);
       ctx.log(`signing ${name} with ${ctx.signing.signer.name}: ${s.name}`);
-      const bytes = await ctx.signing.signer.signStatement(statement);
+      const bytes = await ctx.signing.signer.signStatement(s.statement());
       const bundle: Attachment = { kind: "provenance", name: `${s.attachment}.sigstore.json`, mediaType: SIGSTORE_BUNDLE_MEDIA_TYPE, bytes, digest: bytesDigest(bytes) };
       const manifest = bundleReferrerManifest(bundle, s.predicateType, subject);
       const digest = bytesDigest(manifest);
@@ -708,7 +815,30 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async plan(ctx) {
       const layout = inspect(ctx);
       try {
-        return [item(ctx, layout.top.digest, platformTags(ctx, layout)), ...referrers(ctx, layout).map(referrerItem), ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
+        // #5446: an SBOM made from the layers is made when the image stages, so the plan names it without a digest.
+        const planned = fromLayers(ctx)
+          ? [{ name: IMAGE_SBOM_FILE, destination: `${decl.repository}, a referrer of the image, made from its layers when staged`, attachment: "sbom" as const }, ...(await referrers(ctx, layout, { sbom: false })).map(referrerItem)]
+          : (await referrers(ctx, layout)).map(referrerItem);
+        return [item(ctx, layout.top.digest, platformTags(ctx, layout)), ...planned, ...(ctx.signing ? (await signedStatements(ctx, layout, true)).map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
+      } finally {
+        layout.cleanup();
+      }
+    },
+    /**
+     * #5446: the image, through the SBOM made from its layers, which is the
+     * SBOM the stage attaches; and a file the declaration names as its SBOM,
+     * scanned too. With `sbom: false` the image is still scanned.
+     */
+    async scanSubjects(ctx) {
+      const layout = inspect(ctx);
+      try {
+        const image = `${decl.repository}@${layout.top.digest}`;
+        const declared = typeof decl.sbom === "string" ? memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`) : null;
+        const layers = ctx.scan ? await layerSbom(ctx, layout.top.digest) : null;
+        return [
+          ...(layers ? [{ target: this.name, name: image, sbom: layers, digest: layout.top.digest }] : [{ target: this.name, name: image, image: memberFile(ctx.cwd, decl.image), digest: layout.top.digest }]),
+          ...(declared ? [{ target: this.name, name: `${declared.name} of ${image}`, sbom: sbomDocumentOf(declared.bytes, "attached"), digest: layout.top.digest }] : []),
+        ];
       } finally {
         layout.cleanup();
       }
@@ -716,7 +846,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async stage(ctx) {
       const layout = inspect(ctx);
       try {
-        const attached = referrers(ctx, layout);
+        const attached = await referrers(ctx, layout);
         const { cred, registry } = connect(ctx);
         const staged: PublishItem = { ...item(ctx, layout.top.digest, platformTags(ctx, layout)), name: decl.image };
         const items: PublishItem[] = [];
@@ -768,7 +898,10 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
           ctx.log(`tagged ${p.digest} ${p.tag}`);
         }
         const signed = (staged?.items ?? []).filter((i) => i.attachment === "signature" || i.attachment === "attestation").map(({ present: _present, ...i }) => i);
-        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...referrers(ctx, layout).map(referrerItem), ...signed] };
+        // #5446: the findings referrer the stage pushed, which a resumed reveal can't make again.
+        const listed = (await referrers({ ...ctx, scanReport: undefined }, layout)).map(referrerItem);
+        const findings = (staged?.items ?? []).filter((i) => i.attachment === "scan").map(({ present: _present, ...i }) => i);
+        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...listed, ...findings, ...signed] };
       } finally {
         layout.cleanup();
       }

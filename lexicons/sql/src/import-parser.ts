@@ -10,13 +10,16 @@
  * the same way without the option, so it is not taken for Postgres.
  * `from=sqlserver` with `dialect=...` is refused: the target is ClickHouse.
  *
- * `--parser-option dialect=postgres` (or `clickhouse`) names the dialect;
+ * `--parser-option dialect=postgres` (or `clickhouse`, `mysql`) names the dialect;
  * without one it is read off the statements: an `ENGINE =` clause, a
  * `CREATE DATABASE`, a `CREATE DICTIONARY` or a lambda `CREATE FUNCTION f AS
  * (x) -> ...` is ClickHouse, a statement
  * only Postgres has (`CREATE SCHEMA`, `CREATE INDEX`, `COMMENT ON`, `ALTER
  * TABLE`, `GRANT`, ...) or a `CREATE TABLE` with no engine is Postgres, and
- * anything else is ClickHouse.
+ * anything else is ClickHouse. A file with a mark only MySQL DDL has (an
+ * InnoDB or MyISAM engine, or a `/*!40101 ... *\/` version
+ * comment as mysqldump writes) is MySQL; other MySQL DDL names its dialect
+ * with `--parser-option dialect=mysql`.
  *
  * A statement that declares nothing, or does not parse, is an error naming
  * it (`./sql-files.ts`); none is left out. So is a `CREATE` of a kind chant
@@ -32,6 +35,8 @@ import type { ParserOptions, TemplateIR, TemplateParser } from "@intentius/chant
 import { SQL_DIALECTS, type SqlDialect } from "./dialects";
 import { readClickHouse } from "./files/clickhouse";
 import { readPostgres } from "./files/postgres";
+import { readMysql } from "./files/mysql";
+import { mysqlObjectsToIR } from "./mysql/import/generator";
 import { SqlFileError } from "./files/common";
 import { objectsToIR as chObjectsToIR } from "./clickhouse/import/ir";
 import { objectsToIR as pgObjectsToIR } from "./postgres/import/ir";
@@ -78,8 +83,12 @@ export function looksLikeTSql(content: string): boolean {
   return TSQL_MARKERS.some((re) => re.test(text));
 }
 
+/** Marks only MySQL DDL has: its own engines, and mysqldump's version comments. */
+const MYSQL_ONLY = [/\bENGINE\s*=\s*(?:InnoDB|MyISAM)\b/i, /\/\*!\d{5}/];
+
 /** The dialect a file of DDL is written in, read off its statements. */
 export function guessDialect(content: string): SqlDialect {
+  if (MYSQL_ONLY.some((re) => re.test(content))) return "mysql";
   const text = content.replace(/--[^\n]*/g, "");
   if (CLICKHOUSE_ONLY.some((re) => re.test(text))) return "clickhouse";
   if (POSTGRES_ONLY.some((re) => re.test(text))) return "postgres";
@@ -121,8 +130,13 @@ export class SqlFileParser implements TemplateParser {
     const prerequisites: Array<{ kind: string; name: string }> = [];
     const notes: string[] = [];
     const read = { origin: "the DDL", prerequisites, warnings: notes, ...(this.options.skipUndeclarable ? { undeclarable: skipped } : {}) };
-    const ir = dialect === "postgres" ? pgObjectsToIR(readPostgres(content, read, problems)) : chObjectsToIR(readClickHouse(content, read, problems));
-    if (problems.length > 0) throw new SqlFileError(`the ${dialect === "postgres" ? "Postgres" : "ClickHouse"} DDL`, problems);
+    const ir =
+      dialect === "postgres"
+        ? pgObjectsToIR(readPostgres(content, read, problems))
+        : dialect === "mysql"
+          ? mysqlObjectsToIR(readMysql(content, read, problems))
+          : chObjectsToIR(readClickHouse(content, read, problems));
+    if (problems.length > 0) throw new SqlFileError(`the ${dialect === "postgres" ? "Postgres" : dialect === "mysql" ? "MySQL" : "ClickHouse"} DDL`, problems);
     // A named collection is the environment's (#4395): its CREATE, or a declaration naming one, is a prerequisite, its values never imported.
     const objects = ir.resources.map((r) => r.properties as { database?: string; name: string; ddl: string });
     const prereq =

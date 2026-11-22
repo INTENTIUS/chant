@@ -99,17 +99,20 @@ export interface ArmSchemaDefinition {
  * nondeterministically, depending on which runner's cache was warm.
  *
  * Pinning to a commit SHA makes generation reproducible regardless of cache
- * state. Bump policy: #523's scheduled lexicon-upgrade cron (rolling-spec
- * bucket, sub-issue #526) is meant to propose bumps to this constant as a
- * reviewable PR once built. Until then, bump by hand: take the current
- * `main` HEAD sha from
- * https://github.com/Azure/azure-resource-manager-schemas/commits/main,
- * regenerate, fix up any composite left referencing a renamed or vanished
- * export (adding a PROVIDER_VERSION_OVERRIDES entry if a resource dropped
- * out of the naive "latest by date" pick), and update this constant +
- * comment.
+ * state. A commit sha already addresses the whole tree by content, so unlike
+ * aws (`AWS_SPEC_PIN`, whose archive has no version in its path) there is no
+ * separate content digest to keep beside it.
+ *
+ * Bump policy: the weekly `azure-upgrade` Op reads this pin through the
+ * plugin's `upstreamPin` (`kind: "commits"`), compares it with the head of
+ * Azure/azure-resource-manager-schemas `main`, and opens the bump as a pull
+ * request with the surface delta. To bump by hand, set the constant to that
+ * head, regenerate, fix up any composite left referencing a renamed or
+ * vanished export (adding a PROVIDER_VERSION_OVERRIDES entry if a resource
+ * dropped out of the naive "latest by date" pick), and accept the surface
+ * with `chant dev surface-diff lexicons/azure --update-snapshot --bump`.
  */
-export const AZURE_SCHEMA_COMMIT = "0085cb6f3a98e735359807143bcb1667aeec930f";
+export const AZURE_SCHEMA_COMMIT = "d15606ffeb7eb87642decae9daf5aab5b3bbee30";
 
 const TARBALL_URL = `https://github.com/Azure/azure-resource-manager-schemas/archive/${AZURE_SCHEMA_COMMIT}.tar.gz`;
 const CACHE_DIR = join(homedir(), ".chant");
@@ -173,6 +176,14 @@ const SCOPE_SECTIONS: Array<{ key: keyof ArmProviderSchema; scope: DeployScope }
  * writing into `out` keyed by resource type. Resource types already present
  * in `out` are left untouched (first file wins across a multi-version pin).
  *
+ * ARM and Azure Resource Graph treat type names case-insensitively, and
+ * upstream does not spell them consistently across dates: at d15606ff the
+ * 2026-05-01-preview Microsoft.ServiceFabric file writes
+ * `managedClusters_applications` where 2023-11-01-preview writes
+ * `managedclusters_applications` (#5454). Presence is therefore checked on
+ * the lowercased type, so the first file's spelling wins and the later file
+ * cannot add a second kind for the same ARM type.
+ *
  * For providers in {@link SCOPED_SECTION_PROVIDERS} all deployment-scope
  * sections are read; the definition comes from the highest-priority section
  * that has it, and `deployScopes` unions every section that defines it.
@@ -204,9 +215,11 @@ export function explodeProviderSchema(
     }
   }
 
+  const seen = new Set([...out.keys()].map((k) => k.toLowerCase()));
   for (const [resourceName, { def, scopes }] of byName) {
     const resourceType = `${normalizeProvider(provider)}/${resourceName}`;
-    if (out.has(resourceType)) continue;
+    if (seen.has(resourceType.toLowerCase())) continue;
+    seen.add(resourceType.toLowerCase());
 
     // Build a per-resource schema that includes the resource def + shared definitions + apiVersion
     const perResourceSchema = {
@@ -251,6 +264,10 @@ export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer
   // Explode: one provider file has N resourceDefinitions → emit N entries.
   // With a multi-version pin the first file that defines a resource wins.
   const schemas = new Map<string, Buffer>();
+  // Lowercased type -> the spelling stored in `schemas`, so a later provider
+  // file replaces a type whose name differs only in case instead of adding a
+  // second kind for it (ARM type names are case-insensitive, #5454).
+  const spelling = new Map<string, string>();
 
   for (const [provider, files] of selected) {
     // First-wins applies within one provider's pin list; across providers the
@@ -269,6 +286,10 @@ export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer
       }
     }
     for (const [resourceType, buf] of providerSchemas) {
+      const lower = resourceType.toLowerCase();
+      const previous = spelling.get(lower);
+      if (previous !== undefined) schemas.delete(previous);
+      spelling.set(lower, resourceType);
       schemas.set(resourceType, buf);
     }
   }

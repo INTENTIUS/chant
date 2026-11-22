@@ -76,6 +76,8 @@ export interface TrainWorkflowInput {
   signing?: boolean;
   /** GitLab: entries the members' targets add under the publish job's `id_tokens:` beside `SIGSTORE_ID_TOKEN`, such as `PYPI_ID_TOKEN`. */
   idTokens?: string[];
+  /** GitHub and Forgejo: the `env:` lines of the publish step alone, such as a signing key's variables (#5458). */
+  publishEnv?: string[];
   /** `chant release doctor` in each member before the cut (#5216): `--doctor` on the dispatched cut. */
   doctor?: boolean;
   /** `verified-releases`: `chant workspace train verify` before the publish (#5216). */
@@ -336,6 +338,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
     run('git config user.name "chant release"'),
     run('git config user.email "chant-release@localhost"'),
     run(`${o.chant} workspace train publish ${env} "$CHANT_RELEASE_TRAIN" ${o.flags}`),
+    ...(o.publishEnv ?? []),
   );
   if (o.after.length > 0) {
     lines.push(

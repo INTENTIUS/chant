@@ -1,0 +1,133 @@
+---
+title: "chant release evidence"
+description: "Writes the records of one release, or of every release and change in a period, into a directory with an index by control id, and checks such a directory from its files alone."
+diataxis: reference
+sidebar:
+  label: "evidence"
+---
+
+Gathers what chant recorded about a release into one directory an assessor can read: the records on `chant/lifecycle`, the trust files at the release's commit, the output of `release verify`, and an `index.json` that lists, for each control of the [security profiles](/chant/reference/security-profiles/) table, the records that are evidence toward it and what they do not show.
+
+```bash
+git fetch origin chant/lifecycle:chant/lifecycle
+chant release evidence v1.4.0 -o evidence/v1.4.0 --sign
+chant release evidence --since 2026-10-01 --until 2026-11-01 -o evidence/2026-10
+chant release evidence --check evidence/v1.4.0
+```
+
+The records are evidence toward the controls the index names. They do not make a system compliant or authorised: the system owner implements a control, and an assessor decides whether it is met. Each control in the index carries the table's `notShown`, what its records do not show, and a control the export found nothing for says so in a sentence.
+
+## Scope
+
+`<label|digest>` names one release of the member in the current directory. Its records are the release file, its cut and publish lines, the deploy lines that name it, the merge records of the commits it carries since the release cut before it, the change sets and gate ledgers of those merges with their policy overrides, the release gate facts that name it, and the Op run lines at its commit.
+
+`--since <date> [--until <date>]` takes a period, `until` defaulting to now and not included. Its releases are those cut in it, with their records as above, and the merge, gate, override, deploy and run lines dated in it. A period in which no release was cut is still written: `index.json` says so in `noReleases`, the command prints it, and every control says that nothing was found rather than showing an empty list.
+
+## What it reads
+
+It reads this clone and nothing else. `chant/lifecycle` is read at its local tip, pinned once so every file comes from one commit; fetch it first. The trust files are read from git at each release's commit and at the base of each merge. It writes only into `-o <dir>`, which must be missing or empty, and never writes `chant/lifecycle`, a registry or a forge.
+
+Two flags read further, each only when given:
+
+| Flag | What it adds |
+|---|---|
+| `--referrers` | Each image's referrers, fetched from its registry by the digests the publish recorded: the SBOM made from its layers, `scan.json`, the SLSA statement and other attestations, and signatures. Each manifest and blob is checked against its digest, and the manifest's subject against the image, before it is written. The registry credentials are the ones a publish uses (`OCI_USERNAME` and `OCI_PASSWORD`, or the docker config). |
+| `--sigstore` | The check of [`release verify --sigstore`](/chant/cli/release/verify/) for each release, which runs cosign against the registry and the transparency log. |
+| `--assets <dir>` | The forge release assets the publish record names (Sigstore bundles, SBOMs, the provenance statement), copied from a directory you downloaded them to, such as with `gh release download <tag> -D <dir>`. A file whose digest is not the one the publish uploaded is left out and listed. With `--sigstore`, the same directory is handed to the check. |
+
+What the export does not hold is listed under `notIncluded` with the command that produces it: the results of `chant release doctor`, `chant workspace check` and `chant workspace state`, which read the forge, the working tree today and each member's state backend.
+
+## The directory
+
+```
+<dir>/
+  index.json               the index
+  SHA256SUMS               every file's SHA-256, in sha256sum's format, index.json included
+  SHA256SUMS.sig           with --sign: an ssh signature in the chant-evidence namespace
+  lifecycle/<path>         chant/lifecycle files, byte for byte, at their paths on the branch
+  commits/<sha>/<path>     .chant/trust.json, the signers file it names, chant.workspace.json
+  verify/<digest>.json     release verify --json, and <digest>.sigstore.json with --sigstore
+  referrers/<digest>/      with --referrers: each referrer's manifest.json and blobs, named by digest
+  assets/<digest>/<name>   with --assets: the forge assets that matched
+```
+
+Ledger files are copied whole, so every seal on a line still verifies and each file's git blob id in the index can be checked against the repository. For a `.jsonl` file, the index names the line numbers that bear on the scope and the kind of record each carries. `sha256sum -c SHA256SUMS` in the directory checks every file.
+
+## The index
+
+`index.json` is chant's own format, described by `@intentius/chant/workspace/release-evidence.schema.json`. It is not OSCAL and not a FedRAMP or CCCS format. It holds:
+
+| Field | What it holds |
+|---|---|
+| `statement` | What the export is, and that an assessor decides whether a control is met. |
+| `scope`, `lifecycle` | The release or period, and the `chant/lifecycle` commit every lifecycle file was read from. |
+| `releases` | Each release in scope: its digest, label, commit, when it was cut, and what `release verify` found at export time. |
+| `noReleases` | With no release in scope, a sentence saying so. |
+| `files` | Every file with its SHA-256, size, where it came from (a lifecycle path and blob, a commit and path, a registry digest, an assets directory, or the command that produced it) and the kinds of record it holds. |
+| `controls` | One entry per control of the table, in its order: the id, titles, whether each baseline selects it, FedRAMP's parameter, the records that bear on it with what each shows, `found`, `absent` when nothing was found, `notShown`, and the check codes and doctor checks to run for it. |
+| `outsideBothBaselines` | The controls the table keeps apart because neither baseline selects them, with any records that bear on them. |
+| `notIncluded`, `problems` | What the export leaves out and how to get it, and what could not be read or fetched. |
+
+Which kinds of record bear on which control is part of the control table in `packages/core/src/workspace/security-controls.ts`, so the index and the [profile page](/chant/reference/security-profiles/) read the same rows. The table below is printed from it, and a test compares the two.
+
+| Kind | Where it is | Bears on |
+|---|---|---|
+| `release` | `lifecycle/_releases/<digest>.json` | CM-2, SA-10, SI-7 |
+| `cut` | lines of `lifecycle/_releases/cuts.jsonl` | AU-2, AU-3, AU-9, AU-12, CM-3(2), IA-2, SA-10, SA-11; outside both baselines: AU-10 |
+| `publish` | staged and revealed lines of `lifecycle/_releases/publishes.jsonl` | AU-2, AU-3, AU-12 |
+| `scan` | `scanned` and `scan-failed` lines of `lifecycle/_releases/publishes.jsonl` | RA-5, RA-5(2), SI-2 |
+| `rescan` | `rescanned` lines of `lifecycle/_releases/publishes.jsonl` | CA-7, RA-5, RA-5(2), SI-2 |
+| `crypto` | the `crypto` of a publish line | SC-13 |
+| `runner-key` | the `runnerKey` of a publish line | IA-2, SR-3 |
+| `signature-record` | the signature and attestation items of a publish line | SA-10(1), SC-13, SI-7, SR-11; outside both baselines: CM-14, SI-7(15), SA-12 |
+| `sbom-record` | the SBOM items of a publish line | CM-8, RA-5(3) |
+| `deploy` | lines of `lifecycle/<env>/releases.jsonl` | AU-2, AU-3, AU-12, IA-2 |
+| `merge` | `lifecycle/_merges/<commit>.json` | AC-5, AU-2, CM-3, CM-4, SA-10 |
+| `change-set` | `lifecycle/_change-sets/<digest>.json` | AU-2, CM-3, CM-4, SA-10 |
+| `gate` | lines of `lifecycle/_gates/<op>.jsonl` | AC-5, AU-2, AU-3, AU-6, CM-3, CM-3(4), IA-2 |
+| `sealed-approval` | sealed approval lines of `lifecycle/_gates/<op>.jsonl` | AC-5, AU-9, CM-3(4); outside both baselines: AU-10 |
+| `override` | lines of `lifecycle/_gates/policy-override.jsonl` and `policy-override/applied.jsonl` | AU-2, AU-6, CM-5(1) |
+| `run` | lines of `lifecycle/<env>/runs__<op>.jsonl` | AU-2, AU-3, AU-12 |
+| `trust` | `commits/<sha>/.chant/trust.json` | AC-5, CM-5, SC-12, SC-13 |
+| `signers` | the signers file `.chant/trust.json` names, under `commits/<sha>/` | AU-9, SA-10(1), SC-12 |
+| `declaration` | `commits/<sha>/chant.workspace.json` | AC-5, AU-11, CM-3(4), IA-2 |
+| `verify` | `verify/<digest>.json` | CM-3(2), SA-10(1), SI-7, SI-7(1) |
+| `sigstore-verify` | `verify/<digest>.sigstore.json` | SA-10(1), SI-7, SI-7(1), SR-11 |
+| `referrer-sbom` | `referrers/`, an SBOM referrer | CM-8, RA-5(3) |
+| `referrer-scan` | `referrers/`, the `scan.json` referrer | RA-5 |
+| `referrer-attestation` | `referrers/`, an attestation or provenance referrer | SI-7, SR-3; outside both baselines: SR-4, SA-12 |
+| `referrer-signature` | `referrers/`, a signature referrer | SI-7, SR-11; outside both baselines: CM-14 |
+| `forge-asset` | `assets/<digest>/<name>` | SI-7, SR-11 |
+
+AC-6, CM-2(2), CM-3(6), CM-6, SA-11(1) and SA-15 have no record in the export: their evidence is in the cloud's IAM, lint output, `chant.config.ts` and the pinned tool files. Their entries say so and repeat where the table says to look.
+
+## Signing and checking
+
+`--sign [<key file>]` signs `SHA256SUMS` with `ssh-keygen -Y sign` in the `chant-evidence` namespace, with the key file given or git's `user.signingkey`, as `chant approve --sign` takes it. Any key ssh-keygen can sign with works, a runner key file among them. Check it by hand with:
+
+```bash
+ssh-keygen -Y verify -f allowed_signers -I <signer> -n chant-evidence -s SHA256SUMS.sig < SHA256SUMS
+```
+
+`--check <dir>` reads only the directory:
+
+- every file against `SHA256SUMS` and the index, and any file that no list names;
+- each release file against its own digest;
+- each cut's signature against the signers file exported at the release's commit;
+- each sealed approval against the trust files exported at the base of the merge whose gate it is;
+- the signature on `SHA256SUMS`, with its key and whether an exported signers file lists that key.
+
+It exits 1 on a changed or unlisted file, a release file that does not hash to its digest, or a signature that does not verify. A cut with no signature, or an approval it has no trust files for, is reported and is not a failure. `--json` prints each of these.
+
+## Exit codes
+
+| Code | When |
+|---|---|
+| `evidence-out-not-empty` | `-o` names a file, or a directory that holds files. |
+| `evidence-release-not-found` | No release of this member carries the label or digest. |
+| `evidence-period-invalid` | `--since` or `--until` is not a date, or the period ends before it starts. |
+| `evidence-no-lifecycle` | The clone has no `chant/lifecycle` branch. |
+| `evidence-not-a-repository` | The directory is not in a git repository. |
+| `evidence-sign-failed` | `--sign` found no key, or ssh-keygen could not sign with it. |
+
+`--json` prints the directory, the signer's fingerprint, the releases, how many files were written, how many controls had records, `noReleases`, `notIncluded` and `problems`.

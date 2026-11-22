@@ -74,6 +74,16 @@ describe("security groups (WSP161 to WSP165)", () => {
     expect((await found(root)).map((f) => f[1]).sort()).toEqual(["security-component-no-sbom", "security-component-no-verify", "security-publish-no-provenance", "security-sbom-unsourced"]);
   });
 
+  test("supply-chain reports a release image whose FROM is not pinned by digest, and passes it once pinned (#5457)", async () => {
+    const config = 'export default { release: { images: [{ name: "app", dockerfile: "docker/Dockerfile" }] } };';
+    const unpinned = repo({ "chant.workspace.json": declaration({ security: ["supply-chain"] }), "app/chant.config.ts": config, "app/docker/Dockerfile": "FROM node:22\nRUN true\n" });
+    expect(await found(unpinned)).toEqual([["WSP162", "security-image-base-unpinned", "app"]]);
+    const pinned = repo({ "chant.workspace.json": declaration({ security: ["supply-chain"] }), "app/chant.config.ts": config, "app/docker/Dockerfile": `FROM node:22@sha256:${"b".repeat(64)} AS build\nFROM build\n` });
+    expect(await found(pinned)).toEqual([]);
+    // Without the group nothing is checked.
+    expect(await found(repo({ "chant.workspace.json": declaration(), "app/chant.config.ts": config, "app/docker/Dockerfile": "FROM node:22\n" }))).toEqual([]);
+  });
+
   test("a Cargo.lock above the member is an SBOM source", async () => {
     const root = repo({
       "chant.workspace.json": declaration({ security: ["supply-chain"] }),
@@ -93,13 +103,22 @@ describe("security groups (WSP161 to WSP165)", () => {
   });
 
   test("who-ran-it passes with signedSince, a trusted runner and a keyed tick", async () => {
-    const root = repo({
-      "chant.workspace.json": declaration({ security: ["who-ran-it"], ci: { green: { branch: "main", phases: { test: ["test"] }, require: ["test"], signedSince: "abc1234" } } }),
-      ".chant/trust.json": JSON.stringify({ schema: 1, runners: [{ principal: "chant-runner:box", key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl", class: "runner" }] }),
-      ".github/workflows/chant-ci-green.yml": "        env:\n          CHANT_RUNNER_KEY: ${{ secrets.K }}\n        run: npx chant ci tick\n",
-      "app/x": "",
-    });
+    const trust = JSON.stringify({ schema: 1, runners: [{ principal: "chant-runner:box", key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl", class: "runner" }] });
+    const tick = "        env:\n          CHANT_RUNNER_KEY: ${{ secrets.K }}\n        run: npx chant ci tick\n";
+    // signedSince must name a commit in the clone, or the declaration does not read and no security check runs.
+    const root = repo({ ".chant/trust.json": trust, ".github/workflows/chant-ci-green.yml": tick, "app/x": "" });
+    const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.test", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.test", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+    execFileSync("git", ["add", "-A"], { cwd: root, env });
+    execFileSync("git", ["commit", "-q", "--no-gpg-sign", "-m", "first"], { cwd: root, env });
+    const first = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8" }).trim();
+    const green = { branch: "main", phases: { test: ["test"] }, require: ["test"] };
+    writeFileSync(join(root, "chant.workspace.json"), declaration({ security: ["who-ran-it"], ci: { green: { ...green, signedSince: first } } }));
+    const all = (await runDeclarationChecks(root, (f) => f, { gather: false })).diagnostics;
+    expect(all.filter((d) => d.severity === "error").map((d) => d.code)).toEqual([]);
     expect(await found(root)).toEqual([]);
+    // The same tree without signedSince is reported, so the check ran on the declaration above.
+    writeFileSync(join(root, "chant.workspace.json"), declaration({ security: ["who-ran-it"], ci: { green } }));
+    expect((await found(root)).map((f) => f[1])).toEqual(["security-signed-since-unset"]);
   });
 
   test("review-rules reports --no-require-review, attribution and an unsigned gate", async () => {

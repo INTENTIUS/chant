@@ -264,6 +264,7 @@ export const REASONS = {
   "security-publish-no-provenance": "Under supply-chain, a pipeline file runs release publish without --require-provenance.",
   "security-component-no-sbom": "Under supply-chain, a member's components have no generate-sbom step.",
   "security-component-no-verify": "Under supply-chain, a member's components have no verify step.",
+  "security-image-base-unpinned": "Under supply-chain, a Dockerfile a member's release.images names starts FROM a base not pinned by digest.",
   "security-signed-since-unset": "Under who-ran-it, ci.green sets no signedSince, or there is no ci.green block.",
   "security-runner-untrusted": "Under who-ran-it, .chant/trust.json lists no runner key.",
   "security-tick-no-key": "Under who-ran-it, a pipeline file runs ci tick with no runner key.",
@@ -273,6 +274,14 @@ export const REASONS = {
   "security-runner-start-no-key": "Under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with.",
   "security-runner-start-no-role": "Under isolated-runners, no principal under runners in .chant/trust.json holds the runner role.",
   "security-trust-unreadable": "Under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked.",
+  // The security profile checks (check, #5464). Each is also a WSP166 or WSP167 finding, and names the control ids it bears on.
+  "profile-retention-short": "Under a security profile, retention.changeSets.days or retention.releases.days is unset or below the profile's days.",
+  "profile-gate-not-human": "Under a security profile, the release gate or a gate an apply job names is missing from identity.gates, names no class, names a class an agent, runner or service principal holds, or sets agentPassesAlone.",
+  "profile-scan-off": "Under a security profile, a chant.config.ts sets release.scan: false.",
+  "profile-scan-db-unbounded": "Under a security profile, release.scan.db is set with no dbMaxAgeHours, or dbMaxAgeHours is above the profile's hours.",
+  "profile-signing-off": "Under a security profile, a chant.config.ts sets release.signing: false.",
+  "profile-signing-module": "Under a security profile, a chant.config.ts signs images or forge assets keylessly or with a cosign key and names no CHANT_COSIGN build.",
+  "profile-runner-key-eddsa": "Under a security profile, .chant/trust.json lists an Ed25519 key under runners or local.keys.",
   // The ci.workflow requirements (check, #4168 step 6). Each is also a WSP151 finding.
   "ci-workflow-green-undeclared": "Under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut.",
   "ci-workflow-no-pre-merge": "Under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves.",
@@ -379,11 +388,13 @@ export const REASONS = {
   "evidence-payload-type": "The envelope's payload type is not application/vnd.in-toto+json.",
   "evidence-statement-invalid": "The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define.",
   "evidence-runner-mismatch": "The statement names a runner other than the one whose key signed it.",
-  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM, or the key given to trust runner add is not an ssh-ed25519 public key or an Ed25519 key in PEM.",
+  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 or ECDSA P-256 private key in PEM, or the key given to trust runner add is not an ssh-ed25519 or ecdsa-sha2-nistp256 public key or an Ed25519 or P-256 key in PEM.",
   "runner-key-is-signer": "The key given to evidence sign, runs sign or trust runner add is a person's key in the signers file, or trust runner add names a signer. Evidence and run statements are signed by a service or CI identity.",
   "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign or runs sign.",
   // The ref gate (workspace ref-gate, #4867): why an update can't be decided, and why a required check has no current evidence.
   "ref-update-invalid": "The hook's standard input is not the lines git hands a pre-receive or pre-push hook.",
+  "lifecycle-ref-deleted": "The update deletes chant/lifecycle, which holds the audit trail and is never deleted; chant lifecycle gc prunes it with a new commit.",
+  "lifecycle-ref-rewritten": "The update moves chant/lifecycle to a commit that does not descend from its old tip, which a force push does; the branch is append-only.",
   "ref-evidence-missing": "No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit.",
   "ref-evidence-stale": "Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree.",
   // The release-changed read (release changed, #5134): why the read stopped, and why a member is in the release.

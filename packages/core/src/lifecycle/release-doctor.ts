@@ -31,6 +31,25 @@
  * When the publish signs with Sigstore (#5164, ./publish-signing.ts), the
  * doctor checks what signing needs from the job it runs in: the OIDC token
  * cosign signs with (`signing-oidc`) and cosign 3 (`signing-cosign`).
+ *
+ * When the publish scans before the stage (#5446, ./publish-scan.ts), the
+ * doctor checks that the scanner runs, and syft when an `oci` target is
+ * declared (`scan-tool`), and says where the scanner's database comes from
+ * (`scan-database`). On a workstation a missing scanner is a warning, so a
+ * cut is not started with a publish that would be refused.
+ *
+ * Under the `supply-chain` group the doctor reads each Dockerfile
+ * `release.images` names and warns of a `FROM` not pinned by digest
+ * (`image-base-pinned`, #5457, ./dockerfile-pins.ts). For each registry a
+ * `release.images` entry's `pull` names, it checks that the username and
+ * password variables are set (`image-pull-login`).
+ *
+ * Every report carries `crypto` (#5470, ../crypto-module.ts): the Node and
+ * OpenSSL the doctor runs on and whether in FIPS mode, printed under the
+ * header. In FIPS mode with SHA-256 or ECDSA P-256 not fetchable it adds a
+ * `crypto-module` warning. When the publish signs, `signing-cosign-build`
+ * names the cosign it would run and whether that is chant's pinned upstream
+ * build or one the job supplies through `CHANT_COSIGN`.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -38,6 +57,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parseYAML } from "../yaml";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
+import { unpinnedFroms } from "./dockerfile-pins";
+import { releaseImagePulls } from "./release-images";
 import type {
   CargoPublishDeclaration,
   ForgePublishDeclaration,
@@ -55,7 +76,7 @@ import type {
   PypiPublishDeclaration,
   TauriUpdaterPublishDeclaration,
 } from "./publish-declaration";
-import type { PublishFetch } from "./release-publish";
+import { isForgejoJob, type PublishFetch } from "./release-publish";
 
 /** The first chant with `chant release doctor`, which checks each `release.publish` target before a cut, and whose `chant release workflow` runs it in a dispatched release's cut job (`release.workflow.doctor`) (#5161). */
 export const RELEASE_DOCTOR_FLOOR = "0.124.101";
@@ -101,6 +122,8 @@ export interface DoctorEnvironment {
 
 export interface DoctorReport {
   environment: DoctorEnvironment;
+  /** The crypto module this process runs on (#5470). */
+  crypto: import("../crypto-module").CryptoModuleReport;
   targets: DoctorTarget[];
   counts: Record<DoctorStatus, number>;
 }
@@ -119,6 +142,14 @@ export interface DoctorDeps {
   signer?: Pick<import("./publish-signing").Signer, "name" | "unavailable">;
   /** The cargo executable. Default `cargo`. */
   cargo?: string;
+  /** What would scan before the stage (#5446). Default: grype or trivy and syft, as the publish runs them. */
+  scanner?: Pick<import("./publish-scan").ReleaseScanner, "name" | "unavailable">;
+  /** What reads whether the forge protects `chant/lifecycle` (#5469). Default: the forge's REST API, read-only. */
+  lifecycleProtection?: (target: import("./lifecycle-protection").ProtectionTarget, fetch: import("../pr-forge").ForgeFetch) => Promise<import("./lifecycle-protection").LifecycleProtection>;
+  /** The crypto module's probes (#5470). Default: this process's. */
+  crypto?: import("../crypto-module").CryptoModuleDeps;
+  /** Which cosign signing would run (#5470). Default: `CHANT_COSIGN` or `cosign` on PATH, read and hashed; skipped when `signer` is given and this is not. */
+  cosignBinary?: (env: NodeJS.ProcessEnv) => import("../crypto-module").CosignBinary;
 }
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -137,7 +168,8 @@ function defaultRun(bin: string, args: string[], opts: { cwd: string; env: NodeJ
 
 /** The CI this process runs in, and whether it can get an OIDC token, from its environment. */
 export function doctorEnvironment(env: NodeJS.ProcessEnv, req: { cwd: string; releaseWorkflow: string | null; from?: "cut" }): DoctorEnvironment {
-  const ci = env.GITHUB_ACTIONS === "true" ? "github" : env.GITLAB_CI === "true" ? "gitlab" : env.CI ? "other" : null;
+  // #5458: a Forgejo runner sets GITHUB_ACTIONS too, and is not GitHub.
+  const ci = isForgejoJob(env) ? "other" : env.GITHUB_ACTIONS === "true" ? "github" : env.GITLAB_CI === "true" ? "gitlab" : env.CI ? "other" : null;
   const oidc = ci === "github" ? Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) : ci === "gitlab" ? Boolean(env.NPM_ID_TOKEN || env.SIGSTORE_ID_TOKEN || env.OVSX_ID_TOKEN) : Boolean(env.OVSX_ID_TOKEN);
   // GITHUB_WORKFLOW_REF is `owner/name/.github/workflows/release.yml@refs/heads/main`.
   const ref = env.GITHUB_WORKFLOW_REF ?? "";
@@ -184,6 +216,11 @@ export async function releaseDoctor(req: {
   /** `release.signing` (#5164), and the workspace's security groups, which decide whether the publish signs. */
   signing?: import("./publish-signing").SigningConfig;
   groups?: ReadonlySet<import("../workspace/security").SecurityGroup>;
+  /** `release.scan` (#5446) and `vulnPolicy.scanner`, which with the groups decide whether and with what the publish scans. */
+  scan?: import("./publish-scan").ReleaseScanConfig;
+  scanner?: "grype" | "trivy";
+  /** `release.images` (#5457): under `supply-chain`, each Dockerfile entry's bases are checked for a digest. */
+  images?: readonly import("./release-images").ReleaseImageDeclaration[];
   deps?: DoctorDeps;
 }): Promise<DoctorReport> {
   const env = req.env ?? process.env;
@@ -210,12 +247,51 @@ export async function releaseDoctor(req: {
     }
   }
   if (req.green === "forge-checks") targets.push(await checkForgeChecks(ctx, req.commit));
-  const signing = await checkSigning(ctx, req.publish, req.signing, req.groups ?? new Set(), deps.signer);
+  const signing = await checkSigning(ctx, req.publish, req.signing, req.groups ?? new Set(), deps.signer, deps.cosignBinary);
   if (signing) targets.push(signing);
+  const scan = await checkScan(ctx, req.publish, req.scan, req.groups ?? new Set(), req.scanner, deps.scanner);
+  if (scan) targets.push(scan);
+  const bases = checkImageBases(ctx, req.images ?? [], req.groups ?? new Set());
+  if (bases) targets.push(bases);
+  const pull = checkPullLogin(ctx, req.images ?? []);
+  if (pull) targets.push(pull);
+  const lifecycle = await checkLifecycleBranch(ctx, req.groups ?? new Set(), deps.lifecycleProtection);
+  if (lifecycle) targets.push(lifecycle);
+  const { cryptoModule, cryptoModuleBroken } = await import("../crypto-module");
+  const crypto = cryptoModule(deps.crypto);
+  const broken = cryptoModuleBroken(crypto);
+  if (broken) targets.push({ kind: "crypto", name: "crypto module", checks: [{ check: "crypto-module", status: "warn", message: broken, fix: "Load a FIPS provider that supplies SHA-256 and ECDSA P-256 in the OpenSSL config Node reads, or run without FIPS mode." }] });
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
-  return { environment, targets, counts };
+  return { environment, crypto, targets, counts };
+}
+
+/**
+ * #5469: under `verified-releases` or `who-ran-it`, whether the forge refuses
+ * force pushes to and deletions of `chant/lifecycle`. No forge to ask (the
+ * origin remote names none chant reads) is no target; a forge with no token
+ * that reads it is `unknown`.
+ */
+async function checkLifecycleBranch(ctx: Ctx, groups: ReadonlySet<import("../workspace/security").SecurityGroup>, read?: DoctorDeps["lifecycleProtection"]): Promise<DoctorTarget | null> {
+  if (!groups.has("verified-releases") && !groups.has("who-ran-it")) return null;
+  const { forgeOfCheckout } = await import("../forge-remote");
+  const { FORGE_TOKEN_ORDER } = await import("../pr-forge");
+  const { readLifecycleProtection, protectionVerdict, LIFECYCLE_BRANCH } = await import("./lifecycle-protection");
+  const remote = forgeOfCheckout(ctx.cwd);
+  if (!remote) return null;
+  const t: DoctorTarget = { kind: "lifecycle", name: `${LIFECYCLE_BRANCH} on ${remote.kind} ${remote.repo}`, checks: [] };
+  const source = FORGE_TOKEN_ORDER[remote.kind].find((n) => ctx.env[n]?.trim());
+  if (!source) {
+    t.checks.push({ check: "lifecycle-protected", status: "unknown", message: `no token to ask ${remote.kind} whether ${LIFECYCLE_BRANCH} refuses force pushes and deletions is set: ${FORGE_TOKEN_ORDER[remote.kind].join(", ")}`, fix: `Set ${FORGE_TOKEN_ORDER[remote.kind][0]} to a token that reads ${remote.repo}.` });
+    return t;
+  }
+  const apiBase = remote.kind === "github" ? (remote.host === "github.com" ? "https://api.github.com" : `${remote.url}/api/v3`) : remote.kind === "gitlab" ? `${remote.url}/api/v4` : `${remote.url}/api/v1`;
+  const target = { kind: remote.kind, apiBase, repo: remote.repo, token: ctx.env[source]!.trim() };
+  const protection = await (read ?? readLifecycleProtection)(target, ctx.fetch as never);
+  const v = protectionVerdict(protection);
+  t.checks.push({ check: "lifecycle-protected", status: v.status, message: v.message, ...(v.fix ? { fix: v.fix } : {}) });
+  return t;
 }
 
 async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTarget[]> {
@@ -289,9 +365,14 @@ async function checkForgeChecks(ctx: Ctx, commit: string | undefined): Promise<D
 
 /**
  * Sigstore signing (#5164), when `release.signing` or the `supply-chain`
- * group turns it on and an `oci` or `forge` target signs: whether this job
- * has the OIDC token the certificate is issued for, and cosign 3. Null when
- * the publish does not sign.
+ * group turns it on and an `oci`, `forge` or `pypi` target signs: whether
+ * this job can sign in the mode the config names, and cosign 3. Keyless
+ * needs the OIDC token the certificate is issued for (`signing-oidc`); a KMS
+ * key (#5458) needs its credentials' variables, and a key its file or
+ * variable and its password variable, each its public key when it names one
+ * (`signing-key`). The release workflow gives the key's variables to the
+ * publish step alone, so in the cut job (`--from cut`) a missing one is
+ * unknown rather than a failure. Null when the publish does not sign.
  */
 async function checkSigning(
   ctx: Ctx,
@@ -299,24 +380,125 @@ async function checkSigning(
   config: import("./publish-signing").SigningConfig | undefined,
   groups: ReadonlySet<import("../workspace/security").SecurityGroup>,
   injected: DoctorDeps["signer"],
+  binary?: DoctorDeps["cosignBinary"],
 ): Promise<DoctorTarget | null> {
-  const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
+  const { resolveSigning, signingReadiness, signingIdentity, cosignSigner, KEYLESS_FIX } = await import("./publish-signing");
   const setting = resolveSigning(config, groups);
   if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge" || d.type === "pypi")) return null;
   const why = setting.from === "config" ? "release.signing" : "the supply-chain group";
   const checks: DoctorCheck[] = [];
-  const id = signingIdentity(ctx.env);
-  if ("reason" in id) {
-    checks.push(
-      missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), or set release.signing: false."),
-    );
+  if (setting.mode === "keyless") {
+    const id = signingIdentity(ctx.env, setting);
+    if ("reason" in id) checks.push(missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, KEYLESS_FIX));
+    else checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
   } else {
-    checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
+    const refused = signingReadiness({ ...setting, trustRoot: undefined }, ctx.env, ctx.cwd);
+    const held = refused !== null && /not set here$/.test(refused.reason);
+    const what = setting.mode === "kms" ? `the KMS key ${setting.kms}` : `the key ${setting.key}`;
+    if (refused === null) checks.push({ check: "signing-key", status: "ok", message: `${why} signs with ${what}, verified with ${setting.publicKey ?? setting.kms}` });
+    else if (held && ctx.environment.from === "cut") checks.push({ check: "signing-key", status: "unknown", message: `${refused.reason}; this is the cut job, and the release workflow gives the key's variables to the publish step alone, so only a run of the publish can test this` });
+    else checks.push(missing(ctx, "signing-key", `${why} signs with ${what}, and ${refused.reason}`, refused.fix));
+  }
+  // #5458: a private Sigstore instance's trusted root.
+  if (setting.trustRoot) {
+    const at = [setting.fulcio ? `Fulcio ${setting.fulcio}` : null, setting.rekor ? `Rekor ${setting.rekor}` : null].filter(Boolean).join(" and ");
+    checks.push(
+      existsSync(resolve(ctx.cwd, setting.trustRoot))
+        ? { check: "signing-trust-root", status: "ok", message: `${setting.trustRoot} is the trusted root${at ? ` of ${at}` : ""}` }
+        : { check: "signing-trust-root", status: "fail", message: `release.signing.trustRoot names ${setting.trustRoot}, which is not there, so cosign can't trust the private Sigstore instance`, fix: "Commit the instance's trusted_root.json where release.signing.trustRoot names it." },
+    );
   }
   const signer = injected ?? cosignSigner(ctx.env, ctx.redactor);
   const gone = signer.unavailable();
   checks.push(gone ? missing(ctx, "signing-cosign", gone, "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.") : { check: "signing-cosign", status: "ok", message: `${signer.name} signs` });
+  // #5470: which cosign build signs, so its crypto module can be named.
+  const which = binary ?? (injected ? undefined : (await import("../crypto-module")).cosignBinary);
+  if (!gone && which) {
+    const { describeCosignBinary } = await import("../crypto-module");
+    const c = which(ctx.env);
+    checks.push({ check: "signing-cosign-build", status: c.sha256 === null ? "unknown" : "ok", message: describeCosignBinary(c) });
+  }
   return { kind: "signing", name: "Sigstore signing", checks };
+}
+
+/**
+ * The scan before the stage (#5446), when `release.scan` or the
+ * `supply-chain` group turns it on and an `oci`, `forge` or `npm` target is
+ * declared: whether the scanner runs, and syft for an image's SBOM, and
+ * where the scanner's database comes from. Null when the publish does not scan.
+ */
+async function checkScan(
+  ctx: Ctx,
+  publish: readonly PublishDeclaration[],
+  config: import("./publish-scan").ReleaseScanConfig | undefined,
+  groups: ReadonlySet<import("../workspace/security").SecurityGroup>,
+  tool: "grype" | "trivy" | undefined,
+  injected: DoctorDeps["scanner"],
+): Promise<DoctorTarget | null> {
+  const { resolveScan, toolReleaseScanner } = await import("./publish-scan");
+  const setting = resolveScan(config, groups);
+  if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge" || d.type === "npm")) return null;
+  const why = setting.from === "config" ? "release.scan" : "the supply-chain group";
+  const images = publish.some((d) => d.type === "oci");
+  const db = setting.db ? resolve(ctx.cwd, setting.db) : null;
+  const { withImageScanner } = await import("./publish-scan-wiz");
+  const scanner = injected ?? withImageScanner(setting, ctx.env, toolReleaseScanner(ctx.env, { tool: tool ?? "grype", db, redactor: ctx.redactor }), { redactor: ctx.redactor });
+  const gone = scanner.unavailable({ images });
+  const checks: DoctorCheck[] = [
+    gone
+      ? missing(ctx, "scan-tool", `${why} scans what the publish puts out before anything is pushed, and ${gone}`, "Install grype (or trivy) and syft, as chant release workflow does in the job, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; with imageScanner wiz, set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET and put wizcli on PATH; or set release.scan: false.")
+      : { check: "scan-tool", status: "ok", message: `${scanner.name} scans${images ? ", and syft makes each image's SBOM from its layers" : ""}` },
+    db
+      ? { check: "scan-database", status: "ok", message: `the scanner reads its database from ${db} and does not update it` }
+      : { check: "scan-database", status: "ok", message: "the scanner downloads its database on first use, which needs the network; release.scan.db names a directory that holds one for a job without it" },
+  ];
+  return { kind: "scan", name: "vulnerability scan", checks };
+}
+
+/**
+ * Under `supply-chain` (#5457): each Dockerfile `release.images` names, with
+ * the entry's build arguments, starts from bases pinned by digest. Null
+ * without the group or a Dockerfile entry.
+ */
+function checkImageBases(ctx: Ctx, images: readonly import("./release-images").ReleaseImageDeclaration[], groups: ReadonlySet<import("../workspace/security").SecurityGroup>): DoctorTarget | null {
+  const entries = images.filter((i): i is import("./release-images").ReleaseImageDockerfile => "dockerfile" in i);
+  if (!groups.has("supply-chain") || entries.length === 0) return null;
+  const checks: DoctorCheck[] = [];
+  for (const entry of entries) {
+    const abs = resolve(ctx.cwd, entry.dockerfile);
+    if (!existsSync(abs)) {
+      checks.push({ check: "image-base-pinned", status: "unknown", message: `${entry.name}: ${entry.dockerfile} is not there, so its bases can't be read` });
+      continue;
+    }
+    const found = unpinnedFroms(readFileSync(abs, "utf-8"), entry.args ?? {});
+    checks.push(
+      found.length === 0
+        ? { check: "image-base-pinned", status: "ok", message: `${entry.name}: every FROM in ${entry.dockerfile} is pinned by digest` }
+        : {
+            check: "image-base-pinned",
+            status: "warn",
+            message: `${entry.name}: ${found.map((u) => `${entry.dockerfile}:${u.line} FROM ${u.image}: ${u.why}`).join("; ")}`,
+            fix: "Pin each FROM as name:tag@sha256:<digest>, the digest docker buildx imagetools inspect prints for the tag; chant release images --repin then moves the pins as the tags move.",
+          },
+    );
+  }
+  return { kind: "images", name: "release image bases", checks };
+}
+
+/**
+ * Each registry `release.images` pulls from that needs a login (#5457):
+ * both its variables are set here. Null when no entry names one.
+ */
+function checkPullLogin(ctx: Ctx, images: readonly import("./release-images").ReleaseImageDeclaration[]): DoctorTarget | null {
+  const pulls = releaseImagePulls(images);
+  if (pulls.length === 0) return null;
+  const checks: DoctorCheck[] = pulls.map((p) => {
+    const unset = [p.usernameEnv, p.passwordEnv].filter((v) => !ctx.env[v]);
+    return unset.length === 0
+      ? { check: "image-pull-login", status: "ok", message: `${p.registry}: ${p.usernameEnv} and ${p.passwordEnv} are set for docker login` }
+      : missing(ctx, "image-pull-login", `${p.registry}: release.images pulls from it with a login, and ${unset.join(" and ")} ${unset.length === 1 ? "is" : "are"} not set`, `Set ${unset.join(" and ")} in the job, as chant release workflow does from the repository's secrets of the same names; on a workstation, export them, or docker login to ${p.registry} yourself.`);
+  });
+  return { kind: "pull", name: "image pull logins", checks };
 }
 
 /** A credential the publish needs and this environment lacks: a failure in CI, a warning on a workstation. */

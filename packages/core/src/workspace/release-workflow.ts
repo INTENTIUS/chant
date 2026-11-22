@@ -56,6 +56,7 @@ import { releaseJobSteps, releaseSetupSteps, type ReleaseStepItem, type ReleaseS
 import { packLine } from "./release-steps/builds";
 import { RELEASE_BINFMT_IMAGE, qemuArchitectures } from "./release-steps/qemu";
 import { targetExtras } from "./release-steps/targets";
+import { pullLoginEnv } from "./release-steps/pull";
 import { goreleaserSetup, setsUpGo } from "./release-steps/goreleaser";
 import { renderTrainWorkflow } from "./release-train-workflow";
 
@@ -173,6 +174,12 @@ export interface ReleaseWorkflowInput {
    * and publish jobs, before `release.workflow.setup`.
    */
   imagePlatforms?: string[];
+  /**
+   * The registries `release.images` pulls its bases from that need a login
+   * (#5457), at the root or in a train's members: the cut and publish jobs
+   * log docker in to each before they build ({@link pullLoginSetup}).
+   */
+  pullRegistries?: import("../lifecycle/release-images").ReleaseImagePull[];
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
   /**
@@ -218,6 +225,29 @@ export interface ReleaseWorkflowInput {
    * cosign pinned by SHA-256 ({@link cosignSetup}).
    */
   signing?: boolean;
+  /**
+   * How a keyless signer signs (#5458): `public` when one signs with public
+   * Sigstore, `private` when every keyless signer names a private Fulcio.
+   * Absent when none signs keylessly. Forgejo refuses `public`, since public
+   * Fulcio issues no certificate for a Forgejo token, and gives the jobs
+   * that sign `enable-openid-connect: true` under `private`.
+   */
+  keyless?: "public" | "private";
+  /**
+   * The variables the signing step alone gets (#5458): a `release.signing.key`
+   * held in a variable and its password. On GitHub and Forgejo the step that
+   * runs `chant release publish` reads each from the repository's secret of
+   * the same name ({@link signingStepEnv}); GitLab hands CI/CD variables to
+   * every job, so its file names none.
+   */
+  signingEnv?: string[];
+  /**
+   * The publish scans what it would put out before the stage (#5446):
+   * `release.scan` or the `supply-chain` group, with an `oci`, `forge` or
+   * `npm` target. The jobs download grype and syft pinned by SHA-256
+   * ({@link scanSetup}).
+   */
+  scan?: boolean;
   /**
    * The config declares `release.version` (#4840): the publish job runs
    * `chant release stamp <label>` before the images and the build, so what
@@ -288,7 +318,9 @@ export { NPM_TRUSTED_PUBLISHING_MIN, NPM_TRUSTED_PUBLISHING_SETUP, NPM_TRUSTED_P
 export { RELEASE_BINFMT_IMAGE, qemuArchitectures, qemuSetup } from "./release-steps/qemu";
 export { RELEASE_ARTIFACTS_ARTIFACT, RELEASE_ARTIFACTS_STAGE } from "./release-steps/artifacts";
 export { goreleaserSetup } from "./release-steps/goreleaser";
-export { cosignSetup } from "./release-steps/signing";
+export { cosignSetup, signingStepEnv } from "./release-steps/signing";
+export { scanSetup } from "./release-steps/scan";
+export { pullLoginEnv, pullLoginLine, pullLoginSetup } from "./release-steps/pull";
 export { RELEASE_DIGESTS_FILE, RELEASE_DIGESTS_PATHS, RELEASE_IMAGES_ARTIFACT } from "./release-steps/images";
 
 /** The flags `chant release publish` gets under the groups. */
@@ -325,6 +357,9 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   }
   // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
   const derived = targetExtras(input.forge, input.publish ?? [], p);
+  // #5457: the pull logins' credentials, from the repository's secrets, in the cut and publish jobs.
+  const pullEnv = pullLoginEnv(input.forge, p, input.pullRegistries ?? []);
+  if (Object.keys(pullEnv).length > 0) derived.env = { ...derived.env, ...pullEnv };
   // #5149: the cut asks the forge for the commit's checks with the run's token.
   const green = input.green ?? "chant";
   if (green === "forge-checks" && p.trigger === "dispatch" && input.forge === "github") {
@@ -347,19 +382,29 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     version: input.version === true,
     doctor: shape === "dispatch" ? p.doctor !== false : p.doctor === true,
     signing: input.signing === true,
+    signingEnv: input.signingEnv ?? [],
+    scan: input.scan === true,
     green,
     builds,
     ...(input.tags ? { tags: input.tags } : {}),
   };
-  const extra = jobExtras(
-    {
-      ...p,
-      ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
-      ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
-      setup: releaseSetupSteps(context),
-    },
-    input.forge,
-  );
+  // #5458: on Forgejo a keyless signer needs a private Fulcio, and the jobs that sign or check ask for the OIDC token.
+  if (input.forge === "forgejo" && input.signing && input.keyless === "public") {
+    throw new Error("release.signing: a Forgejo job's OIDC token gets no certificate from public Sigstore, so a keyless signature can't be made here; sign with a KMS key (release.signing.kms) or a key (release.signing.key), or name a private Fulcio that trusts this Forgejo (release.signing.fulcio and trustRoot)");
+  }
+  const openIdConnect = (doctor: boolean): Array<"cut" | "publish"> => (input.forge === "forgejo" && input.signing && input.keyless === "private" ? [...(doctor ? (["cut"] as const) : []), "publish"] : []);
+  const extra = {
+    ...jobExtras(
+      {
+        ...p,
+        ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
+        ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
+        setup: releaseSetupSteps(context),
+      },
+      input.forge,
+    ),
+    openIdConnect: openIdConnect(context.doctor && shape === "dispatch"),
+  };
   // #4767: Forgejo's job token is not a GitHub token, and GitLab has no such expression.
   const forgeToken =
     input.forge === "github" && p.env?.GITHUB_TOKEN === undefined && (input.publish ?? []).some((t) => t.type === "forge" && t.forge === "github" && !t.tokenEnv)
@@ -388,7 +433,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       const setup = toolchainLines(resolveToolchains(b.build.toolchains !== undefined ? b.build.toolchains : p.toolchains === false ? false : own ? undefined : p.toolchains, own ? new Set(b.files) : files, own ? (dir === "." ? null : dir) : root, false));
       return { ...b.build, member: b.member, memberDir: b.dir, path: dir, setup };
     });
-    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, green, builds: [] };
+    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, signingEnv: input.signingEnv ?? [], scan: input.scan === true, green, builds: [] };
     return renderTrainWorkflow({
       forge: input.forge,
       env: input.train.env,
@@ -401,7 +446,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       after,
       chantSetup,
       fullSetup,
-      extra: jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge),
+      extra: { ...jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge), openIdConnect: openIdConnect(p.trigger === "dispatch" && p.doctor !== false) },
       forgeToken,
       cutToken: green === "forge-checks" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [],
       green,
@@ -412,6 +457,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(t.artifacts && t.goreleaser ? { goreleaser: ((g) => (input.forge === "gitlab" ? g.gitlab : g.github))(goreleaserSetup(input.forge, [root, t.goreleaserDir].filter((d): d is string => !!d && d !== ".").join("/") || null, p, setsUpGo(p, input.projectFiles, root))) } : {}),
       ...(input.signing ? { signing: true } : {}),
       ...(input.forge === "gitlab" ? { idTokens: stepLines(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("idTokens"), (l) => l) } : {}),
+      // #5458: the signing step's own variables.
+      publishEnv: publishStepEnv(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("publishEnv")),
       doctor: p.trigger === "dispatch" && p.doctor !== false,
       verify: input.groups.has("verified-releases"),
       ...(trainBuilds.length > 0 ? { builds: trainBuilds } : {}),
@@ -500,6 +547,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...step("afterBuild"),
     ...step("beforePublish"),
     `      - run: ${chant} release publish ${label} ${flags}`,
+    ...publishStepEnv(at("publishEnv")),
   ];
   if (after.length > 0) {
     lines.push(
@@ -521,6 +569,12 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
 /** A job's steps as lines: each shell line as the job writes one, and each feature's own lines as they are. */
 function stepLines(items: readonly ReleaseStepItem[], run: (line: string) => string): string[] {
   return items.flatMap((i) => (typeof i === "string" ? [run(i)] : i.lines));
+}
+
+/** The `env:` of the step that runs the publish, from the `publishEnv` slot (#5458): nothing when it is empty. */
+export function publishStepEnv(items: readonly ReleaseStepItem[]): string[] {
+  const entries = stepLines(items, (l) => `          ${l}`);
+  return entries.length > 0 ? ["        env:", ...entries] : [];
 }
 
 /** A GitLab publish job's `id_tokens:`: `SIGSTORE_ID_TOKEN`, and the entries the features add. */
@@ -651,6 +705,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     ...step("afterBuild"),
     ...step("beforePublish"),
     run(`${chant} release publish ${label} ${flags}`),
+    ...publishStepEnv(at("publishEnv")),
   ];
   if (after.length > 0) {
     lines.push(
@@ -681,6 +736,12 @@ export interface JobExtras {
   gitlabVariables: string[];
   /** GitLab: script lines after the install. */
   gitlabScript: string[];
+  /**
+   * Forgejo (#5458): the jobs that get `enable-openid-connect: true`, which
+   * hands them an OIDC token, because a keyless signer signs (the publish)
+   * or checks that it can (a dispatched cut's doctor).
+   */
+  openIdConnect?: ReadonlyArray<"cut" | "publish">;
 }
 
 /**
@@ -690,7 +751,7 @@ export interface JobExtras {
  * The cut never takes `packages` (the publish pushes the images), and the
  * extras the config set by hand go to both.
  */
-export function jobPermissions(extra: Pick<JobExtras, "permissions">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
+export function jobPermissions(extra: Pick<JobExtras, "permissions" | "openIdConnect">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
   const scopes: Record<string, string> = { ...base };
   if (job === "cut" || job === "publish") {
     for (const [k, v] of extra.permissions) {
@@ -698,7 +759,9 @@ export function jobPermissions(extra: Pick<JobExtras, "permissions">, base: Reco
       scopes[k] = v;
     }
   }
-  return [`${indent}permissions:`, ...Object.entries(scopes).map(([k, v]) => `${indent}  ${k}: ${v}`)];
+  // #5458: Forgejo hands a job an OIDC token only when it asks.
+  const oidc = (job === "cut" || job === "publish") && (extra.openIdConnect ?? []).includes(job) ? [`${indent}enable-openid-connect: true`] : [];
+  return [`${indent}permissions:`, ...Object.entries(scopes).map(([k, v]) => `${indent}  ${k}: ${v}`), ...oidc];
 }
 
 /** `release.workflow`'s `permissions`, `env` and `setup` (#4751) as lines of the forge's file. Empty for a config without them, so its file is what it was. */
@@ -1005,6 +1068,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...publishStep("afterBuild"),
     ...publishStep("beforePublish"),
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
+    ...publishStepEnv(publish("publishEnv")),
   ];
   if (o.after.length > 0) {
     lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...jobPermissions(o.extra, { contents: "read" }, "after"), ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
@@ -1144,36 +1208,60 @@ export function releaseWorkflowHeader(command: string): string {
   return `# ${GENERATED_MARKER}. Regenerate with: ${command} (in the workspace root)\n`;
 }
 
+/** Why the release workflow's input could not be read, with the hint the command prints. */
+export class ReleaseWorkflowInputError extends Error {
+  constructor(
+    message: string,
+    readonly hint?: string,
+  ) {
+    super(message);
+    this.name = "ReleaseWorkflowInputError";
+  }
+}
+
+/** What {@link releaseWorkflowInputAt} read: the input the workflow renders from, and what the command reports. */
+export interface ReleaseWorkflowRead {
+  /** The workspace root, real path. */
+  root: string;
+  repoRoot: string;
+  forge: ReleaseWorkflowForge;
+  release: import("../config").ChantConfig["release"];
+  tags: MemberTags;
+  input: ReleaseWorkflowInput;
+  /** A target signs (#5164, #5458). */
+  signs: boolean;
+  /** The publish scans before the stage (#5446). */
+  scans: boolean;
+  /** A train's members' release config (#5154), empty for one release. */
+  memberReleases: Array<NonNullable<import("../config").ChantConfig["release"]>>;
+}
+
 /**
- * `chant release workflow [--forge github|gitlab|forgejo] [--install <command>]
- * [--build <command>|--no-build] [--chant <command>] [--output <file>]`: write
- * the publish workflow for the workspace's forge, under its security groups.
+ * The input `chant release workflow` renders from, read at the workspace
+ * root above `dir` (#5462): the root's and a train's members' release
+ * config, the security groups, the tag template, signing, the scan and the
+ * pull logins. `chant ci serve --release` reads the same input, so the jobs
+ * it runs on its host are the ones the file holds. Throws
+ * {@link ReleaseWorkflowInputError}.
  */
-export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandContext): Promise<number> {
-  const { existsSync, mkdirSync, realpathSync, writeFileSync } = await import("node:fs");
-  const { dirname, join, relative, resolve, sep } = await import("node:path");
-  const { formatError, formatSuccess } = await import("../cli/format");
+export async function releaseWorkflowInputAt(
+  dir: string,
+  o: { forge?: string; install?: string; build?: string; chant?: string } = {},
+): Promise<ReleaseWorkflowRead> {
+  const { existsSync, realpathSync } = await import("node:fs");
+  const { join, relative, sep } = await import("node:path");
   const { findWorkspaceRoot } = await import("../project-root");
   const { gitTop } = await import("./tree");
   const { securityGroupsAt } = await import("./security");
-  const { shellArg } = await import("./member-pipeline");
-  const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]";
-  const { args } = ctx;
   // #5149: a project with only a chant.config.ts, and no chant.workspace.json, renders its release workflow too.
-  const found = findWorkspaceRoot(process.cwd());
-  const projectDir = found?.dir ?? (["chant.config.ts", "chant.config.json"].some((f) => existsSync(join(process.cwd(), f))) ? process.cwd() : null);
-  if (!projectDir) {
-    console.error(formatError({ message: "no chant.workspace.json between this directory and the git root, and no chant.config.ts or chant.config.json here", hint: usage }));
-    return 1;
-  }
+  const found = findWorkspaceRoot(dir);
+  const projectDir = found?.dir ?? (["chant.config.ts", "chant.config.json"].some((f) => existsSync(join(dir, f))) ? dir : null);
+  if (!projectDir) throw new ReleaseWorkflowInputError("no chant.workspace.json between this directory and the git root, and no chant.config.ts or chant.config.json here");
   const root = realpathSync(projectDir);
   const repoRoot = gitTop(root) ?? root;
-  const forge = (args.forge ??
+  const forge = (o.forge ??
     (existsSync(join(repoRoot, ".github", "workflows")) ? "github" : existsSync(join(repoRoot, ".forgejo", "workflows")) ? "forgejo" : existsSync(join(repoRoot, ".gitlab-ci.yml")) ? "gitlab" : "github")) as ReleaseWorkflowForge;
-  if (!(RELEASE_WORKFLOW_FORGES as readonly string[]).includes(forge)) {
-    console.error(formatError({ message: `--forge ${JSON.stringify(forge)} is not one of ${RELEASE_WORKFLOW_FORGES.join(", ")}`, hint: usage }));
-    return 1;
-  }
+  if (!(RELEASE_WORKFLOW_FORGES as readonly string[]).includes(forge)) throw new ReleaseWorkflowInputError(`--forge ${JSON.stringify(forge)} is not one of ${RELEASE_WORKFLOW_FORGES.join(", ")}`);
   const groups = securityGroupsAt(root);
   const workspaceRoot = relative(repoRoot, root).split(sep).join("/") || ".";
   // #4656: release.workflow, release.images and release.lane in the root's chant.config.ts.
@@ -1182,8 +1270,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     const { loadChantConfig } = await import("../config");
     release = (await loadChantConfig(root)).config.release;
   } catch (err) {
-    console.error(formatError({ message: `chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
-    return 1;
+    throw new ReleaseWorkflowInputError(`chant.config.ts at the workspace root could not be read: ${err instanceof Error ? err.message : String(err)}`);
   }
   // #5150: release.tag decides the tags the workflow runs on, refused when another member's can make the same tag.
   let tags: MemberTags;
@@ -1193,8 +1280,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     await checkTagCollisions(root, tags);
   } catch (err) {
     const code = (err as { code?: unknown }).code;
-    console.error(formatError({ message: `${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`, hint: usage }));
-    return 1;
+    throw new ReleaseWorkflowInputError(`${err instanceof Error ? err.message : String(err)}${typeof code === "string" ? ` [${code}]` : ""}`);
   }
   // #5154: a train publishes its members' targets, so their credentials, tools and signing are the workflow's.
   const memberReleases: Array<NonNullable<typeof release>> = [];
@@ -1217,8 +1303,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
         }
         if (r?.artifacts && goreleaserDir === undefined && (await import("../lifecycle/release-artifacts")).usesGoreleaser(r.artifacts)) goreleaserDir = m.dir.split(sep).join("/");
       } catch (err) {
-        console.error(formatError({ message: `member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, hint: usage }));
-        return 1;
+        throw new ReleaseWorkflowInputError(`member ${m.name}'s chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     // #5216: a member's files are built by its cut, in the train's cut job; #5237: or by the member's own release.workflow.builds, which builtBy names.
@@ -1229,22 +1314,36 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
         checkReleaseArtifacts(r.artifacts!, { builds: r.workflow?.builds ?? [] });
       } catch (err) {
         if (!(err instanceof ReleaseArtifactError)) throw err;
-        console.error(formatError({ message: `release.train: a member's ${err.message} [${err.code}]`, hint: err.fix ?? "Fix release.artifacts in the member's chant.config.ts." }));
-        return 1;
+        throw new ReleaseWorkflowInputError(`release.train: a member's ${err.message} [${err.code}]`, err.fix ?? "Fix release.artifacts in the member's chant.config.ts.");
       }
     }
   }
   const memberImages = memberReleases.flatMap((r) => r.images ?? []);
+  // #5457: the registries the images pull from that need a login, at the root and in the members.
+  const { releaseImagePulls } = await import("../lifecycle/release-images");
+  const pullRegistries = releaseImagePulls([...(release?.images ?? []), ...memberImages]);
   const memberArtifacts = memberReleases.flatMap((r) => r.artifacts ?? []);
   const allTargets = [...(release?.publish ?? []), ...memberReleases.flatMap((r) => r.publish ?? [])];
-  const { resolveSigning } = await import("../lifecycle/publish-signing");
-  const signs = [release, ...memberReleases].some((r) => resolveSigning(r?.signing, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi"));
+  const { resolveSigning, signingStepVariables } = await import("../lifecycle/publish-signing");
+  // #5458: a key signs the SLSA statement that meets --require-provenance with no CI OIDC token, so under supply-chain it signs for any target.
+  const signsFor = (r: (typeof memberReleases)[number] | undefined) => {
+    const setting = resolveSigning(r?.signing, groups);
+    const targets = r?.publish ?? [];
+    return setting.on && (targets.some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi") || (setting.mode !== "keyless" && groups.has("supply-chain") && targets.length > 0));
+  };
+  const signs = [release, ...memberReleases].some(signsFor);
+  const signingEnv = [...new Set([release, ...memberReleases].filter(signsFor).flatMap((r) => signingStepVariables(resolveSigning(r?.signing, groups))))];
+  // #5458: whether a keyless signer signs with public Sigstore, or every one through a private Fulcio.
+  const keylessSigners = [release, ...memberReleases].filter(signsFor).map((r) => resolveSigning(r?.signing, groups)).filter((st) => st.mode === "keyless");
+  const keyless = keylessSigners.length === 0 ? undefined : keylessSigners.some((st) => !st.fulcio) ? ("public" as const) : ("private" as const);
+  // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
+  const { resolveScan } = await import("../lifecycle/publish-scan");
+  const scans = [release, ...memberReleases].some((r) => resolveScan(r?.scan, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "npm"));
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
-  const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
+  const { TOOLCHAIN_MARKERS } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
   const node = projectFiles.includes("package.json");
   const { readerVersion } = await import("./declaration");
-  let text: string;
   // #5183: an artifact's builtBy names a job of release.workflow.builds, so a workflow without it is refused here, not at the cut.
   if ((release?.artifacts?.length ?? 0) > 0) {
     const { checkReleaseArtifacts, ReleaseArtifactError } = await import("../lifecycle/release-artifacts");
@@ -1252,22 +1351,21 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
       checkReleaseArtifacts(release!.artifacts!, { builds: release?.workflow?.builds ?? [] });
     } catch (err) {
       if (!(err instanceof ReleaseArtifactError)) throw err;
-      console.error(formatError({ message: `${err.message} [${err.code}]`, hint: err.fix ?? "Fix release.artifacts in chant.config.ts." }));
-      return 1;
+      throw new ReleaseWorkflowInputError(`${err.message} [${err.code}]`, err.fix ?? "Fix release.artifacts in chant.config.ts.");
     }
   }
-  try {
-  text = renderReleaseWorkflow({
+  const artifactsMod = await import("../lifecycle/release-artifacts");
+  const input: ReleaseWorkflowInput = {
     forge,
     projectFiles,
-    ...(node || args.ciInstall || release?.workflow?.install !== undefined ? {} : { install: null }),
-    ...(node || args.ciChant || release?.workflow?.chant !== undefined ? {} : { chant: `npx --yes @intentius/chant@${readerVersion()}` }),
+    ...(node || o.install || release?.workflow?.install !== undefined ? {} : { install: null }),
+    ...(node || o.chant || release?.workflow?.chant !== undefined ? {} : { chant: `npx --yes @intentius/chant@${readerVersion()}` }),
     groups,
     workspaceRoot,
     tags,
     ...(release?.workflow ? { pipeline: release.workflow } : {}),
     ...((release?.images?.length ?? 0) > 0 ? { images: true, imageArchives: resolveReleaseImages(placeReleaseImages(release!.images!, release!.artifacts ?? [])).map((i) => i.archive), imagePlatforms: releaseImagePlatforms(release!.images!) } : {}),
-    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}), ...((await import("../lifecycle/release-artifacts")).usesNfpm(release!.artifacts!) ? { nfpm: true } : {}) } : {}),
+    ...((release?.artifacts?.length ?? 0) > 0 ? { artifacts: true, ...(artifactsMod.usesGoreleaser(release!.artifacts!) ? { goreleaser: true } : {}), ...(artifactsMod.usesNfpm(release!.artifacts!) ? { nfpm: true } : {}) } : {}),
     ...(release?.lane ? { lane: release.lane } : {}),
     green: await (async () => {
       const { resolveGreenSource } = await import("../lifecycle/release-green");
@@ -1283,21 +1381,55 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     })(),
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
+    ...(signingEnv.length > 0 ? { signingEnv } : {}),
+    ...(keyless ? { keyless } : {}),
+    ...(scans ? { scan: true } : {}),
+    ...(pullRegistries.length > 0 ? { pullRegistries } : {}),
     ...(allTargets.length > 0 ? { publish: allTargets } : {}),
     ...(release?.train
       ? {
           train: {
             env: release.train.env,
             ...(memberImages.length > 0 ? { images: true, imagePlatforms: releaseImagePlatforms(memberImages) } : {}),
-            ...(memberArtifacts.length > 0 ? { artifacts: true, ...((await import("../lifecycle/release-artifacts")).usesGoreleaser(memberArtifacts) ? { goreleaser: true, ...(goreleaserDir ? { goreleaserDir } : {}) } : {}) } : {}),
+            ...(memberArtifacts.length > 0 ? { artifacts: true, ...(artifactsMod.usesGoreleaser(memberArtifacts) ? { goreleaser: true, ...(goreleaserDir ? { goreleaserDir } : {}) } : {}) } : {}),
             ...(memberBuilds.length > 0 ? { builds: memberBuilds } : {}),
           },
         }
       : {}),
-    ...(args.ciInstall ? { install: args.ciInstall } : {}),
-    ...(args.buildCommand ? { build: args.buildCommand } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
-    ...(args.ciChant ? { chant: args.ciChant } : {}),
-  });
+    ...(o.install ? { install: o.install } : {}),
+    ...(o.build ? { build: o.build } : !hasBuildScript(root) && release?.workflow?.build === undefined ? { build: null } : {}),
+    ...(o.chant ? { chant: o.chant } : {}),
+  };
+  return { root, repoRoot, forge, release, tags, input, signs, scans, memberReleases };
+}
+
+/**
+ * `chant release workflow [--forge github|gitlab|forgejo] [--install <command>]
+ * [--build <command>|--no-build] [--chant <command>] [--output <file>]`: write
+ * the publish workflow for the workspace's forge, under its security groups.
+ */
+export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandContext): Promise<number> {
+  const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { dirname, join, relative, resolve, sep } = await import("node:path");
+  const { formatError, formatSuccess } = await import("../cli/format");
+  const { shellArg } = await import("./member-pipeline");
+  const { detectToolchains } = await import("./release-toolchains");
+  const usage = "chant release workflow [--forge github|gitlab|forgejo] [--install <command>] [--build <command>] [--chant <command>] [--output <file>] [--force]";
+  const { args } = ctx;
+  let read: ReleaseWorkflowRead;
+  try {
+    read = await releaseWorkflowInputAt(process.cwd(), { ...(args.forge ? { forge: args.forge } : {}), ...(args.ciInstall ? { install: args.ciInstall } : {}), ...(args.buildCommand ? { build: args.buildCommand } : {}), ...(args.ciChant ? { chant: args.ciChant } : {}) });
+  } catch (err) {
+    if (!(err instanceof ReleaseWorkflowInputError)) throw err;
+    console.error(formatError({ message: err.message, hint: err.hint ?? usage }));
+    return 1;
+  }
+  const { root, repoRoot, forge, release, tags, signs, scans } = read;
+  const { groups } = read.input;
+  const projectFiles = read.input.projectFiles ?? [];
+  let text: string;
+  try {
+    text = renderReleaseWorkflow(read.input);
   } catch (err) {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: "Fix release.workflow in chant.config.ts." }));
     return 1;
@@ -1322,7 +1454,30 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
-  const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null].filter(Boolean);
+  // #5466: release.scan.schedule asks for a second workflow that rescans what the environments run.
+  const schedule = typeof release?.scan === "object" ? release.scan.schedule : undefined;
+  if (schedule) {
+    const { renderRescanWorkflow, registryEnvOf, RELEASE_RESCAN_WORKFLOW_FILES } = await import("./release-rescan-workflow");
+    const { basename } = await import("node:path");
+    const rescanDefault = join(repoRoot, RELEASE_RESCAN_WORKFLOW_FILES[forge]);
+    const rescanTarget = args.output ? join(dirname(target), basename(RELEASE_RESCAN_WORKFLOW_FILES[forge])) : renderPathOf(rescanDefault);
+    if (args.force !== true && existsSync(rescanTarget) && !readFileSync(rescanTarget, "utf-8").includes(GENERATED_MARKER)) {
+      console.error(formatError({ message: `${relative(process.cwd(), rescanTarget).split(sep).join("/")} exists and chant did not write it [release-workflow-exists]`, hint: "Run again with --force to replace it." }));
+      return 1;
+    }
+    let rescan: string;
+    try {
+      rescan = renderRescanWorkflow({ forge, schedule, chant: read.input.chant ?? release?.workflow?.chant ?? "npx chant", install: read.input.install !== undefined ? read.input.install : release?.workflow?.install === false ? null : (release?.workflow?.install ?? "npm ci"), root: read.input.workspaceRoot && read.input.workspaceRoot !== "." ? read.input.workspaceRoot : null, pipeline: release?.workflow ?? {}, registryEnv: registryEnvOf(release?.publish ?? []) });
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: "Fix release.scan or release.publish in chant.config.ts." }));
+      return 1;
+    }
+    mkdirSync(dirname(rescanTarget), { recursive: true });
+    writeFileSync(rescanTarget, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + rescan);
+    console.log(formatSuccess(`Wrote ${relative(process.cwd(), rescanTarget).split(sep).join("/") || rescanTarget}: runs chant release scan --deployed on ${JSON.stringify(schedule)}.`));
+    if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml, and create a pipeline schedule with that cron expression: include: [{ local: ${RELEASE_RESCAN_WORKFLOW_FILES.gitlab} }]`);
+  }
+  const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null, scans ? `scans before anything is pushed, with grype ${TOOL_PINS.grype.version} and syft ${TOOL_PINS.syft.version} pinned by SHA-256` : null].filter(Boolean);
   const what = release?.train
     ? release.workflow?.trigger === "dispatch"
       ? `cuts and publishes a release train for ${release.train.env} started by hand, from a green commit, and publishes one a release-train/${release.train.env}/* tag names`

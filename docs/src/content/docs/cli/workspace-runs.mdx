@@ -136,7 +136,7 @@ The signing key is a runner key, listed at base under `runners` in `.chant/trust
 
 | Command | Does |
 |---|---|
-| `runs sign <id> --key <pem>` | builds the statement from the ledger, signs it with the Ed25519 key, and appends it to the run's file as a `statement` line |
+| `runs sign <id> --key <pem>` | builds the statement from the ledger, signs it with the runner key (Ed25519 or ECDSA P-256), and appends it to the run's file as a `statement` line |
 | `runs statement <id> --signer <principal>` | prints the statement, the `payloadType` and the `payload` to sign, in base64, for a signer whose key is kept elsewhere. It writes nothing |
 | `runs sign <id> --envelope <file\|->` | takes an envelope signed elsewhere, checks it, and appends it |
 

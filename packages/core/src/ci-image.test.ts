@@ -5,8 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
+import { IMAGE_PINS, imageRef, WOLFI_PACKAGE_PINS } from "./image-pins";
+import { NEXT_RELEASE } from "./release-floors";
 import {
   CI_BASE_IMAGES,
+  CI_IMAGE_BASE_FLOOR,
+  CI_IMAGE_CHAINGUARD_USER,
+  CI_IMAGE_PACKAGE_NAMES,
   CI_IMAGE_DOCKER_STAGES_FLOOR,
   CI_IMAGE_FLOOR,
   CI_IMAGE_NON_ROOT_FLOOR,
@@ -15,6 +20,8 @@ import {
   CI_TOOL_SHA256,
   CI_TOOLS,
   checksumFor,
+  ciImageBase,
+  ciImagePackages,
   ciToolBin,
   ciToolFetchScript,
   ciToolInstallLine,
@@ -209,6 +216,7 @@ describe("ciToolRelease", () => {
     expect(CI_IMAGE_NON_ROOT_FLOOR).toBe("0.124.88");
     expect(CI_IMAGE_DOCKER_STAGES_FLOOR).toBe("0.124.88");
     expect(CI_TOOL_NODE_DOWNLOAD_FLOOR).toBe("0.124.89");
+    expect(CI_IMAGE_BASE_FLOOR).toBe(NEXT_RELEASE);
   });
 });
 
@@ -563,15 +571,20 @@ describe("productImageStages", () => {
     expect(final).toContain("COPY --from=fetch /opt/terragucci/ /opt/terragucci/");
     expect(final).toContain("RUN ln -sf /opt/terragucci/tofu-1.13.1/tofu /usr/local/bin/tofu && ln -sf /opt/terragucci/terragrunt-1.2.0/terragrunt /usr/local/bin/terragrunt");
     expect(final).toContain("COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci");
-    expect(final.slice(-7)).toEqual([
+    expect(final.slice(-10)).toEqual([
       'LABEL org.opencontainers.image.title="terragucci-terragrunt"',
       'LABEL org.opencontainers.image.description="Terragrunt 1.2.0, OpenTofu 1.13.1 and the terragucci engine"',
       'LABEL org.opencontainers.image.version="${CHANT_RELEASE_LABEL}"',
       'LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"',
       'LABEL org.opencontainers.image.licenses="Apache-2.0"',
+      'LABEL org.opencontainers.image.base.name="node:22-bookworm-slim"',
+      `LABEL org.opencontainers.image.base.digest="${CI_BASE_IMAGES.node.split("@")[1]}"`,
+      'LABEL io.intentius.chant.image.base="debian"',
       'CMD ["bash"]',
       "",
     ]);
+    // A Debian image stays root: no USER line, and no ENTRYPOINT.
+    expect(final.some((l) => l.startsWith("USER ") || l.startsWith("ENTRYPOINT"))).toBe(false);
     // curl is in the fetch stage only.
     expect(final.join("\n")).not.toContain("curl");
   });
@@ -666,11 +679,223 @@ describe("derivedImageDockerfile", () => {
         "# A prepared image for plywood's jobs.",
         "# Build and push it in your own CI.",
         `FROM ghcr.io/intentius/plywood-pulumi:0.4.0-pulumi3.272.0@sha256:${"6".repeat(64)}`,
+        "USER root",
         "RUN pulumi plugin install resource aws 7.4.0",
         "RUN chmod -R a+rX /opt/plywood/pulumi-home",
+        "USER ${CHANT_IMAGE_USER:-root}",
         "",
       ].join("\n"),
     );
     expect(() => derivedImageDockerfile({ from: "a b", steps: [] })).toThrow(/image reference/);
+  });
+});
+
+describe("derivedImageDockerfile on either base (#5445)", () => {
+  test("steps that set their own user get no USER line from chant", () => {
+    const text = derivedImageDockerfile({ from: "img@sha256:" + "6".repeat(64), steps: [{ user: "root" }, { run: "true" }, { user: "1000" }] });
+    expect(text).toBe(["FROM img@sha256:" + "6".repeat(64), "USER root", "RUN true", "USER 1000", ""].join("\n"));
+  });
+
+  test("terragucci's mirror recipe steps run as root and the image's user comes back from CHANT_IMAGE_USER", () => {
+    const lines = derivedImageDockerfile({
+      from: "ghcr.io/intentius/terragucci-tofu:1.0.0@sha256:" + "7".repeat(64),
+      steps: [
+        { arg: "TARGETOS=linux" },
+        { copy: "mirror/ /tmp/terragucci-mirror/" },
+        { run: "mkdir -p /usr/share/terragucci/providers; rm -rf /tmp/terragucci-mirror" },
+        { env: "TF_CLI_CONFIG_FILE=/usr/share/terragucci/terragucci.tfrc" },
+      ],
+    }).split("\n");
+    expect(lines[1]).toBe("USER root");
+    expect(lines.at(-2)).toBe("USER ${CHANT_IMAGE_USER:-root}");
+  });
+});
+
+describe("productImageStages with base (#5445)", () => {
+  const spec = {
+    name: "terragucci-tofu",
+    product: "terragucci",
+    description: "OpenTofu 1.13.1 and the terragucci engine",
+    source: "https://github.com/INTENTIUS/terragucci",
+    tools: [{ tool: "tofu" as const, version: "1.13.1" }],
+    packages: ["openssh-client", "xz-utils"],
+    npm: ["@cdktn/hcl2json@0.24.0"],
+    chant: "0.124.81",
+    bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
+  };
+  const stagesOf = (base?: Parameters<typeof ciImageBase>[0]) => productImageStages({ ...spec, ...(base ? { base } : {}) }).map((st) => dockerfileText([st]).split("\n"));
+  const pinned = (name: string): string => WOLFI_PACKAGE_PINS[name]!.version;
+  const APK_FAILED_TEXT =
+    'echo "apk add failed. If Wolfi no longer serves a pinned version, move the pin: a newer chant moves its own (WOLFI_PACKAGE_PINS), and chant release images --repin <file> moves an apk:<name>=<version> entry in your source; then render this Dockerfile again." >&2; exit 1';
+
+  test("both families from one spec: Debian with apt and root, Chainguard with apk and a final user that is not root", () => {
+    const [debFetch, deb] = stagesOf("debian");
+    expect(stagesOf()).toEqual([debFetch, deb]);
+    expect(debFetch![0]).toBe(`FROM ${CI_BASE_IMAGES.debian} AS fetch`);
+    expect(debFetch!.some((l) => l.includes("apt-get install -y --no-install-recommends ca-certificates curl unzip"))).toBe(true);
+    expect(deb![0]).toBe(`FROM ${CI_BASE_IMAGES.node}`);
+    expect(deb).toContain("RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates openssh-client xz-utils && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/ldconfig/aux-cache");
+    expect(deb!.join("\n")).not.toContain("apk ");
+    expect(deb!.filter((l) => l.startsWith("USER "))).toEqual([]);
+
+    const [cgFetch, cg] = stagesOf("chainguard");
+    expect(cgFetch![0]).toBe(`FROM ${imageRef(IMAGE_PINS.chainguardWolfiBase)} AS fetch`);
+    expect(cgFetch).toContain(`RUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=${pinned("curl")} unzip=${pinned("unzip")} || { ${APK_FAILED_TEXT}; }`);
+    expect(cgFetch!.join("\n")).not.toContain("apt-get");
+    expect(cg![0]).toBe(`FROM ${imageRef(IMAGE_PINS.chainguardNode)}`);
+    expect(cg![0]).toMatch(/^FROM cgr\.dev\/chainguard\/node:latest-dev@sha256:[0-9a-f]{64}$/);
+    // Packages come from apk, under their Wolfi names; apt is never run.
+    expect(cg).toContain(`RUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} openssh-client=${pinned("openssh-client")} xz=${pinned("xz")} || { ${APK_FAILED_TEXT}; } && mkdir -p /usr/local/bin`);
+    expect(cg!.join("\n")).not.toContain("apt-get");
+    // Every install step runs as root, and the final user is not root.
+    expect(cg![1]).toBe("USER root");
+    const users = cg!.filter((l) => l.startsWith("USER "));
+    expect(users).toEqual(["USER root", `USER ${CI_IMAGE_CHAINGUARD_USER}`]);
+    expect(cg!.at(-2)).toBe("USER 65532");
+    expect(cg!.at(-2)).not.toMatch(/USER (root|0)$/);
+    expect(cg).toContain("ENV CHANT_IMAGE_USER=65532");
+    expect(cg).toContain("ENV USER=terragucci");
+    expect(cg).toContain("ENV HOME=/tmp");
+    expect(cg).toContain("RUN git config --system --add safe.directory '*'");
+    expect(cg).toContain("COPY --from=fetch /opt/terragucci/ /opt/terragucci/");
+    expect(cg).toContain("RUN mkdir -p /opt/terragucci && chown 65532:65532 /opt/terragucci");
+    expect(cg!.slice(-7, -3)).toEqual([
+      'LABEL org.opencontainers.image.base.name="cgr.dev/chainguard/node:latest-dev"',
+      `LABEL org.opencontainers.image.base.digest="${IMAGE_PINS.chainguardNode.digest}"`,
+      'LABEL io.intentius.chant.image.base="chainguard"',
+      "ENTRYPOINT []",
+    ]);
+    expect(cg!.at(-3)).toBe('CMD ["bash"]');
+  });
+
+  test("a Chainguard org's registry: its tags, latest-dev by default, a digest when the product records one", () => {
+    const d = "a".repeat(64);
+    expect(ciImageBase({ registry: "cgr.dev/example.com" })).toEqual({
+      family: "chainguard",
+      node: "cgr.dev/example.com/node:latest-dev",
+      fetch: "cgr.dev/example.com/wolfi-base:latest",
+      user: CI_IMAGE_CHAINGUARD_USER,
+    });
+    const base = ciImageBase({ registry: "cgr.dev/example.com/", node: `22-dev@sha256:${d}`, wolfiBase: `cgr.dev/example.com/wolfi-base:latest@sha256:${d}` });
+    expect(base.node).toBe(`cgr.dev/example.com/node:22-dev@sha256:${d}`);
+    expect(base.fetch).toBe(`cgr.dev/example.com/wolfi-base:latest@sha256:${d}`);
+    const [fetch, final] = stagesOf({ registry: "cgr.dev/example.com", node: "22-dev" });
+    expect(fetch![0]).toBe("FROM cgr.dev/example.com/wolfi-base:latest AS fetch");
+    expect(final![0]).toBe("FROM cgr.dev/example.com/node:22-dev");
+    // No digest recorded, so no digest label.
+    expect(final!.some((l) => l.includes("image.base.digest"))).toBe(false);
+    expect(final).toContain('LABEL org.opencontainers.image.base.name="cgr.dev/example.com/node:22-dev"');
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "other.dev/x/node:22@sha256:" + d })).toThrow(/base.node/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "22 dev" })).toThrow(/base.node/);
+    expect(() => ciImageBase({ registry: "https://cgr.dev/x" })).toThrow(/base.registry/);
+    expect(() => ciImageBase("alpine" as never)).toThrow(/"debian", "chainguard"/);
+  });
+
+  test("a registry route takes another image name for each image, as an <image>:<tag> or a full reference, with or without a digest", () => {
+    const d = "b".repeat(64);
+    // The names are fixtures: chant takes whatever image names the org holds and checks none.
+    const own = ciImageBase({ registry: "cgr.dev/example.com", node: "custom-node:22-dev", wolfiBase: "custom-base:latest" });
+    expect(own.node).toBe("cgr.dev/example.com/custom-node:22-dev");
+    expect(own.fetch).toBe("cgr.dev/example.com/custom-base:latest");
+    const pinned = ciImageBase({ registry: "cgr.dev/example.com", node: `cgr.dev/example.com/custom-node:22-dev@sha256:${d}`, wolfiBase: `custom-base:latest@sha256:${d}` });
+    expect(pinned.node).toBe(`cgr.dev/example.com/custom-node:22-dev@sha256:${d}`);
+    expect(pinned.fetch).toBe(`cgr.dev/example.com/custom-base:latest@sha256:${d}`);
+    // The Dockerfile starts both stages from them, and the labels carry the chosen name and digest.
+    const [fetch, final] = stagesOf({ registry: "cgr.dev/example.com", node: `custom-node:22-dev@sha256:${d}`, wolfiBase: "custom-base:latest" });
+    expect(fetch![0]).toBe("FROM cgr.dev/example.com/custom-base:latest AS fetch");
+    expect(final![0]).toBe(`FROM cgr.dev/example.com/custom-node:22-dev@sha256:${d}`);
+    expect(final).toContain('LABEL org.opencontainers.image.base.name="cgr.dev/example.com/custom-node:22-dev"');
+    expect(final).toContain(`LABEL org.opencontainers.image.base.digest="sha256:${d}"`);
+    // The defaults stay where they were, and an image outside the registry is refused.
+    expect(ciImageBase({ registry: "cgr.dev/example.com", node: "22-dev" }).node).toBe("cgr.dev/example.com/node:22-dev");
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "cgr.dev/other/custom-node:22-dev" })).toThrow(/base.node/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", wolfiBase: "cgr.dev/example.com/sub/custom-base:latest" })).toThrow(/base.wolfiBase/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "Custom:22" })).toThrow(/base.node/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "custom-node:" })).toThrow(/base.node/);
+  });
+
+  test("packages: Debian names through the map, apk: and apt: entries for one family, an unmapped name refused under Chainguard", () => {
+    expect(ciImagePackages("debian", ["openssh-client", "apt:python3", "apk:python-3.13"])).toEqual(["openssh-client", "python3"]);
+    expect(ciImagePackages("chainguard", ["openssh-client", "dnsutils", "tar", "apt:python3", "apk:python-3.13=3.13.9-r0"])).toEqual([
+      `openssh-client=${pinned("openssh-client")}`,
+      `bind-tools=${pinned("bind-tools")}`,
+      `gnutar=${pinned("gnutar")}`,
+      "python-3.13=3.13.9-r0",
+    ]);
+    expect(() => ciImagePackages("chainguard", ["python3"])).toThrow(/no Wolfi name in CI_IMAGE_PACKAGE_NAMES/);
+    expect(() => ciImagePackages("debian", ["Bad"])).toThrow(/not a package name/);
+    expect(() => productImageStages({ ...spec, base: "chainguard", packages: ["libpq-dev"] })).toThrow(/libpq-dev/);
+    expect(CI_IMAGE_PACKAGE_NAMES.git).toBe("git");
+    expect(CI_IMAGE_PACKAGE_NAMES["ca-certificates"]).toBe("ca-certificates");
+  });
+
+  test("every package chant installs on Chainguard by default has a pinned version, read from Wolfi's index with its date", () => {
+    const defaults = new Set(["git", "ca-certificates", "curl", "unzip", ...Object.values(CI_IMAGE_PACKAGE_NAMES)]);
+    for (const name of defaults) {
+      expect(WOLFI_PACKAGE_PINS[name], name).toBeDefined();
+      expect(WOLFI_PACKAGE_PINS[name]!.version).toMatch(/^[0-9][0-9A-Za-z._+~]*-r[0-9]+$/);
+      expect(WOLFI_PACKAGE_PINS[name]!.read).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    expect(Object.keys(WOLFI_PACKAGE_PINS).sort()).toEqual([...defaults].sort());
+  });
+
+  test("the default Chainguard set writes every apk package at its pinned version, in both stages", () => {
+    const [fetch, final] = productImageStages({ ...spec, packages: [], base: "chainguard" }).map((st) => dockerfileText([st]));
+    expect(fetch).toContain(`\nRUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=${pinned("curl")} unzip=${pinned("unzip")} || { ${APK_FAILED_TEXT}; }\n`);
+    expect(final).toContain(`\nRUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} || { ${APK_FAILED_TEXT}; } && mkdir -p /usr/local/bin\n`);
+    // No apk name goes in without a version.
+    for (const line of `${fetch}${final}`.split("\n").filter((l) => l.startsWith("RUN apk add"))) {
+      const words = line.slice("RUN apk add --no-cache ".length, line.indexOf(" ||")).split(" ");
+      for (const w of words) expect(w).toMatch(/^[a-z0-9][a-z0-9.+-]*=[0-9][0-9A-Za-z._+~]*-r[0-9]+$/);
+    }
+  });
+
+  test("a product's apk: entry: with a version it goes in at that version and replaces chant's pin; without one it is refused unless chant pins the name", () => {
+    const final = (packages: string[]) => productImageStages({ ...spec, base: "chainguard", packages }).map((st) => dockerfileText([st]));
+    const [fetch, withOwn] = final(["apk:python-3.13=3.13.9-r0", "apk:curl=8.23.0-r2", "apt:python3"]);
+    expect(withOwn).toContain(`RUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} python-3.13=3.13.9-r0 curl=8.23.0-r2 || {`);
+    // The product's curl replaces chant's in the fetch stage too.
+    expect(fetch).toContain(`RUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=8.23.0-r2 unzip=${pinned("unzip")} || {`);
+    // A bare apk: entry for a name chant pins takes chant's version.
+    expect(final(["apk:jq"])[1]).toContain(` jq=${pinned("jq")} || {`);
+    // A bare apk: entry for a name chant does not pin is refused, with how to get the version.
+    expect(() => final(["apk:python-3.13"])).toThrow(/apk package python-3\.13 has no version: .*"apk:python-3\.13=<version>".*apk policy python-3\.13.*chant release images --repin/);
+    expect(() => ciImagePackages("chainguard", ["apk:python-3.13"])).toThrow(/has no version/);
+    // A version that is not an apk version, a version on an apt: entry, and two versions of one package are refused.
+    expect(() => final(["apk:python-3.13=3.13"])).toThrow(/not an apk version with its revision/);
+    expect(() => final(["apt:python3=3.11.2-1"])).toThrow(/version on an apk: entry only/);
+    expect(() => final(["apk:jq=1.8.2-r4", "apk:jq=1.8.2-r5"])).toThrow(/two versions, 1\.8\.2-r4 and 1\.8\.2-r5/);
+    // Debian ignores apk: entries, versioned or not, and stays unpinned.
+    expect(ciImagePackages("debian", ["openssh-client", "apk:python-3.13=3.13.9-r0", "apk:python-3.13"])).toEqual(["openssh-client"]);
+    const deb = productImageDockerfile({ ...spec, packages: ["apk:python-3.13=3.13.9-r0"] });
+    expect(deb).not.toContain("python");
+    expect(deb).toContain("apt-get install -y --no-install-recommends git ca-certificates &&");
+  });
+
+  test("a Chainguard org's registry installs the same pinned versions, and an apk: entry overrides one its repositories lack", () => {
+    const [fetch, final] = stagesOf({ registry: "cgr.dev/example.com", node: "22-dev" }).map((l) => l.join("\n"));
+    expect(fetch).toContain(`RUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=${pinned("curl")} unzip=${pinned("unzip")} || {`);
+    expect(final).toContain(`RUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} openssh-client=${pinned("openssh-client")} xz=${pinned("xz")} || {`);
+    const own = productImageDockerfile({ ...spec, base: { registry: "cgr.dev/example.com" }, packages: ["apk:openssl=3.6.5-r4"] });
+    expect(own).toContain(` openssl=3.6.5-r4 || {`);
+  });
+
+  test("a SQL Yodeler image on Chainguard: no fetch stage, the npm prefix and its link made as root", () => {
+    const stages = productImageStages({
+      name: "sql-yodeler",
+      product: "yodel",
+      description: "yodel",
+      source: "https://github.com/INTENTIUS/sql-yodeler",
+      base: "chainguard",
+      packages: ["openssh-client"],
+      bundle: { npm: "@intentius/sql-yodeler@1.0.0", prefix: "/opt/yodel" },
+    });
+    expect(stages).toHaveLength(1);
+    const lines = dockerfileText(stages).split("\n");
+    const userRoot = lines.indexOf("USER root");
+    const install = lines.findIndex((l) => l.includes("ln -s /opt/yodel/node_modules /node_modules"));
+    expect(userRoot).toBeGreaterThan(0);
+    expect(install).toBeGreaterThan(userRoot);
+    expect(lines.at(-2)).toBe("USER 65532");
   });
 });

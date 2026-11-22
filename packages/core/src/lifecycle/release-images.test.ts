@@ -17,6 +17,8 @@ import { runPublish, PublishTargetError, type PublishContext } from "./release-p
 import {
   buildReleaseImages,
   checkReleaseImages,
+  pullCredentialsMissing,
+  releaseImagePulls,
   packagePinProblem,
   pinnedDigests,
   readPins,
@@ -339,5 +341,25 @@ describe("an npm package that would carry an image archive (#4934)", () => {
     const { cut } = await cutCarrying("cut-leaves-image-out", ["dist", "!dist/images/app.tar"]);
     const { release } = await cut;
     expect(release.artifactDigests.map((a) => a.component)).toEqual(["app"]);
+  });
+});
+
+describe("pull registries that need a login (#5457)", () => {
+  const cgr = { registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" };
+
+  test("an entry names a registry host and the two variables, checked as such", () => {
+    expect(() => checkReleaseImages([{ name: "app", dockerfile: "Dockerfile", pull: [cgr] }])).not.toThrow();
+    expect(() => checkReleaseImages([{ name: "app", build: "make", archive: "a.tar", pull: [{ ...cgr, registry: "registry.example.com:5000" }] }])).not.toThrow();
+    expect(() => checkReleaseImages([{ name: "app", dockerfile: "Dockerfile", pull: [{ ...cgr, registry: "https://cgr.dev/acme" }] }])).toThrow(/not a registry host/);
+    expect(() => checkReleaseImages([{ name: "app", dockerfile: "Dockerfile", pull: [{ ...cgr, passwordEnv: "cgr password" }] }])).toThrow(/not an environment variable name/);
+  });
+
+  test("each registry once, across entries, and which variables a run lacks", () => {
+    const images = [
+      { name: "a", dockerfile: "a/Dockerfile", pull: [cgr] },
+      { name: "b", dockerfile: "b/Dockerfile", pull: [cgr, { registry: "registry.example.com", usernameEnv: "REG_USER", passwordEnv: "REG_TOKEN" }] },
+    ];
+    expect(releaseImagePulls(images).map((p) => p.registry)).toEqual(["cgr.dev", "registry.example.com"]);
+    expect(pullCredentialsMissing(images, { CGR_USERNAME: "u", CGR_PASSWORD: "p", REG_USER: "u" })).toEqual([{ registry: "registry.example.com", missing: ["REG_TOKEN"] }]);
   });
 });

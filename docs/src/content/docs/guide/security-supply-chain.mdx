@@ -5,6 +5,7 @@ diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/security-supply-chain/.
   Add `supply-chain` to `security` in `chant.workspace.json`, run `npx chant workspace check`, and fix the `WSP162` findings that are file changes: an `sbom` entry, a `generate-sbom` or `verify` step, `--require-provenance` on the publish job.
+  Leave Chainguard bases for a product's CI image to the product's own config key (https://intentius.io/chant/concepts/ci-products/); no `security` group turns them on.
   Open a pull request with the changes, and list the findings left for a person.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -16,9 +17,10 @@ Under `supply-chain`:
 - A publish target with no SBOM source is refused (`publish-sbom-missing`). Without the group it publishes without one.
 - A publish with no OIDC token warns that what it publishes carries no provenance. Without the group, provenance is only a field in the plan. `--require-provenance` refuses instead, with or without the group.
 - `chant release cut` refuses `release.green: "none"` (`release-green-none-refused`), so every release passed a [green gate](/chant/cli/release/cut/#the-green-gate).
-- An `oci` or `forge` target signs what it publishes with Sigstore and adds SLSA provenance, keylessly with the CI job's OIDC token. A publish that can't sign is refused (`publish-signing-no-oidc`, `publish-signing-tool-missing`). `release.signing: false` in `chant.config.ts` turns it off with a warning. [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures) has the details.
+- An `oci` or `forge` target signs what it publishes with Sigstore and adds SLSA provenance, keylessly with the CI job's OIDC token, or with a KMS key or a cosign key (`release.signing.kms`, `release.signing.key`) where there is none. A publish that can't sign is refused (`publish-signing-no-oidc`, `publish-signing-key-missing`, `publish-signing-tool-missing`). `release.signing: false` in `chant.config.ts` turns it off with a warning. [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures) has the details.
+- `chant release publish` scans what it would put out for known vulnerabilities before anything is pushed or signed, and stops with `publish-scan-failed` on a finding the policy blocks. `release.scan: false` turns it off with a warning. [The scan before the stage](#the-scan-before-the-stage) has the details.
 
-An SBOM comes from the file a target's `sbom` names, else from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first.
+An SBOM comes from the file a target's `sbom` names. With none named, an image's SBOM is the one the scan made from the image's layers, so it lists the OS packages in the image. Every other SBOM comes from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first.
 
 ## Opt in
 
@@ -29,6 +31,8 @@ Add the group to `security` in `chant.workspace.json`, at the top level for ever
 ```
 
 A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
+
+`chant release init` does not add the group. It writes no `chant.workspace.json` for a single release, and under the group an npm package that carries no SBOM is refused, which a new project's packages usually don't yet. Add the group once the packages carry one.
 
 ## Fill the gaps
 
@@ -41,3 +45,79 @@ A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
 | `security-publish-no-provenance` | Pass `--require-provenance` in the publish job, which runs in CI with an OIDC token. |
 | `security-component-no-sbom` | Add a `generateSbom` step to the member's components. |
 | `security-component-no-verify` | Add a `verify` step before the deploy steps. |
+| `security-image-base-unpinned` | Pin the `FROM` line it names by digest; see [Pin image bases by digest](#pin-image-bases-by-digest). |
+
+## Pin image bases by digest
+
+A base named by tag (`FROM node:22`) is whatever the registry serves under that tag on the day of the build, so a later build of the same commit can start from a different image. Named by digest (`FROM node:22@sha256:<digest>`) it is the same image every time; the tag beside the digest is for a reader.
+
+Under the group, `chant workspace check` reads each Dockerfile a member's `release.images` names and reports a `FROM` that is not pinned (`security-image-base-unpinned`), and `chant release doctor` warns of the same (`image-base-pinned`), with the entry's `args` applied. A `FROM` passes when it names an earlier stage, `scratch`, or an `ARG` declared before the first `FROM` whose default is pinned and which the entry's `args` do not replace with a tag. The workspace check reads `chant.config.ts` as text, so it finds a `dockerfile:` written as a string, not one built at run time; the doctor loads the config and sees every entry.
+
+The build refuses one too. Under the group, `chant release cut` and `chant release images` read each Dockerfile entry's `FROM` lines the same way before they build anything, and stop with `release-image-base-unpinned`, naming each line. Every release path builds its images through one of the two: a workstation, the jobs [the release workflow](/chant/cli/release/workflow/) renders on each forge and in a train, and a [`ci serve --release`](/chant/cli/ci/#releases) host.
+
+### Pull bases from a private registry
+
+A base from a registry that needs a login, such as a hardened image set served to an organization, is named with a `pull` entry on the `release.images` entry; [the release workflow](/chant/cli/release/workflow/) then logs in to it before each build. See there for the variables and secrets it reads.
+
+### Hardened bases for a product's CI image
+
+A CI product's image (plywood's, terragucci's, SQL Yodeler's) can be built on Chainguard's images in place of Debian. The product's own config has a key for it, which sets `base` in chant's image helper. No `security` group turns it on, and `supply-chain` does not check for it. See [the image's base](/chant/concepts/ci-products/#the-product-pipeline) for what it changes. A product's Chainguard bases are pinned by digest like any other, and `--repin` moves them.
+
+### Move the pins
+
+A pinned base stays where it was pinned while its tag moves on to patched images. `chant release images --repin` asks each image's registry what digest the tag names today and, when it moved, rewrites the digest in place, keeping the tag:
+
+```
+$ chant release images --repin
+moved docker/Dockerfile:1 node:22-bookworm-slim sha256:c3de60bf2f9d... -> sha256:5e1d2c7a90b3...
+1 reference(s) moved; 0 unchanged.
+```
+
+It reads the Dockerfiles `release.images` names, or the files given after `--repin`, and moves every `name:tag@sha256:<digest>` in them, `ARG` defaults included. A `FROM` by tag alone is left for a person to pin the first time. A run with nothing to move writes nothing and says so. `--check` writes nothing and exits 1 when a reference would move, and `--json` prints `moved`, `unchanged`, `failed` and `written`, so a scheduled job can open a pull request with the change. It reads with a pull-only token, using `OCI_USERNAME` and `OCI_PASSWORD` or the docker config's login for a private registry, and asks anonymously otherwise. A tag it can't resolve leaves its digest and exits 1.
+
+The same command moves Wolfi package versions, which a Chainguard CI image installs at exact versions. In the files it is given it finds two more shapes: a row of chant's `WOLFI_PACKAGE_PINS`, `apk("<name>", "<version>", "<date>")`, and a product's own `apk:<name>=<version>` entry. It reads Wolfi's index for x86_64 and aarch64 from `packages.wolfi.dev`, only when a file holds one of them, and moves each to the newest version both list, writing the day it moved on a row:
+
+```
+$ chant release images --repin src/image.ts
+moved src/image.ts:12 apk:python-3.13 3.13.9-r0 -> 3.13.9-r1
+1 reference(s) moved; 0 unchanged.
+```
+
+It does not rewrite the `apk add` line of a rendered Dockerfile, so render the Dockerfile again after it moves your source. A package the index no longer lists for both architectures keeps its version and exits 1. The pins hold the packages named; their dependencies come from the index on the day of the build.
+
+Outside a release, the docker lexicon's [DKRD021](/chant/lexicons/docker/lint-rules/#dkrd021--from-names-a-base-by-tag-not-by-digest) runs the same rule on generated Dockerfiles once a project turns it on.
+
+## The scan before the stage
+
+A publish stages every target before it reveals any, but staging is not private: an `oci` target pushes the image's layers, manifest and referrers by digest, and anyone can pull it by digest from then on. So the scan runs first, before any target stages and before anything is signed, on what each target would put out:
+
+- each `oci` target's image, from its local archive (which `chant release images` already checked against the release's digests), through an SBOM syft makes from the image's layers;
+- the SBOM each `forge` target attaches beside its assets, goreleaser and nfpm files among them;
+- the SBOM each npm package carries, or, for a package with none, one written from the member's lockfile.
+
+Each SBOM goes through the gate a component's `vuln-gate` step runs, with the project's `vulnPolicy` in `chant.config.ts`: `failSeverity` (default `critical`), `fixableOnly`, `failOnKev`, the EPSS thresholds, and the VEX files `vexSources` names. A finding the policy blocks stops the publish with `publish-scan-failed` and the list of findings, and nothing reaches a registry: no layer, manifest or referrer. Fix the dependency or the base image and build the release again, or record a VEX statement when the finding is not exploitable.
+
+The scanner is grype, or trivy with `vulnPolicy.scanner: "trivy"`, and syft makes an image's SBOM. A publish finds them in `CHANT_GRYPE`, `CHANT_TRIVY` and `CHANT_SYFT`, else on `PATH`, and is refused (`publish-scan-tool-missing`) without them. The workflow `chant release workflow` renders installs grype and syft at versions pinned by SHA-256, on GitHub, GitLab and Forgejo and in a train's jobs, with nothing to add to `release.workflow`. `chant release doctor` reports a missing scanner before a cut: a warning on a workstation, a failure in CI.
+
+The scanner downloads its vulnerability database on first use, which needs the network. For a job without it, `release.scan: { db: "<dir>" }` names a directory that already holds the database, and the scan reads it there without updating it.
+
+What the scan found stays with the release:
+
+- the publish record, `_releases/publishes.jsonl` on `chant/lifecycle`, gets a `scanned` or `scan-failed` line with the scanner, its database's version and build time, and every finding with what the policy made of it;
+- each image gets a `scan.json` referrer beside its SBOM (`application/vnd.intentius.chant.scan.v1+json`) with the same findings for that image, so `oras discover` or `cosign tree` lists it under the image's digest.
+
+To scan images with Wiz, set `release.scan: { "imageScanner": "wiz" }` in `chant.config.ts`. Each image goes through `wizcli docker scan` in place of grype, and its findings go through the same `vulnPolicy`, VEX files, record and referrer. syft still makes the image's layer SBOM, and the SBOMs forge assets and packages carry still go to grype or trivy, since Wiz scans images. The job sets `WIZ_CLIENT_ID` and `WIZ_CLIENT_SECRET` and puts `wizcli` on `PATH` (or names it in `CHANT_WIZCLI`); without them the publish stops with `publish-scan-tool-missing` and does not fall back to another scanner. chant reads the results `wizcli` writes as SARIF: a finding's advisory is the rule id, its severity the `security-severity` property (else the SARIF level), and its package, version and fix the result's `packageName`, `packageVersion` and `fixedVersion` properties.
+
+`release.scan: true` turns the scan on without the group.
+
+A scan made at publish is a scan of that day. [`chant release scan`](/chant/cli/release/scan/) scans a release again against today's database with the same scanner and `vulnPolicy`, and appends a `rescanned` line to the publish record beside the `scanned` line, so a reader sees what was known when the release shipped and what is known now. `chant release scan --deployed` scans every release the environments run, and `release.scan.schedule` has `chant release workflow` write a scheduled job that does it.
+
+## Promote checks what the publish recorded
+
+Under `supply-chain`, `chant components promote --release` deploys a release only after two checks, which it makes beside the revocation check and, under `verified-releases`, `chant release verify`. A train's promote runs the same command in each member, so each member's release is checked.
+
+- When the publish signs (`release.signing`, or the group) and `release.publish` declares an `oci` or `forge` target, the publish record must hold a Sigstore signature, and every bundle of an `oci` target must verify, as [`chant release verify --sigstore`](/chant/cli/release/verify/#checking-the-sigstore-signatures) checks it. A record with none refuses with `release-sigstore-unsigned`, and a bundle that does not verify, or that cosign can't check, with `release-sigstore-unverified`. A forge release's bundles sit beside files promote does not read, so check them with `release verify --sigstore --assets`.
+- When the publish scans (`release.scan`, or the group) and an `oci`, `forge` or `npm` target is declared, the publish record must hold a `scanned` line for the release. A release with none, or with only a `scan-failed` line, refuses with `release-scan-missing`.
+
+Each refusal names the check to run by hand. There is no flag to skip it; a workspace that wants it off leaves `supply-chain` off, or sets `release.signing: false` or `release.scan: false` and takes the warning those print at publish. `chant components rollback` does not make these checks, since it returns to a release an environment already ran.
+

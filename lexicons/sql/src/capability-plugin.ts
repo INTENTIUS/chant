@@ -65,7 +65,9 @@
  * an object the plan cannot read, or a named collection the server lacks
  * fails the plan, naming the migration Op to run instead. `run` plans again
  * and applies only when the digest is still the one decided; otherwise it
- * refuses as moved and sends nothing.
+ * refuses as moved and sends nothing. A MySQL build (#5449) plans and
+ * applies the same way; MySQL makes every change it classifies in place, so
+ * its plan refuses nothing.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -73,6 +75,8 @@ import type { Capability, CapabilityPlan, DeployContext } from "@intentius/chant
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import { readChangeSetPartFile, type ChangeSetHole, type ChangeSetPart } from "@intentius/chant/change-set";
 import { CHANT_EXIT, type ChantExitCode } from "@intentius/chant/exit-codes";
+import type { ChantConfig } from "@intentius/chant/config";
+import type { OwnershipMarker } from "@intentius/chant/ownership";
 import { sqlDeclarativePlanPart, type SqlDeclarativeChange } from "./change-set";
 import { yodelExitOf } from "./exit-codes";
 import { sqlDefaultLockGrain, sqlLockGrainRefusal } from "./lock-grain";
@@ -349,7 +353,7 @@ export interface SqlApplyStepInput {
 
 /** A declarative plan, as `sql-apply` reads it from the dialect's planner. */
 export interface SqlDeclarativePlan {
-  dialect: "clickhouse" | "postgres";
+  dialect: SqlBuildDialect;
   changes: SqlDeclarativeChange[];
   /** Changes the applier will not make in place, each with the Op to run instead when the planner names one. */
   refused: Array<{ object: string; field: string; op?: string }>;
@@ -361,13 +365,13 @@ export interface SqlDeclarativePlan {
 export interface SqlApplyArtifact {
   kind: "sql-apply";
   environment: string;
-  dialect: "clickhouse" | "postgres";
+  dialect: SqlBuildDialect;
   planDigest: string;
 }
 
 export interface SqlApplyStepOutput {
   environment: string;
-  dialect: "clickhouse" | "postgres";
+  dialect: SqlBuildDialect;
   planDigest: string;
   applied: string[];
   pruned: string[];
@@ -375,12 +379,15 @@ export interface SqlApplyStepOutput {
 
 /** What `sql-apply` is built with. Tests pass fakes for the planner and the applier. */
 export interface SqlApplyDeps {
-  plan?: (input: SqlApplyStepInput, dialect: "clickhouse" | "postgres") => Promise<SqlDeclarativePlan>;
-  apply?: (input: SqlApplyStepInput, dialect: "clickhouse" | "postgres") => Promise<{ applied: string[]; pruned: string[]; notAttempted: Array<{ name: string; reason: string }> }>;
+  plan?: (input: SqlApplyStepInput, dialect: SqlBuildDialect) => Promise<SqlDeclarativePlan>;
+  apply?: (input: SqlApplyStepInput, dialect: SqlBuildDialect) => Promise<{ applied: string[]; pruned: string[]; notAttempted: Array<{ name: string; reason: string }> }>;
 }
 
-/** The dialect a build output names: `postgres`, else `clickhouse`. */
-export function buildDialect(path: string): "clickhouse" | "postgres" {
+/** A dialect a build can name. */
+export type SqlBuildDialect = "clickhouse" | "postgres" | "mysql";
+
+/** The dialect a build output names: `postgres` or `mysql`, else `clickhouse`. */
+export function buildDialect(path: string): SqlBuildDialect {
   let raw: { dialect?: unknown; sql?: { dialect?: unknown } };
   try {
     raw = JSON.parse(readFileSync(path, "utf-8")) as typeof raw;
@@ -388,13 +395,25 @@ export function buildDialect(path: string): "clickhouse" | "postgres" {
     throw new Error(`sql-apply: the build ${path} cannot be read: ${err instanceof Error ? err.message : String(err)}. Run chant build first`);
   }
   const d = raw.sql && typeof raw.sql === "object" ? raw.sql.dialect : raw.dialect;
-  return d === "postgres" ? "postgres" : "clickhouse";
+  return d === "postgres" ? "postgres" : d === "mysql" ? "mysql" : "clickhouse";
 }
 
 const pick = <T extends object>(o: T): Partial<T> => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
 
-async function defaultPlan(input: SqlApplyStepInput, dialect: "clickhouse" | "postgres"): Promise<SqlDeclarativePlan> {
+async function defaultPlan(input: SqlApplyStepInput, dialect: SqlBuildDialect): Promise<SqlDeclarativePlan> {
   const cwd = input.cwd ? { cwd: input.cwd } : {};
+  if (dialect === "mysql") {
+    const { planMysqlAgainstServer } = await import("./mysql/plan/commands");
+    const marker = await mysqlMarker(input);
+    const diff = await planMysqlAgainstServer(input.environment, input.build, { ...cwd, ...(marker ? { marker } : {}), ...(input.prune ? { prune: true } : {}) });
+    return {
+      dialect,
+      changes: diff.changes,
+      refused: [],
+      holes: diff.unreadable.map((u) => ({ address: u.object, type: "MySQL::Object", reason: u.reason })),
+      problems: [],
+    };
+  }
   if (dialect === "postgres") {
     const { planPgAgainstServer } = await import("./postgres/plan/commands");
     const diff = await planPgAgainstServer(input.environment, input.build, cwd);
@@ -421,10 +440,25 @@ async function defaultPlan(input: SqlApplyStepInput, dialect: "clickhouse" | "po
   };
 }
 
-async function defaultApply(input: SqlApplyStepInput, dialect: "clickhouse" | "postgres"): Promise<{ applied: string[]; pruned: string[]; notAttempted: Array<{ name: string; reason: string }> }> {
+/** The ownership marker a MySQL plan prunes by: the step's stack and env, else the project's. */
+async function mysqlMarker(input: SqlApplyStepInput): Promise<OwnershipMarker | undefined> {
+  const { resolveOwnershipMarker } = await import("./core/apply");
+  let config: Pick<ChantConfig, "ownership"> | undefined;
+  try {
+    const { loadChantConfig } = await import("@intentius/chant/config");
+    config = (await loadChantConfig(input.cwd ?? process.cwd())).config;
+  } catch {
+    config = undefined;
+  }
+  return resolveOwnershipMarker(input, config, "sql-apply");
+}
+
+async function defaultApply(input: SqlApplyStepInput, dialect: SqlBuildDialect): Promise<{ applied: string[]; pruned: string[]; notAttempted: Array<{ name: string; reason: string }> }> {
   const args = pick({ buildPath: input.build, environment: input.environment, prune: input.prune, stack: input.stack, ownershipEnv: input.ownershipEnv, cwd: input.cwd });
   const outcome =
-    dialect === "postgres"
+    dialect === "mysql"
+      ? await (await import("./op/activities/mysql-apply")).mysqlApply({ ...args, buildPath: input.build })
+      : dialect === "postgres"
       ? await (await import("./op/activities/postgres-apply")).postgresApply({
           ...args,
           buildPath: input.build,
@@ -444,7 +478,7 @@ function requireApplyInput(input: SqlApplyStepInput): void {
 }
 
 /** Plan `input` and say why it cannot be applied, if it cannot. */
-async function planDeclarative(plan: NonNullable<SqlApplyDeps["plan"]>, input: SqlApplyStepInput): Promise<{ part: ChangeSetPart; dialect: "clickhouse" | "postgres" }> {
+async function planDeclarative(plan: NonNullable<SqlApplyDeps["plan"]>, input: SqlApplyStepInput): Promise<{ part: ChangeSetPart; dialect: SqlBuildDialect }> {
   const dialect = buildDialect(input.build);
   const planned = await plan(input, dialect);
   const why: string[] = [...planned.problems];

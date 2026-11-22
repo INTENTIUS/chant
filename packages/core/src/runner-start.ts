@@ -15,7 +15,7 @@
  * for one job does not verify in another.
  *
  * The statement is an in-toto Statement v1 in a DSSE envelope
- * (./workspace/trust/dsse.ts), signed with an Ed25519 key that
+ * (./workspace/trust/dsse.ts), signed with an Ed25519 or ECDSA P-256 key that
  * `.chant/trust.json` lists under `runners`, whose principal holds the
  * `runner` role there, the same keys and role a ci tag needs (#4031):
  *
@@ -105,7 +105,7 @@ export interface RunnerStartStatement {
 /** A key that may sign the statement, as `.chant/trust.json` lists it under `runners`. */
 export interface RunnerStartKey {
   principal: string;
-  /** `ssh-ed25519 <base64>`. */
+  /** `ssh-ed25519 <base64>` or `ecdsa-sha2-nistp256 <base64>`. */
   key: string;
 }
 

@@ -10,7 +10,8 @@
  * - a map of name to value, `{ "AWS_SECRET_ACCESS_KEY": "..." }`;
  * - or `{ "secrets": { ... }, "jobs": { "plan": [...], "apply": [...] } }`,
  *   where `jobs` lists, for a job, the names it gets. A job `jobs` doesn't
- *   name gets every secret.
+ *   name gets every secret. `release` lists what the step that publishes a
+ *   release `ci serve --release` serves gets (#5462).
  *
  * The allowlist lives in this file on the host, not in the repository, so a
  * pull request can't widen what its plan gets.
@@ -38,8 +39,11 @@ export const SECRET_NAME = /TOKEN|SECRET|KEY|PASSWORD/i;
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** The jobs a secrets file can give a list of its own: the pull-request jobs, and a pull request environment's (#4330). */
-const JOBS: readonly CiJobName[] = ["plan", "apply", "env-up", "env-post", "env-down", "env-sweep"];
+/** What a secrets file can give a list of its own: a job, or (#5462) the publish of a release `ci serve --release` serves. */
+export type CiSecretsJob = CiJobName | "release";
+
+/** The jobs a secrets file can give a list of its own: the pull-request jobs, a pull request environment's (#4330), and a served release's publish (#5462). */
+const JOBS: readonly CiSecretsJob[] = ["plan", "apply", "env-up", "env-post", "env-down", "env-sweep", "release"];
 
 /** The secrets file, read. */
 export interface CiSecrets {
@@ -48,7 +52,7 @@ export interface CiSecrets {
   /** Every secret, by name. */
   values: Record<string, string>;
   /** For a job the file names, the secrets it gets. A job missing here gets every one. */
-  jobs: Partial<Record<CiJobName, string[]>>;
+  jobs: Partial<Record<CiSecretsJob, string[]>>;
 }
 
 export class CiSecretsError extends Error {
@@ -183,7 +187,7 @@ export function parseCiSecrets(text: string, file: string): Omit<CiSecrets, "fil
       if (!(JOBS as readonly string[]).includes(job)) throw new CiSecretsError(`${file}: jobs names ${JSON.stringify(job)}, and the jobs are ${JOBS.join(", ")}`);
       if (!Array.isArray(names) || names.some((n) => typeof n !== "string")) throw new CiSecretsError(`${file}: jobs.${job} must be a list of secret names`);
       for (const n of names as string[]) if (!Object.prototype.hasOwnProperty.call(values, n)) throw new CiSecretsError(`${file}: jobs.${job} names ${n}, which the file does not set`);
-      jobs[job as CiJobName] = [...(names as string[])];
+      jobs[job as CiSecretsJob] = [...(names as string[])];
     }
   }
   return { values, jobs };
@@ -196,7 +200,7 @@ export function readCiSecrets(file: string): CiSecrets {
 }
 
 /** The secrets `job` gets: those `jobs` lists for it, else every one. */
-export function ciSecretsFor(secrets: CiSecrets | undefined, job: CiJobName): Record<string, string> {
+export function ciSecretsFor(secrets: CiSecrets | undefined, job: CiSecretsJob): Record<string, string> {
   if (!secrets) return {};
   const names = secrets.jobs[job] ?? Object.keys(secrets.values);
   return Object.fromEntries(names.map((n) => [n, secrets.values[n]!]));

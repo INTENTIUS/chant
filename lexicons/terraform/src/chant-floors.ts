@@ -66,3 +66,8 @@ export const TERRAFORM_OWNERSHIP_ROWS_FLOOR = NEXT_RELEASE;
  * `@intentius/chant` at `UNDECLARED_LIVE_NODES_FLOOR` or later to draw them.
  */
 export const TERRAFORM_UNDECLARED_NODES_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first terraform lexicon release whose roots publish `stateLocations` on their graph meta, so `chant workspace state` says where a root's state lives: the backend block with the `-backend-config` files, pairs and `TF_CLI_ARGS` flags over it (s3 with its lockfile or DynamoDB table, gcs, azurerm, http, local, cloud), the root's estate or workspace as its environment, and the record store of a choudoufu live block (#5456).
+ */
+export const TERRAFORM_STATE_LOCATIONS_FLOOR = NEXT_RELEASE;

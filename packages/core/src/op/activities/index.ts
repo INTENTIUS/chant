@@ -18,6 +18,9 @@ export type { ShellCmdArgs, ShellCmdResult } from "./shell";
 
 export { httpCheck, statusOk } from "./http-check";
 
+export { restoreDrill } from "./restore-drill";
+export type { RestoreDrillArgs, RestoreDrillResult, DrillCheck, DrillStoreSpec } from "./restore-drill";
+
 export { sourceArchive, releasePlan, releaseRecord } from "./source-release";
 export type { SourceArchiveArgs, SourceArchiveResult, ReleasePlanArgs, ReleasePlanResult, ReleaseRecordArgs, ReleaseRecordResult } from "./source-release";
 export { releaseRollbackPlan, releaseRollbackRecord } from "./source-rollback";

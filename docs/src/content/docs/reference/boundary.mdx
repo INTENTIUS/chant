@@ -44,16 +44,16 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | studio | behold | plugin |
 |---|---|---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 16 | 5 | 3 | 1 | 1 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 83 | 0 | 0 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 84 | 0 | 0 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 6 | 0 | 0 | 0 | 0 |
 | record kind | none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party | 7 | 0 | 0 | 0 | 1 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 303 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 313 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 67 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
@@ -96,6 +96,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace patch` | chant | patch.schema.json | Prints the hunks of a range, a work branch or one commit, file by file, cut to a size limit, for a reader that runs no git. |
 | workspace command | `workspace check` | chant | check.schema.json | Checks the declaration with WSP ids and the lineage lock with reason codes, and prints the result as a read-contract document. |
 | workspace command | `workspace status` | chant | status.schema.json | Shows each member's releases in one environment from the lifecycle ledgers, read-only. |
+| workspace command | `workspace state` | chant | state.schema.json | Reports where each member's state lives, per environment, as each member's lexicon publishes it on its graph, read-only. |
 | workspace command | `workspace metrics` | chant | delivery-metrics.schema.json | Computes the four DORA metrics per member and environment from the deploy records, the releases and the ci revoked tags on the local chant/lifecycle branch, read-only (#4039). behold and Grafana read the same numbers from it. |
 | workspace command | `workspace records` | chant | records.schema.json, records-since.schema.json | Reads the records a record kind locates, or every kind the declaration names, validated against its schema, with provenance and reason codes; with --since, what changed in them between two revisions. |
 | workspace command | `workspace work` | chant | work-lease.schema.json | Claims, renews and releases the lease on a work item: a compare-and-set ref with a fencing token and an expiry, pushed to the remote so separate clones coordinate, with each change appended to _leases/&lt;id&gt;.jsonl on chant/lifecycle (#2732, ws-055). |
@@ -382,6 +383,7 @@ Each row follows, in the order of the table above.
 | reason code | `security-publish-no-provenance` | chant | check.schema.json | Under supply-chain, a pipeline file runs release publish without --require-provenance. |
 | reason code | `security-component-no-sbom` | chant | check.schema.json | Under supply-chain, a member's components have no generate-sbom step. |
 | reason code | `security-component-no-verify` | chant | check.schema.json | Under supply-chain, a member's components have no verify step. |
+| reason code | `security-image-base-unpinned` | chant | check.schema.json | Under supply-chain, a Dockerfile a member's release.images names starts FROM a base not pinned by digest. |
 | reason code | `security-signed-since-unset` | chant | check.schema.json | Under who-ran-it, ci.green sets no signedSince, or there is no ci.green block. |
 | reason code | `security-runner-untrusted` | chant | check.schema.json | Under who-ran-it, .chant/trust.json lists no runner key. |
 | reason code | `security-tick-no-key` | chant | check.schema.json | Under who-ran-it, a pipeline file runs ci tick with no runner key. |
@@ -391,6 +393,13 @@ Each row follows, in the order of the table above.
 | reason code | `security-runner-start-no-key` | chant | check.schema.json | Under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
 | reason code | `security-runner-start-no-role` | chant | check.schema.json | Under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
 | reason code | `security-trust-unreadable` | chant | check.schema.json | Under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
+| reason code | `profile-retention-short` | chant | check.schema.json | Under a security profile, retention.changeSets.days or retention.releases.days is unset or below the profile's days. |
+| reason code | `profile-gate-not-human` | chant | check.schema.json | Under a security profile, the release gate or a gate an apply job names is missing from identity.gates, names no class, names a class an agent, runner or service principal holds, or sets agentPassesAlone. |
+| reason code | `profile-scan-off` | chant | check.schema.json | Under a security profile, a chant.config.ts sets release.scan: false. |
+| reason code | `profile-scan-db-unbounded` | chant | check.schema.json | Under a security profile, release.scan.db is set with no dbMaxAgeHours, or dbMaxAgeHours is above the profile's hours. |
+| reason code | `profile-signing-off` | chant | check.schema.json | Under a security profile, a chant.config.ts sets release.signing: false. |
+| reason code | `profile-signing-module` | chant | check.schema.json | Under a security profile, a chant.config.ts signs images or forge assets keylessly or with a cosign key and names no CHANT_COSIGN build. |
+| reason code | `profile-runner-key-eddsa` | chant | check.schema.json | Under a security profile, .chant/trust.json lists an Ed25519 key under runners or local.keys. |
 | reason code | `ci-workflow-green-undeclared` | chant | check.schema.json | Under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut. |
 | reason code | `ci-workflow-no-pre-merge` | chant | check.schema.json | Under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves. |
 | reason code | `ci-workflow-apply-in-green` | chant | check.schema.json | Under ci.workflow, a phase in ci.green.require matches an apply job, which would wait on its own verdict. |
@@ -418,6 +427,8 @@ Each row follows, in the order of the table above.
 | reason code | `signers-file-missing` | chant | signers.schema.json | There is no signers file at the base revision, so there is no signer history to read. |
 | reason code | `rotation-threshold-not-met` | chant | signers.schema.json | Fewer distinct signers of the set before signed the rotation, in the chant-signers namespace, than that set's threshold. |
 | reason code | `ref-update-invalid` | chant | ref-gate.schema.json | The hook's standard input is not the lines git hands a pre-receive or pre-push hook. |
+| reason code | `lifecycle-ref-deleted` | chant | ref-gate.schema.json | The update deletes chant/lifecycle, which holds the audit trail and is never deleted; chant lifecycle gc prunes it with a new commit. |
+| reason code | `lifecycle-ref-rewritten` | chant | ref-gate.schema.json | The update moves chant/lifecycle to a commit that does not descend from its old tip, which a force push does; the branch is append-only. |
 | reason code | `ref-evidence-missing` | chant | ref-gate.schema.json | No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit. |
 | reason code | `ref-evidence-stale` | chant | ref-gate.schema.json | Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
 | reason code | `bump-invalid` | chant | release-changed.schema.json | --bump-member is not &lt;member&gt;=major\|minor\|patch, or names a member the declaration does not have. |
@@ -434,7 +445,7 @@ Each row follows, in the order of the table above.
 | reason code | `evidence-runner-mismatch` | chant | evidence.schema.json, ref-gate.schema.json | The statement names a runner other than the one whose key signed it. |
 | reason code | `evidence-payload-type` | chant | evidence.schema.json, ref-gate.schema.json | The envelope's payload type is not application/vnd.in-toto+json. |
 | reason code | `runner-key-unlisted` | chant | evidence.schema.json, runs-write.schema.json | The policy at base lists no runner with the key given to evidence sign or runs sign. |
-| reason code | `runner-key-invalid` | chant | evidence.schema.json, runs-write.schema.json, trust-write.schema.json | The key given to evidence sign or runs sign is not an Ed25519 private key in PEM. |
+| reason code | `runner-key-invalid` | chant | evidence.schema.json, runs-write.schema.json, trust-write.schema.json | The key given to evidence sign or runs sign is not an Ed25519 or ECDSA P-256 private key in PEM. |
 | reason code | `runner-key-is-signer` | chant | evidence.schema.json, runs-write.schema.json, trust-write.schema.json | The key given to evidence sign or runs sign is a person's key in the signers file. Evidence and run statements are signed by a service or CI identity. |
 | reason code | `lock-invalid` | chant | check.schema.json | The lineage lock can't be read. |
 | reason code | `manual-step-open` | chant | check.schema.json | A scope in the lineage lock has an open manual step. |
@@ -596,6 +607,8 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP163` `security-who-ran-it` | chant | check.schema.json | Under the who-ran-it group: ci.green.signedSince is set, .chant/trust.json lists a runner key, and the tick signs its tags. |
 | WSP check | `WSP164` `security-review-rules` | chant | check.schema.json | Under the review-rules group: no apply job turns forge review off, attribution is identified, and every gate an apply job names needs a signed approval. |
 | WSP check | `WSP165` `security-isolated-runners` | chant | check.schema.json | Under the isolated-runners group: .chant/trust.json lists a runner key whose principal holds the runner role, so an apply job can require a runner-start statement (#4147). |
+| WSP check | `WSP166` `security-profile-fedramp-moderate` | chant | check.schema.json | Under the fedramp-moderate security profile: retention of at least 90 days, release and apply gates held to people, the release scan on with a database no older than 24 hours, signing in a crypto module the team names, and ECDSA P-256 runner keys. Each finding names the FedRAMP Rev. 5 Moderate controls it bears on (#5464). |
+| WSP check | `WSP167` `security-profile-cccs-medium` | chant | check.schema.json | Under the cccs-medium security profile: the same requirements as fedramp-moderate, and each finding names the CCCS Medium controls it bears on (#5464). |
 | WSP check | `WSP125` `box-fountain-callback-undeclared` | chant | check.schema.json | A box member that builds a fountain Box declares the callback token fountain gives its sandbox: the fountain-callback capability, brokered by fountain, with scope owner. |
 | WSP check | `WSP126` `box-intent-unknown` | chant | check.schema.json | The intent a box block names is the id of a record of a declared kind named decision, the record that says what the box is for. |
 | WSP check | `WSP127` `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains a member or path of this workspace, with member: and a declared member's name or a path: entry at, above or inside one's directory; not necessarily the box's own member. |

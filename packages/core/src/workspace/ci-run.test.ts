@@ -397,7 +397,7 @@ describe("chant ci run, then ci tick from runs (#4094)", () => {
 
     // The same key given with --key refuses the run before anything runs, and so does a key that is not one.
     await expect(ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: stranger.pem, push: false })).rejects.toThrow(/would not be signed/);
-    await expect(ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: "not a key", runnerKeyFromEnv: true, push: false })).rejects.toThrow(/in CHANT_RUNNER_KEY is not an Ed25519 private key in PEM/);
+    await expect(ciRun({ image: JOB_IMAGE, cwd: app, job: "apply", env: "prod", forge: "github", base, chant: fakeChant(), hostEnv: HOST, runnerKey: "not a key", runnerKeyFromEnv: true, push: false })).rejects.toThrow(/in CHANT_RUNNER_KEY is not an Ed25519 or ECDSA P-256 private key in PEM/);
     expect((await readRunLedger("prod", "pr-apply", { cwd: app })).records).toHaveLength(1);
 
     // With ci.green.signedSince the same run warns, and so does one with no key.

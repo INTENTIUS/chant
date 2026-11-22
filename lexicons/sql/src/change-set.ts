@@ -58,10 +58,10 @@ import type { MigrationStep, StatementChange } from "./core/statements";
 export const SQL_CHANGE_SET_LEXICON = "sql";
 
 /**
- * What each change class costs, both dialects together. The same values as
- * `CHANGE_CLASSES.disruption` (ClickHouse) and `PG_CHANGE_CLASSES.disruption`
- * (Postgres), copied so the rule tables stay out of the bundle; the test
- * holds the two together.
+ * What each change class costs, every dialect together. The same values as
+ * `CHANGE_CLASSES.disruption` (ClickHouse), `PG_CHANGE_CLASSES.disruption`
+ * (Postgres) and `MYSQL_CHANGE_CLASSES.disruption` (MySQL), copied so the
+ * rule tables stay out of the bundle; the test holds them together.
  */
 export const SQL_CLASS_DISRUPTION: Readonly<Record<string, ChangeSetDisruption>> = {
   create: "in-place",
@@ -73,6 +73,9 @@ export const SQL_CLASS_DISRUPTION: Readonly<Record<string, ChangeSetDisruption>>
   rebuild: "replace",
   expand: "replace",
   drop: "destroy",
+  instant: "in-place",
+  inplace: "rolling",
+  copy: "rolling",
 };
 
 /**
@@ -375,7 +378,7 @@ export interface SqlDeclarativeChange {
 
 export interface SqlDeclarativePlanPartInput {
   member: string;
-  dialect: "clickhouse" | "postgres";
+  dialect: "clickhouse" | "postgres" | "mysql";
   /** The environment it plans into: the member's and every entry's `scope`. */
   environment: string;
   changes: readonly SqlDeclarativeChange[];
@@ -386,7 +389,7 @@ export interface SqlDeclarativePlanPartInput {
 }
 
 /** The entry type a declarative change gets: the classified change names no object kind. */
-const DECLARATIVE_TYPE = { clickhouse: "ClickHouse::Object", postgres: "Postgres::Object" } as const;
+const DECLARATIVE_TYPE = { clickhouse: "ClickHouse::Object", postgres: "Postgres::Object", mysql: "MySQL::Object" } as const;
 
 /** The digest of a declarative plan: the dialect, the environment and every change, sorted. */
 export function sqlDeclarativePlanDigest(input: Pick<SqlDeclarativePlanPartInput, "dialect" | "environment" | "changes">): string {

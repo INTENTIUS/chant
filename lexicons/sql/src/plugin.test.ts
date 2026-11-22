@@ -60,8 +60,14 @@ describe("the sql config namespace", () => {
 
   test("refuses any other name as unknown", () => {
     const message = (dialect: unknown) => sqlConfigSchema.safeParse({ dialect }).error?.issues[0]?.message;
-    expect(message("mysql")).toBe("expected a dialect (clickhouse, postgres) or a non-empty list of them");
-    expect(message(["postgres", "mysql"])).toBe("expected a dialect (clickhouse, postgres) or a non-empty list of them");
+    expect(message("oracle")).toBe("expected a dialect (clickhouse, postgres, mysql) or a non-empty list of them");
+    expect(message(["postgres", "oracle"])).toBe("expected a dialect (clickhouse, postgres, mysql) or a non-empty list of them");
+  });
+
+  test("accepts mysql, with a mysql:// profile (#5449)", () => {
+    expect(sqlConfigSchema.safeParse({ dialect: "mysql" }).success).toBe(true);
+    expect(sqlConfigSchema.safeParse({ dialect: ["postgres", "mysql"] }).success).toBe(true);
+    expect(sqlConfigSchema.safeParse({ dialect: "mysql", profiles: { prod: { url: "mysql://db:3306/shop", user: { env: "MYSQL_USER" }, password: { env: "MYSQL_PASSWORD" } } } }).success).toBe(true);
   });
 
   test("refuses an unknown key rather than ignoring it", () => {

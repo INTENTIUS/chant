@@ -4,22 +4,26 @@ description: Each chant security feature with what it does when nothing is turne
 diataxis: reference
 ---
 
-Every security feature is off until a workspace turns it on ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The `security` list in `chant.workspace.json` names groups, at the top level or on a member, and a member's list adds to the top-level one. `chant workspace check` reports what a declared group still lacks, as `WSP161` to `WSP165` warnings, and says nothing about a group the declaration does not name.
+Every security feature is off until a workspace turns it on ([#4168](https://github.com/INTENTIUS/chant/issues/4168)). The `security` list in `chant.workspace.json` names groups, at the top level or on a member, and a member's list adds to the top-level one. `chant workspace check` reports what a declared group still lacks, as `WSP161` to `WSP165` warnings, and says nothing about a group the declaration does not name. The top-level list may also name a security profile, `fedramp-moderate` or `cccs-medium`, which turns on every group and adds checks of its own; [Security profiles](/chant/reference/security-profiles/) describes them.
 
 ## Features
 
-The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/security.ts`, and a test compares the two. The Default column says what chant does when the workspace turns nothing on. The Turns it on alone column names the flag or setting for that one feature, and the Checked as column names the `workspace check` codes reported when the group is declared and the feature is still missing.
+The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/security.ts`, and a test compares the two. The Default column says what chant does when the workspace turns nothing on. The Turns it on alone column names the flag or setting for that one feature, and the Checked as column names the `workspace check` codes reported when the group is declared and the feature is still missing. A profile turns on every group, so each row with a group is on under both profiles; the rows that name profiles are what a profile adds beyond the groups.
 
-| Feature | Default | Turns it on alone | Group | Checked as |
+| Feature | Default | Turns it on alone | Group or profile | Checked as |
 |---|---|---|---|---|
 | Publish refuses an unsigned release | off: publishes and records `signature: unsigned` | `identity.gates.release` | `verified-releases` | `security-signers-missing`, `security-publish-allows-unsigned` |
 | Signed cut in the release gate's class | off | `identity.gates.release` with a `class` | `verified-releases` | `security-release-gate-missing` |
 | Promote verifies the release | off: `chant release verify` on demand | `chant release verify` | `verified-releases` | none |
 | Cut refuses `release.green: "none"` | off: cuts with a warning and records `green: none` | `identity.gates.release` | `verified-releases` | none |
+| Remote refuses a rewrite or deletion of `chant/lifecycle` | off: chant's own pushes are client-checked and a plain force push is not stopped | the `pre-receive` hook of `chant workspace ref-gate install`, or branch protection on the forge, which `chant release doctor` reads | `verified-releases` | none |
 | SBOM on every target | off: a target with no SBOM source publishes without one | `sbom` on the target | `supply-chain` | `security-sbom-disabled`, `security-sbom-unsourced` |
 | OIDC provenance | off: a plan field | `--require-provenance` | `supply-chain` | `security-publish-no-provenance` |
 | Cut needs a green gate | off: `release.green: "none"` cuts with a warning | `release.green` other than `none` | `supply-chain` | none |
-| Sigstore signatures and SLSA provenance on images and forge assets | off: nothing is signed | `release.signing` | `supply-chain` | none |
+| Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key | off: nothing is signed | `release.signing` (`kms` for a KMS key, `key` for a cosign key, `fulcio`, `rekor` and `trustRoot` for a private Sigstore instance) | `supply-chain` | none |
+| Vulnerability scan before anything is pushed | off: a publish pushes without scanning | `release.scan` | `supply-chain` | none |
+| Promote checks the image signatures and the scan record | off: promote deploys a release whatever its publish recorded | none: the group turns it on | `supply-chain` | none |
+| Release image bases pinned by digest | off: a `FROM` by tag builds from whatever the tag names that day | pin each `FROM` as `name:tag@sha256:<digest>` | `supply-chain` | `security-image-base-unpinned` |
 | SBOM and verify steps on components | off | a `generate-sbom` or `verify` step | `supply-chain` | `security-component-no-sbom`, `security-component-no-verify` |
 | Signed green tags and runs | off: every tag counts | `ci.green.signedSince` | `who-ran-it` | `security-signed-since-unset` |
 | Trusted runner keys | off | `.chant/trust.json` with a runner role | `who-ran-it` | `security-runner-untrusted` |
@@ -28,10 +32,19 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Identified attribution | off: `any` | `identity.attribution: "identified"` | `review-rules` | `security-attribution-any` |
 | Signed approvals | off | `identity.gates.<gate>` | `review-rules` | `security-gate-unsigned` |
 | Apply jobs require a runner-start statement | off | `--require-runner-start` | `isolated-runners` | `security-runner-start-no-key`, `security-runner-start-no-role`, `security-trust-unreadable` |
+| `chant lifecycle gc` keeps change sets and releases for at least the profile's days | off: `retention` may be any number of days | `retention` in `chant.workspace.json` | `fedramp-moderate`, `cccs-medium` | `profile-retention-short` |
+| Release and apply gates take approvals from people | off: a gate may name any class or none | `identity.gates.<gate>` with `class: "human"` | `fedramp-moderate`, `cccs-medium` | `profile-gate-not-human` |
+| Publish refuses a scanner database older than a bound | off: the scan reads whatever database it has | `release.scan.dbMaxAgeHours` | `fedramp-moderate`, `cccs-medium` | `profile-scan-off`, `profile-scan-db-unbounded` |
+| Signatures made in a crypto module the team names | off: the upstream cosign build signs | `release.signing.kms`, or `CHANT_COSIGN` in the release config | `fedramp-moderate`, `cccs-medium` | `profile-signing-off`, `profile-signing-module` |
+| ECDSA P-256 runner keys | off: Ed25519 and P-256 keys are both taken | `chant ci serve --setup-key --key-type ecdsa-p256` | `fedramp-moderate`, `cccs-medium` | `profile-runner-key-eddsa` |
 | Secrets file | off | `--secrets` | none | none |
 | Env allowlist and log redaction | on: `ci run`'s contract, a listed exception | `--pass-env` | none | none |
 | Plan steps hold no forge token | on: the plan job's contract, a listed exception | regenerate the pipeline | none | none |
 | Separate plan and apply cloud identities | off: no job requests an OIDC token | `ci.identity.cloud` | none | none |
+
+Which crypto module makes each digest and signature, the runner key types (Ed25519, or ECDSA P-256 with `--key-type ecdsa-p256`), and where chant reports the module are in [Signatures and crypto modules](/chant/reference/crypto-modules/).
+
+A CI product's image built on Chainguard's hardened bases (`base: "chainguard"`, or your Chainguard org's registry) is not in the table: it is a key in the product's own config, which no `security` group turns on or checks. [CI products](/chant/concepts/ci-products/#the-product-pipeline) describes it.
 
 ## Forge tokens on each forge
 

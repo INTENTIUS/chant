@@ -86,11 +86,38 @@ Releases:
                         SLSA provenance the publish recorded, with cosign:
                         an image's in its registry, a forge release's in the
                         directory --assets names.
+  release evidence <label|digest> | --since <date> [--until <date>] -o <dir>
+              [--sign [<key>]] [--referrers] [--sigstore] [--assets <dir>] [--json]
+                        Write the records of a release, or of every release
+                        and change in a period, byte for byte into <dir> with
+                        an index by control id that says what each record
+                        shows and does not show, and SHA256SUMS. Reads only
+                        this clone unless --referrers or --sigstore asks.
+  release evidence --check <dir> [--json]
+                        Check an export from the directory alone: digests,
+                        cut and approval signatures, and the sums' signature.
+  release scan <label|digest> | --deployed [<env>] [--json]
+                        Scan a published release again against today's
+                        vulnerability database: the SBOMs its publish
+                        recorded, with the scanner and vulnPolicy the publish
+                        uses, appended to the publish record as a rescanned
+                        line. --deployed scans every release the latest
+                        deploy record of each environment (or of <env>)
+                        names. Exits 1 when the policy blocks a finding.
   release images <label|digest> [--no-build] [-o <file>] [--json]
                         Build the images release.images declares again from
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to
                         the file CHANT_RELEASE_DIGESTS names for the build.
+  release images --repin [<file>...] [--check] [--json]
+                        Move each image pinned by digest to the digest its
+                        tag names today, in the Dockerfiles release.images
+                        names or the files given, and print what moved.
+                        Wolfi package pins move too: WOLFI_PACKAGE_PINS
+                        rows and apk:<name>=<version> entries go to the
+                        newest version Wolfi's x86_64 and aarch64 indexes
+                        both list.
+                        --check writes nothing and exits 1 when one moved.
   release doctor [--from cut] [--json]
                         Before a cut, ask each release.publish target whether
                         a publish from here can succeed: credentials, OIDC,

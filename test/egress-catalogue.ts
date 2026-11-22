@@ -399,6 +399,24 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     destination: "the forge that hosts the remote, through the GitHub CLI and its own credentials",
     why: "`gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550). On a Forgejo or GitLab job the same calls go over REST through `pr-forge.ts` instead (#3798).",
   },
+  {
+    binary: "grype",
+    subcommand: "db",
+    command: "chant release publish --yes, when the publish scans (release.scan or the supply-chain group)",
+    file: "packages/core/src/lifecycle/publish-scan.ts",
+    phase: "apply",
+    destination: "grype's vulnerability database server",
+    why: "The scan before the stage runs `grype sbom:<file> -o json` on each SBOM, and grype downloads its database on first use and when its copy is stale; `grype db status -o json` then reads the database's version for the publish record. With `release.scan.db` set, grype reads the database in that directory and downloads nothing. Update checks are turned off, and syft, which makes an image's SBOM from its local archive, reaches nothing.",
+  },
+  {
+    binary: "trivy",
+    subcommand: "sbom",
+    command: "chant release publish --yes, when the publish scans with vulnPolicy.scanner: \"trivy\"",
+    file: "packages/core/src/lifecycle/publish-scan.ts",
+    phase: "apply",
+    destination: "trivy's vulnerability database registry",
+    why: "`trivy sbom --format json <file>` downloads trivy's database on first use. With `release.scan.db` set it runs with `--cache-dir <db> --skip-db-update` and downloads nothing.",
+  },
 ];
 
 // ── The catalogue ────────────────────────────────────────────────────────────
@@ -484,6 +502,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "Route 53 (GetHealthCheckStatus) and ECS (DescribeServices), or `AWS_ENDPOINT_URL`",
     why: "`chant lifecycle health` (#4177) reads whether a declared health check passes and a service runs its desired count, signed with SigV4.",
+  },
+  {
+    file: "lexicons/aws/src/ecs-tasks.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "ECS (DescribeServices, ListTasks and DescribeTasks), or `AWS_ENDPOINT_URL`",
+    why: "`chant graph --live` on an aws project reads each declared ECS service's tasks as runtime nodes owned by the service (#5448), signed with SigV4. Read only, and capped per service.",
   },
   {
     file: "lexicons/aws/src/op/activities/aws-apply.ts",
@@ -1248,6 +1273,41 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "each registry or forge a `release.publish` target declares, such as `registry.npmjs.org`, `crates.io` and the forge API",
     why: "`chant release doctor` asks each target whether a publish from this environment can succeed, with read requests and token trades that change nothing on a registry.",
+  },
+  {
+    file: "packages/core/src/lifecycle/lifecycle-protection.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge API (GitHub, GitLab or Forgejo) of the repository a release is cut in",
+    why: "`chant release doctor` reads the rulesets, branch protection or protected branches that apply to `chant/lifecycle`, and reports a branch that allows a force push or a deletion (#5469). Read only.",
+  },
+  {
+    file: "packages/core/src/lifecycle/image-repin.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the registry each pinned image names (Docker Hub, GHCR, `cgr.dev` or any registry API v2), and Wolfi's package index (`packages.wolfi.dev/os/<arch>/APKINDEX.tar.gz`)",
+    why: "`chant release images --repin` asks each registry, with a pull-only token, which digest a pinned image's tag names now, and moves the pin in the file (#5457). When a file holds a Wolfi package pin it reads Wolfi's x86_64 and aarch64 indexes once each and moves the version (#5445). It pushes nothing.",
+  },
+  {
+    file: "packages/core/src/lifecycle/release-evidence.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the registry of each image a release published",
+    why: "`chant release evidence --referrers` reads an image's referrers (the layer SBOM, scan findings, attestations and signatures) with a pull-only token (#5465). Without `--referrers` the export reads no registry.",
+  },
+  {
+    file: "packages/core/src/lifecycle/release-rescan.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the registry of each image a release published",
+    why: "`chant release scan` fetches the SBOMs a release's publish recorded, by the referrer's digest, with the credentials the publish used, and scans them again (#5466). It pushes nothing.",
+  },
+  {
+    file: "packages/core/src/workspace/ci-serve-release.ts",
+    primitives: ["fetch"],
+    phase: "ci",
+    destination: "`github.com`, the release files of the tools chant pins (cosign, goreleaser, nfpm, grype and syft)",
+    why: "`chant ci serve --release` downloads a pinned tool the publish job's steps need when the host has none, refuses it unless its SHA-256 is the pinned one, and caches it (#5462). A host that has the tools reaches nothing here.",
   },
   {
     file: "packages/core/src/lifecycle/release-green.ts",

@@ -956,7 +956,7 @@ function definedEnv(env: Record<string, string | undefined>): Record<string, str
 
 /**
  * Who signs the run (#4156): the runner key, checked against
- * `.chant/trust.json` at the commit. A key that isn't an Ed25519 PEM is an
+ * `.chant/trust.json` at the commit. A key that isn't an Ed25519 or P-256 PEM is an
  * error, and so is a `--key` the file does not list. A key from the
  * environment that it does not list, and no key at all, leave the run
  * unsigned: a warning when the declaration's `ci.green.signedSince` asks
@@ -970,7 +970,7 @@ function ciRunSigner(req: CiRunRequest, at: { cwd: string; top: string; commit: 
   try {
     loadRunnerKey(req.runnerKey);
   } catch (err) {
-    throw new CiRunError(`the runner key${req.runnerKeyFromEnv ? ` in ${RUNNER_KEY_ENV}` : ""} is not an Ed25519 private key in PEM: ${message(err)}`);
+    throw new CiRunError(`the runner key${req.runnerKeyFromEnv ? ` in ${RUNNER_KEY_ENV}` : ""} is not an Ed25519 or ECDSA P-256 private key in PEM: ${message(err)}`);
   }
   try {
     return { signer: ciTagSigner(at.top, at.commit, req.runnerKey, "the runs it signed"), warnings: [], notes: [] };
@@ -1211,7 +1211,7 @@ const USAGE =
   "chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--parallelism <n>] [--comment-targets] [--refresh] [--require-review] [--apply-before-merge [--requires <list>] [--merge auto --merge-token-env <VAR> [--merge-method <m>]]] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> [--release [--label <label>] [--levels <levels>]] | chant ci run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -1258,11 +1258,28 @@ async function requestBuildCommand(at: string): Promise<number> {
   return 0;
 }
 
+/**
+ * `chant ci run --at <sha> --release [--label <label>] [--levels <levels>]`
+ * (#5462): ask a `ci serve --release` host to release a commit, with an
+ * annotated `ci/release/<sha>` tag pushed to origin.
+ */
+async function requestReleaseCommand(at: string, label: string | undefined, levels: string | undefined): Promise<number> {
+  const { requestRelease } = await import("./ci-serve-release");
+  const r = requestRelease({ cwd: process.cwd(), at, ...(label ? { label } : {}), ...(levels ? { levels } : {}) });
+  console.log(
+    r.existed
+      ? `${r.request.tag} already asks for a release of this commit (label ${r.request.label}).`
+      : `Asked for a release of ${r.request.commit.slice(0, 12)} (label ${r.request.label}): ${r.request.tag}. A ci serve --release host runs the release workflow's gate and cut for it when the commit is green, and publishes the tag the cut pushes.`,
+  );
+  return 0;
+}
+
 /** `chant ci run plan|record|apply` (#4094, #4168). */
 export async function runCiRun(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   try {
     if (args.setupKey) return (await import("./ci-serve")).runnerKeySetupCommand(ctx);
+    if (args.at !== undefined && args.extraPositional === undefined && args.ciRelease) return requestReleaseCommand(args.at, args.label, args.levels);
     if (args.at !== undefined && args.extraPositional === undefined) return await requestBuildCommand(args.at);
     const job = args.extraPositional as CiJobName | undefined;
     if (!job || !CI_JOB_NAMES.includes(job)) throw new CiRunError(`ci run takes the job to run, ${CI_JOB_NAMES.join(", ")}${job ? `, not ${JSON.stringify(job)}` : ""}`);

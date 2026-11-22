@@ -784,7 +784,7 @@ The command reads the whole branch, every member's ledger at once, from anywhere
 | `releases` | 14 days, newest 10 | it is promotable: cut within `days`, or among the newest `keep` of its member, and its commit has no `ci/revoked` tag |
 | `runEvents` | 14 days, newest 100 | its file was written within `days`, or it is among the newest `keep` files |
 
-A workspace overrides any of these in the `retention` block of its declaration, read at base. See [Retention](/chant/reference/workspace-declaration/#retention). A project with no declaration uses the defaults.
+A workspace overrides any of these in the `retention` block of its declaration, read at base. See [Retention](/chant/reference/workspace-declaration/#retention). A project with no declaration uses the defaults. Under a [security profile](/chant/reference/security-profiles/), change sets and releases are kept at least the profile's days (90 for `fedramp-moderate` and `cccs-medium`); a shorter `days` in the declaration is not used, and gc prints a warning saying so.
 
 #### What is never pruned
 

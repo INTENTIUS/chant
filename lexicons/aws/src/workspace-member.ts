@@ -20,6 +20,18 @@
  * assembly reader says whether the directory is one. chant does not run the
  * app. With no assembly there is nothing to read, and the report says
  * `synthesized: false` with the reason.
+ *
+ * A `cloudformation` member can also name deployed stacks (#5455): a
+ * `cloudformation-stacks.json` in its directory, `{ "stacks": ["<name>"],
+ * "region": "<region>" }`. For a stack another pipeline deployed, whose
+ * template is not in the repository, {@link readDeployedStacks} reads the
+ * template CloudFormation holds (`GetTemplate`, the processed stage, so a
+ * transform's resources are in it), the resources with their physical ids
+ * (`DescribeStackResources`) and the outputs (`DescribeStacks`). The template
+ * goes through the same reader as a file, so the edges are the same ones.
+ * The three calls only read; a stack that cannot be read is named in a warning
+ * and in `meta.awsMember.stacks`, with the credentials and region the read
+ * needs, and does not fail the graph.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
@@ -27,7 +39,12 @@ import yaml from "js-yaml";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import { isCloudAssembly } from "@intentius/chant/cdk/assembly";
+import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
 import { CF_SCHEMA } from "./import/parser";
+import { AwsReadError, cfnQuery, describeStackResources, xmlLeaves, xmlMembers, type AwsReadClientOptions } from "./api/read-client";
+
+/** The file in a member's directory that names the deployed stacks to read (#5455). */
+export const STACKS_FILE = "cloudformation-stacks.json";
 
 export interface AwsMemberConfig {
   /** `cloudformation` (the default) or `cdk`. */
@@ -47,9 +64,43 @@ export interface AwsMemberReport {
   synthesized?: boolean;
   /** Why nothing was read; set with `synthesized: false`. */
   reason?: string;
+  /** Set when the member names deployed stacks: what each read found. */
+  stacks?: DeployedStackReport[];
 }
 
-type Template = { Resources?: Record<string, { Type?: unknown; Properties?: Record<string, unknown>; DependsOn?: unknown }> };
+/** One resource of a deployed stack: the node it is drawn as, and what CloudFormation says it is. */
+export interface DeployedResource {
+  /** The graph node's id, `<member>/<LogicalId>` (`<member>/<stack>/<LogicalId>` with several templates). */
+  node: string;
+  logicalId: string;
+  type: string;
+  physicalId?: string;
+  status?: string;
+}
+
+/** What reading one named stack found, on `meta.awsMember.stacks`. */
+export interface DeployedStackReport {
+  name: string;
+  region?: string;
+  /** True when the template was read and drawn. */
+  read: boolean;
+  /** `StackStatus`, such as `UPDATE_COMPLETE`. */
+  status?: string;
+  /** Why the stack was not read; set with `read: false`. */
+  reason?: string;
+  resources: DeployedResource[];
+  outputs: Record<string, string>;
+}
+
+/** A deployed stack's template, read and parsed, ready to join the member's templates. */
+export interface DeployedStack {
+  name: string;
+  template: Template;
+  resources: Array<{ logicalId: string; type: string; physicalId?: string; status?: string }>;
+  report: DeployedStackReport;
+}
+
+export type Template = { Resources?: Record<string, { Type?: unknown; Properties?: Record<string, unknown>; DependsOn?: unknown }> };
 type Name = { id: string; attr?: string };
 
 function parseTemplate(text: string): Template | undefined {
@@ -115,15 +166,17 @@ function cdkOutput(dir: string): string {
   return "cdk.out";
 }
 
-export function readCloudFormationMember(opts: { member: AwsMemberConfig }): {
+export function readCloudFormationMember(opts: { member: AwsMemberConfig; deployed?: DeployedStack[]; stackReports?: DeployedStackReport[] }): {
   entities: Map<string, Declarable>;
   warnings: string[];
   report: AwsMemberReport;
 } {
   const { member } = opts;
+  const deployed = opts.deployed ?? [];
+  const stackReports = opts.stackReports ?? (deployed.length > 0 ? deployed.map((d) => d.report) : undefined);
   const label = member.label ?? basename(member.dir);
   const warnings: string[] = [];
-  const templates: Array<{ file: string; template: Template }> = [];
+  const templates: Array<{ file: string; template: Template; deployed?: DeployedStack }> = [];
   let source = member.dir;
   if (member.kind === "cdk") {
     source = join(member.dir, cdkOutput(member.dir));
@@ -138,9 +191,10 @@ export function readCloudFormationMember(opts: { member: AwsMemberConfig }): {
     const template = parseTemplate(readFileSync(join(source, file), "utf-8"));
     if (template) templates.push({ file, template });
   }
+  for (const d of deployed) templates.push({ file: d.name, template: d.template, deployed: d });
 
   const entities = new Map<string, Declarable>();
-  for (const { file, template } of templates) {
+  for (const { file, template, deployed: stack } of templates) {
     // One template per member is the usual case and keeps ids short; two share a directory, so the file name qualifies them.
     const prefix = templates.length === 1 ? label : `${label}/${basename(file, extname(file)).replace(/\.template$/, "")}`;
     const resources = Object.entries(template.Resources ?? {}).filter(([, r]) => typeof r?.Type === "string");
@@ -171,14 +225,148 @@ export function readCloudFormationMember(opts: { member: AwsMemberConfig }): {
       } as unknown as Declarable;
       entities.set(keyOf.get(id)!, entity);
     }
+    if (stack) {
+      const live = new Map(stack.resources.map((r) => [r.logicalId, r]));
+      for (const [id] of resources) {
+        const found = live.get(id);
+        stack.report.resources.push({
+          node: keyOf.get(id)!,
+          logicalId: id,
+          type: found?.type || String((template.Resources?.[id] as { Type?: unknown }).Type),
+          ...(found?.physicalId ? { physicalId: found.physicalId } : {}),
+          ...(found?.status ? { status: found.status } : {}),
+        });
+      }
+    }
   }
   if (templates.length === 0) warnings.push(`${member.kind ?? "cloudformation"} member "${label}" has no CloudFormation template directly in ${source}`);
 
   return {
     entities,
     warnings,
-    report: { templates: templates.map((t) => t.file), objects: entities.size, ...(member.kind === "cdk" ? { synthesized: true } : {}) },
+    report: {
+      templates: templates.filter((t) => !t.deployed).map((t) => t.file),
+      objects: entities.size,
+      ...(member.kind === "cdk" ? { synthesized: true } : {}),
+      ...(stackReports ? { stacks: stackReports } : {}),
+    },
   };
+}
+
+/** What a member's `cloudformation-stacks.json` says. */
+export interface StacksFile {
+  stacks: string[];
+  region?: string;
+}
+
+/**
+ * The member's `cloudformation-stacks.json`, or undefined when it has none.
+ * A file that is not `{ "stacks": [string, ...], "region"?: string }` is an
+ * error with the reason, so the member is not silently read as empty.
+ */
+export function readStacksFile(dir: string): StacksFile | undefined {
+  let text: string;
+  try {
+    text = readFileSync(join(dir, STACKS_FILE), "utf-8");
+  } catch {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${STACKS_FILE} is not JSON: ${(e as Error).message}`);
+  }
+  const o = parsed as { stacks?: unknown; region?: unknown };
+  if (!o || typeof o !== "object" || !Array.isArray(o.stacks) || o.stacks.length === 0 || !o.stacks.every((n) => typeof n === "string" && n.length > 0)) {
+    throw new Error(`${STACKS_FILE} must be { "stacks": ["<stack name>", ...], "region": "<region>" } with at least one stack name`);
+  }
+  if (o.region !== undefined && (typeof o.region !== "string" || !o.region)) throw new Error(`${STACKS_FILE}: "region" must be a region name`);
+  return { stacks: o.stacks as string[], ...(o.region ? { region: o.region as string } : {}) };
+}
+
+/** The error codes that mean the credentials, not the stack, are the trouble. */
+const CREDENTIAL_CODES = new Set([
+  "MissingAuthenticationToken",
+  "InvalidClientTokenId",
+  "ExpiredToken",
+  "ExpiredTokenException",
+  "AccessDenied",
+  "AccessDeniedException",
+  "UnrecognizedClientException",
+  "SignatureDoesNotMatch",
+  "IncompleteSignature",
+]);
+
+const NEEDS =
+  "the read needs AWS credentials that allow cloudformation:DescribeStacks, cloudformation:DescribeStackResources and cloudformation:GetTemplate (set AWS_PROFILE, or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY) and the stack's region";
+
+/** Test seam: the read options the plugin's `buildRoots` reads deployed stacks with (a fake `http`, an endpoint). */
+let stackReadOptions: AwsReadClientOptions = {};
+export function setStackReadOptions(options: AwsReadClientOptions): void {
+  stackReadOptions = options;
+}
+
+/**
+ * Read each stack the member's `cloudformation-stacks.json` names: its
+ * template, resources and outputs. Read only, three CloudFormation calls per
+ * stack. One stack that cannot be read is a warning and a `read: false` entry
+ * with the reason, and the rest are still read.
+ */
+export async function readDeployedStacks(
+  member: AwsMemberConfig,
+  options: AwsReadClientOptions = stackReadOptions,
+): Promise<{ deployed: DeployedStack[]; reports: DeployedStackReport[]; warnings: string[] } | undefined> {
+  if (member.kind === "cdk") return undefined;
+  const file = readStacksFile(member.dir);
+  if (!file) return undefined;
+  const label = member.label ?? basename(member.dir);
+  const env = options.env ?? process.env;
+  const region = file.region ?? env.AWS_REGION ?? env.AWS_DEFAULT_REGION;
+  const deployed: DeployedStack[] = [];
+  const reports: DeployedStackReport[] = [];
+  const warnings: string[] = [];
+  for (const name of file.stacks) {
+    const report: DeployedStackReport = { name, ...(region ? { region } : {}), read: false, resources: [], outputs: {} };
+    reports.push(report);
+    if (!region) {
+      report.reason = `no region: name one in ${STACKS_FILE} ("region") or set AWS_REGION`;
+      warnings.push(`cloudformation member "${label}": stack "${name}" was not read: ${report.reason}`);
+      continue;
+    }
+    try {
+      const client: AwsReadClientOptions = { ...options, region };
+      // One command reads a stack once (#2498): the graph's lint pass builds
+      // the project too, and both builds call buildRoots.
+      const { described, template, resources } = await memoLiveRead(
+        liveReadKey("aws-cfn-stack", { name, region, endpoint: options.endpoint ?? null }),
+        async () => {
+          const described = await cfnQuery("DescribeStacks", { StackName: name }, client);
+          report.status = /<StackStatus>([^<]*)<\/StackStatus>/.exec(described)?.[1];
+          const body = xmlLeaves(await cfnQuery("GetTemplate", { StackName: name, TemplateStage: "Processed" }, client)).TemplateBody;
+          const template = body ? parseTemplate(body) : undefined;
+          if (!template) throw new Error(`the template CloudFormation holds for ${name} is not one chant can read`);
+          return { described, template, resources: await describeStackResources(name, client) };
+        },
+      );
+      report.status = /<StackStatus>([^<]*)<\/StackStatus>/.exec(described)?.[1];
+      for (const m of xmlMembers(described, "Outputs")) if (m.OutputKey) report.outputs[m.OutputKey] = m.OutputValue ?? "";
+      report.read = true;
+      deployed.push({ name, template, resources, report });
+    } catch (e) {
+      const err = e as Error;
+      const code = err instanceof AwsReadError ? err.code : undefined;
+      const needsCredentials = err instanceof AwsReadError && (CREDENTIAL_CODES.has(code ?? "") || err.status === 401 || err.status === 403);
+      report.reason =
+        code === "ValidationError" && /does not exist/i.test(err.message)
+          ? `no stack named ${name} in ${region}`
+          : needsCredentials
+            ? `${err.message}; ${NEEDS}`
+            : err.message;
+      warnings.push(`cloudformation member "${label}": stack "${name}" in ${region} was not read: ${report.reason}`);
+    }
+  }
+  return { deployed, reports, warnings };
 }
 
 export { lastMemberReport, setLastMemberReport } from "./member-report";

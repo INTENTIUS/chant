@@ -33,19 +33,29 @@
  */
 
 import { execFile, execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { IN_TOTO_STATEMENT_TYPE } from "./publish-attachments";
 import type { Redactor } from "./publish-credentials";
 import type { SecurityGroup } from "../workspace/security";
-import { PublishTargetError, type PublishContext } from "./release-publish";
+import { PublishTargetError, isForgejoJob, type PublishContext } from "./release-publish";
+import type { PinnedBase } from "./dockerfile-pins";
+import { keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningConfig } from "./signing-config";
+
+export { isForgejoJob, keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningConfig };
 
 /** The media type of a Sigstore bundle, and the artifact type of a referrer that holds one. */
 export const SIGSTORE_BUNDLE_MEDIA_TYPE = "application/vnd.dev.sigstore.bundle.v0.3+json";
 /** The predicate type of cosign's image signature statement. */
 export const COSIGN_SIGN_PREDICATE = "https://sigstore.dev/cosign/sign/v1";
+/** The predicate type `cosign attest --type spdxjson` writes for an SPDX SBOM (#5468). */
+export const SPDX_PREDICATE = "https://spdx.dev/Document";
+/** The predicate type `cosign attest --type cyclonedx` writes for a CycloneDX SBOM (#5468). */
+export const CYCLONEDX_PREDICATE = "https://cyclonedx.org/bom";
+/** The predicate type of cosign's vulnerability scan attestation (#5468). */
+export const COSIGN_VULN_PREDICATE = "https://cosign.sigstore.dev/attestation/vuln/v1";
 /** The predicate type of SLSA provenance v1. */
 export const SLSA_PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1";
 /** What a file's signature bundle is named after: `<file>.sigstore.json`. */
@@ -58,11 +68,28 @@ export const BUNDLE_PREDICATE_ANNOTATION = "dev.sigstore.bundle.predicateType";
 export const GITHUB_BUILD_TYPE = "https://actions.github.io/buildtypes/workflow/v1";
 /** The buildType of SLSA provenance written in GitLab CI. */
 export const GITLAB_BUILD_TYPE = "https://intentius.io/chant/release/build/gitlab-ci/v1";
+/** The buildType of SLSA provenance written in Forgejo Actions (#5458). */
+export const FORGEJO_BUILD_TYPE = "https://intentius.io/chant/release/build/forgejo-actions/v1";
+/** The buildType of SLSA provenance written outside a forge's CI: a `chant ci serve` host or a workstation (#5458). */
+export const HOST_BUILD_TYPE = "https://intentius.io/chant/release/build/host/v1";
+/** The builder id of a `chant ci serve` host, followed by its runner key's fingerprint (#5458). */
+export const CI_SERVE_BUILDER = "https://intentius.io/chant/release/builder/ci-serve/";
+/** The builder id of a publish run by hand, outside any CI (#5458). */
+export const WORKSTATION_BUILDER = "https://intentius.io/chant/release/builder/workstation";
+/**
+ * The variable a `chant ci serve` host sets for the publish it runs: its
+ * runner key's ssh fingerprint (`SHA256:...`), which the SLSA statement
+ * names as the builder (#5458).
+ */
+export const RUNNER_FINGERPRINT_ENV = "CHANT_RELEASE_RUNNER_KEY_FINGERPRINT";
 /** The cosign major version chant runs: 3 writes Sigstore bundles by default. */
 export const COSIGN_MAJOR = 3;
 
-/** `release.signing` in `chant.config.ts`. */
-export type SigningConfig = boolean | { identity?: string; issuer?: string };
+/** How a publish signs: keylessly with an OIDC token, with a key held in a KMS, or with a key (#5458). */
+export type SigningMode = "keyless" | "kms" | "key";
+
+/** The variable cosign reads a key's password from. */
+export const COSIGN_PASSWORD_ENV = "COSIGN_PASSWORD";
 
 /** Whether a publish signs, and why. */
 export interface SigningSetting {
@@ -71,23 +98,58 @@ export interface SigningSetting {
   from: "config" | "supply-chain" | "off";
   /** Set when the group asks for signing and `signing: false` turns it off. */
   warning: string | null;
+  /** How it signs (#5458): `keyless` unless the config names a key. */
+  mode: SigningMode;
   /** The certificate identity (a regular expression) and issuer a verify expects, when the config names them. */
   identity?: string;
   issuer?: string;
+  /** `key` mode: the key, a file from the member or `env://NAME`, and the variable holding its password. */
+  key?: string;
+  passwordEnv?: string;
+  /** `kms` mode: the KMS reference, and the variables that hold its credentials. */
+  kms?: string;
+  env?: string[];
+  /** `key` and `kms` modes: the PEM public key a verify checks against, from the member. */
+  publicKey?: string;
+  /** False when the signature goes to no transparency log (`rekor: false`). */
+  tlog: boolean;
+  /** A private Sigstore instance: its Fulcio (keyless), its Rekor, and the trusted root, from the member, that signs and verifies against it. */
+  fulcio?: string;
+  rekor?: string;
+  trustRoot?: string;
 }
 
 /** Whether a publish signs: `release.signing` first, then the `supply-chain` group. */
 export function resolveSigning(config: SigningConfig | undefined, groups: ReadonlySet<SecurityGroup>): SigningSetting {
-  const named = typeof config === "object" ? { ...(config.identity ? { identity: config.identity } : {}), ...(config.issuer ? { issuer: config.issuer } : {}) } : {};
   if (config === false) {
     return {
       on: false,
       from: "off",
+      mode: "keyless",
+      tlog: true,
       warning: groups.has("supply-chain") ? "the workspace opts into supply-chain, and release.signing: false publishes images and forge assets without Sigstore signatures or SLSA provenance" : null,
     };
   }
-  if (config !== undefined) return { on: true, from: "config", warning: null, ...named };
-  return groups.has("supply-chain") ? { on: true, from: "supply-chain", warning: null } : { on: false, from: "off", warning: null };
+  if (config !== undefined) {
+    const c = typeof config === "object" ? config : {};
+    const mode: SigningMode = c.kms ? "kms" : c.key ? "key" : "keyless";
+    return {
+      on: true,
+      from: "config",
+      warning: null,
+      mode,
+      tlog: c.rekor !== false,
+      ...(c.identity ? { identity: c.identity } : {}),
+      ...(c.issuer ? { issuer: c.issuer } : {}),
+      ...(c.kms ? { kms: c.kms, env: kmsEnvOf(c.kms, c.env) } : {}),
+      ...(c.key && !c.kms ? { key: c.key, passwordEnv: c.passwordEnv ?? COSIGN_PASSWORD_ENV } : {}),
+      ...(c.publicKey ? { publicKey: c.publicKey } : {}),
+      ...(c.fulcio ? { fulcio: c.fulcio } : {}),
+      ...(typeof c.rekor === "string" ? { rekor: c.rekor } : {}),
+      ...(c.trustRoot ? { trustRoot: c.trustRoot } : {}),
+    };
+  }
+  return groups.has("supply-chain") ? { on: true, from: "supply-chain", warning: null, mode: "keyless", tlog: true } : { on: false, from: "off", warning: null, mode: "keyless", tlog: true };
 }
 
 /** Who a keyless signature names: the OIDC issuer and a regular expression the certificate's identity matches. */
@@ -97,21 +159,72 @@ export interface SigstoreIdentity {
 }
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const trimSlash = (s: string): string => s.replace(/\/+$/, "");
+
+/** Where a release is built: a forge's CI, a `chant ci serve` host, or a workstation (#5458). */
+export type ReleaseBuildKind = "github" | "gitlab" | "forgejo" | "host" | "workstation";
+
+/** Where this run builds the release, from its environment (#5458). */
+export function releaseBuildKind(env: NodeJS.ProcessEnv): ReleaseBuildKind {
+  if (isForgejoJob(env)) return "forgejo";
+  if (env.GITHUB_ACTIONS === "true") return "github";
+  if (env.GITLAB_CI === "true") return "gitlab";
+  if (env[RUNNER_FINGERPRINT_ENV]) return "host";
+  return "workstation";
+}
+
+/**
+ * The OIDC issuer of a GitHub Actions token on `server`: GitHub's own on
+ * github.com, `token.actions.<host>` on a GHE.com host, and the server's
+ * `/_services/token` on GitHub Enterprise Server.
+ */
+export function githubOidcIssuer(server: string): string {
+  const url = trimSlash(server);
+  const host = url.replace(/^https?:\/\//, "");
+  if (host === "github.com") return "https://token.actions.githubusercontent.com";
+  if (host.endsWith(".ghe.com")) return `https://token.actions.${host}`;
+  return `${url}/_services/token`;
+}
+
+/** The server and repository of a Forgejo job, from its `FORGEJO_*` variables, else the `GITHUB_*` ones an older runner sets. */
+function forgejoJob(env: NodeJS.ProcessEnv) {
+  return {
+    server: trimSlash(env.FORGEJO_SERVER_URL ?? env.GITHUB_SERVER_URL ?? ""),
+    repo: env.FORGEJO_REPOSITORY ?? env.GITHUB_REPOSITORY ?? "",
+    workflowRef: env.FORGEJO_WORKFLOW_REF ?? env.GITHUB_WORKFLOW_REF ?? "",
+    ref: env.FORGEJO_REF ?? env.GITHUB_REF ?? "",
+    runNumber: env.FORGEJO_RUN_NUMBER ?? env.GITHUB_RUN_NUMBER ?? "",
+    runId: env.FORGEJO_RUN_ID ?? env.GITHUB_RUN_ID ?? "",
+    event: env.FORGEJO_EVENT_NAME ?? env.GITHUB_EVENT_NAME ?? null,
+  };
+}
 
 /**
  * Whether this run can sign keylessly, and the identity its certificate will
  * name: in GitHub Actions, a job with `id-token: write`, whose certificate
- * names a workflow of the repository; in GitLab CI, an ID token named
- * `SIGSTORE_ID_TOKEN` with the audience `sigstore`, whose certificate names
- * the project's pipeline. Anywhere else there is none.
+ * names a workflow of the repository and is issued by the server's token
+ * service; in GitLab CI, an ID token named `SIGSTORE_ID_TOKEN` with the
+ * audience `sigstore`, whose certificate names the project's pipeline.
+ * A Forgejo job is never taken for GitHub (#5458): it signs keylessly only
+ * through a private Fulcio (`o.fulcio`) that trusts the instance, with the
+ * token a job with `enable-openid-connect: true` gets, whose issuer is
+ * `<server>/api/actions` unless `o.issuer` names another. Anywhere else
+ * there is none.
  */
-export function signingIdentity(env: NodeJS.ProcessEnv): { identity: SigstoreIdentity } | { reason: string } {
+export function signingIdentity(env: NodeJS.ProcessEnv, o: { fulcio?: string; issuer?: string } = {}): { identity: SigstoreIdentity } | { reason: string } {
+  if (isForgejoJob(env)) {
+    if (!o.fulcio) return { reason: "this is a Forgejo Actions job, and public Sigstore issues no certificate for a Forgejo token; sign with release.signing.kms or key, or name a private Fulcio that trusts this Forgejo (release.signing.fulcio)" };
+    if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return { reason: "this Forgejo Actions job has no OIDC token; give the job enable-openid-connect: true" };
+    const f = forgejoJob(env);
+    if (!f.server || !f.repo) return { reason: "this Forgejo Actions job names no server or repository" };
+    return { identity: { issuer: o.issuer ?? `${f.server}/api/actions`, identity: `^${escape(f.server)}/${escape(f.repo)}/` } };
+  }
   if (env.GITHUB_ACTIONS === "true") {
     if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return { reason: "this GitHub Actions job has no OIDC token; give the job permissions: id-token: write" };
-    const server = (env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "");
+    const server = trimSlash(env.GITHUB_SERVER_URL ?? "https://github.com");
     const repo = env.GITHUB_REPOSITORY;
     if (!repo) return { reason: "this GitHub Actions job has no GITHUB_REPOSITORY" };
-    return { identity: { issuer: "https://token.actions.githubusercontent.com", identity: `^${escape(server)}/${escape(repo)}/` } };
+    return { identity: { issuer: githubOidcIssuer(server), identity: `^${escape(server)}/${escape(repo)}/` } };
   }
   if (env.GITLAB_CI === "true") {
     if (!env.SIGSTORE_ID_TOKEN) return { reason: "this GitLab CI job has no SIGSTORE_ID_TOKEN; declare it under the job's id_tokens with aud: sigstore" };
@@ -141,19 +254,68 @@ export function cosignSignStatement(subject: { name: string; digest: string }): 
   return { _type: IN_TOTO_STATEMENT_TYPE, subject: [subjectOf(subject)], predicateType: COSIGN_SIGN_PREDICATE, predicate: {} };
 }
 
+/** The `origin` remote of `cwd` without any credentials in it, or null. */
+function originUrl(cwd: string | undefined): string | null {
+  if (!cwd) return null;
+  try {
+    const url = execFileSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return url ? url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1") : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * SLSA provenance v1 over `subjects`, from the CI job's environment. In
- * GitHub Actions it is the predicate `actions/attest-build-provenance`
- * writes: the workflow, the event, the repository's ids, the commit and the
- * run. In GitLab CI it names the project, its CI config, the pipeline source
- * and the job. Either adds `internalParameters.chant`, the release's digest,
- * label and member, and the source it resolves is the release's commit.
+ * SLSA provenance v1 over `subjects`, naming the environment that built the
+ * release (#5458), each with its own build type and builder id:
+ *
+ * - GitHub Actions: the predicate `actions/attest-build-provenance` writes,
+ *   the workflow, the event, the repository's ids, the commit and the run.
+ * - GitLab CI: the project, its CI config, the pipeline source and the job.
+ * - Forgejo Actions: the server, the repository, the workflow and the run.
+ * - a `chant ci serve` host: its runner key's fingerprint
+ *   ({@link RUNNER_FINGERPRINT_ENV}) as the builder.
+ * - a workstation: {@link WORKSTATION_BUILDER}, with no builder identity.
+ *
+ * Each adds `internalParameters.chant`, the release's digest, label and
+ * member, and the source it resolves is the release's commit.
  */
-export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "release" | "label">, subjects: ReadonlyArray<{ name: string; digest: string }>): InTotoStatement {
+export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "release" | "label"> & { cwd?: string }, subjects: ReadonlyArray<{ name: string; digest: string }>, o: { bases?: readonly PinnedBase[] } = {}): InTotoStatement {
   const env = ctx.env;
   const chant = { releaseDigest: ctx.release.releaseDigest, label: ctx.label, member: ctx.release.member };
+  const kind = releaseBuildKind(env);
   let predicate: Record<string, unknown>;
-  if (env.GITLAB_CI === "true") {
+  if (kind === "forgejo") {
+    const f = forgejoJob(env);
+    const path = f.workflowRef.startsWith(`${f.repo}/`) ? f.workflowRef.slice(f.repo.length + 1).split("@")[0]! : f.workflowRef.split("@")[0]!;
+    predicate = {
+      buildDefinition: {
+        buildType: FORGEJO_BUILD_TYPE,
+        externalParameters: { workflow: { ref: f.ref, repository: `${f.server}/${f.repo}`, path } },
+        internalParameters: { forgejo: { event_name: f.event, run_id: f.runId || null }, chant },
+        resolvedDependencies: [{ uri: `git+${f.server}/${f.repo}@${f.ref}`, digest: { gitCommit: ctx.release.commit } }],
+      },
+      runDetails: {
+        builder: { id: `${f.server}/${f.workflowRef}` },
+        metadata: { invocationId: `${f.server}/${f.repo}/actions/runs/${f.runNumber}` },
+      },
+    };
+  } else if (kind === "host" || kind === "workstation") {
+    const origin = originUrl(ctx.cwd);
+    const fingerprint = env[RUNNER_FINGERPRINT_ENV] ?? null;
+    predicate = {
+      buildDefinition: {
+        buildType: HOST_BUILD_TYPE,
+        externalParameters: { source: origin, commit: ctx.release.commit },
+        internalParameters: { host: { runner: kind === "host" ? "ci-serve" : "workstation", runnerKey: fingerprint }, chant },
+        resolvedDependencies: [{ ...(origin ? { uri: `git+${origin}` } : {}), digest: { gitCommit: ctx.release.commit } }],
+      },
+      runDetails: {
+        builder: { id: kind === "host" ? `${CI_SERVE_BUILDER}${encodeURIComponent(fingerprint!)}` : WORKSTATION_BUILDER },
+        metadata: {},
+      },
+    };
+  } else if (kind === "gitlab") {
     const server = (env.CI_SERVER_URL ?? "https://gitlab.com").replace(/\/+$/, "");
     const project = `${server}/${env.CI_PROJECT_PATH ?? ""}`;
     const ref = env.CI_COMMIT_TAG ? `refs/tags/${env.CI_COMMIT_TAG}` : `refs/heads/${env.CI_COMMIT_REF_NAME ?? ""}`;
@@ -191,7 +353,40 @@ export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "relea
       },
     };
   }
+  // #5468: each base image the Dockerfile names by digest is a dependency of the build, beside the source commit.
+  if (o.bases && o.bases.length > 0) {
+    const def = predicate.buildDefinition as { resolvedDependencies: unknown[] };
+    def.resolvedDependencies.push(...o.bases.map(baseDependency));
+  }
   return { _type: IN_TOTO_STATEMENT_TYPE, subject: subjects.map(subjectOf), predicateType: SLSA_PROVENANCE_PREDICATE, predicate };
+}
+
+/**
+ * A base image as a SLSA resolved dependency (#5468): a `pkg:docker` URI
+ * that names the repository (host included) and the digest, the digest as
+ * the descriptor's own, and the reference as the Dockerfile resolves it.
+ */
+export function baseDependency(b: PinnedBase): { uri: string; digest: Record<string, string>; name: string } {
+  const [alg, hex] = b.digest.split(":") as [string, string];
+  return { uri: `pkg:docker/${b.repository}@${b.digest}`, digest: { [alg]: hex }, name: b.reference };
+}
+
+/** What a key-signed bundle names in place of a certificate (#5458): the public key from the member that verifies it. */
+export interface KeyIdentity {
+  key: string;
+}
+
+/** What a bundle is verified against: a keyless certificate's issuer and identity, or a key. */
+export type SigningIdentity = SigstoreIdentity | KeyIdentity;
+
+/** Whether `id` names a key rather than a certificate. */
+export function isKeyIdentity(id: SigningIdentity): id is KeyIdentity {
+  return "key" in id && typeof (id as KeyIdentity).key === "string";
+}
+
+/** In a sentence, who signed: the certificate's identity and issuer, or the key. */
+export function describeSigningIdentity(id: SigningIdentity): string {
+  return isKeyIdentity(id) ? `the key ${id.key}` : `${id.identity}, issuer ${id.issuer}`;
 }
 
 /** Signs with Sigstore. Injected, so tests sign with a fake. */
@@ -210,10 +405,10 @@ export interface Signer {
 export interface SigstoreVerifier {
   readonly name: string;
   unavailable(): string | null;
-  verifyBlob(bundle: Uint8Array, digest: string, id: SigstoreIdentity): Promise<string | null>;
-  verifyBlobAttestation(bundle: Uint8Array, digest: string, predicateType: string, id: SigstoreIdentity): Promise<string | null>;
-  verifyImage(ref: string, id: SigstoreIdentity): Promise<string | null>;
-  verifyImageAttestation(ref: string, predicateType: string, id: SigstoreIdentity): Promise<string | null>;
+  verifyBlob(bundle: Uint8Array, digest: string, id: SigningIdentity): Promise<string | null>;
+  verifyBlobAttestation(bundle: Uint8Array, digest: string, predicateType: string, id: SigningIdentity): Promise<string | null>;
+  verifyImage(ref: string, id: SigningIdentity): Promise<string | null>;
+  verifyImageAttestation(ref: string, predicateType: string, id: SigningIdentity): Promise<string | null>;
 }
 
 /** The cosign a run uses: `CHANT_COSIGN`, else `cosign` on `PATH`. */
@@ -241,7 +436,7 @@ function cosignUnavailable(cosign: string, env: NodeJS.ProcessEnv): { version: s
 const run = promisify(execFile);
 
 /** Run cosign with `args`; a failure is a {@link PublishTargetError} with `code` and the end of its stderr, redacted. */
-async function cosignRun(cosign: string, args: string[], env: NodeJS.ProcessEnv, redactor: Redactor | null, code: string, what: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+async function cosignRun(cosign: string, args: string[], env: NodeJS.ProcessEnv, redactor: Redactor | null, code: string, what: string, fix = "Check that the job's OIDC token reaches cosign and that Fulcio and Rekor are reachable, then run the publish again."): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     await run(cosign, args, { env, maxBuffer: 16 * 1024 * 1024 });
     return { ok: true };
@@ -249,7 +444,7 @@ async function cosignRun(cosign: string, args: string[], env: NodeJS.ProcessEnv,
     const e = err as Error & { stderr?: string };
     const tail = String(e.stderr ?? e.message).trim().split("\n").filter(Boolean).slice(-3).join("; ");
     const reason = redactor ? redactor.redact(tail) : tail;
-    if (code) throw new PublishTargetError(code, `${what} failed: ${reason}`, "Check that the job's OIDC token reaches cosign and that Fulcio and Rekor are reachable, then run the publish again.");
+    if (code) throw new PublishTargetError(code, `${what} failed: ${reason}`, fix);
     return { ok: false, reason };
   }
 }
@@ -259,10 +454,53 @@ function withTemp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   return fn(dir).finally(() => rmSync(dir, { recursive: true, force: true }));
 }
 
-/** A {@link Signer} that runs cosign keylessly, with `env`, which carries the job's OIDC token. */
-export function cosignSigner(env: NodeJS.ProcessEnv, redactor: Redactor, cosign = cosignPath(env)): Signer {
+/**
+ * How cosign signs (#5458): keylessly with the job's token, or with `key`: a
+ * KMS reference, whose credentials cosign reads from the run's variables, or
+ * a key file's absolute path or `env://NAME`, whose password cosign reads
+ * from `passwordEnv`. `tlog: false` writes no transparency log entry.
+ */
+export interface CosignSignOptions {
+  mode: SigningMode;
+  key?: string;
+  passwordEnv?: string;
+  tlog?: boolean;
+  /** A private instance: Fulcio and Rekor URLs, and the trusted root's absolute path. */
+  fulcio?: string;
+  rekor?: string;
+  trustRoot?: string;
+}
+
+/**
+ * The flags `cosign sign-blob` and `attest-blob` get for `o`, before their
+ * own. A private instance or `tlog: false` turns off cosign's signing config,
+ * which names public Sigstore, and names the services itself.
+ */
+export function cosignSigningFlags(o: CosignSignOptions): string[] {
+  const flags: string[] = [];
+  if (o.mode !== "keyless" && o.key) flags.push("--key", o.key);
+  const fulcio = o.mode === "keyless" ? o.fulcio : undefined;
+  if (o.tlog === false || fulcio || o.rekor) flags.push("--use-signing-config=false");
+  if (fulcio) flags.push("--fulcio-url", fulcio);
+  if (o.tlog === false) flags.push("--tlog-upload=false");
+  else if (o.rekor) flags.push("--rekor-url", o.rekor);
+  if (o.trustRoot) flags.push("--trusted-root", o.trustRoot);
+  return flags;
+}
+
+/** The environment cosign signs with: the run's, and in `key` mode the key's password as `COSIGN_PASSWORD`. */
+export function cosignSigningEnv(env: NodeJS.ProcessEnv, o: CosignSignOptions): NodeJS.ProcessEnv {
+  if (o.mode !== "key") return env;
+  return { ...env, [COSIGN_PASSWORD_ENV]: env[o.passwordEnv ?? COSIGN_PASSWORD_ENV] ?? "" };
+}
+
+/** A {@link Signer} that runs cosign with `env`, keylessly with the job's OIDC token unless `o` names a key. */
+export function cosignSigner(env: NodeJS.ProcessEnv, redactor: Redactor, cosign = cosignPath(env), o: CosignSignOptions = { mode: "keyless" }): Signer {
   let checked: ReturnType<typeof cosignUnavailable> | null = null;
   const check = () => (checked ??= cosignUnavailable(cosign, env));
+  const flags = cosignSigningFlags(o);
+  const signEnv = cosignSigningEnv(env, o);
+  const fix = o.mode === "keyless" ? undefined : "Check that the key and its credentials reach cosign in the publish step, then run the publish again.";
   return {
     get name() {
       return `cosign${check().version ? ` ${check().version}` : ""}`;
@@ -272,26 +510,38 @@ export function cosignSigner(env: NodeJS.ProcessEnv, redactor: Redactor, cosign 
       withTemp(async (dir) => {
         const file = join(dir, "blob");
         writeFileSync(file, bytes);
-        await cosignRun(cosign, ["sign-blob", "--yes", "--new-bundle-format=true", "--bundle", join(dir, "out.json"), file], env, redactor, "publish-signing-failed", `cosign sign-blob for ${name}`);
+        await cosignRun(cosign, ["sign-blob", "--yes", "--new-bundle-format=true", ...flags, "--bundle", join(dir, "out.json"), file], signEnv, redactor, "publish-signing-failed", `cosign sign-blob for ${name}`, fix);
         return new Uint8Array(readFileSync(join(dir, "out.json")));
       }),
     signStatement: (statement) =>
       withTemp(async (dir) => {
         const file = join(dir, "statement.json");
         writeFileSync(file, JSON.stringify(statement));
-        await cosignRun(cosign, ["attest-blob", "--yes", "--new-bundle-format=true", "--statement", file, "--bundle", join(dir, "out.json")], env, redactor, "publish-signing-failed", `cosign attest-blob for ${statement.predicateType}`);
+        await cosignRun(cosign, ["attest-blob", "--yes", "--new-bundle-format=true", ...flags, "--statement", file, "--bundle", join(dir, "out.json")], signEnv, redactor, "publish-signing-failed", `cosign attest-blob for ${statement.predicateType}`, fix);
         return new Uint8Array(readFileSync(join(dir, "out.json")));
       }),
   };
 }
 
 /** The `--type` cosign takes for a predicate type: its short name for SLSA provenance v1, else the URI. */
-const cosignType = (predicateType: string): string => (predicateType === SLSA_PROVENANCE_PREDICATE ? "slsaprovenance1" : predicateType);
-const idFlags = (id: SigstoreIdentity): string[] => ["--certificate-identity-regexp", id.identity, "--certificate-oidc-issuer", id.issuer];
+const COSIGN_TYPES: Record<string, string> = { [SLSA_PROVENANCE_PREDICATE]: "slsaprovenance1", [SPDX_PREDICATE]: "spdxjson", [CYCLONEDX_PREDICATE]: "cyclonedx", [COSIGN_VULN_PREDICATE]: "vuln" };
+export const cosignType = (predicateType: string): string => COSIGN_TYPES[predicateType] ?? predicateType;
 const hexOf = (digest: string): string => (digest.includes(":") ? digest.split(":")[1]! : digest);
 
+/** How cosign verifies (#5458): `tlog: false` for a signature that went to no transparency log, and a private instance's trusted root (an absolute path). */
+export interface CosignVerifyOptions {
+  tlog?: boolean;
+  trustRoot?: string;
+}
+
+/** The flags a cosign verify gets for `id`: the certificate's identity and issuer, or `--key`, and the trusted root of a private instance. */
+export function cosignVerifyFlags(id: SigningIdentity, o: CosignVerifyOptions = {}): string[] {
+  const who = isKeyIdentity(id) ? ["--key", id.key] : ["--certificate-identity-regexp", id.identity, "--certificate-oidc-issuer", id.issuer];
+  return [...who, ...(o.tlog === false ? ["--insecure-ignore-tlog=true"] : []), ...(o.trustRoot ? ["--trusted-root", o.trustRoot] : [])];
+}
+
 /** A {@link SigstoreVerifier} that runs cosign. Image checks read the registry with docker's credentials. */
-export function cosignVerifier(env: NodeJS.ProcessEnv, cosign = cosignPath(env)): SigstoreVerifier {
+export function cosignVerifier(env: NodeJS.ProcessEnv, cosign = cosignPath(env), o: CosignVerifyOptions = {}): SigstoreVerifier {
   let checked: ReturnType<typeof cosignUnavailable> | null = null;
   const check = () => (checked ??= cosignUnavailable(cosign, env));
   const go = async (args: string[]): Promise<string | null> => {
@@ -304,6 +554,7 @@ export function cosignVerifier(env: NodeJS.ProcessEnv, cosign = cosignPath(env))
       writeFileSync(file, bundle);
       return go(args(file));
     });
+  const idFlags = (id: SigningIdentity) => cosignVerifyFlags(id, o);
   return {
     get name() {
       return `cosign${check().version ? ` ${check().version}` : ""}`;
@@ -316,8 +567,94 @@ export function cosignVerifier(env: NodeJS.ProcessEnv, cosign = cosignPath(env))
   };
 }
 
-/** What a target signs with, in the publish context: the signer and the identity its certificate names. */
+/** What a target signs with, in the publish context: the signer and who its bundles name. */
 export interface SigningContext {
   signer: Signer;
-  identity: SigstoreIdentity;
+  identity: SigningIdentity;
+  /** How it signs (#5458). Absent: keyless. */
+  mode?: SigningMode;
+}
+
+/** Why a publish that should sign can't, before anything is sent. */
+export interface SigningRefusal {
+  code: "publish-signing-no-oidc" | "publish-signing-tool-missing" | "publish-signing-key-missing" | "publish-signing-trust-root-missing";
+  /** What is missing, in a clause. */
+  reason: string;
+  fix: string;
+}
+
+/**
+ * The variables the signing step needs from the CI's secrets in the mode
+ * `setting` names (#5458): a KMS's credentials, or a key held in a variable
+ * and its password. The
+ * release workflow passes them to the publish step alone.
+ */
+export function signingStepVariables(setting: SigningSetting): string[] {
+  if (!setting.on) return [];
+  if (setting.mode === "kms") return [...(setting.env ?? [])];
+  if (setting.mode !== "key") return [];
+  const variable = keyEnvOf(setting.key!);
+  return [...(variable ? [variable] : []), setting.passwordEnv ?? COSIGN_PASSWORD_ENV];
+}
+
+/** The fix for a keyless run with no OIDC token. */
+export const KEYLESS_FIX = "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), sign with a KMS key (release.signing.kms) or a key (release.signing.key), or set release.signing: false.";
+
+/**
+ * Whether the mode `setting` names can sign in this run, without running
+ * cosign (#5458): a keyless run needs an OIDC token cosign takes; `kms`
+ * needs each variable its credentials are in; `key` needs its file or
+ * variable and its password variable; either needs the public key it names.
+ * Null when it can, else the refusal.
+ */
+export function signingReadiness(setting: SigningSetting, env: NodeJS.ProcessEnv, cwd: string): SigningRefusal | null {
+  if (setting.trustRoot && !existsSync(resolve(cwd, setting.trustRoot))) {
+    return { code: "publish-signing-trust-root-missing", reason: `release.signing.trustRoot names ${setting.trustRoot}, which is not there, so cosign can't trust the private Sigstore instance`, fix: "Commit the instance's trusted_root.json where release.signing.trustRoot names it." };
+  }
+  if (setting.mode === "kms") {
+    const unset = (setting.env ?? []).filter((v) => !env[v]);
+    if (unset.length > 0) return { code: "publish-signing-key-missing", reason: `the credentials of ${setting.kms} are read from ${unset.join(", ")}, which ${unset.length === 1 ? "is" : "are"} not set here`, fix: `Give the publish step ${unset.join(", ")}, as chant release workflow does from the repository's secrets, or name the variables in release.signing.env.` };
+    if (setting.publicKey && !existsSync(resolve(cwd, setting.publicKey))) return { code: "publish-signing-key-missing", reason: `release.signing.publicKey names ${setting.publicKey}, which is not there, so nothing could verify what the KMS key signs`, fix: `Commit the key's public half where release.signing.publicKey names it (cosign public-key --key ${setting.kms}).` };
+    return null;
+  }
+  if (setting.mode === "key") {
+    const key = setting.key!;
+    const variable = keyEnvOf(key);
+    if (variable !== null && !env[variable]) return { code: "publish-signing-key-missing", reason: `release.signing.key reads the key from ${variable}, which is not set here`, fix: `Give the publish step ${variable}, the cosign private key in PEM, as chant release workflow does from the repository's secrets.` };
+    if (variable === null && !existsSync(resolve(cwd, key))) return { code: "publish-signing-key-missing", reason: `release.signing.key names ${key}, which is not there`, fix: "Put the cosign key file where release.signing.key names it, or use env://NAME for a key held in a variable." };
+    const password = setting.passwordEnv ?? COSIGN_PASSWORD_ENV;
+    if (env[password] === undefined) return { code: "publish-signing-key-missing", reason: `the key's password is read from ${password}, which is not set here`, fix: `Give the publish step ${password}, empty for a key made with no password.` };
+    if (setting.publicKey && !existsSync(resolve(cwd, setting.publicKey))) return { code: "publish-signing-key-missing", reason: `release.signing.publicKey names ${setting.publicKey}, which is not there, so nothing could verify what the key signs`, fix: "Commit the key's public half where release.signing.publicKey names it (cosign public-key --key <key>)." };
+    return null;
+  }
+  const id = signingIdentity(env, setting);
+  return "reason" in id ? { code: "publish-signing-no-oidc", reason: `this run can't sign keylessly: ${id.reason}`, fix: KEYLESS_FIX } : null;
+}
+
+/**
+ * What a publish signs with (#5458), or why it can't: the mode's readiness
+ * ({@link signingReadiness}), then cosign. `signer` replaces cosign, as a
+ * test's fake does.
+ */
+export function prepareSigning(setting: SigningSetting, req: { env: NodeJS.ProcessEnv; cwd: string; redactor: Redactor; signer?: Signer }): { context: SigningContext } | { refusal: SigningRefusal } {
+  const refused = signingReadiness(setting, req.env, req.cwd);
+  if (refused) return { refusal: refused };
+  const instance = {
+    ...(setting.fulcio ? { fulcio: setting.fulcio } : {}),
+    ...(setting.rekor ? { rekor: setting.rekor } : {}),
+    ...(setting.trustRoot ? { trustRoot: resolve(req.cwd, setting.trustRoot) } : {}),
+  };
+  const options: CosignSignOptions =
+    setting.mode === "key"
+      ? { mode: "key", key: keyEnvOf(setting.key!) !== null ? setting.key! : resolve(req.cwd, setting.key!), passwordEnv: setting.passwordEnv ?? COSIGN_PASSWORD_ENV, tlog: setting.tlog, ...instance }
+      : setting.mode === "kms"
+        ? { mode: "kms", key: setting.kms!, tlog: setting.tlog, ...instance }
+        : { mode: "keyless", ...instance };
+  const signer = req.signer ?? cosignSigner(req.env, req.redactor, cosignPath(req.env), options);
+  const missing = signer.unavailable();
+  if (missing) return { refusal: { code: "publish-signing-tool-missing", reason: missing, fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it." } };
+  if (setting.mode === "key") return { context: { signer, identity: { key: setting.publicKey! }, mode: "key" } };
+  if (setting.mode === "kms") return { context: { signer, identity: { key: setting.publicKey ?? setting.kms! }, mode: "kms" } };
+  const id = signingIdentity(req.env, setting) as { identity: SigstoreIdentity };
+  return { context: { signer, identity: id.identity, mode: "keyless" } };
 }

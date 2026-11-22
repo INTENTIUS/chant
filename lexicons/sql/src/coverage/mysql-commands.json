@@ -1,0 +1,22 @@
+{
+  "source": "the MySQL 8.0 Reference Manual, Data Definition Statements, Account Management Statements and Resource Group Management Statements",
+  "version": "8.0.40",
+  "commands": [
+    "CREATE DATABASE",
+    "CREATE EVENT",
+    "CREATE FUNCTION",
+    "CREATE INDEX",
+    "CREATE LOGFILE GROUP",
+    "CREATE PROCEDURE",
+    "CREATE RESOURCE GROUP",
+    "CREATE ROLE",
+    "CREATE SCHEMA",
+    "CREATE SERVER",
+    "CREATE SPATIAL REFERENCE SYSTEM",
+    "CREATE TABLE",
+    "CREATE TABLESPACE",
+    "CREATE TRIGGER",
+    "CREATE USER",
+    "CREATE VIEW"
+  ]
+}

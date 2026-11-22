@@ -34,7 +34,7 @@
       "type": "object",
       "required": ["code", "message"],
       "properties": {
-        "code": { "enum": ["not-a-git-repository", "revision-unknown", "trust-policy-unreadable", "ref-update-invalid"] },
+        "code": { "enum": ["not-a-git-repository", "revision-unknown", "trust-policy-unreadable", "ref-update-invalid", "lifecycle-ref-deleted", "lifecycle-ref-rewritten"] },
         "message": { "type": "string" }
       }
     },

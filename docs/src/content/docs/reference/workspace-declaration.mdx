@@ -65,7 +65,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.108.0. |
 | `retention` | no | How long `chant lifecycle gc` keeps stored change sets, releases and run event files. See [Retention](#retention). It was added in chant 0.124.29. |
 | `metrics` | no | The failure window `chant workspace metrics` counts a failed deploy in, new in chant 0.124.29. See [Metrics](#metrics). |
-| `security` | no | The security groups the workspace opts into, new in chant 0.124.33. See [Security](#security). |
+| `security` | no | The security groups the workspace opts into, new in chant 0.124.33, and the security profiles. See [Security](#security). |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. [`status --json`](/chant/cli/workspace-status/#output) and [`ls --json`](/chant/cli/workspace-ls/#output) print them back, as written, on the object of their output that the declaration holds them on ([#3595](https://github.com/INTENTIUS/chant/issues/3595)), so a tool reads what it wrote without parsing the file. |
@@ -674,6 +674,8 @@ Every security feature is opt-in ([#4168](https://github.com/INTENTIUS/chant/iss
 | `isolated-runners` | `chant ci run apply`, and so `chant ci serve`, refuses to start without a provisioner's runner-start statement for the job, as `--require-runner-start` does. `chant build --pr-loop` writes the flag into the apply job. |
 
 Each feature also turns on alone: a `release` gate in [`identity.gates`](#identity), `--require-provenance`, `--require-review`, `--require-runner-start`, `ci.green.signedSince`. A group is read at base, as the release gate is. Each name may appear once in a list, and an unknown name is refused. `chant workspace check` reports what a declared group still lacks as `WSP161` to `WSP165` warnings ([security features](/chant/reference/security-features/)). A chant older than 0.124.33 refuses `security`, so set `minReader` to at least that version when you use it.
+
+The top-level list may also name a security profile, `fedramp-moderate` or `cccs-medium`. A profile turns on every group, keeps change sets and releases for at least 90 days in `chant lifecycle gc`, refuses a publish whose scanner database is older than 24 hours, and adds its own `workspace check` (`WSP166`, `WSP167`). A member's list takes groups only. A profile reports what its records lack as evidence toward named controls, and does not decide whether a control is met. A chant that reads profiles is the release carrying `SECURITY_PROFILES_FLOOR`; set `minReader` to it. See [Security profiles](/chant/reference/security-profiles/).
 
 ## Diagrams
 

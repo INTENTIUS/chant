@@ -508,3 +508,45 @@ describe("pinned-upgrade for a pin that moves with a digest (sql shape, network 
     }
   });
 });
+
+// ── azure: a commit pin that follows the head of an upstream with no releases (#5454) ──
+
+describe("checkPinnedUpgrade — a commit pin (azure)", () => {
+  const OLD = "0085cb6f3a98e735359807143bcb1667aeec930f";
+  const NEW = "d15606ff0000000000000000000000000000abcd";
+  const pinContent = `export const AZURE_SCHEMA_COMMIT = "${OLD}";\n`;
+
+  test("an upstream head ahead of the pin is an upgrade", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const dir = makeWorkingLexicon(root, "azure", "src/spec/fetch.ts", pinContent);
+      const result = await checkPinnedUpgrade({
+        lexiconDir: dir,
+        lexicon: "azure",
+        resolverOverride: async () => NEW,
+        skipBuild: true,
+        skipBundle: true,
+        skipLint: true,
+      });
+      expect(result.hasUpgrade).toBe(true);
+      expect(result.from).toBe(OLD);
+      expect(result.to).toBe(NEW);
+      expect(result.fetchError).toBeNull();
+      expect(readFileSync(join(dir, "src/spec/fetch.ts"), "utf-8")).toBe(pinContent);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the pin at the upstream head is no upgrade", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const dir = makeWorkingLexicon(root, "azure", "src/spec/fetch.ts", pinContent);
+      const result = await checkPinnedUpgrade({ lexiconDir: dir, lexicon: "azure", resolverOverride: async () => OLD });
+      expect(result.hasUpgrade).toBe(false);
+      expect(result.to).toBe(OLD);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

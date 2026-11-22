@@ -34,15 +34,16 @@ function counts(dialect: SqlDialect): string {
 export function renderCoveragePage(): string {
   const pg = PINNED_COMMANDS.postgres.map((p) => p.version).join(", ");
   const ch = PINNED_COMMANDS.clickhouse.map((p) => p.version).join(", ");
+  const my = PINNED_COMMANDS.mysql.map((p) => p.version).join(", ");
   return `---
 title: "Object Coverage"
 label: "Object Coverage"
-description: "Every kind of object each pinned Postgres and ClickHouse server can create, marked declared, referenced, refused with a reason, or out of scope, and what import does with each"
+description: "Every kind of object each pinned Postgres, ClickHouse and MySQL server can create, marked declared, referenced, refused with a reason, or out of scope, and what import does with each"
 diataxis: reference
 order: 3
 ---
 
-{/* Written by src/codegen/coverage-page.ts from src/coverage/postgres.json and src/coverage/clickhouse.json. Edit the tables, then run npm run docs. */}
+{/* Written by src/codegen/coverage-page.ts from src/coverage/postgres.json, src/coverage/clickhouse.json and src/coverage/mysql.json. Edit the tables, then run npm run docs. */}
 
 Each row is a \`CREATE\` command a pinned server has, or one form of a command where chant treats the forms apart (\`CREATE TYPE ... AS ENUM\` is declared, \`CREATE TYPE ... AS RANGE\` is not). The commands come from the servers' own sources at each pinned version (\`scripts/sql-create-commands.ts\`), and a test fails when a pinned server has a command with no row here, so a new server release cannot add a kind nobody looked at.
 
@@ -72,8 +73,14 @@ Pinned release: ${ch}. ${counts("clickhouse")}.
 
 ${table("clickhouse")}
 
+## MySQL
+
+MySQL ${my}, and Aurora MySQL 3. ${counts("mysql")}. MySQL's commands are the reference manual's \`CREATE\` statements at that release, as its column types are; no server source is read.
+
+${table("mysql")}
+
 ## Declaring a refused kind
 
-A kind becomes declarable in three steps: a tag that declares it, the catalog reader reading it (\`src/postgres/live/catalog.ts\`, \`src/clickhouse/live/catalog.ts\`), and its row flipped to \`declared\` with the entity type, its reason taken out. The row's flip is what stops import refusing the kind. After moving a pin, run \`npx tsx scripts/sql-create-commands.ts\` and give each new command a row.
+A kind becomes declarable in three steps: a tag that declares it, the catalog reader reading it (\`src/postgres/live/catalog.ts\`, \`src/clickhouse/live/catalog.ts\`, \`src/mysql/live/catalog.ts\`), and its row flipped to \`declared\` with the entity type, its reason taken out. The row's flip is what stops import refusing the kind. After moving a pin, run \`npx tsx scripts/sql-create-commands.ts\` and give each new command a row.
 `;
 }

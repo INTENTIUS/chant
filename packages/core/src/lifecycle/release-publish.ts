@@ -22,12 +22,19 @@
  * It then says whether the run has an OIDC token to sign provenance with
  * ({@link detectProvenance}). Under `supply-chain` it warns when there is
  * none, before any target runs; `--require-provenance` refuses instead
- * (`publish-provenance-missing`). Without either, provenance is only the
- * plan's `provenance` field.
+ * (`publish-provenance-missing`), unless the run signs the release's SLSA
+ * statement another way (#5458): with a KMS key (`release.signing.kms`) or a
+ * key (`release.signing.key`). Without
+ * either, provenance is only the plan's `provenance` field.
  * When `release.signing` or `supply-chain` asks for Sigstore signing and an
  * OCI, forge or pypi target is declared (#5164, ./publish-signing.ts), a run that
- * can't sign keylessly is refused (`publish-signing-no-oidc`,
- * `publish-signing-tool-missing`).
+ * can't sign in its mode is refused (`publish-signing-no-oidc`,
+ * `publish-signing-key-missing`, `publish-signing-tool-missing`).
+ * When `release.scan` or `supply-chain` asks for the scan before the stage
+ * (#5446, ./publish-scan.ts), a run without the scanner is refused
+ * (`publish-scan-tool-missing`), and {@link runPublish} scans what the
+ * targets would put out before any stages; a blocking finding stops it with
+ * `publish-scan-failed` and nothing pushed.
  * The targets come from {@link releasePublishTargets}: the member declares them under `release.publish` in its `chant.config.ts` (#4047).
  * With a target, the checkout must be the release's commit with a clean
  * tree ({@link checkCheckoutIsRelease}), every target is planned before any
@@ -44,18 +51,31 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
 import type { Release } from "./release-store";
 import { stampedChanges, type ReleaseVersionConfig } from "./release-version";
 import { createRedactor, type Redactor } from "./publish-credentials";
 import { floatingTagOfLine, renderReleaseTag, stableVersionOf, type MemberTags } from "./release-tag";
 import { prereleaseOf } from "./release-prerelease";
 
+/**
+ * Whether this is a Forgejo (or Gitea) Actions job (#5458). A Forgejo runner
+ * sets the `GITHUB_*` variables too, `GITHUB_ACTIONS` among them, so it is
+ * told apart by `FORGEJO_ACTIONS` or `GITEA_ACTIONS`, and on a runner older
+ * than v7, which sets neither, by its API URL: Forgejo's is `<server>/api/v1`,
+ * and GitHub's is `https://api.github.com` or `<server>/api/v3`.
+ */
+export function isForgejoJob(env: NodeJS.ProcessEnv): boolean {
+  if (env.FORGEJO_ACTIONS === "true" || env.GITEA_ACTIONS === "true") return true;
+  return env.GITHUB_ACTIONS === "true" && /\/api\/v1\/?$/.test(env.GITHUB_API_URL ?? "");
+}
+
 /** Whether this run can sign provenance with an OIDC token, and why not when it can't. */
 export interface ProvenanceCheck {
   /** True when the run has an OIDC token a registry accepts for provenance. */
   oidc: boolean;
-  /** The CI the run is in, or null on a workstation. */
-  ci: "github" | "gitlab" | null;
+  /** The CI the run is in, or null on a workstation or a `chant ci serve` host. */
+  ci: "github" | "gitlab" | "forgejo" | null;
   /** One sentence on what was found. */
   reason: string;
 }
@@ -65,9 +85,13 @@ export interface ProvenanceCheck {
  * provenance: in GitHub Actions, `ACTIONS_ID_TOKEN_REQUEST_URL` and
  * `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `id-token: write` gets;
  * in GitLab CI, an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN`
- * declared under the job's `id_tokens`. Anywhere else there is none.
+ * declared under the job's `id_tokens`. A Forgejo job, which sets the
+ * `GITHUB_*` variables too, has none a registry takes (#5458). Anywhere else
+ * there is none.
  */
 export function detectProvenance(env: NodeJS.ProcessEnv = process.env): ProvenanceCheck {
+  // #5458: a Forgejo runner sets GITHUB_ACTIONS too, and its token is not one npm or PyPI records provenance from.
+  if (isForgejoJob(env)) return { oidc: false, ci: "forgejo", reason: "this is a Forgejo Actions job, and npm and PyPI record provenance only from a GitHub or GitLab OIDC token" };
   if (env.GITHUB_ACTIONS === "true") {
     return env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
       ? { oidc: true, ci: "github", reason: "GitHub Actions hands this job an OIDC token" }
@@ -97,14 +121,15 @@ export interface PublishItem {
    * Set on a file attached to what the target publishes: an SBOM or the
    * release's provenance statement (#4049), or a Sigstore bundle (#5164), a
    * `signature` over a file or an image, or an `attestation`, SLSA provenance.
+   * `scan` is what the scan before the stage found in an image (#5446).
    */
-  attachment?: "sbom" | "provenance" | "signature" | "attestation";
+  attachment?: "sbom" | "provenance" | "signature" | "attestation" | "scan";
   /** On a Sigstore bundle (#5164): what it signs, each name and digest. An image is named `<repository>@<digest>`. */
   signs?: Array<{ name: string; digest: string }>;
   /** On a Sigstore bundle over a statement (#5164): the statement's predicate type. */
   predicateType?: string;
-  /** On a Sigstore bundle (#5164): the OIDC issuer and the identity (a regular expression) its certificate was issued to. */
-  sigstore?: { issuer: string; identity: string };
+  /** On a Sigstore bundle (#5164): the OIDC issuer and the identity (a regular expression) its certificate was issued to, or (#5458) the public key that verifies a key's signature. */
+  sigstore?: import("./publish-signing").SigningIdentity;
   /** The SBOM file an npm package carries at its root (#4049). */
   sbom?: string;
   /** The notes a forge release is given (#4658), which a dry run prints. */
@@ -181,6 +206,8 @@ export interface PublishDeps {
   now?: () => number;
   /** What signs with Sigstore (#5164). Default: cosign, run keylessly (./publish-signing.ts). */
   signer?: import("./publish-signing").Signer;
+  /** What scans before the stage (#5446). Default: syft and grype or trivy (./publish-scan.ts). */
+  releaseScanner?: import("./publish-scan").ReleaseScanner;
 }
 
 /** The subset of the WHATWG `fetch` the targets use. */
@@ -244,6 +271,12 @@ export interface PublishContext extends PublishContextBase {
    * targets sign what they stage with it. Null or absent: nothing is signed.
    */
   signing?: import("./publish-signing").SigningContext | null;
+  /** Set when the publish scans before the stage (#5446): the scanner, the policy and the VEX documents. Null or absent: nothing is scanned. */
+  scan?: import("./publish-scan").ScanContext | null;
+  /** What the scan before the stage found (#5446), set once it ran: the OCI target attaches an image's findings beside its SBOM. */
+  scanReport?: import("./publish-scan").ScanReport;
+  /** The member's `release.images`, archives placed (#5468): a signed publish reads each Dockerfile's bases from them, to name them in the SLSA statement. */
+  releaseImages?: readonly import("./release-images").ReleaseImageDeclaration[];
 }
 
 /** A target refused or failed. The message never holds a credential. */
@@ -302,6 +335,13 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * publish plans every target before any of them publishes.
    */
   plan(ctx: C): Promise<PublishItem[]>;
+  /**
+   * What the scan before the stage reads of this target (#5446,
+   * ./publish-scan.ts): its image archive and the SBOMs it would attach or
+   * its packages carry. Reads the checkout, checks digests as `plan` does,
+   * and sends nothing. Absent: the target has nothing to scan.
+   */
+  scanSubjects?(ctx: C): Promise<import("./publish-scan").ScanSubject[]>;
   /**
    * Put every item where the target publishes, where no consumer resolves it
    * yet (#4048): npm under the `next` dist-tag, OCI by digest with no tag
@@ -464,6 +504,10 @@ export interface PublishRefusal {
     | "publish-provenance-missing"
     | "publish-signing-no-oidc"
     | "publish-signing-tool-missing"
+    | "publish-signing-key-missing"
+    | "publish-signing-trust-root-missing"
+    | "publish-scan-tool-missing"
+    | "publish-scan-vex-missing"
     | "publish-config-invalid"
     | "release-head-mismatch"
     | "release-worktree-dirty"
@@ -513,6 +557,12 @@ export interface PublishPlan {
   signing: import("./publish-signing").SigningContext | null;
   /** The warning printed when the `supply-chain` group asks for signing and `release.signing: false` turns it off. */
   signingWarning: string | null;
+  /** What the publish scans with before the stage (#5446), or null when it does not scan. */
+  scan?: import("./publish-scan").ScanContext | null;
+  /** The warning printed when the `supply-chain` group asks for the scan and `release.scan: false` turns it off. */
+  scanWarning?: string | null;
+  /** The member's `release.images`, archives placed (#5468). */
+  images?: readonly import("./release-images").ReleaseImageDeclaration[];
 }
 
 /**
@@ -647,49 +697,83 @@ export async function preparePublish(req: {
 
   const env = req.env ?? process.env;
   const provenance = detectProvenance(env);
-  if (req.requireProvenance && !provenance.oidc) {
-    return {
-      refusal: {
-        code: "publish-provenance-missing",
-        message: `${name} would be published without OIDC provenance, and --require-provenance asks for it: ${provenance.reason}`,
-        fix: "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), or drop --require-provenance.",
-      },
-    };
-  }
-  const warning = provenance.oidc || !groups.has("supply-chain")
-    ? null
-    : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
   // #5164: Sigstore signing, when release.signing or supply-chain asks for it and a target signs.
-  const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
+  const { resolveSigning, prepareSigning } = await import("./publish-signing");
   const { loadChantConfig: loadConfig } = await import("../config");
   const signingConfig = (await loadConfig(cwd).catch(() => null))?.config.release?.signing;
   const setting = resolveSigning(signingConfig, groups);
-  let signing: PublishPlan["signing"] = null;
   const signs = targets.filter((t) => t.kind === "oci" || t.kind === "forge" || t.kind === "pypi");
-  if (setting.on && signs.length > 0) {
-    const why = setting.from === "config" ? "release.signing in chant.config.ts" : "the supply-chain group";
-    const id = signingIdentity(env);
-    if ("reason" in id) {
+  const why = setting.from === "config" ? "release.signing in chant.config.ts" : "the supply-chain group";
+  // #5458: with no CI OIDC token, a statement this run signs (with a key, or keylessly on a forge whose token npm does not take) is the provenance.
+  const prepared = setting.on && (signs.length > 0 || (req.requireProvenance && !provenance.oidc)) ? prepareSigning(setting, { env, cwd, redactor: createRedactor(env), ...(req.deps?.signer ? { signer: req.deps.signer } : {}) }) : null;
+  const signedStatement = prepared !== null && "context" in prepared;
+  if (req.requireProvenance && !provenance.oidc && !signedStatement) {
+    const missing = !setting.on
+      ? `${provenance.reason}, and the publish signs no SLSA statement (release.signing is off)`
+      : prepared && "refusal" in prepared
+        ? setting.mode === "keyless"
+          ? prepared.refusal.reason
+          : `${provenance.reason}, and the ${setting.mode === "kms" ? "KMS key" : "key"} that would sign the SLSA statement can't: ${prepared.refusal.reason}`
+        : provenance.reason;
+    return {
+      refusal: {
+        code: "publish-provenance-missing",
+        message: `${name} would be published without OIDC provenance or a signed SLSA statement, and --require-provenance asks for one: ${missing}`,
+        fix: prepared && "refusal" in prepared && setting.mode !== "keyless" ? prepared.refusal.fix : "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), sign with a KMS key (release.signing.kms) or a key (release.signing.key), or drop --require-provenance.",
+      },
+    };
+  }
+  const warning = provenance.oidc || signedStatement || !groups.has("supply-chain")
+    ? null
+    : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
+  let signing: PublishPlan["signing"] = null;
+  if (setting.on && signs.length > 0 && prepared) {
+    if ("refusal" in prepared) {
       return {
         refusal: {
-          code: "publish-signing-no-oidc",
-          message: `${name} would be signed with Sigstore, as ${why} asks, and this run can't sign keylessly: ${id.reason}`,
-          fix: "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), or set release.signing: false.",
+          code: prepared.refusal.code,
+          message: `${name} would be signed with Sigstore, as ${why} asks, and ${prepared.refusal.reason}`,
+          fix: prepared.refusal.fix,
         },
       };
     }
-    const signer = req.deps?.signer ?? cosignSigner(env, createRedactor(env));
-    const missing = signer.unavailable();
+    signing = prepared.context;
+  }
+  // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
+  const { resolveScan, toolReleaseScanner, readVexSources } = await import("./publish-scan");
+  const fullConfig = (await loadConfig(cwd).catch(() => null))?.config;
+  const scanSetting = resolveScan(fullConfig?.release?.scan, groups);
+  let scan: PublishPlan["scan"] = null;
+  const scanned = targets.filter((t) => t.scanSubjects);
+  if (scanSetting.on && scanned.length > 0) {
+    const why = scanSetting.from === "config" ? "release.scan in chant.config.ts" : "the supply-chain group";
+    const db = scanSetting.db ? resolvePath(cwd, scanSetting.db) : null;
+    const { withImageScanner } = await import("./publish-scan-wiz");
+    const redactor = createRedactor(env);
+    const scanner = req.deps?.releaseScanner ?? withImageScanner(scanSetting, env, toolReleaseScanner(env, { tool: fullConfig?.vulnPolicy?.scanner ?? "grype", db, redactor }), { redactor });
+    const missing = scanner.unavailable({ images: scanned.some((t) => t.kind === "oci") });
     if (missing) {
       return {
         refusal: {
-          code: "publish-signing-tool-missing",
-          message: `${name} would be signed with Sigstore, as ${why} asks, and ${missing}`,
-          fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.",
+          code: "publish-scan-tool-missing",
+          message: `${name} would be scanned for known vulnerabilities before anything is pushed, as ${why} asks, and ${missing}`,
+          fix: "Install grype (or trivy) and syft in the job, as chant release workflow does, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; with imageScanner wiz, set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET and put wizcli on PATH; or set release.scan: false.",
         },
       };
     }
-    signing = { signer, identity: id.identity };
+    let vex: string[];
+    try {
+      vex = readVexSources(cwd, fullConfig?.vulnPolicy?.vexSources);
+    } catch (err) {
+      const e = err as PublishTargetError;
+      return { refusal: { code: "publish-scan-vex-missing", message: e.message, ...(e.fix ? { fix: e.fix } : {}) } };
+    }
+    const { resolveVulnPolicy } = await import("../config");
+    // #5464: the oldest database the publish takes, from release.scan.dbMaxAgeHours or a security profile.
+    const { profilesOf, scanDatabaseBound } = await import("../workspace/security-profiles");
+    const scanConfig = fullConfig?.release?.scan;
+    const dbAge = scanDatabaseBound(typeof scanConfig === "object" ? scanConfig.dbMaxAgeHours : undefined, profilesOf(source.declaration));
+    scan = { scanner, policy: fullConfig ? resolveVulnPolicy(fullConfig) : {}, vex, ...(dbAge ? { dbAge } : {}) };
   }
   // #5150: the tag release.tag gives the label, as the cut made it, and the floating tag the publish moves.
   const { memberTags, ReleaseTagError } = await import("./release-tag");
@@ -718,7 +802,9 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
+  const { placeReleaseImages } = await import("./release-images");
+  const images = fullConfig?.release?.images ? placeReleaseImages(fullConfig.release.images, fullConfig.release.artifacts ?? []) : undefined;
+  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning, scan, scanWarning: scanSetting.warning, ...(images ? { images } : {}) };
 }
 
 /**
@@ -853,6 +939,8 @@ export function publishContext(plan: PublishPlan, req: { cwd: string; env?: Node
     log: (line) => req.log(plan.redactor.redact(line)),
     requireSbom: plan.requireSbom,
     signing: plan.signing,
+    scan: plan.scan ?? null,
+    ...(plan.images ? { releaseImages: plan.images } : {}),
   };
 }
 
@@ -866,6 +954,8 @@ export interface PublishRun {
   recordWarning: string | null;
   /** How `release.verify` went (#5157): `passed`, or `skipped` when a reveal was already recorded; absent with no commands. */
   verify?: "passed" | "skipped";
+  /** What the scan before the stage found (#5446); absent when nothing was scanned. */
+  scan?: import("./publish-scan").ScanReport;
 }
 
 /** A publish that stopped, with what it left staged and revealed so a run of the same command resumes. */
@@ -874,7 +964,7 @@ export class PublishRunError extends PublishTargetError {
     code: string,
     message: string,
     fix: string | undefined,
-    readonly step: "stage" | "verify" | "reveal",
+    readonly step: "scan" | "stage" | "verify" | "reveal",
     readonly staged: string[],
     readonly revealed: string[],
   ) {
@@ -939,19 +1029,24 @@ export async function runPublish(req: {
   const { appendPublishRecord, publishProgress, readPublishRecords } = await import("./publish-record");
   const { pushLifecycleReport } = await import("./git");
   const { resolveRunId } = await import("./release-ledger");
-  const { cwd, release, label, targets, ctx } = req;
+  const { cwd, release, label, targets } = req;
+  let ctx = req.ctx;
   const say = req.say ?? (() => undefined);
   const now = req.now ?? (() => new Date());
   const record = req.record ?? true;
   const runId = resolveRunId(undefined, ctx.env).runId;
+  // #5462: a publish a ci serve host ran names the host's runner key in each line.
+  const runnerKey = ctx.env[(await import("./publish-signing")).RUNNER_FINGERPRINT_ENV] || undefined;
+  // #5470: the crypto module this publish's digests and signatures run on, read once.
+  const crypto = record ? (await import("../crypto-module")).cryptoRecord(ctx.env) : undefined;
   const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
   let recordWarning: string | null = null;
 
-  const write = async (target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" }, step: import("./publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>) => {
+  const write = async (target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" | "scan" }, step: import("./publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>, scanned?: import("./publish-scan").ScanRecord) => {
     if (!record) return;
     try {
       await appendPublishRecord(
-        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, runId, timestamp: now().toISOString() },
+        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, ...(scanned ? { scan: scanned } : {}), runId, ...(runnerKey ? { runnerKey } : {}), ...(crypto ? { crypto } : {}), timestamp: now().toISOString() },
         ctx.redactor,
         { cwd },
       );
@@ -993,6 +1088,32 @@ export async function runPublish(req: {
     stagedNames.push(target.name);
     await write(target, "staged", s.items, s.state);
   };
+  // #5446: scan what the targets would put out, before anything stages or is signed. A target an earlier run staged is out already.
+  let scanReport: import("./publish-scan").ScanReport | undefined;
+  const toScan = targets.filter((t) => !progress.revealed.has(t.key) && !progress.staged.has(t.key));
+  if (req.ctx.scan && toScan.length > 0) {
+    const { scanBeforeStage, scanRecord, PublishScanError, SCAN_RECORD_TARGET } = await import("./publish-scan");
+    say(`  scanning with ${req.ctx.scan.scanner.name} before anything is pushed`);
+    try {
+      scanReport = await scanBeforeStage({ targets: toScan, ctx: req.ctx, scan: req.ctx.scan, say });
+    } catch (err) {
+      if (err instanceof PublishScanError) await write(SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(err.report));
+      const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
+      throw new PublishRunError(e.code, ctx.redactor.redact(e.message), e.fix, "scan", stagedNames, revealedNames);
+    }
+    // #5464: a database older than the bound refuses the publish, with the scan recorded as failed and nothing staged.
+    if (req.ctx.scan.dbAge) {
+      const { scanDatabaseStale, SCAN_DB_STALE_FIX } = await import("../workspace/security-profiles");
+      const stale = scanDatabaseStale(scanReport.database, req.ctx.scan.dbAge, now());
+      if (stale) {
+        await write(SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(scanReport));
+        throw new PublishRunError("publish-scan-db-stale", `${stale}, so nothing was staged or pushed`, SCAN_DB_STALE_FIX, "scan", stagedNames, revealedNames);
+      }
+    }
+    await write(SCAN_RECORD_TARGET, "scanned", [], {}, scanRecord(scanReport));
+    // The stage attaches an image's findings beside its SBOM.
+    ctx = { ...ctx, scanReport };
+  }
   for (const target of targets) {
     if (progress.revealed.has(target.key)) {
       resumed.push({ target: target.name, step: "revealed" });
@@ -1074,5 +1195,5 @@ export async function runPublish(req: {
     revealedNames.push(target.name);
     await write(target, "revealed", p.items, {});
   }
-  return { published, resumed, recordWarning, ...(verified ? { verify: verified } : {}) };
+  return { published, resumed, recordWarning, ...(verified ? { verify: verified } : {}), ...(scanReport ? { scan: scanReport } : {}) };
 }

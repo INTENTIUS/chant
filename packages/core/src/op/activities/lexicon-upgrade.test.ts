@@ -32,7 +32,7 @@ describe("pinned vs rolling classification", () => {
 
   test("pinned lexicons are any whose plugin declares upstreamPin", async () => {
     const loadPin = vi.fn(async () => pin);
-    for (const l of ["k8s", "gcp", "docker", "gitlab", "sql", "k3s", "cedar"]) {
+    for (const l of ["k8s", "gcp", "docker", "gitlab", "sql", "k3s", "cedar", "azure"]) {
       expect(await isPinned(l, "/x", loadPin)).toBe(true);
       expect(isRolling(l)).toBe(false);
     }
@@ -44,7 +44,7 @@ describe("pinned vs rolling classification", () => {
 
   test("rolling lexicons", async () => {
     const loadPin = vi.fn(async () => null);
-    for (const l of ["aws", "azure", "github"] as const) {
+    for (const l of ["aws", "github", "fly"] as const) {
       expect(isRolling(l)).toBe(true);
       expect(await isPinned(l, "/x", loadPin)).toBe(false);
     }

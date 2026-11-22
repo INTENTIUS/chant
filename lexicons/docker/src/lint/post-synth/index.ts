@@ -14,6 +14,7 @@ import { dkrd017 } from "./unused-global-arg";
 import { dkrd018 } from "./relative-workdir";
 import { dkrd019 } from "./add-url-checksum";
 import { dkrd020 } from "./apt-update-alone";
+import { dkrd021 } from "./unpinned-base";
 
 export const postSynthChecks: PostSynthCheck[] = [
   dkrd001,
@@ -30,4 +31,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   dkrd018,
   dkrd019,
   dkrd020,
+  dkrd021,
 ];

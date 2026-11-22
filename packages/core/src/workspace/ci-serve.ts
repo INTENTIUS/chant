@@ -78,6 +78,18 @@
  *   names a work item or a direct push. A refused land stays in the state
  *   file under `land:<name>:<sha>`, so a new push to the branch is tried
  *   again and the same head is not.
+ * - Releases (#5462). With `release` (`--release`), each release tag the
+ *   rendered release workflow would run on (`release/**`, a `release.tag`
+ *   template's tags, or a train's `release-train/<env>/<id>`) is served
+ *   once: its publish job runs on this host in a fresh worktree of the tag,
+ *   from the same steps (./ci-serve-release.ts). The tags there on the first
+ *   pass were published by whatever ran then, and are noted, not run. A
+ *   release counts against `maxJobs`, the state file keeps it under
+ *   `release:<tag>`, and `rerunFailed` runs a failed one again. A
+ *   `ci/release/<sha>` request runs the release workflow's gate and cut for
+ *   the commit, and the cut's tag is published as any other. Each takes the
+ *   `release` lease first, and a tag another host marked published, or a
+ *   request another host served, is left, so two hosts publish once.
  * - The `git` forge kind (#4016 gap 6). With `forge: "git"` the serve reads
  *   only refs, through `git ls-remote` against `origin`, so any git server
  *   that takes pushes will do. It lists no pull requests and sets no commit
@@ -112,7 +124,11 @@ import { gitTop } from "./tree";
 import { readDeclaration } from "./declaration";
 import { servedBranches } from "./ci-branches";
 import { locateWorkspace } from "./which-chant";
-import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
+import { ciServeRunnerKey, formatRunnerKeySetup, runnerKeyKind, setupRunnerKey } from "./ci-runner-key";
+import { hostReleaseTools, hostSigningRefusal, HostReleaseError, readReleaseRequests, releaseTagMatcher, runHostDispatch, runHostRelease, type HostDispatchResult, type HostReleaseRequest } from "./ci-serve-release";
+import { releaseWorkflowInputAt } from "./release-workflow";
+import { loadRunnerKey, sshFingerprint } from "./trust/dsse";
+import type { CiSecrets } from "./ci-secrets";
 
 /** The forges `ci serve` polls. GitLab is later. `git` is any git server, read through refs alone (#4016 gap 6). */
 export type CiServeForgeKind = "github" | "forgejo" | "git";
@@ -172,6 +188,36 @@ export interface CiServeLandState {
   settledAt?: string;
 }
 
+/** One release tag in the state file, by `release:<tag>` (#5462). */
+export interface CiServeReleaseState {
+  tag: string;
+  commit: string;
+  /** `baseline`: there on the first pass, published by whatever ran then, and not run. `elsewhere`: another host published it. */
+  status: "baseline" | "running" | "ok" | "fail" | "elsewhere";
+  runId?: string;
+  attempts?: number;
+  startedAt?: string;
+  settledAt?: string;
+  /** Why it failed, in a line. */
+  failure?: string;
+  /** Where the publish job's output was written. */
+  log?: string;
+}
+
+/** One release request in the state file, by `dispatch:<sha>` (#5462). */
+export interface CiServeDispatchState {
+  tag: string;
+  commit: string;
+  label: string;
+  /** `ok`: cut, its tag pushed. `refused`: the gate refused it. `elsewhere`: another host served it. */
+  status: "running" | "ok" | "refused" | "fail" | "elsewhere";
+  /** Why it was refused or failed, in a line. */
+  reason?: string;
+  startedAt: string;
+  settledAt?: string;
+  log?: string;
+}
+
 /** One job in the state file. */
 export interface CiServeJobState {
   job: CiJobName;
@@ -209,6 +255,12 @@ export interface CiServeState {
   builds?: Record<string, { tag: string; status: "running" | "ok" | "fail"; startedAt: string; settledAt?: string }>;
   /** The land branch heads seen (#4168 4.4), by `land:<name>:<sha>`. */
   lands?: Record<string, CiServeLandState>;
+  /** The release tags seen (#5462), by `release:<tag>`. */
+  releases?: Record<string, CiServeReleaseState>;
+  /** Set once the first pass with `release` noted the release tags already there. */
+  releasesSeen?: true;
+  /** The release requests served (#5462), by `dispatch:<sha>`. */
+  dispatches?: Record<string, CiServeDispatchState>;
 }
 
 /** What a pass did, in order, for the log. */
@@ -224,6 +276,10 @@ export type CiServeEvent =
   | { type: "build"; commit: string; phases: string[]; status: "started" | "ok" | "fail" | "held"; exitCode?: number }
   /** A land branch (#4168 4.4): its pre-merge phases started, the target moved to it, or it was refused and left. */
   | { type: "land"; branch: string; commit: string; status: "started" | "landed" | "refused" | "held"; reason?: string; warning?: string }
+  /** A release tag (#5462): noted on the first pass, started, settled, or waiting. */
+  | { type: "release"; tag: string; commit: string; status: "baseline" | "started" | "ok" | "fail" | "held" | "elsewhere"; reason?: string; count?: number; log?: string }
+  /** A release request (#5462): started, cut, refused by its gate, failed, waiting, or served by another host. */
+  | { type: "dispatch"; commit: string; label: string; status: "started" | "ok" | "refused" | "fail" | "held" | "elsewhere"; reason?: string; log?: string }
   /** `ci tick` after the pass (#4168): the tags it made from the runs. */
   | { type: "tick"; made: string[] }
   | { type: "error"; message: string };
@@ -282,6 +338,33 @@ export interface CiServeOptions {
   land?: { phases: string[] };
   /** Judges a land head's phases. Default {@link judgePreMerge} from the Op run records. */
   judgeLand?: (input: { commit: string; base: string }) => Promise<CommitVerdict>;
+  /** Serve release tags (#5462). */
+  release?: CiServeReleaseOptions;
+}
+
+/** How `ci serve` serves releases (#5462). */
+export interface CiServeReleaseOptions {
+  /** Whether a tag starts a publish, as the release workflow's trigger reads it ({@link releaseTagMatcher}). */
+  isReleaseTag: (tag: string) => boolean;
+  /** The runner key's ssh fingerprint, which the SLSA statement and the publish record name. */
+  fingerprint: string;
+  /** Where the release tools are cached. Default `<state>/tools`. */
+  toolCache?: string;
+  /** The host's secrets: `${{ secrets.NAME }}` in the job, and the publish step's `release` secrets. */
+  secrets?: CiSecrets;
+  passEnv?: readonly string[];
+  /** What runs chant, from `--chant`. */
+  chant?: string;
+  /** The variables the host has. Default the process's. */
+  hostEnv?: Record<string, string | undefined>;
+  /** Each line of a publish job's output, redacted. */
+  output?: (line: string) => void;
+  /** Serves one release. Default {@link runHostRelease}. */
+  run?: (req: HostReleaseRequest) => Promise<{ status: "ok" | "fail"; failure?: string; warning?: string }>;
+  /** Serves one release request. Default {@link runHostDispatch}. */
+  dispatch?: (req: HostReleaseRequest & { request: import("./ci-serve-release").ReleaseRequest }) => Promise<HostDispatchResult>;
+  /** Where the release lease is taken: the workspace root, so every host and member names one lease. Default the clone's top. */
+  leaseCwd?: string;
 }
 
 /** The jobs this process runs now, by state key, shared by every pass of one loop. */
@@ -717,9 +800,10 @@ export async function ciServePass(opts: CiServeOptions, rt: CiServeRuntime = new
   const scheduled = await ciServeSchedule(opts, observed.triggers, rt);
   const builds = opts.buildCommand ? ciServeBuilds(opts, rt) : { started: [], events: [] };
   const lands = opts.land && opts.buildCommand ? await ciServeLands(opts, rt) : { started: [], events: [] };
+  const releases = opts.release ? await ciServeReleases(opts, rt) : { started: [], events: [] };
   const jobs = wait ? await Promise.all(scheduled.started) : [];
-  if (wait) await Promise.all([...builds.started, ...lands.started]);
-  return { events: [...observed.events, ...scheduled.events, ...builds.events, ...lands.events], jobs };
+  if (wait) await Promise.all([...builds.started, ...lands.started, ...releases.started]);
+  return { events: [...observed.events, ...scheduled.events, ...builds.events, ...lands.events, ...releases.events], jobs };
 }
 
 /**
@@ -873,6 +957,231 @@ export async function ciServeLands(opts: CiServeOptions, rt: CiServeRuntime): Pr
   return { started, events };
 }
 
+/** The repository's tags, oldest first, each with the commit it names. */
+function tagsByAge(top: string): { tag: string; commit: string }[] {
+  const raw = tryGit(top, ["for-each-ref", "--sort=creatordate", "--format=%(refname:lstrip=2)%00%(objectname)%00%(*objectname)", "refs/tags"]);
+  if (!raw) return [];
+  return raw
+    .split("\n")
+    .map((line) => line.split("\u0000"))
+    .filter(([tag, sha]) => tag && sha)
+    .map(([tag, sha, peeled]) => ({ tag: tag!, commit: peeled || sha! }));
+}
+
+/** A tag as a file name. */
+const fileOf = (tag: string): string => tag.replace(/[^A-Za-z0-9._-]+/g, "_");
+
+/** The lease every host serving a repository's releases takes before it publishes or cuts (#5462): `refs/chant/lease/release`. */
+export const RELEASE_LEASE = "release";
+/** Where a host marks a release tag it published, on the remote, so another host publishing the same repository leaves it (#5462). */
+export const RELEASED_REF_PREFIX = "refs/chant/released/";
+
+/**
+ * Serve the releases (#5462): fetch the tags, then serve each release
+ * request (`ci/release/<sha>`) and each release tag the release workflow
+ * would run on that is not in the state file, oldest first, one at a time
+ * and within `maxJobs`. The first pass notes the release tags already there
+ * and runs none. Each one first takes the {@link RELEASE_LEASE} lease, so
+ * two hosts serving one repository take turns, and then checks the remote:
+ * a tag another host marked published ({@link RELEASED_REF_PREFIX}), or a
+ * request another host served and deleted, is recorded as served elsewhere
+ * and not run. A failed release is run again only with `rerunFailed`, as a
+ * failed job is; a request is served once, whatever it ended in, and its
+ * tag deleted.
+ */
+export async function ciServeReleases(opts: CiServeOptions, rt: CiServeRuntime): Promise<{ started: Promise<void>[]; events: CiServeEvent[] }> {
+  const place = servePlace(opts);
+  const rel = opts.release!;
+  const fresh = { forge: opts.forge, repo: opts.repo, env: opts.env, branch: place.branch, ...(place.member ? { member: place.member } : {}) };
+  const update = (fn: (s: CiServeState) => void): void => {
+    const st = readCiServeState(place.stateFile, fresh);
+    fn(st);
+    writeState(place.stateFile, st);
+  };
+  const events: CiServeEvent[] = [];
+  const started: Promise<void>[] = [];
+  const now = opts.now ?? (() => new Date());
+  const holder = opts.holder ?? currentHolderId();
+  const ttlMs = opts.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
+  const leaseCwd = rel.leaseCwd ?? place.top;
+  const log = (e: CiServeEvent): void => {
+    events.push(e);
+    opts.log?.(e);
+  };
+  tryGit(place.top, ["fetch", "--quiet", "origin", "+refs/tags/*:refs/tags/*"]);
+  const tags = tagsByAge(place.top).filter((t) => rel.isReleaseTag(t.tag));
+  const state = readCiServeState(place.stateFile, fresh);
+  if (!state.releasesSeen) {
+    // What was released before this host served releases was published by whatever ran then.
+    update((s) => {
+      s.releasesSeen = true;
+      s.releases = { ...s.releases, ...Object.fromEntries(tags.map((t) => [`release:${t.tag}`, { tag: t.tag, commit: t.commit, status: "baseline" as const }])) };
+    });
+    log({ type: "release", tag: "", commit: "", status: "baseline", count: tags.length });
+    return { started, events };
+  }
+
+  /** One release or request at a time: the lease is one, and a cut's tag is published after it. */
+  const releasing = (): boolean => [...rt.inflight.keys()].some((k) => k.startsWith("release:") || k.startsWith("dispatch:"));
+  /** Take the lease, or say who holds it. */
+  const take = async (): Promise<{ lease: LeaseRecord } | { heldBy: string } | null> => {
+    try {
+      const got = await acquireLease(RELEASE_LEASE, holder, { cwd: leaseCwd, ttlMs, mode: "claim", requirePush: true, now });
+      return got.acquired && got.lease ? { lease: got.lease } : { heldBy: got.heldBy?.holder ?? "another host" };
+    } catch (err) {
+      log({ type: "error", message: `the ${RELEASE_LEASE} lease could not be taken: ${message(err)}` });
+      return null;
+    }
+  };
+  /** Run `work` with the lease renewed, and release it after. */
+  const holding = <T>(lease: LeaseRecord, work: () => Promise<T>): Promise<T> => {
+    const renew = setInterval(() => {
+      void acquireLease(RELEASE_LEASE, holder, { cwd: leaseCwd, ttlMs, mode: "renew", token: lease.token, now }).catch(() => undefined);
+    }, Math.max(1000, Math.floor(ttlMs / 3)));
+    renew.unref?.();
+    return work().finally(async () => {
+      clearInterval(renew);
+      await releaseLease(RELEASE_LEASE, holder, lease.token, { cwd: leaseCwd }).catch(() => false);
+    });
+  };
+  const onRemote = (ref: string): boolean => gitStatus(place.top, ["ls-remote", "--exit-code", "origin", ref]).code === 0;
+  const logTo = (file: string): ((line: string) => void) => {
+    mkdirSync(join(place.stateDir, "reports", "releases"), { recursive: true });
+    writeFileSync(file, "");
+    return (line) => {
+      try {
+        writeFileSync(file, `${line}\n`, { flag: "a" });
+      } catch {
+        // The log is for a reader; a write that fails does not fail the release.
+      }
+      rel.output?.(line);
+    };
+  };
+  const request = (o: { tag: string; commit: string; runId: string; output: (line: string) => void }): HostReleaseRequest => ({
+    top: place.top,
+    cwd: resolve(opts.cwd),
+    tag: o.tag,
+    commit: o.commit,
+    runId: o.runId,
+    fingerprint: rel.fingerprint,
+    hostEnv: rel.hostEnv ?? process.env,
+    toolCache: rel.toolCache ?? join(place.stateDir, "tools"),
+    output: o.output,
+    ...(rel.passEnv ? { passEnv: rel.passEnv } : {}),
+    ...(rel.secrets ? { secrets: rel.secrets } : {}),
+    ...(rel.chant ? { chant: rel.chant } : {}),
+  });
+  const why = (err: unknown): string => (err instanceof HostReleaseError && err.fix ? `${err.message}. ${err.fix}` : message(err));
+
+  // Release requests first: a request's cut makes the tag the next pass publishes.
+  for (const req of readReleaseRequests(place.top).values()) {
+    const key = `dispatch:${req.commit}`;
+    if (state.dispatches?.[key] || rt.inflight.has(key)) continue;
+    if (releasing() || rt.inflight.size >= (opts.maxJobs ?? 1)) {
+      log({ type: "dispatch", commit: req.commit, label: req.label, status: "held", reason: releasing() ? "a release runs" : "--max-jobs jobs run" });
+      continue;
+    }
+    const got = await take();
+    if (!got) continue;
+    if ("heldBy" in got) {
+      log({ type: "dispatch", commit: req.commit, label: req.label, status: "held", reason: `the release lease is held by ${got.heldBy}` });
+      continue;
+    }
+    const runId = `chant-serve-${now().getTime()}-dispatch-${req.commit.slice(0, 8)}`;
+    const startedAt = now().toISOString();
+    const settle = (status: "ok" | "refused" | "fail", extra: { reason?: string; log?: string } = {}): void => {
+      // Served or refused, the request is done: its tag goes, here and on the remote.
+      gitStatus(place.top, ["push", "--quiet", "origin", "--delete", `refs/tags/${req.tag}`]);
+      tryGit(place.top, ["tag", "-d", req.tag]);
+      update((s) => {
+        s.dispatches = { ...s.dispatches, [key]: { tag: req.tag, commit: req.commit, label: req.label, status, startedAt, settledAt: now().toISOString(), ...extra } };
+      });
+      log({ type: "dispatch", commit: req.commit, label: req.label, status, ...extra });
+    };
+    // Another host served it under the lease, and deleted its tag.
+    if (!onRemote(`refs/tags/${req.tag}`)) {
+      await releaseLease(RELEASE_LEASE, holder, got.lease.token, { cwd: leaseCwd }).catch(() => false);
+      tryGit(place.top, ["tag", "-d", req.tag]);
+      update((s) => {
+        s.dispatches = { ...s.dispatches, [key]: { tag: req.tag, commit: req.commit, label: req.label, status: "elsewhere", startedAt, settledAt: now().toISOString() } };
+      });
+      log({ type: "dispatch", commit: req.commit, label: req.label, status: "elsewhere" });
+      continue;
+    }
+    const logFile = join(place.stateDir, "reports", "releases", `${fileOf(req.tag)}-${runId}.log`);
+    update((s) => {
+      s.dispatches = { ...s.dispatches, [key]: { tag: req.tag, commit: req.commit, label: req.label, status: "running", startedAt, log: logFile } };
+    });
+    log({ type: "dispatch", commit: req.commit, label: req.label, status: "started", log: logFile });
+    const output = logTo(logFile);
+    const dispatch = rel.dispatch ?? runHostDispatch;
+    const job = holding(got.lease, () => dispatch({ ...request({ tag: req.tag, commit: req.commit, runId, output }), request: req }))
+      .catch((err: unknown): HostDispatchResult => ({ status: "fail", failure: why(err) }))
+      .then((r) => {
+        if (r.warning) output(`warning: ${r.warning}`);
+        settle(r.status, { log: logFile, ...(r.status === "refused" ? { reason: r.reason ?? "the gate failed" } : r.failure ? { reason: r.failure } : {}) });
+      })
+      .finally(() => rt.inflight.delete(key));
+    rt.inflight.set(key, job);
+    started.push(job);
+  }
+
+  for (const t of tags) {
+    const key = `release:${t.tag}`;
+    const entry = state.releases?.[key];
+    if (rt.inflight.has(key)) continue;
+    const failed = entry && (entry.status === "fail" || entry.status === "running");
+    if (entry && !(opts.rerunFailed && failed)) continue;
+    if (releasing() || rt.inflight.size >= (opts.maxJobs ?? 1)) {
+      log({ type: "release", tag: t.tag, commit: t.commit, status: "held", reason: releasing() ? "a release runs" : "--max-jobs jobs run" });
+      continue;
+    }
+    const got = await take();
+    if (!got) continue;
+    if ("heldBy" in got) {
+      log({ type: "release", tag: t.tag, commit: t.commit, status: "held", reason: `the release lease is held by ${got.heldBy}` });
+      continue;
+    }
+    const startedAt = now().toISOString();
+    const marker = `${RELEASED_REF_PREFIX}${t.tag}`;
+    // Another host published it under the lease, and marked it.
+    if (onRemote(marker)) {
+      await releaseLease(RELEASE_LEASE, holder, got.lease.token, { cwd: leaseCwd }).catch(() => false);
+      update((s) => {
+        s.releases = { ...s.releases, [key]: { tag: t.tag, commit: t.commit, status: "elsewhere", startedAt, settledAt: now().toISOString() } };
+      });
+      log({ type: "release", tag: t.tag, commit: t.commit, status: "elsewhere" });
+      continue;
+    }
+    const runId = `chant-serve-${now().getTime()}-release-${t.commit.slice(0, 8)}`;
+    const logFile = join(place.stateDir, "reports", "releases", `${fileOf(t.tag)}-${runId}.log`);
+    const attempts = (entry?.attempts ?? 0) + 1;
+    update((s) => {
+      s.releases = { ...s.releases, [key]: { tag: t.tag, commit: t.commit, status: "running", runId, attempts, startedAt, log: logFile } };
+    });
+    log({ type: "release", tag: t.tag, commit: t.commit, status: "started", log: logFile });
+    const output = logTo(logFile);
+    const run = rel.run ?? runHostRelease;
+    const job = holding(got.lease, async () => {
+      const r = await run(request({ tag: t.tag, commit: t.commit, runId, output })).catch((err: unknown): { status: "fail"; failure: string; warning?: string } => ({ status: "fail", failure: why(err) }));
+      // Published: mark it on the remote while the lease is held, so another host leaves it.
+      if (r.status === "ok" && gitStatus(place.top, ["push", "--quiet", "origin", `${t.commit}:${marker}`]).code !== 0) output(`warning: ${marker} could not be pushed, so another host serving this repository may publish ${t.tag} again; its publish resumes from the record and sends nothing that went out`);
+      return r;
+    })
+      .then((r) => {
+        if (r.warning) output(`warning: ${r.warning}`);
+        update((s) => {
+          s.releases = { ...s.releases, [key]: { tag: t.tag, commit: t.commit, status: r.status, runId, attempts, startedAt, settledAt: now().toISOString(), log: logFile, ...(r.failure ? { failure: r.failure } : {}) } };
+        });
+        log({ type: "release", tag: t.tag, commit: t.commit, status: r.status, log: logFile, ...(r.failure ? { reason: r.failure } : {}) });
+      })
+      .finally(() => rt.inflight.delete(key));
+    rt.inflight.set(key, job);
+    started.push(job);
+  }
+  return { started, events };
+}
+
 /** `sh -c <command>` in a fresh detached worktree of the request's commit, removed after. Resolves to the exit code. */
 async function runBuild(input: { top: string; request: CiServeBuildInput; command: string }): Promise<number> {
   const dir = mkdtempSync(join(tmpdir(), "chant-ci-build-"));
@@ -967,6 +1276,22 @@ export function formatCiServeEvent(e: CiServeEvent): string {
       if (e.status === "refused") return `${what} was refused and left on the remote: ${e.reason ?? "no reason given"}`;
       return `${what} landed${e.warning ? `; ${e.warning}` : ", and the land branch was deleted"}`;
     }
+    case "release": {
+      if (e.status === "baseline") return e.count ? `${e.count} release tag(s) are there already and were published by whatever ran then; each new one is published here` : "no release tag yet; each new one is published here";
+      const what = `the release ${e.tag} at ${e.commit.slice(0, 12)}`;
+      if (e.status === "held") return `${what} waits: ${e.reason ?? "--max-jobs jobs run"}`;
+      if (e.status === "elsewhere") return `${what} was published by another host`;
+      if (e.status === "started") return `${what}: the publish job started${e.log ? `; its output goes to ${e.log}` : ""}`;
+      return e.status === "ok" ? `${what} published` : `${what} failed${e.reason ? `: ${e.reason}` : ""}${e.log ? `; see ${e.log}` : ""}`;
+    }
+    case "dispatch": {
+      const what = `the release request for ${e.commit.slice(0, 12)} (label ${e.label})`;
+      if (e.status === "held") return `${what} waits: ${e.reason ?? "--max-jobs jobs run"}`;
+      if (e.status === "elsewhere") return `${what} was served by another host`;
+      if (e.status === "started") return `${what}: the gate and cut started${e.log ? `; their output goes to ${e.log}` : ""}`;
+      if (e.status === "refused") return `${what} was refused: ${e.reason ?? "the gate failed"}`;
+      return e.status === "ok" ? `${what} was cut, and its tag pushed; the next poll publishes it` : `${what} failed${e.reason ? `: ${e.reason}` : ""}${e.log ? `; see ${e.log}` : ""}`;
+    }
     case "tick":
       return e.made.length > 0 ? `ci tick made ${e.made.join(", ")}` : "ci tick: no tag due";
     case "error":
@@ -977,8 +1302,9 @@ export function formatCiServeEvent(e: CiServeEvent): string {
 // ── The command ──────────────────────────────────────────────────────────────
 
 /**
- * `chant ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]` (#4099):
- * make the host's runner key when there is none, print its public half on
+ * `chant ci serve|run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]` (#4099):
+ * make the host's runner key when there is none, of the kind `--key-type`
+ * names (#5470, default Ed25519), print its public half on
  * stdout, and say whether the target's head lists it. With --trust, commit
  * the runner entry on a branch of its own and push it for review.
  */
@@ -988,6 +1314,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
   const top = gitTop(cwd);
   if (!top) throw new CiRunError("the runner key is kept in the repository's git directory, and this directory is not in a git repository");
   if (args.ciPrincipal !== undefined && !args.trustKey) throw new CiRunError("--principal names who --trust lists the key for; give --trust with it");
+  const kind = args.runnerKeyType !== undefined ? runnerKeyKind(args.runnerKeyType) : undefined;
   const branch = args.branch ?? "main";
   const setup = setupRunnerKey({
     top,
@@ -996,6 +1323,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
     ...(args.ciPrincipal ? { principal: args.ciPrincipal } : {}),
     ...(args.trustKey ? { trust: true } : {}),
     ...(args.by ? { by: args.by } : {}),
+    ...(kind ? { kind } : {}),
   });
   console.log(setup.key.publicKey);
   console.error(formatRunnerKeySetup(setup, branch));
@@ -1003,9 +1331,9 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
 }
 
 const USAGE =
-  "chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
+  "chant ci serve --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
   "chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
-  "[--author <login>]... [--once] [--rerun-failed] [--build-command <line>] [--land] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
+  "[--author <login>]... [--once] [--rerun-failed] [--build-command <line>] [--land] [--release] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
   "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [--unsigned]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -1089,6 +1417,40 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       if (!api.openPullRequests || !api.branchHead) throw new CiRunError(`the ${forge} client cannot list pull requests`);
       client = { openPullRequests: api.openPullRequests.bind(api), branchHead: api.branchHead.bind(api), pullRequestFor: api.pullRequestFor.bind(api) };
     }
+    // #5462: release tags, published on this host with the runner key as the builder.
+    let release: CiServeReleaseOptions | undefined;
+    if (args.ciRelease) {
+      if (runnerKey === undefined) throw new CiRunError("--release names this host's runner key as the builder of what it publishes, and there is no trusted runner key here; make one with chant ci serve --setup-key and list it with --trust");
+      let read: Awaited<ReturnType<typeof releaseWorkflowInputAt>>;
+      try {
+        read = await releaseWorkflowInputAt(cwd, args.ciChant ? { chant: args.ciChant } : {});
+      } catch (err) {
+        throw new CiRunError(`--release reads the release config, which could not be read: ${message(err)}`);
+      }
+      const refused = hostSigningRefusal(read);
+      if (refused) throw new CiRunError(`--release: ${refused.message}. ${refused.fix ?? ""}`.trim());
+      const toolCache = join(stateDir, "tools");
+      // A host that can't have a release tool stops here, before its first poll, and never part way through a publish.
+      try {
+        await hostReleaseTools({ signing: read.signs, scan: read.scans, cacheDir: toolCache, hostEnv: process.env });
+      } catch (err) {
+        if (err instanceof HostReleaseError) throw new CiRunError(`--release: ${err.message}. ${err.fix ?? ""}`.trim());
+        throw err;
+      }
+      const fingerprint = sshFingerprint(loadRunnerKey(runnerKey).publicKey);
+      release = {
+        isReleaseTag: releaseTagMatcher(read),
+        fingerprint,
+        leaseCwd: read.root,
+        toolCache,
+        hostEnv: process.env,
+        ...(secrets ? { secrets } : {}),
+        ...(args.passEnv?.length ? { passEnv: args.passEnv } : {}),
+        ...(args.ciChant ? { chant: args.ciChant } : {}),
+        output: (line) => void process.stderr.write(`${line}\n`),
+      };
+      console.error(`ci serve: publishes each new ${read.release?.train ? `release-train/${read.release.train.env}/*` : "release"} tag on this host, naming the runner key ${fingerprint} as the builder`);
+    }
     // #4168: a host that applied each merge before the upgrade hears that it no longer does.
     if (!args.applyOnMerge) console.error("ci serve: each new commit on the target branch gets the record job, which applies nothing (#4168); --apply-on-merge also applies each newest green commit");
     const opts: CiServeOptions = {
@@ -1104,6 +1466,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       ...(args.ciBuildCommand ? { buildCommand: args.ciBuildCommand } : {}),
       ...(args.applyOnMerge ? { applyOnMerge: true } : {}),
       ...(landPhases ? { land: { phases: landPhases } } : {}),
+      ...(release ? { release } : {}),
       // #4168: the tick from the runs the jobs recorded, signed with the runs' key. No ci.green, no tick.
       tick: async () => {
         try {

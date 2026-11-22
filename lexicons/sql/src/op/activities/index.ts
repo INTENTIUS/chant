@@ -2,7 +2,8 @@
  * sql Op activities, resolved by the core activity registry when a project's
  * `chant.config.ts` lists the `sql` lexicon. Contributes the ClickHouse
  * applier (`clickhouseApply`, #3208), the Postgres applier (`postgresApply`,
- * #3280) and their envelope projection (`toApplyResult`, one for both), which
+ * #3280), the MySQL applier (`mysqlApply`, #5449, which `sql-apply` calls)
+ * and their envelope projection (`toApplyResult`, one for both), which
  * core's apply activity looks up by name for the `clickhouse` and `postgres`
  * targets, the emulator lifecycles, the steps of the two migration Ops, and
  * the receipt store and SQL step of an Op of `effect()` batches.
@@ -16,6 +17,8 @@ export { clickhouseUp, clickhouseDown, CLICKHOUSE_EMULATOR, CLICKHOUSE_EMULATOR_
 export { postgresApply } from "./postgres-apply";
 export type { PostgresApplyArgs, PostgresApplyDeps, PostgresApplyOutcome } from "./postgres-apply";
 export { postgresUp, postgresDown, POSTGRES_EMULATOR, POSTGRES_EMULATOR_SPEC } from "./postgres-emulator";
+export { mysqlApply } from "./mysql-apply";
+export type { MysqlApplyArgs, MysqlApplyDeps, MysqlApplyOutcome } from "./mysql-apply";
 
 // effect() steps (#3657): their receipts are kept on the environment's
 // database server (../../receipts.ts, `chant_receipts.receipts`), and

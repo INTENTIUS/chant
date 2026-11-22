@@ -74,6 +74,6 @@ describe("chant run's runner key from the environment (#4156)", () => {
   test("a key that is not an Ed25519 PEM is an error", async () => {
     const r = await signer(repo(), "not a key");
     expect(r.result).toBeNull();
-    expect(r.err).toContain("CHANT_RUNNER_KEY is not an Ed25519 private key in PEM");
+    expect(r.err).toContain("CHANT_RUNNER_KEY is not an Ed25519 or ECDSA P-256 private key in PEM");
   });
 });

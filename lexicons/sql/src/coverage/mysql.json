@@ -1,0 +1,24 @@
+{
+  "dialect": "mysql",
+  "kinds": [
+    { "command": "CREATE DATABASE", "kind": "database", "status": "declared", "entity": "MySQL::Database" },
+    { "command": "CREATE EVENT", "kind": "event", "status": "refused", "reason": "an event runs SQL on a schedule; chant declares no scheduled work" },
+    { "command": "CREATE FUNCTION", "kind": "stored function", "status": "refused", "reason": "a stored function's body is a program, and chant declares no MySQL routines" },
+    { "command": "CREATE FUNCTION", "form": "loadable (SONAME)", "match": "\\bSONAME\\b", "kind": "loadable function", "status": "out-of-scope", "reason": "a loadable function is a library installed on the server, not a schema object" },
+    { "command": "CREATE INDEX", "kind": "index", "status": "declared", "entity": "MySQL::Table", "note": "an index is part of its table: SHOW CREATE TABLE prints it, and the table's declaration holds it. A CREATE INDEX in a file of DDL is read into its table" },
+    { "command": "CREATE LOGFILE GROUP", "kind": "logfile group", "status": "out-of-scope", "reason": "a logfile group belongs to NDB Cluster's storage, not to a schema" },
+    { "command": "CREATE PROCEDURE", "kind": "stored procedure", "status": "refused", "reason": "a stored procedure's body is a program, and chant declares no MySQL routines" },
+    { "command": "CREATE RESOURCE GROUP", "kind": "resource group", "status": "out-of-scope", "reason": "a resource group is server-level thread scheduling, not a schema object" },
+    { "command": "CREATE ROLE", "kind": "role", "status": "out-of-scope", "reason": "accounts and roles are the server's, and the MySQL dialect declares no access" },
+    { "command": "CREATE SCHEMA", "kind": "schema", "status": "declared", "entity": "MySQL::Database", "note": "CREATE SCHEMA is a synonym of CREATE DATABASE" },
+    { "command": "CREATE SERVER", "kind": "federated server", "status": "out-of-scope", "reason": "a server definition holds another server's credentials, which are the environment's" },
+    { "command": "CREATE SPATIAL REFERENCE SYSTEM", "kind": "spatial reference system", "status": "out-of-scope", "reason": "a spatial reference system is server-wide data, not a schema object" },
+    { "command": "CREATE TABLE", "kind": "table", "status": "declared", "entity": "MySQL::Table" },
+    { "command": "CREATE TABLE", "form": "TEMPORARY", "match": "^CREATE\\s+TEMPORARY\\b", "kind": "temporary table", "status": "out-of-scope", "reason": "a temporary table lives in one session" },
+    { "command": "CREATE TABLE", "form": "PARTITION BY", "match": "\\bPARTITION\\s+BY\\b", "kind": "partitioned table", "status": "refused", "reason": "chant does not plan partition changes, so a partitioned table is not declared" },
+    { "command": "CREATE TABLESPACE", "kind": "tablespace", "status": "out-of-scope", "reason": "a tablespace is storage the server's operator manages, not a schema object" },
+    { "command": "CREATE TRIGGER", "kind": "trigger", "status": "refused", "reason": "a trigger's body is a program, and chant declares no MySQL triggers" },
+    { "command": "CREATE USER", "kind": "user", "status": "out-of-scope", "reason": "accounts are the server's, and the MySQL dialect declares no access" },
+    { "command": "CREATE VIEW", "kind": "view", "status": "declared", "entity": "MySQL::View" }
+  ]
+}

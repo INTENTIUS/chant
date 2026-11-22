@@ -483,7 +483,7 @@ export async function runsSign(req: RunsSignRequest): Promise<RunsWriteDocument>
       try {
         runner = loadRunnerKey(req.keyPem);
       } catch (err) {
-        return fail("runner-key-invalid", `the key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+        return fail("runner-key-invalid", `the key is not an Ed25519 or ECDSA P-256 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
       }
       if (policy.signers.some((s) => s.key === runner.publicKey)) {
         return fail("runner-key-is-signer", `this is a signer's key in ${policy.signersPath}. A run statement is signed by a runner or steward identity, never by a person's key`);

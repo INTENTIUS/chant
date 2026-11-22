@@ -11,6 +11,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { applyCiInit, componentStub, editDeclarationText, inferGreen, lineDiff, proposeCiInit, withEnvironments } from "./ci-init";
 import { publishFlags, renderReleaseWorkflow } from "./release-workflow";
 import { runDeclarationChecks } from "./checks";
+import { parseDeclaration } from "./declaration";
 
 const scratch: string[] = [];
 afterAll(() => {
@@ -68,6 +69,15 @@ describe("proposeCiInit", () => {
     const p = proposeCiInit(root, { workflow: "trunk-curated+apply-on-merge", security: ["supply-chain"] });
     expect(JSON.parse(p.files[0]!.after).security).toEqual(["supply-chain"]);
     expect(p.commands[0]!.args).toContain("--apply-on-merge");
+  });
+
+  test("--security takes a security profile, which the proposed declaration reads as one (#5464)", () => {
+    const root = fresh();
+    const p = proposeCiInit(root, { workflow: "trunk-curated", security: ["fedramp-moderate", "supply-chain"] });
+    const after = p.files[0]!.after;
+    expect(JSON.parse(after).security).toEqual(["fedramp-moderate", "supply-chain"]);
+    // A profile is valid at the top level, so the declaration still parses.
+    expect(() => parseDeclaration(after, "chant.workspace.json")).not.toThrow();
   });
 
   test("a rerun after the writes and the generators proposes only what is still missing", async () => {

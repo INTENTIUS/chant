@@ -83,7 +83,7 @@ export function runnerStartReadiness(policy: TrustPolicy): { configured: boolean
     return { configured: false, gaps };
   }
   if (policy.runners.length === 0) {
-    gaps.push({ gap: "no-runner-key", reason: ".chant/trust.json lists no key under runners for a provisioner to sign with: chant workspace trust runner add <principal> --key <ssh-ed25519 line>" });
+    gaps.push({ gap: "no-runner-key", reason: ".chant/trust.json lists no key under runners for a provisioner to sign with: chant workspace trust runner add <principal> --key <ssh-ed25519 or ecdsa-sha2-nistp256 line>" });
   } else {
     const holders = new Set((policy.roles[RUNNER_START_SIGNER_ROLE] ?? []).map((p) => p.normalize("NFKC").trim().toLowerCase()));
     if (!policy.runners.some((r) => holders.has(r.principal.normalize("NFKC").trim().toLowerCase()))) {
@@ -151,7 +151,7 @@ export async function runCiRunnerStart(ctx: CommandContext): Promise<number> {
   const action = args.extraPositional;
   try {
     if (action === "sign") {
-      if (!args.key) throw new Error("--key names the provisioner's runner key, an Ed25519 private key in PEM, which the job never holds");
+      if (!args.key) throw new Error("--key names the provisioner's runner key, an Ed25519 or ECDSA P-256 private key in PEM, which the job never holds");
       if (!args.ciPrincipal) throw new Error("--principal names the principal .chant/trust.json lists the key for under runners");
       if (!args.ciJob) throw new Error("--job names the job the runner was started for, as JSON or @<file>");
       const job = parseJobSpec(args.ciJob);

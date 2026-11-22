@@ -48,7 +48,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
@@ -209,6 +209,98 @@ export function copyImageArchives(images: ReadonlyArray<{ archive: string }>, fr
   }
 }
 
+/**
+ * Under the supply-chain group (#5462), refuse a `release.images` Dockerfile
+ * entry with a `FROM` not pinned by digest, before anything is built: the
+ * cut and `chant release images` call it, so a forge's release workflow and
+ * a `ci serve --release` host refuse the same release. Throws
+ * `ReleaseImageError` (`release-image-base-unpinned`); outside the group, or
+ * with every base pinned, does nothing. The bases are read as
+ * `workspace check` and the doctor read them (../../lifecycle/dockerfile-pins.ts).
+ */
+export async function refuseUnpinnedBases(images: readonly import("../../lifecycle/release-images").ReleaseImageDeclaration[], cwd: string): Promise<void> {
+  const { securityGroupsAt } = await import("../../workspace/security");
+  let groups: ReadonlySet<string>;
+  try {
+    groups = securityGroupsAt(cwd);
+  } catch {
+    return;
+  }
+  if (!groups.has("supply-chain")) return;
+  const { unpinnedFroms } = await import("../../lifecycle/dockerfile-pins");
+  const { ReleaseImageError } = await import("../../lifecycle/release-images");
+  const found: string[] = [];
+  for (const image of images) {
+    if (!("dockerfile" in image) || image.dockerfile === undefined) continue;
+    const abs = resolve(cwd, image.dockerfile);
+    if (!existsSync(abs)) continue;
+    for (const u of unpinnedFroms(readFileSync(abs, "utf-8"), image.args ?? {})) found.push(`${image.name}: ${image.dockerfile}:${u.line} FROM ${u.image}: ${u.why}`);
+  }
+  if (found.length === 0) return;
+  throw new ReleaseImageError(
+    "release-image-base-unpinned",
+    `the workspace opts into supply-chain, and a release image builds from a base not pinned by digest: ${found.join("; ")}`,
+    "Pin each FROM as name:tag@sha256:<digest>: chant release images --repin moves pins as their tags move, and docker buildx imagetools inspect <name:tag> prints the digest of a new one.",
+  );
+}
+
+/**
+ * `release images --repin [<file>...] [--check] [--json]` (#5457): move each
+ * image reference pinned by digest, `name:tag@sha256:<digest>` or an
+ * `IMAGE_PINS` row, to the digest its tag names today, keeping the tag, and
+ * each Wolfi package pin, a `WOLFI_PACKAGE_PINS` row or an
+ * `apk:<name>=<version>` entry, to the newest version Wolfi's index lists
+ * for both architectures (#5445). The
+ * files are the Dockerfiles `release.images` names, else those given. It
+ * prints each reference that moved and rewrites the files, or with
+ * `--check` writes nothing and exits 1 when one would move, so a scheduled
+ * job can open a pull request with the change. A tag that can't be resolved
+ * leaves its digest and exits 1.
+ */
+export async function runReleaseImagesRepin(ctx: CommandContext, resolver?: import("../../lifecycle/image-repin").ImageResolver, apk?: import("../../lifecycle/image-repin").ApkResolver): Promise<number> {
+  const { args } = ctx;
+  const cwd = resolve(".");
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  let paths = (args.positionals ?? []).slice(1);
+  if (paths.length === 0) {
+    let declared: import("../../lifecycle/release-images").ReleaseImageDeclaration[];
+    try {
+      declared = await releaseImagesOf(cwd);
+    } catch (err) {
+      return fail("repin-config-invalid", `release.images in chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, "Name the files to re-pin: chant release images --repin <file>...");
+    }
+    paths = declared.filter((d): d is import("../../lifecycle/release-images").ReleaseImageDockerfile => "dockerfile" in d).map((d) => d.dockerfile);
+    if (paths.length === 0) return fail("repin-nothing-named", "release.images names no Dockerfile, and no file was given", "Name the files to re-pin: chant release images --repin <file>...");
+  }
+  const files: Array<{ path: string; text: string }> = [];
+  for (const p of paths) {
+    const abs = resolve(cwd, p);
+    if (!existsSync(abs)) return fail("repin-file-missing", `${p} is not there`);
+    files.push({ path: p, text: readFileSync(abs, "utf-8") });
+  }
+  const { repinFiles, registryResolver, wolfiResolver } = await import("../../lifecycle/image-repin");
+  // #5445: Wolfi's index is read only when a file holds an apk pin.
+  const result = await repinFiles(files, resolver ?? registryResolver(process.env), { apk: apk ?? wolfiResolver() });
+  const write = !args.check;
+  if (write) for (const f of result.files) if (f.changed) writeFileSync(resolve(cwd, f.path), f.text);
+  if (args.json) {
+    console.log(JSON.stringify({ moved: result.moved, unchanged: result.unchanged, failed: result.failed, written: write ? result.files.filter((f) => f.changed).map((f) => f.path) : [] }, null, 2));
+  } else {
+    for (const m of result.moved) console.log(`${write ? "moved" : "would move"} ${m.file}:${m.line} ${m.reference} ${m.from} -> ${m.to}`);
+    for (const f of result.failed) {
+      const what = f.reference.startsWith("apk:") ? "its version could not be read, so it is left" : "its tag could not be resolved, so its digest is left";
+      console.error(formatWarning({ message: `${f.file}:${f.line} ${f.reference}: ${what}: ${f.reason}` }));
+    }
+    console.log(result.moved.length === 0 ? `Nothing moved: ${result.unchanged} pinned reference(s) are where their tag or the package index puts them today.` : `${result.moved.length} reference(s) ${write ? "moved" : "would move"}; ${result.unchanged} unchanged.`);
+  }
+  if (result.failed.length > 0) return 1;
+  return args.check && result.moved.length > 0 ? 1 : 0;
+}
+
 /** A commit's time in seconds, the `SOURCE_DATE_EPOCH` a release's image builds run with (#4657). */
 function commitTime(cwd: string, commit: string): number {
   return Number(execFileSync("git", ["show", "-s", "--format=%ct", commit], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim());
@@ -224,6 +316,7 @@ function commitTime(cwd: string, commit: string): number {
  */
 export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.repin) return runReleaseImagesRepin(ctx);
   const ref = args.extraPositional;
   const fail = (code: string, message: string, fix?: string): number => {
     if (args.json) console.log(JSON.stringify({ ref: ref ?? null, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
@@ -254,7 +347,11 @@ export async function runReleaseImages(ctx: CommandContext): Promise<number> {
           if (!existsSync(abs)) throw new ReleaseImageError("release-image-no-archive", `image "${d.name}" has no archive at ${d.archive}`, "Hand this job the archives the cut built, or run without --no-build to build them again.");
           return { component: d.name, kind: "image" as const, path: d.archive, digest: ociArchiveDigest(abs) };
         })
-      : buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest, ...((await releaseVersionOf(cwd)) ? { versionArg: true } : {}) });
+      : await (async () => {
+          // #5462: under supply-chain a base not pinned by digest refuses the build.
+          await refuseUnpinnedBases(declared, cwd);
+          return buildReleaseImages({ images: declared, cwd, sourceDateEpoch: commitTime(cwd, release.commit), label, archiveDigest: ociArchiveDigest, ...((await releaseVersionOf(cwd)) ? { versionArg: true } : {}) });
+        })();
   } catch (err) {
     if (err instanceof ReleaseImageError) return fail(err.code, err.message, err.fix);
     throw err;
@@ -646,13 +743,15 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
           try {
             // #5269: goreleaser would empty an archive in its dist before the cut records it.
             checkImagesOutsideGoreleaser(declaredImages, declaredArtifacts);
+            // #5462: under supply-chain a base not pinned by digest refuses the cut, before anything is built.
+            await refuseUnpinnedBases(declaredImages, cutCwd);
             const built = buildReleaseImages({ images: declaredImages, cwd: cutCwd, sourceDateEpoch: commitTime(cutCwd, at), label, archiveDigest: ociArchiveDigest, ...(versionConfig ? { versionArg: true } : {}) });
             writeReleaseDigests(digestsFile, Object.fromEntries(built.map((a) => [a.component, a.digest])));
             return built;
           } catch (err) {
             const code = err instanceof ReleaseImageError ? err.code : (err as { code?: unknown }).code;
             const fix = err instanceof ReleaseImageError ? err.fix : undefined;
-            throw new ReleaseCutError(code === "release-image-name-taken" || code === "release-image-archive-in-dist" ? code : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
+            throw new ReleaseCutError(code === "release-image-name-taken" || code === "release-image-archive-in-dist" || code === "release-image-base-unpinned" ? code : "release-image-build-failed", `no release was cut: ${(err as Error).message}`, fix);
           }
         }
       : undefined;
@@ -1016,7 +1115,9 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   if (gateWarning) console.error(formatWarning({ message: gateWarning }));
   if (warning) console.error(formatWarning({ message: warning }));
   if (signingWarning) console.error(formatWarning({ message: signingWarning }));
-  if (prepared.signing && !args.json) say(`  signing images and forge assets with Sigstore (${prepared.signing.signer.name}) as ${prepared.signing.identity.identity}, issuer ${prepared.signing.identity.issuer}`);
+  if (prepared.scanWarning) console.error(formatWarning({ message: prepared.scanWarning }));
+  if (prepared.scan && !args.json) say(`  scanning for known vulnerabilities with ${prepared.scan.scanner.name} before anything is pushed`);
+  if (prepared.signing && !args.json) say(`  signing images and forge assets with Sigstore (${prepared.signing.signer.name}) as ${(await import("../../lifecycle/publish-signing")).describeSigningIdentity(prepared.signing.identity)}`);
   // #4168 4.3: a release cut with --channel moves that tag, not latest.
   const pctx = publishContext(prepared, { cwd, tag: prepared.channel, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
 
@@ -1055,8 +1156,9 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
     commit: release.commit,
     signature,
     provenance,
-    warnings: [signatureWarning, gateWarning, warning, signingWarning, verifyWarning].filter((w): w is string => w !== null),
+    warnings: [signatureWarning, gateWarning, warning, signingWarning, prepared.scanWarning ?? null, verifyWarning].filter((w): w is string => w !== null),
     signing: prepared.signing ? { identity: prepared.signing.identity, signer: prepared.signing.signer.name } : null,
+    ...(prepared.scan ? { scan: { scanner: prepared.scan.scanner.name } } : {}),
     ...(floating ? { floating } : {}),
     ...(verifySteps.length > 0 ? { verify: { steps: verifySteps, unstaged } } : {}),
   };
@@ -1142,7 +1244,9 @@ function describeItem(i: import("../../lifecycle/release-publish").PublishItem):
           ? `${i.name} (Sigstore signature)`
           : i.attachment === "attestation"
             ? `${i.name} (SLSA provenance, Sigstore)`
-            : i.name;
+            : i.attachment === "scan"
+              ? `${i.name} (vulnerability scan findings)`
+              : i.name;
   if (i.notes !== undefined) return `${i.name} to ${i.destination}:\n${i.notes.trimEnd().split("\n").map((l) => `      ${l}`.trimEnd()).join("\n")}`;
   return `${what} to ${i.destination}${i.sbom ? `, carrying ${i.sbom}` : ""}`;
 }
@@ -1618,6 +1722,86 @@ export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
+}
+
+/**
+ * `release scan <label|digest> | --deployed [<env>] [--json]` (#5466): scan
+ * the SBOMs a release's publish recorded again, with the scanner and
+ * `vulnPolicy` the publish uses, and append a `rescanned` line to its publish
+ * record. Exits 1 when the policy blocks a finding, and when nothing could be
+ * scanned, since a scan of nothing is not a pass.
+ */
+export async function runReleaseScan(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const cwd = resolve(".");
+  const ref = args.extraPositional;
+  if ((ref === undefined) === (args.deployed === undefined)) {
+    console.error(formatError({ message: "release scan needs a release, or --deployed", hint: USAGE }));
+    return 1;
+  }
+  const { prepareRescan, rescanRelease, deployedReleases } = await import("../../lifecycle/release-rescan");
+  const { resolveRelease } = await import("../../lifecycle/release-store");
+  const prepared = await prepareRescan({ cwd, env: process.env });
+  if ("refusal" in prepared) {
+    if (args.json) console.log(JSON.stringify({ error: prepared.refusal }, null, 2));
+    else console.error(formatError({ message: `${prepared.refusal.message} [${prepared.refusal.code}]`, ...(prepared.refusal.fix ? { hint: prepared.refusal.fix } : {}) }));
+    return 1;
+  }
+  const wanted: Array<{ digest: string; label: string | null; deployed: string[] }> = [];
+  if (ref !== undefined) {
+    const found = await resolveRelease(ref, { cwd });
+    if (!found) {
+      console.error(formatError({ message: `no release is labelled or digested "${ref}" in this member [release-not-found]`, hint: "Fetch chant/lifecycle (git fetch origin chant/lifecycle:chant/lifecycle), then list them with: chant release list" }));
+      return 1;
+    }
+    wanted.push({ digest: found.release.releaseDigest, label: found.label, deployed: [] });
+  } else {
+    const named = typeof args.deployed === "string" ? args.deployed : undefined;
+    const running = await deployedReleases({ cwd, ...(named ? { env: named } : {}) });
+    if (running.size === 0) {
+      console.error(formatError({ message: `no environment${named ? ` "${named}"` : ""} has a deploy record that names a release [release-scan-nothing]`, hint: "A deploy made with chant components promote --release records the release it came from." }));
+      return 1;
+    }
+    for (const [digest, envs] of running) {
+      const found = await resolveRelease(digest, { cwd });
+      wanted.push({ digest, label: found?.label ?? null, deployed: envs });
+    }
+  }
+  const say = (line: string) => {
+    if (!args.json) console.error(line);
+  };
+  const results: Array<Awaited<ReturnType<typeof rescanRelease>> & { deployed: string[] }> = [];
+  for (const w of wanted) {
+    say(`${w.label ?? w.digest}${w.deployed.length > 0 ? `, run by ${w.deployed.join(", ")}` : ""}`);
+    results.push({ ...(await rescanRelease({ cwd, releaseDigest: w.digest, label: w.label, env: process.env, scan: prepared.scan, deployed: w.deployed, say })), deployed: w.deployed });
+  }
+  const failed = results.filter((r) => r.blocked || r.nothingScanned || r.stale !== null);
+  if (args.json) {
+    console.log(JSON.stringify({ scanner: prepared.scan.scanner.name, releases: results.map((r) => ({ releaseDigest: r.releaseDigest, label: r.label, deployed: r.deployed, blocked: r.blocked, nothingScanned: r.nothingScanned, ...(r.stale ? { stale: r.stale } : {}), ...(r.recordWarning ? { recordWarning: r.recordWarning } : {}), scan: r.record })) }, null, 2));
+    return failed.length > 0 ? 1 : 0;
+  }
+  for (const r of results) {
+    const name = r.label ?? r.releaseDigest;
+    for (const s of r.record.subjects) {
+      for (const f of s.findings.filter((x) => x.outcome !== "reported" && x.outcome !== "suppressed")) {
+        console.error(`  ${name}: ${s.name}: ${f.id} (${f.severity}) in ${f.package} ${f.version}${f.fixedVersion ? `, fixed in ${f.fixedVersion}` : ""} [${f.outcome}]`);
+      }
+    }
+    for (const k of r.record.skipped ?? []) console.error(`  ${name}: not scanned: ${k.name}: ${k.reason}`);
+    if (r.recordWarning) console.error(formatWarning({ message: r.recordWarning }));
+  }
+  for (const r of failed) {
+    const name = r.label ?? r.releaseDigest;
+    // #5464: the database bound a publish holds holds for a rescan too.
+    if (r.stale) {
+      const { RESCAN_DB_STALE_FIX } = await import("../../workspace/security-profiles");
+      console.error(formatError({ message: `${name} was scanned, but ${r.stale}; the rescan is recorded as stale and is not a pass [release-scan-db-stale]`, hint: RESCAN_DB_STALE_FIX }));
+    }
+    if (r.blocked) console.error(formatError({ message: `${r.record.scanner} found a finding the vulnerability policy blocks in ${name} [release-scan-blocked]`, hint: "Cut and publish a release that fixes it, or record a VEX statement in a file vulnPolicy.vexSources names when it is not exploitable." }));
+    else if (r.nothingScanned) console.error(formatError({ message: `nothing of ${name} was scanned: the publish recorded no SBOM a rescan can fetch [release-scan-nothing]`, hint: "A rescan reads an image's SBOM referrer from its registry. Publish the release with release.scan on, from CI with the registry's credentials set here." }));
+  }
+  if (failed.length === 0) console.error(formatSuccess(`Scanned ${results.length} release${results.length === 1 ? "" : "s"} with ${prepared.scan.scanner.name}; the policy blocks nothing`));
+  return failed.length > 0 ? 1 : 0;
 }
 
 export async function runReleaseUnknown(ctx: CommandContext): Promise<number> {

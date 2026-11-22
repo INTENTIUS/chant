@@ -262,7 +262,7 @@ describe("sql-migrate against a fake yodel binary", () => {
 });
 
 describe("sql-apply", () => {
-  const build = (dialect: "clickhouse" | "postgres") => {
+  const build = (dialect: "clickhouse" | "postgres" | "mysql") => {
     const cwd = scratch();
     const path = join(cwd, "schema.json");
     writeJson(path, { dialect });
@@ -279,6 +279,21 @@ describe("sql-apply", () => {
     holes: [],
     problems: [],
     ...over,
+  });
+
+  test("a mysql build plans and applies through the MySQL planner and applier (#5449)", async () => {
+    const path = build("mysql");
+    const applied: string[] = [];
+    const cap = createSqlApplyCapability({
+      plan: async (_input, dialect) =>
+        plan({ dialect, changes: [{ object: "users (table shop.users)", field: "columns.email", rule: "SQLMY201", class: "instant", after: "varchar(255)" }] }),
+      apply: async (input, dialect) => (applied.push(`${dialect}:${input.environment}`), { applied: ["MySQL::Table/table shop.users"], pruned: [], notAttempted: [] }),
+    });
+    const planned = await cap.plan!({ env: "prod", component: "db" }, { environment: "prod", build: path });
+    expect(planned.changeSet?.entries.map((e) => [e.address, e.type, e.action, e.disruption])).toEqual([["users (table shop.users)", "MySQL::Object", "update", "in-place"]]);
+    const out = await cap.run({ env: "prod", component: "db", plans: { prod: planned.artifact } }, { environment: "prod", build: path });
+    expect(out.dialect).toBe("mysql");
+    expect(applied).toEqual(["mysql:prod"]);
   });
 
   test("plans the build against the server as one entry per object, and applies the decided plan", async () => {

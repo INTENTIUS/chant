@@ -129,7 +129,7 @@ export function noRunnerIdentity(): string {
 /**
  * The signer a runner key makes: the principal `.chant/trust.json` at
  * `base` lists the key under `runners`. Throws when the key is not an
- * Ed25519 PEM key, is a signer's (a person's) key, or is not listed, so a
+ * Ed25519 or P-256 PEM key, is a signer's (a person's) key, or is not listed, so a
  * job never keeps evidence its readers would ignore.
  */
 export function runnerKeyEvidenceSigner(repo: string, base: string, pem: string): EvidenceSigner {
@@ -137,7 +137,7 @@ export function runnerKeyEvidenceSigner(repo: string, base: string, pem: string)
   try {
     loaded = loadRunnerKey(pem);
   } catch (err) {
-    throw new Error(`the runner key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`the runner key is not an Ed25519 or ECDSA P-256 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
   }
   const policy = readTrustPolicy(gitRevisionSource(repo, base), base);
   if (policy.problems.length > 0) throw new Error(`the policy at ${base.slice(0, 12)} cannot be read: ${policy.problems.join("; ")}`);

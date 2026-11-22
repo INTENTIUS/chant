@@ -14,6 +14,8 @@ import { dkrd017 } from "./unused-global-arg";
 import { dkrd018 } from "./relative-workdir";
 import { dkrd019 } from "./add-url-checksum";
 import { dkrd020 } from "./apt-update-alone";
+import { dkrd021 } from "./unpinned-base";
+import { dockerPlugin } from "../../plugin";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -326,5 +328,35 @@ describe("DKRD020: apt-get update alone", () => {
 
   test("does not flag update and install in one RUN", () => {
     expect(dkrd020.check(df(["FROM debian:12-slim", "RUN apt-get update \\", "  && apt-get install -y --no-install-recommends curl"]))).toHaveLength(0);
+  });
+});
+
+describe("DKRD021: FROM not pinned by digest", () => {
+  const D = `sha256:${"a".repeat(64)}`;
+
+  test("flags a base named by tag, and passes it once it is pinned", () => {
+    const diags = dkrd021.check(df(["FROM node:22", "RUN true"]));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("FROM node:22 names the base by tag");
+    expect(dkrd021.check(df([`FROM node:22@${D}`, "RUN true"]))).toHaveLength(0);
+  });
+
+  test("passes an earlier stage, scratch, and an ARG whose default is pinned", () => {
+    expect(dkrd021.check(df([`FROM golang:1.23@${D} AS build`, "RUN go build", "FROM scratch", "COPY --from=build /app /app"]))).toHaveLength(0);
+    expect(dkrd021.check(df([`FROM node:22@${D} AS base`, "FROM base", "RUN true"]))).toHaveLength(0);
+    expect(dkrd021.check(df([`ARG BASE=node:22@${D}`, "FROM ${BASE}", "RUN true"]))).toHaveLength(0);
+  });
+
+  test("flags an ARG with no default or a tagged one", () => {
+    expect(dkrd021.check(df(["ARG BASE", "FROM ${BASE}"]))[0].message).toContain("no default");
+    expect(dkrd021.check(df(["ARG BASE=node:22", "FROM $BASE"]))[0].message).toContain("(node:22)");
+  });
+
+  test("is opt-in: the recommended preset leaves it out, and all keeps it", () => {
+    const presets = dockerPlugin.lintPresets!();
+    expect(presets.recommended).not.toContain("DKRD021");
+    expect(presets.recommended).toContain("DKRD020");
+    expect(presets.all).toContain("DKRD021");
+    expect(dkrd021.auditOptIn).toBe(true);
   });
 });
