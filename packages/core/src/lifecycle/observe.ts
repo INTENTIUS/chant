@@ -101,10 +101,24 @@ export function carryAnnotations<N extends { id: string; attrs: Record<string, u
  * the OBSERVED-PRESENT and NOT-OBSERVED maps of the tri-state (#1089).
  */
 function qualifyObservation(obs: NormalizedObservation, stackName: string): NormalizedObservation {
+  const id = (k: string): string => `${stackName}::${k}`;
   const q = <T>(m: Record<string, T>): Record<string, T> =>
-    Object.fromEntries(Object.entries(m).map(([k, v]) => [`${stackName}::${k}`, v]));
+    Object.fromEntries(Object.entries(m).map(([k, v]) => [id(k), v]));
+  // A resource's metadata names other resources by id in the same key space
+  // as its own key (#5490), so those references re-key with it. Without this a
+  // runtime child (an ECS task under `my-stack::service`) kept `ownerChain`
+  // pointing at the bare `service`, which is not a node in the qualified graph.
+  const meta = (m: ResourceMetadata): ResourceMetadata => {
+    let out = m;
+    if (m.ownerChain?.root === "declared") out = { ...out, ownerChain: { root: "declared", entity: id(m.ownerChain.entity) } };
+    if (m.component !== undefined) out = { ...out, component: id(m.component) };
+    if (m.referencedBy) out = { ...out, referencedBy: m.referencedBy.map(id) };
+    return out;
+  };
+  const qm = (m: Record<string, ResourceMetadata>): Record<string, ResourceMetadata> =>
+    Object.fromEntries(Object.entries(m).map(([k, v]) => [id(k), meta(v)]));
   return {
-    resources: q(obs.resources),
+    resources: qm(obs.resources),
     unobserved: q(obs.unobserved),
     queried: q(obs.queried),
     // Which read answered (#2267) is per entity, so it re-keys with them.
@@ -113,7 +127,10 @@ function qualifyObservation(obs: NormalizedObservation, stackName: string): Norm
     // Engine facts (#5333) are keyed by node id, so they re-key the same way.
     ...(obs.engineFacts ? { engineFacts: q(obs.engineFacts) } : {}),
     // Undeclared live objects (#5429) are keyed by node id too.
-    ...(obs.undeclared ? { undeclared: q(obs.undeclared) } : {}),
+    ...(obs.undeclared ? { undeclared: qm(obs.undeclared) } : {}),
+    // Root reads are keyed by a lexicon-chosen root key, not a node id, so
+    // they pass through as they are rather than being dropped.
+    ...(obs.rootReads ? { rootReads: obs.rootReads } : {}),
     notes: obs.notes,
     // Exports are already keyed by stack (#1279); nothing to qualify.
     ...(obs.stackExports ? { stackExports: obs.stackExports } : {}),

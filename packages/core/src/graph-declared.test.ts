@@ -2,7 +2,8 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildDeclaredPerStack } from "./graph-declared";
+import { buildDeclaredPerStack, groupStackNodes } from "./graph-declared";
+import { buildLiveGraphIr, sourceOverlayGraphs } from "./graph-ir";
 
 /**
  * Side-by-side stacks (#1433) — several stacks declared in config, each with its
@@ -100,5 +101,33 @@ describe("buildDeclaredPerStack takes edges from the lexicon hooks (#4232)", () 
     expect(seen).toEqual([["vpc"], ["service"]]);
     expect(ir.edges).toContainEqual({ from: "network::vpc", to: "network::vpc", kind: "ref", viaAttr: "self" });
     expect(ir.edges).toContainEqual({ from: "app::service", to: "app::service", kind: "ref", viaAttr: "self" });
+  });
+});
+
+describe("groupStackNodes puts a stack's live-only nodes in its box (#5490)", () => {
+  test("a runtime task the read qualified joins its stack beside the declared service", async () => {
+    const declared = await buildDeclaredPerStack([{ name: "app", src: "app/src" }, { name: "network", src: "network/src" }], dir);
+    const live = buildLiveGraphIr([
+      {
+        lexicon: "aws",
+        resources: {
+          "app::service": { type: "Thing", status: "ACTIVE" },
+          "app::Task/c/1": { type: "AWS::ECS::Task", status: "RUNNING", ownerChain: { root: "declared", entity: "app::service" } },
+          "vpc-123": { type: "AWS::EC2::VPC", status: "available", referencedBy: ["app::service"] },
+        },
+      },
+    ]);
+    const ir = groupStackNodes(sourceOverlayGraphs(declared, live), ["app", "network"]);
+    expect(ir.groups.byStack?.app).toEqual(["app::Task/c/1", "app::service"]);
+    expect(ir.groups.byStack?.network).toEqual(["network::vpc"]);
+    // A dependency keyed across stacks carries no stack prefix and stays unboxed.
+    expect(Object.values(ir.groups.byStack ?? {}).flat()).not.toContain("vpc-123");
+    const task = ir.nodes.find((n) => n.id === "app::Task/c/1");
+    expect(task?.attrs._status).toBe("runtime");
+  });
+
+  test("nothing to add leaves the graph as it was", async () => {
+    const declared = await buildDeclaredPerStack([{ name: "app", src: "app/src" }], dir);
+    expect(groupStackNodes(declared, ["app"])).toBe(declared);
   });
 });

@@ -6,7 +6,7 @@ import { applyLexiconOutputs, buildGraphIr, buildLiveGraphIr, carryEngineFacts, 
 import { behaviourOverlay } from "../../behaviour-overlay";
 import type { SerializerResult } from "../../serializer";
 import { applyBehaviourOverlay, behaviourRequestFromIr } from "../../behaviour-graph";
-import { buildDeclaredPerStack } from "../../graph-declared";
+import { buildDeclaredPerStack, groupStackNodes } from "../../graph-declared";
 import { mergeProjectOps } from "../../graph-ops";
 import { reconstructEdges, mergeCatalogs, containmentGroups, type ReferenceCatalog, type ContainmentPair } from "../../graph-refs";
 import { carryAnnotations, observeResources, type ObserveResult } from "../../lifecycle/observe";
@@ -428,7 +428,7 @@ async function runGraphLive(
       ir =
         args.overlayAnchor === "live"
           ? overlayGraphs(ir, declaredIr, overlayOpts)
-          : sourceOverlayGraphs(declaredIr, ir, overlayOpts);
+          : groupStackNodes(sourceOverlayGraphs(declaredIr, ir, overlayOpts), scopedStacks.map((s) => s.name));
     } else {
       const declaredParams = await graphBuildParams(ctx, projectPath);
       const declared = await discover(resolveSourceDir(resolve("."), config, args.src), {
