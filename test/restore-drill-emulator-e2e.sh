@@ -34,7 +34,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FLOCI_PORT="${FLOCI_PORT:-4602}"
 FLOCI_NAME="chant-floci-restore-drill-e2e-$$"
-FLOCI_IMAGE="floci/floci:1.5.34"
+# Pinned, not :latest. RDS snapshots (CreateDBSnapshot, RestoreDBInstanceFromDBSnapshot)
+# need Floci 2.1.0 or later for postgres; 1.x answers UnsupportedOperation. 2.5.0
+# is the release this recipe was last read against.
+FLOCI_IMAGE="floci/floci:2.5.0"
 WORK="$(mktemp -d)"
 PROJECT="$WORK/project"
 
