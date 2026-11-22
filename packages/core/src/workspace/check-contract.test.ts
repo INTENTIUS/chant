@@ -14,6 +14,7 @@ import { BOX_FINDING_CODES } from "./checks/boxes";
 import { RECORD_FINDING_CODES } from "./checks/records";
 import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { SECURITY_FINDING_CODES } from "./checks/security";
+import { PROFILE_FINDING_CODES } from "./security-profiles";
 import { CI_WORKFLOW_FINDING_CODES } from "./ci-workflow";
 import { CI_BRANCH_FINDING_CODES } from "./checks/ci-branch";
 import { GATE_APPROVAL_FINDING_CODES } from "./checks/gate-approval";
@@ -42,8 +43,8 @@ describe("check output schema", () => {
   test("lists exactly the codes the code can return", () => {
     expect(schema.$defs.lockFinding.properties.code.enum).toEqual([...CHECK_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...CHECK_ERROR_CODES]);
-    expect(schema.$defs.diagnostic.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES, ...CI_WORKFLOW_FINDING_CODES, ...CI_BRANCH_FINDING_CODES, ...GATE_APPROVAL_FINDING_CODES]);
-    expect(schema.$defs.suppressed.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES, ...CI_WORKFLOW_FINDING_CODES, ...CI_BRANCH_FINDING_CODES, ...GATE_APPROVAL_FINDING_CODES]);
+    expect(schema.$defs.diagnostic.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES, ...CI_WORKFLOW_FINDING_CODES, ...CI_BRANCH_FINDING_CODES, ...GATE_APPROVAL_FINDING_CODES, ...PROFILE_FINDING_CODES]);
+    expect(schema.$defs.suppressed.properties.code.enum).toEqual([...WORKSPACE_ERROR_CODES, ...BOX_FINDING_CODES, ...RECORD_FINDING_CODES, ...DIAGRAM_FINDING_CODES, ...SECURITY_FINDING_CODES, ...CI_WORKFLOW_FINDING_CODES, ...CI_BRANCH_FINDING_CODES, ...GATE_APPROVAL_FINDING_CODES, ...PROFILE_FINDING_CODES]);
   });
 });
 

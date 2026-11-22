@@ -28,6 +28,7 @@ import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from 
 import type { Declaration, Member } from "../declaration";
 import type { ReasonCode } from "../reason-codes";
 import { securityGroupsOf, type SecurityGroup } from "../security";
+import { groupsOfEntry } from "../security-profiles";
 import { joinPath, type WorkspaceTree } from "../tree";
 import { runnerStartReadiness } from "../ci-runner-start";
 import type { RecordSource } from "../record-source";
@@ -76,22 +77,24 @@ export const WSP_SECURITY_WHO_RAN_IT = "WSP163";
 export const WSP_SECURITY_REVIEW_RULES = "WSP164";
 export const WSP_SECURITY_ISOLATED_RUNNERS = "WSP165";
 
-const memberDir = (dir: string) => (dir === "." ? "" : dir);
+export const memberDir = (dir: string) => (dir === "." ? "" : dir);
 
 /** The members under `group`: every member when the top level names it, else those that name it themselves. */
 function membersUnder(declaration: Declaration, group: SecurityGroup): Member[] {
   return declaration.members.filter((m) => securityGroupsOf(declaration, m.name).has(group));
 }
 
-/** Whether the declaration names `group` anywhere. */
+/** Whether the declaration turns `group` on anywhere: by name, or through a profile (#5464). */
 function declares(declaration: Declaration, group: SecurityGroup): boolean {
-  return declaration.security.includes(group) || declaration.members.some((m) => m.security.includes(group));
+  return securityGroupsOf(declaration).has(group) || declaration.members.some((m) => m.security.includes(group));
 }
 
-/** Where the group is named, for the finding's pointer: the top level, else the first member naming it. */
+/** Where the group is turned on, for the finding's pointer: the top level by name, else a profile there, else the first member naming it. */
 function groupPointer(declaration: Declaration, group: SecurityGroup): string {
   const top = declaration.security.indexOf(group);
   if (top >= 0) return `/security/${top}`;
+  const profile = declaration.security.findIndex((e) => groupsOfEntry(e).includes(group));
+  if (profile >= 0) return `/security/${profile}`;
   const m = declaration.members.find((e) => e.security.includes(group));
   return m ? `${m.pointer}/security/${m.security.indexOf(group)}` : "/security";
 }
@@ -154,7 +157,7 @@ function lockfileAbove(tree: WorkspaceTree, dir: string): boolean {
 }
 
 /** The trust policy in the tree read: `.chant/trust.json` and the signers file it names. */
-function treePolicy(tree: WorkspaceTree): TrustPolicy {
+export function treePolicy(tree: WorkspaceTree): TrustPolicy {
   const source: RecordSource = {
     label: tree.label,
     list: (dir) => tree.list(dir)?.filter((e) => e.type === "file").map((e) => e.name),
@@ -176,9 +179,9 @@ function finding(check: WorkspaceCheck, code: SecurityCode, message: string, at:
   };
 }
 
-const RELEASE_PUBLISH = /\bchant\b.*\brelease\s+publish\b/;
+export const RELEASE_PUBLISH = /\bchant\b.*\brelease\s+publish\b/;
 const CI_TICK = /\bchant\b.*\bci\s+tick\b|main\.ts\s+ci\s+tick\b/;
-const PR_APPLY = /\bcomponents\s+pr-apply\b|\bci\s+run\s+apply\b/;
+export const PR_APPLY = /\bcomponents\s+pr-apply\b|\bci\s+run\s+apply\b/;
 
 export const SECURITY_CHECKS: readonly WorkspaceCheck[] = [
   {

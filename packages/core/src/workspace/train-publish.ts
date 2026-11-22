@@ -524,6 +524,15 @@ async function runTrain(req: {
       const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
       throw new TrainPublishRunError(e.code, p.plan.redactor.redact(`${p.m.member}: ${e.message}`), e.fix, p.m.member, "scan", [], []);
     }
+    // #5464: a database older than the bound refuses the train, with the scan recorded as failed and nothing staged.
+    if (p.ctx.scan.dbAge) {
+      const { scanDatabaseStale, SCAN_DB_STALE_FIX } = await import("./security-profiles");
+      const stale = scanDatabaseStale(report.database, p.ctx.scan.dbAge, req.now());
+      if (stale) {
+        await write(p, SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(report));
+        throw new TrainPublishRunError("publish-scan-db-stale", `${p.m.member}: ${stale}, so nothing was staged or pushed`, SCAN_DB_STALE_FIX, p.m.member, "scan", [], []);
+      }
+    }
     await write(p, SCAN_RECORD_TARGET, "scanned", [], {}, scanRecord(report));
     scans.push({ member: p.m.member, report });
     // The member's stage attaches an image's findings beside its SBOM.

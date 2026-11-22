@@ -274,6 +274,14 @@ export const REASONS = {
   "security-runner-start-no-key": "Under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with.",
   "security-runner-start-no-role": "Under isolated-runners, no principal under runners in .chant/trust.json holds the runner role.",
   "security-trust-unreadable": "Under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked.",
+  // The security profile checks (check, #5464). Each is also a WSP166 or WSP167 finding, and names the control ids it bears on.
+  "profile-retention-short": "Under a security profile, retention.changeSets.days or retention.releases.days is unset or below the profile's days.",
+  "profile-gate-not-human": "Under a security profile, the release gate or a gate an apply job names is missing from identity.gates, names no class, names a class an agent, runner or service principal holds, or sets agentPassesAlone.",
+  "profile-scan-off": "Under a security profile, a chant.config.ts sets release.scan: false.",
+  "profile-scan-db-unbounded": "Under a security profile, release.scan.db is set with no dbMaxAgeHours, or dbMaxAgeHours is above the profile's hours.",
+  "profile-signing-off": "Under a security profile, a chant.config.ts sets release.signing: false.",
+  "profile-signing-module": "Under a security profile, a chant.config.ts signs images or forge assets keylessly or with a cosign key and names no CHANT_COSIGN build.",
+  "profile-runner-key-eddsa": "Under a security profile, .chant/trust.json lists an Ed25519 key under runners or local.keys.",
   // The ci.workflow requirements (check, #4168 step 6). Each is also a WSP151 finding.
   "ci-workflow-green-undeclared": "Under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut.",
   "ci-workflow-no-pre-merge": "Under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves.",

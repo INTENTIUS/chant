@@ -29,6 +29,7 @@ import { WORK_WARNING_CODES } from "./work";
 import { BOX_FINDING_CODES } from "./checks/boxes";
 import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { SECURITY_FINDING_CODES } from "./checks/security";
+import { PROFILE_FINDING_CODES } from "./security-profiles";
 import { CI_WORKFLOW_FINDING_CODES } from "./ci-workflow";
 import { CI_BRANCH_FINDING_CODES } from "./checks/ci-branch";
 import { GATE_APPROVAL_FINDING_CODES } from "./checks/gate-approval";
@@ -79,6 +80,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   BOX_FINDING_CODES,
   DIAGRAM_FINDING_CODES,
   SECURITY_FINDING_CODES,
+  PROFILE_FINDING_CODES,
   CI_WORKFLOW_FINDING_CODES,
   CI_BRANCH_FINDING_CODES,
   GATE_APPROVAL_FINDING_CODES,

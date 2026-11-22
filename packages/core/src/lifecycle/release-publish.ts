@@ -769,7 +769,11 @@ export async function preparePublish(req: {
       return { refusal: { code: "publish-scan-vex-missing", message: e.message, ...(e.fix ? { fix: e.fix } : {}) } };
     }
     const { resolveVulnPolicy } = await import("../config");
-    scan = { scanner, policy: fullConfig ? resolveVulnPolicy(fullConfig) : {}, vex };
+    // #5464: the oldest database the publish takes, from release.scan.dbMaxAgeHours or a security profile.
+    const { profilesOf, scanDatabaseBound } = await import("../workspace/security-profiles");
+    const scanConfig = fullConfig?.release?.scan;
+    const dbAge = scanDatabaseBound(typeof scanConfig === "object" ? scanConfig.dbMaxAgeHours : undefined, profilesOf(source.declaration));
+    scan = { scanner, policy: fullConfig ? resolveVulnPolicy(fullConfig) : {}, vex, ...(dbAge ? { dbAge } : {}) };
   }
   // #5150: the tag release.tag gives the label, as the cut made it, and the floating tag the publish moves.
   const { memberTags, ReleaseTagError } = await import("./release-tag");
@@ -1096,6 +1100,15 @@ export async function runPublish(req: {
       if (err instanceof PublishScanError) await write(SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(err.report));
       const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
       throw new PublishRunError(e.code, ctx.redactor.redact(e.message), e.fix, "scan", stagedNames, revealedNames);
+    }
+    // #5464: a database older than the bound refuses the publish, with the scan recorded as failed and nothing staged.
+    if (req.ctx.scan.dbAge) {
+      const { scanDatabaseStale, SCAN_DB_STALE_FIX } = await import("../workspace/security-profiles");
+      const stale = scanDatabaseStale(scanReport.database, req.ctx.scan.dbAge, now());
+      if (stale) {
+        await write(SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(scanReport));
+        throw new PublishRunError("publish-scan-db-stale", `${stale}, so nothing was staged or pushed`, SCAN_DB_STALE_FIX, "scan", stagedNames, revealedNames);
+      }
     }
     await write(SCAN_RECORD_TARGET, "scanned", [], {}, scanRecord(scanReport));
     // The stage attaches an image's findings beside its SBOM.

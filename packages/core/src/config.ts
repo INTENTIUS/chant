@@ -238,7 +238,7 @@ export const ChantConfigSchema = z.object({
     // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false. #5458: keyless or a key.
     signing: SigningConfigSchema.optional(),
     // #5446: the vulnerability scan before the stage; on under the supply-chain group unless false.
-    scan: z.union([z.boolean(), z.object({ db: z.string().min(1).optional(), imageScanner: z.literal("wiz").optional(), schedule: z.string().regex(/^\S+(?: \S+){4}$/, "a cron expression of five fields, such as \"0 5 * * 1\"").optional() }).strict()]).optional(),
+    scan: z.union([z.boolean(), z.object({ db: z.string().min(1).optional(), imageScanner: z.literal("wiz").optional(), dbMaxAgeHours: z.number().positive().optional(), schedule: z.string().regex(/^\S+(?: \S+){4}$/, "a cron expression of five fields, such as \"0 5 * * 1\"").optional() }).strict()]).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
     version: z.object({
       packages: z.array(z.string().min(1)).min(1).optional(),
@@ -678,7 +678,10 @@ export interface ChantConfig {
      * every SBOM the publish attaches goes through the gate `vulnPolicy`
      * configures, and a blocking finding stops the publish before anything is
      * pushed. On by default under the `supply-chain` group; `false` turns it
-     * off there. See ./lifecycle/publish-scan.ts.
+     * off there. `{ dbMaxAgeHours }` refuses a publish whose scanner database
+     * was built longer ago than that (`publish-scan-db-stale`, #5464); under a
+     * security profile the shorter of it and the profile's hours applies. See
+     * ./lifecycle/publish-scan.ts.
      */
     scan?: import("./lifecycle/publish-scan").ReleaseScanConfig;
     /**

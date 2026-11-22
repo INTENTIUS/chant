@@ -375,6 +375,13 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `security-runner-start-no-key` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json lists no key under runners for a provisioner to sign runner-start statements with. |
 | `security-runner-start-no-role` | finding, `check` | `WSP165`: under isolated-runners, no principal under runners in .chant/trust.json holds the runner role. |
 | `security-trust-unreadable` | finding, `check` | `WSP165`: under isolated-runners, .chant/trust.json can't be read, so no runner-start statement can be checked. |
+| `profile-retention-short` | finding, `check` | `WSP166` or `WSP167`: under a security profile, `retention.changeSets.days` or `retention.releases.days` is unset or below the profile's days. |
+| `profile-gate-not-human` | finding, `check` | `WSP166` or `WSP167`: under a security profile, the release gate or a gate an apply job names is missing from `identity.gates`, names no class, names a class an agent, runner or service principal holds, or sets `agentPassesAlone`. |
+| `profile-scan-off` | finding, `check` | `WSP166` or `WSP167`: under a security profile, a `chant.config.ts` sets `release.scan: false`. |
+| `profile-scan-db-unbounded` | finding, `check` | `WSP166` or `WSP167`: under a security profile, `release.scan.db` is set with no `dbMaxAgeHours`, or `dbMaxAgeHours` is above the profile's hours. |
+| `profile-signing-off` | finding, `check` | `WSP166` or `WSP167`: under a security profile, a `chant.config.ts` sets `release.signing: false`. |
+| `profile-signing-module` | finding, `check` | `WSP166` or `WSP167`: under a security profile, a `chant.config.ts` signs images or forge assets keylessly or with a cosign key and names no `CHANT_COSIGN` build. |
+| `profile-runner-key-eddsa` | finding, `check` | `WSP166` or `WSP167`: under a security profile, `.chant/trust.json` lists an Ed25519 key under `runners` or `local.keys`. |
 | `ci-workflow-green-undeclared` | finding, `check` | `WSP151`: under ci.workflow, the declaration has no ci.green block, so no commit gets a verdict and no release can be cut. |
 | `ci-workflow-no-pre-merge` | finding, `check` | `WSP151`: under ci.workflow, ci.green.preMerge names no phase, so nothing says which checks run before the branch moves. |
 | `ci-workflow-apply-in-green` | finding, `check` | `WSP151`: under ci.workflow, a phase in ci.green.require matches an apply job, which would wait on its own verdict. |

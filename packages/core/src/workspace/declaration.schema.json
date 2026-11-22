@@ -456,9 +456,9 @@
     "security": {
       "type": "array",
       "uniqueItems": true,
-      "description": "The security groups the workspace opts into (#4168), for every member; a member's own security adds to them. With none, a security feature the workspace has not turned on never refuses, warns or hides anything. verified-releases: release publish and promote --release take only a verified release. supply-chain: a publish without OIDC provenance warns, and a target with no SBOM source is refused. who-ran-it: ci tick needs a runner key. review-rules: pr-apply requires a forge review. isolated-runners: an apply job requires a runner-start statement. workspace check reports what a declared group lacks (WSP161 to WSP165). Added in schema 1 by chant 0.124.33, so a declaration that uses it sets minReader to 0.124.33 or newer.",
+      "description": "The security groups the workspace opts into (#4168), for every member; a member's own security adds to them. With none, a security feature the workspace has not turned on never refuses, warns or hides anything. verified-releases: release publish and promote --release take only a verified release. supply-chain: a publish without OIDC provenance warns, and a target with no SBOM source is refused. who-ran-it: ci tick needs a runner key. review-rules: pr-apply requires a forge review. isolated-runners: an apply job requires a runner-start statement. workspace check reports what a declared group lacks (WSP161 to WSP165). It may also name a security profile, here and not on a member: fedramp-moderate or cccs-medium turns on every group, keeps change sets and releases for at least 90 days in lifecycle gc, refuses a publish whose scanner database is older than 24 hours, and adds its own check (WSP166, WSP167); a profile reports evidence toward controls and does not decide whether they are met. Added in schema 1 by chant 0.124.33, so a declaration that uses it sets minReader to 0.124.33 or newer; a profile is read by the chant release that carries SECURITY_PROFILES_FLOOR (@intentius/chant/workspace/security-profiles).",
       "items": {
-        "enum": ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners"]
+        "enum": ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners", "fedramp-moderate", "cccs-medium"]
       }
     }
   },

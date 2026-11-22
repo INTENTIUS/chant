@@ -351,6 +351,7 @@ export default defineConfig({
 						{ label: 'Publish Targets', slug: 'reference/publish-targets' },
 						{ label: 'Release Catalog', slug: 'reference/release-catalog' },
 						{ label: 'Security Features', slug: 'reference/security-features' },
+						{ label: 'Security Profiles', slug: 'reference/security-profiles' },
 						{ label: 'Signatures and Crypto Modules', slug: 'reference/crypto-modules' },
 						{ label: 'CI Workflows', slug: 'reference/ci-workflows' },
 						{ label: 'CI Product Config Keys', slug: 'reference/ci-product-config' },

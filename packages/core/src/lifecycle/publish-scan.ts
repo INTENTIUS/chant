@@ -73,7 +73,7 @@ export const RELEASE_SCAN_FLOOR = NEXT_RELEASE;
  * `schedule` is a cron expression: `chant release workflow` then writes a
  * second workflow that runs `chant release scan --deployed` on it (#5466).
  */
-export type ReleaseScanConfig = boolean | { db?: string; imageScanner?: "wiz"; schedule?: string };
+export type ReleaseScanConfig = boolean | { db?: string; imageScanner?: "wiz"; dbMaxAgeHours?: number; schedule?: string };
 
 /** Whether a publish scans, and why. */
 export interface ScanSetting {
@@ -153,6 +153,8 @@ export interface ScanContext {
   policy: Partial<VulnPolicy>;
   /** The VEX documents `vulnPolicy.vexSources` names, read. */
   vex: string[];
+  /** The oldest database the publish takes (#5464): `release.scan.dbMaxAgeHours`, or a security profile's hours. Absent, any. */
+  dbAge?: import("../workspace/security-profiles").ScanDatabaseBound | null;
 }
 
 /** What the scan of one subject found. */

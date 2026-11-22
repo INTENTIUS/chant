@@ -28,6 +28,11 @@
  *   job (#4147), as `--require-runner-start` does, and a generated
  *   pull-request pipeline passes the flag. A `--local` run is exempt.
  *
+ * A security profile (`fedramp-moderate`, `cccs-medium`, #5464,
+ * ./security-profiles.ts) in the top-level list turns on every group and
+ * adds checks of its own; {@link securityGroupsOf} expands it, so a reader
+ * that asks for a group needs to know nothing of profiles.
+ *
  * Each feature still turns on alone: `identity.gates.release`,
  * `--require-provenance`, `--require-review`, `ci.green.signedSince`.
  * `chant workspace check` reports what a declared group still lacks
@@ -39,10 +44,14 @@ import { relative, sep } from "node:path";
 import type { Declaration } from "./declaration";
 import { memberHolding } from "./record-assets";
 import { scopeSource, type ScopeSource } from "./write-scope";
+import { groupsOfEntry, SECURITY_PROFILES, type SecurityProfile } from "./security-profiles";
 
 export const SECURITY_GROUPS = ["verified-releases", "supply-chain", "who-ran-it", "review-rules", "isolated-runners"] as const;
 
 export type SecurityGroup = (typeof SECURITY_GROUPS)[number];
+
+/** What the declaration's top-level `security` may name: a group, or a profile (#5464) that turns groups on. A member's own list names groups only. */
+export type SecurityEntry = SecurityGroup | SecurityProfile;
 
 /**
  * The groups `declaration` turns on for `member` (a member name): the
@@ -51,7 +60,8 @@ export type SecurityGroup = (typeof SECURITY_GROUPS)[number];
  */
 export function securityGroupsOf(declaration: Pick<Declaration, "security" | "members"> | null | undefined, member: string | null = null): ReadonlySet<SecurityGroup> {
   const own = member === null ? [] : (declaration?.members?.find((m) => m.name === member)?.security ?? []);
-  return new Set([...(declaration?.security ?? []), ...own]);
+  // #5464: a profile turns on its groups.
+  return new Set([...(declaration?.security ?? []), ...own].flatMap((e) => groupsOfEntry(e)));
 }
 
 /** The member of `source`'s declaration whose directory holds `cwd`, or null. */
@@ -92,6 +102,8 @@ export interface SecurityFeature {
   group: SecurityGroup | null;
   /** The `workspace check` reason codes that report it missing under its group. */
   codes: readonly string[];
+  /** The security profiles that turn it on (#5464) when it has no group: a profile turns on every group, so a feature with a group is on under each profile too. */
+  profiles?: readonly SecurityProfile[];
 }
 
 /**
@@ -125,6 +137,12 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Identified attribution", byDefault: "off: `any`", setting: "`identity.attribution: \"identified\"`", group: "review-rules", codes: ["security-attribution-any"] },
   { feature: "Signed approvals", byDefault: "off", setting: "`identity.gates.<gate>`", group: "review-rules", codes: ["security-gate-unsigned"] },
   { feature: "Apply jobs require a runner-start statement", byDefault: "off", setting: "`--require-runner-start`", group: "isolated-runners", codes: ["security-runner-start-no-key", "security-runner-start-no-role", "security-trust-unreadable"] },
+  // #5464: what a security profile adds beyond the groups.
+  { feature: "`chant lifecycle gc` keeps change sets and releases for at least the profile's days", byDefault: "off: `retention` may be any number of days", setting: "`retention` in `chant.workspace.json`", group: null, codes: ["profile-retention-short"], profiles: SECURITY_PROFILES },
+  { feature: "Release and apply gates take approvals from people", byDefault: "off: a gate may name any class or none", setting: "`identity.gates.<gate>` with `class: \"human\"`", group: null, codes: ["profile-gate-not-human"], profiles: SECURITY_PROFILES },
+  { feature: "Publish refuses a scanner database older than a bound", byDefault: "off: the scan reads whatever database it has", setting: "`release.scan.dbMaxAgeHours`", group: null, codes: ["profile-scan-off", "profile-scan-db-unbounded"], profiles: SECURITY_PROFILES },
+  { feature: "Signatures made in a crypto module the team names", byDefault: "off: the upstream cosign build signs", setting: "`release.signing.kms`, or `CHANT_COSIGN` in the release config", group: null, codes: ["profile-signing-off", "profile-signing-module"], profiles: SECURITY_PROFILES },
+  { feature: "ECDSA P-256 runner keys", byDefault: "off: Ed25519 and P-256 keys are both taken", setting: "`chant ci serve --setup-key --key-type ecdsa-p256`", group: null, codes: ["profile-runner-key-eddsa"], profiles: SECURITY_PROFILES },
   { feature: "Secrets file", byDefault: "off", setting: "`--secrets`", group: null, codes: [] },
   { feature: "Env allowlist and log redaction", byDefault: "on: `ci run`'s contract, a listed exception", setting: "`--pass-env`", group: null, codes: [] },
   // #4295: the plan job's steps never hold a forge token; the plan-note job posts. Part of the generated pipeline, so nothing turns it on.
@@ -135,6 +153,9 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
 
 /** The reference page's table of {@link SECURITY_FEATURES}, as markdown. */
 export function securityFeatureTable(): string {
-  const rows = SECURITY_FEATURES.map((f) => `| ${f.feature} | ${f.byDefault} | ${f.setting} | ${f.group ? `\`${f.group}\`` : "none"} | ${f.codes.map((c) => `\`${c}\``).join(", ") || "none"} |`);
-  return ["| Feature | Default | Turns it on alone | Group | Checked as |", "|---|---|---|---|---|", ...rows].join("\n");
+  const rows = SECURITY_FEATURES.map((f) => {
+    const on = f.group ? `\`${f.group}\`` : f.profiles?.length ? f.profiles.map((p) => `\`${p}\``).join(", ") : "none";
+    return `| ${f.feature} | ${f.byDefault} | ${f.setting} | ${on} | ${f.codes.map((c) => `\`${c}\``).join(", ") || "none"} |`;
+  });
+  return ["| Feature | Default | Turns it on alone | Group or profile | Checked as |", "|---|---|---|---|---|", ...rows].join("\n");
 }
