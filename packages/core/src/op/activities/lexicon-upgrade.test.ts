@@ -10,6 +10,8 @@ import {
   computeBumpedVersion,
   bumpPackageJsonVersion,
   lexiconUpgradeIssueMarker,
+  fitUpgradeBody,
+  MAX_UPGRADE_BODY_CHARS,
   type CheckPinnedFn,
   type CheckRollingFn,
   type BumpPackageVersionFn,
@@ -579,6 +581,56 @@ describe("lexiconUpgrade pull-request mode leaves untracked files alone (#5499)"
   test("pops nothing when there was nothing to stash, so an older stash is not taken", async () => {
     const calls = await runWithStash("No local changes to save\n");
     expect(calls).not.toContain("git stash pop");
+  });
+});
+
+describe("an upgrade summary longer than a forge accepts (#5500)", () => {
+  // gcp v1.152.0 to v1.161.0 produced a 127,025-character delta: 1248 lines
+  // of added resources.
+  const hugeDelta = Array.from({ length: 1248 }, (_, i) => `  + Resource${i} [resource] (GCP::Service::Resource${i})`).join("\n").padEnd(127_025, "x");
+
+  test("the pull request body gh pr create is given stays under GitHub's 65,536-character limit", async () => {
+    const lexiconDir = mkdtempSync(join(tmpdir(), "chant-test-lexicon-body-"));
+    writeFileSync(join(lexiconDir, "package.json"), JSON.stringify({ version: "0.13.1" }) + "\n", "utf-8");
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/5", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    const r = await lexiconUpgrade({
+      lexicon: "k8s",
+      mode: "pull-request",
+      lexiconDir,
+      _checkPinned: vi.fn(async () =>
+        pinnedResult({ validation: { ...pinnedResult().validation!, deltaText: hugeDelta } }),
+      ),
+      _applyBump: vi.fn(() => ({ filePath: join(lexiconDir, "versions.ts") })),
+      _bumpPackageVersion: vi.fn(),
+      _forge: null,
+      _gh: gh,
+    });
+    const create = calls.find((c) => c.startsWith("gh pr create"));
+    expect(create).toBeDefined();
+    expect(create!.length).toBeLessThan(65_536);
+    expect(r.summary.length).toBeLessThanOrEqual(MAX_UPGRADE_BODY_CHARS);
+    expect(r.summary).toContain("## Lexicon upgrade: k8s");
+    expect(r.summary).toMatch(/characters of this summary are not shown/);
+  });
+
+  test("fitUpgradeBody leaves a short body alone", () => {
+    expect(fitUpgradeBody("short", "gcp")).toBe("short");
+  });
+
+  test("fitUpgradeBody cuts at a line boundary, closes an open fence and counts what it left out", () => {
+    const body = ["## head", "```", ...Array.from({ length: 50 }, (_, i) => `line ${i}`), "```"].join("\n");
+    const fitted = fitUpgradeBody(body, "gcp", 400);
+    expect(fitted.length).toBeLessThanOrEqual(400);
+    const kept = fitted.slice(0, fitted.indexOf("\n\n_"));
+    expect(kept.match(/^```/gm)?.length).toBe(2);
+    expect(kept.split("\n").slice(0, -1).every((l) => body.split("\n").includes(l))).toBe(true);
+    const omitted = Number(/_(\d+) characters/.exec(fitted)![1]);
+    expect(kept.length - "\n```".length + omitted).toBe(body.length);
   });
 });
 
