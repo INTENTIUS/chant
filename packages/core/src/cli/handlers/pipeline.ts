@@ -17,6 +17,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { GENERATED_MARKER } from "../../discovery/files";
+import { followOnRunFromEnv } from "../../op/follow-on-run";
 import { OP_WAVES_SPEC_AT_ENV } from "../../op/op-waves-render-spec";
 import { readMemberPipeline, readPipelineAt, type PipelineRead } from "../../pipeline/read";
 import { stageWavesSpec } from "../../pipeline/stages";
@@ -32,6 +33,17 @@ function refused(read: Extract<PipelineRead, { status: "refused" }>): number {
   return 1;
 }
 
+/**
+ * Whether the run renders the spec inside a follow-on run: one that carries a
+ * commit, or a wave after the stage's last (rest) wave. A follow-on, or a run
+ * resumed by a dispatch, has none of the first run's jobs, so a release cut
+ * there must not name them as its own (terragucci#1531).
+ */
+export function renderedInFollowOn(lastWave: number, env: Record<string, string | undefined> = process.env): boolean {
+  const { wave, commit } = followOnRunFromEnv(env);
+  return commit !== undefined || (wave !== undefined && Number(wave) > lastWave);
+}
+
 export async function runPipelineSpec(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const at = args.at ?? process.env[OP_WAVES_SPEC_AT_ENV] ?? undefined;
@@ -44,7 +56,9 @@ export async function runPipelineSpec(ctx: CommandContext): Promise<number> {
   if (read.status === "refused") return refused(read);
   try {
     if (args.ownRunJobs && !args.lockStage) throw new Error("--own-run-jobs goes with --stage: it names the jobs that stage's release-cut hook counts");
-    const out = args.lockStage ? stageWavesSpec(read.spec, args.lockStage, args.ownRunJobs ? { ownRunJobs: args.ownRunJobs } : {}) : read.spec;
+    let out = args.lockStage ? stageWavesSpec(read.spec, args.lockStage, args.ownRunJobs ? { ownRunJobs: args.ownRunJobs } : {}) : read.spec;
+    // A follow-on or resumed run has none of the first run's jobs: the cut then names no own-run jobs and needs a check from another workflow.
+    if (args.lockStage && args.ownRunJobs && renderedInFollowOn((out as { waves: unknown[] }).waves.length)) out = stageWavesSpec(read.spec, args.lockStage);
     console.log(JSON.stringify(out, null, 2));
     return 0;
   } catch (err) {

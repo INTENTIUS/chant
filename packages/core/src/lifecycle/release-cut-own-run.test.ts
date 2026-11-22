@@ -20,6 +20,7 @@ import { releaseCutHook, releaseCutOwnRunJobs, stageWavesSpec } from "../pipelin
 import { generatePipeline, pipelineSpecCommand } from "../pipeline/generate";
 import { pipelineFromConfig } from "../pipeline/product";
 import { asPipelineSpec } from "../pipeline/spec";
+import { renderedInFollowOn } from "../cli/handlers/pipeline";
 import { describeGreen } from "../cli/handlers/release";
 import { parseArgs } from "../cli/parse-args";
 import { TestRepo } from "../workspace/trust/test-repo";
@@ -293,6 +294,18 @@ describe("the pipeline's release-cut hook names the jobs", () => {
     } as never;
     await generatePipeline(one, "github", {}, plugin);
     expect(commands).toEqual([pipelineSpecCommand("dev")]);
+  });
+
+  test("the apply run's render command carries --own-run-jobs, and a follow-on or resumed run's render drops it", async () => {
+    // Run at the first run: the wave is the rest wave's own, no commit.
+    expect(renderedInFollowOn(2, {})).toBe(false);
+    expect(renderedInFollowOn(2, { CHANT_WAVES_WAVE: "2" })).toBe(false);
+    // A follow-on of a decided head names a later wave; a push's names the commit it goes on with.
+    expect(renderedInFollowOn(2, { CHANT_WAVES_WAVE: "3" })).toBe(true);
+    expect(renderedInFollowOn(2, { CHANT_WAVES_WAVE: "2", CHANT_WAVES_COMMIT: "a".repeat(40) })).toBe(true);
+    const spec = asPipelineSpec(pipelineFromConfig({ name: "shop", promotion: ["dev"], defaults: { op: "shop", step: { kind: "pulumi-up", stack: "{target}" } }, waves: { dev: [{ name: "a", runs: [{ target: "a" }] }, { name: "b", runs: [{ target: "b" }] }] } }));
+    // Without the flag the cut hook counts no own-run jobs, so it needs a check from another workflow.
+    expect(stageWavesSpec(spec, "dev").waves[1]!.hooks?.after?.apply?.[0]!.command).not.toContain("--own-run-jobs");
   });
 
   test("--own-run-jobs takes names joined by commas", () => {
