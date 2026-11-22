@@ -41,6 +41,7 @@ import { IN_TOTO_STATEMENT_TYPE } from "./publish-attachments";
 import type { Redactor } from "./publish-credentials";
 import type { SecurityGroup } from "../workspace/security";
 import { PublishTargetError, isForgejoJob, type PublishContext } from "./release-publish";
+import type { PinnedBase } from "./dockerfile-pins";
 import { keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningConfig } from "./signing-config";
 
 export { isForgejoJob, keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningConfig };
@@ -49,6 +50,12 @@ export { isForgejoJob, keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningCo
 export const SIGSTORE_BUNDLE_MEDIA_TYPE = "application/vnd.dev.sigstore.bundle.v0.3+json";
 /** The predicate type of cosign's image signature statement. */
 export const COSIGN_SIGN_PREDICATE = "https://sigstore.dev/cosign/sign/v1";
+/** The predicate type `cosign attest --type spdxjson` writes for an SPDX SBOM (#5468). */
+export const SPDX_PREDICATE = "https://spdx.dev/Document";
+/** The predicate type `cosign attest --type cyclonedx` writes for a CycloneDX SBOM (#5468). */
+export const CYCLONEDX_PREDICATE = "https://cyclonedx.org/bom";
+/** The predicate type of cosign's vulnerability scan attestation (#5468). */
+export const COSIGN_VULN_PREDICATE = "https://cosign.sigstore.dev/attestation/vuln/v1";
 /** The predicate type of SLSA provenance v1. */
 export const SLSA_PROVENANCE_PREDICATE = "https://slsa.dev/provenance/v1";
 /** What a file's signature bundle is named after: `<file>.sigstore.json`. */
@@ -273,7 +280,7 @@ function originUrl(cwd: string | undefined): string | null {
  * Each adds `internalParameters.chant`, the release's digest, label and
  * member, and the source it resolves is the release's commit.
  */
-export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "release" | "label"> & { cwd?: string }, subjects: ReadonlyArray<{ name: string; digest: string }>): InTotoStatement {
+export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "release" | "label"> & { cwd?: string }, subjects: ReadonlyArray<{ name: string; digest: string }>, o: { bases?: readonly PinnedBase[] } = {}): InTotoStatement {
   const env = ctx.env;
   const chant = { releaseDigest: ctx.release.releaseDigest, label: ctx.label, member: ctx.release.member };
   const kind = releaseBuildKind(env);
@@ -346,7 +353,22 @@ export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "relea
       },
     };
   }
+  // #5468: each base image the Dockerfile names by digest is a dependency of the build, beside the source commit.
+  if (o.bases && o.bases.length > 0) {
+    const def = predicate.buildDefinition as { resolvedDependencies: unknown[] };
+    def.resolvedDependencies.push(...o.bases.map(baseDependency));
+  }
   return { _type: IN_TOTO_STATEMENT_TYPE, subject: subjects.map(subjectOf), predicateType: SLSA_PROVENANCE_PREDICATE, predicate };
+}
+
+/**
+ * A base image as a SLSA resolved dependency (#5468): a `pkg:docker` URI
+ * that names the repository (host included) and the digest, the digest as
+ * the descriptor's own, and the reference as the Dockerfile resolves it.
+ */
+export function baseDependency(b: PinnedBase): { uri: string; digest: Record<string, string>; name: string } {
+  const [alg, hex] = b.digest.split(":") as [string, string];
+  return { uri: `pkg:docker/${b.repository}@${b.digest}`, digest: { [alg]: hex }, name: b.reference };
 }
 
 /** What a key-signed bundle names in place of a certificate (#5458): the public key from the member that verifies it. */
@@ -502,7 +524,8 @@ export function cosignSigner(env: NodeJS.ProcessEnv, redactor: Redactor, cosign 
 }
 
 /** The `--type` cosign takes for a predicate type: its short name for SLSA provenance v1, else the URI. */
-const cosignType = (predicateType: string): string => (predicateType === SLSA_PROVENANCE_PREDICATE ? "slsaprovenance1" : predicateType);
+const COSIGN_TYPES: Record<string, string> = { [SLSA_PROVENANCE_PREDICATE]: "slsaprovenance1", [SPDX_PREDICATE]: "spdxjson", [CYCLONEDX_PREDICATE]: "cyclonedx", [COSIGN_VULN_PREDICATE]: "vuln" };
+export const cosignType = (predicateType: string): string => COSIGN_TYPES[predicateType] ?? predicateType;
 const hexOf = (digest: string): string => (digest.includes(":") ? digest.split(":")[1]! : digest);
 
 /** How cosign verifies (#5458): `tlog: false` for a signature that went to no transparency log, and a private instance's trusted root (an absolute path). */

@@ -91,12 +91,19 @@ function substitute(s: string, values: ReadonlyMap<string, string>): { text: str
   return { text, missing };
 }
 
-/**
- * Each `FROM` of `text` that is not pinned by digest. `args` are the build
- * arguments the build passes, which replace an `ARG`'s default.
- */
-export function unpinnedFroms(text: string, args: Readonly<Record<string, string>> = {}): UnpinnedFrom[] {
-  const out: UnpinnedFrom[] = [];
+/** One `FROM` of a Dockerfile, read: what it names after `ARG` defaults, and whether that is pinned by digest. */
+interface ReadFrom {
+  line: number;
+  image: string;
+  resolved: string;
+  /** Null when the `FROM` passes: pinned, an earlier stage, or `scratch`. */
+  problem: Omit<UnpinnedFrom, "line"> | null;
+  /** True when it names an image by digest, as opposed to a stage or `scratch`. */
+  pinnedImage: boolean;
+}
+
+function readFroms(text: string, args: Readonly<Record<string, string>>): ReadFrom[] {
+  const out: ReadFrom[] = [];
   const values = new Map<string, string>();
   const stages = new Set<string>();
   let seenFrom = false;
@@ -115,9 +122,52 @@ export function unpinnedFroms(text: string, args: Readonly<Record<string, string
     if (ins.keyword !== "FROM") continue;
     seenFrom = true;
     const { image, as } = fromImage(ins.value);
-    const found = checkFrom(image, values, stages);
+    const { text: resolved } = image.includes("$") ? substitute(image, values) : { text: image };
+    const problem = checkFrom(image, values, stages);
+    const isStage = resolved === "" || resolved.toLowerCase() === "scratch" || stages.has(resolved.toLowerCase());
+    out.push({ line: ins.line, image, resolved, problem, pinnedImage: problem === null && !isStage && DIGEST_PINNED.test(resolved) });
     if (as) stages.add(as.toLowerCase());
-    if (found) out.push({ line: ins.line, ...found });
+  }
+  return out;
+}
+
+/**
+ * Each `FROM` of `text` that is not pinned by digest. `args` are the build
+ * arguments the build passes, which replace an `ARG`'s default.
+ */
+export function unpinnedFroms(text: string, args: Readonly<Record<string, string>> = {}): UnpinnedFrom[] {
+  return readFroms(text, args).flatMap((f) => (f.problem ? [{ line: f.line, ...f.problem }] : []));
+}
+
+/** A base image a Dockerfile names by digest (#5468). */
+export interface PinnedBase {
+  /** The line the instruction starts on, from 1. */
+  line: number;
+  /** The reference after `ARG` defaults, such as `cgr.dev/acme/node:22@sha256:...`. */
+  reference: string;
+  /** The repository with no tag and no digest, such as `cgr.dev/acme/node`. */
+  repository: string;
+  /** `sha256:<64 hex>`. */
+  digest: string;
+}
+
+/**
+ * Each `FROM` of `text` that names an image by digest, in file order, once
+ * per image. A base not pinned, a stage and `scratch` are left out, which is
+ * what {@link unpinnedFroms} reports and what a build records as its
+ * dependencies. `args` are the build arguments the build passes.
+ */
+export function pinnedFroms(text: string, args: Readonly<Record<string, string>> = {}): PinnedBase[] {
+  const seen = new Set<string>();
+  const out: PinnedBase[] = [];
+  for (const f of readFroms(text, args)) {
+    if (!f.pinnedImage || seen.has(f.resolved)) continue;
+    seen.add(f.resolved);
+    const at = f.resolved.lastIndexOf("@");
+    const name = f.resolved.slice(0, at);
+    const lastSlash = name.lastIndexOf("/");
+    const colon = name.indexOf(":", lastSlash + 1);
+    out.push({ line: f.line, reference: f.resolved, repository: colon < 0 ? name : name.slice(0, colon), digest: f.resolved.slice(at + 1) });
   }
   return out;
 }

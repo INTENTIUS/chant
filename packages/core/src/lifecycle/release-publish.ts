@@ -275,6 +275,8 @@ export interface PublishContext extends PublishContextBase {
   scan?: import("./publish-scan").ScanContext | null;
   /** What the scan before the stage found (#5446), set once it ran: the OCI target attaches an image's findings beside its SBOM. */
   scanReport?: import("./publish-scan").ScanReport;
+  /** The member's `release.images`, archives placed (#5468): a signed publish reads each Dockerfile's bases from them, to name them in the SLSA statement. */
+  releaseImages?: readonly import("./release-images").ReleaseImageDeclaration[];
 }
 
 /** A target refused or failed. The message never holds a credential. */
@@ -559,6 +561,8 @@ export interface PublishPlan {
   scan?: import("./publish-scan").ScanContext | null;
   /** The warning printed when the `supply-chain` group asks for the scan and `release.scan: false` turns it off. */
   scanWarning?: string | null;
+  /** The member's `release.images`, archives placed (#5468). */
+  images?: readonly import("./release-images").ReleaseImageDeclaration[];
 }
 
 /**
@@ -794,7 +798,9 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning, scan, scanWarning: scanSetting.warning };
+  const { placeReleaseImages } = await import("./release-images");
+  const images = fullConfig?.release?.images ? placeReleaseImages(fullConfig.release.images, fullConfig.release.artifacts ?? []) : undefined;
+  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning, scan, scanWarning: scanSetting.warning, ...(images ? { images } : {}) };
 }
 
 /**
@@ -930,6 +936,7 @@ export function publishContext(plan: PublishPlan, req: { cwd: string; env?: Node
     requireSbom: plan.requireSbom,
     signing: plan.signing,
     scan: plan.scan ?? null,
+    ...(plan.images ? { releaseImages: plan.images } : {}),
   };
 }
 

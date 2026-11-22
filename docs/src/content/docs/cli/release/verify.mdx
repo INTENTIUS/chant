@@ -47,7 +47,7 @@ gh release download release/v1.4.0 -D /tmp/v1.4.0
 chant release verify v1.4.0 --sigstore --assets /tmp/v1.4.0
 ```
 
-This check reads the registry and Sigstore's trust root, so it is not offline. It exits 1 with:
+The bundles it checks for an image are its cosign signature, its SLSA provenance, and its SBOM and scan-findings attestations, each by its predicate type. This check reads the registry and Sigstore's trust root, so it is not offline. It exits 1 with:
 
 | Code | When |
 |---|---|

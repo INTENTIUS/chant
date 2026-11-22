@@ -30,6 +30,10 @@ import {
   SIGSTORE_BUNDLE_MEDIA_TYPE,
   SLSA_BUNDLE_FILE,
   SLSA_PROVENANCE_PREDICATE,
+  COSIGN_VULN_PREDICATE,
+  CYCLONEDX_PREDICATE,
+  SPDX_PREDICATE,
+  cosignType,
   resolveSigning,
   signingIdentity,
   slsaProvenanceStatement,
@@ -38,6 +42,9 @@ import {
   type SigstoreVerifier,
 } from "./publish-signing";
 import { createPublishTargets } from "./publish-targets";
+import { pinnedFroms } from "./dockerfile-pins";
+import { scanBeforeStage } from "./publish-scan";
+import { fakeReleaseScanner } from "./__fixtures__/scan-fakes";
 import { detectProvenance, preparePublish, publishContext, runPublish, type PublishContext } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
 import { verifySigstore } from "./release-verify";
@@ -189,6 +196,27 @@ describe("the environment a release is built in (#5458)", () => {
     FORGEJO_EVENT_NAME: "push",
   };
 
+  test("the SLSA statement lists the pinned bases of a Dockerfile as dependencies, whatever builds it, and cosign verifies the new predicates by their short names", () => {
+    const dir = temp();
+    const text = [`ARG BASE=cgr.dev/acme/node:22@sha256:${"c".repeat(64)}`, "FROM ${BASE} AS build", "FROM alpine:3.20", `FROM docker.io/library/debian@sha256:${"d".repeat(64)}`, "FROM build", "FROM scratch"].join("\n");
+    const bases = pinnedFroms(text);
+    expect(bases.map((b) => [b.repository, b.digest])).toEqual([
+      ["cgr.dev/acme/node", `sha256:${"c".repeat(64)}`],
+      ["docker.io/library/debian", `sha256:${"d".repeat(64)}`],
+    ]);
+    for (const env of [GITHUB_ENV, {}, { [RUNNER_FINGERPRINT_ENV]: "SHA256:abc" }]) {
+      const s = slsaProvenanceStatement(context(dir, { env }), [{ name: "api", digest: `sha256:${"a".repeat(64)}` }], { bases });
+      const deps = (s.predicate as { buildDefinition: { resolvedDependencies: unknown[] } }).buildDefinition.resolvedDependencies;
+      expect(deps).toHaveLength(3);
+      expect(deps.slice(1)).toEqual([
+        { uri: `pkg:docker/cgr.dev/acme/node@sha256:${"c".repeat(64)}`, digest: { sha256: "c".repeat(64) }, name: `cgr.dev/acme/node:22@sha256:${"c".repeat(64)}` },
+        { uri: `pkg:docker/docker.io/library/debian@sha256:${"d".repeat(64)}`, digest: { sha256: "d".repeat(64) }, name: `docker.io/library/debian@sha256:${"d".repeat(64)}` },
+      ]);
+    }
+    expect((slsaProvenanceStatement(context(dir, { env: GITHUB_ENV }), [{ name: "api", digest: `sha256:${"a".repeat(64)}` }]).predicate as { buildDefinition: { resolvedDependencies: unknown[] } }).buildDefinition.resolvedDependencies).toHaveLength(1);
+    expect([SLSA_PROVENANCE_PREDICATE, SPDX_PREDICATE, CYCLONEDX_PREDICATE, COSIGN_VULN_PREDICATE].map(cosignType)).toEqual(["slsaprovenance1", "spdxjson", "cyclonedx", "vuln"]);
+  });
+
   test("a Forgejo runner is not taken for GitHub, by FORGEJO_ACTIONS, GITEA_ACTIONS, or an older runner's API URL", () => {
     expect(releaseBuildKind(FORGEJO_ENV)).toBe("forgejo");
     expect(releaseBuildKind({ GITHUB_ACTIONS: "true", GITEA_ACTIONS: "true" })).toBe("forgejo");
@@ -257,17 +285,19 @@ describe("the OCI target", () => {
       expect(plan.filter((i) => i.attachment === "signature" || i.attachment === "attestation")).toEqual([
         { name: "cosign signature", destination: `${repository}, a referrer of the image, signed when staged`, attachment: "signature", signs: [{ name: `${repository}@${digest}`, digest }], predicateType: COSIGN_SIGN_PREDICATE, sigstore: IDENTITY },
         { name: "SLSA provenance", destination: `${repository}, a referrer of the image, signed when staged`, attachment: "attestation", signs: [{ name: `${repository}@${digest}`, digest }], predicateType: SLSA_PROVENANCE_PREDICATE, sigstore: IDENTITY },
+        { name: "SBOM attestation", destination: `${repository}, a referrer of the image, signed when staged`, attachment: "attestation", signs: [{ name: `${repository}@${digest}`, digest }], predicateType: SPDX_PREDICATE, sigstore: IDENTITY },
       ]);
       expect(signer.calls).toEqual([]);
 
       const staged = await target!.stage(ctx);
-      expect(signer.calls).toEqual([`statement ${COSIGN_SIGN_PREDICATE}`, `statement ${SLSA_PROVENANCE_PREDICATE}`]);
+      expect(signer.calls).toEqual([`statement ${COSIGN_SIGN_PREDICATE}`, `statement ${SLSA_PROVENANCE_PREDICATE}`, `statement ${SPDX_PREDICATE}`]);
       // No tag points at the image yet, apart from the referrers tag.
       expect([...reg.manifests.keys()].filter((k) => !k.startsWith("sha256:"))).toEqual([referrersTagOf(digest)]);
       const index = JSON.parse(reg.manifests.get(referrersTagOf(digest))!.bytes.toString("utf-8")) as { manifests: Array<{ digest: string; artifactType: string; annotations: Record<string, string> }> };
       expect(index.manifests.map((m) => [m.artifactType, m.annotations[BUNDLE_PREDICATE_ANNOTATION]])).toEqual([
         [SIGSTORE_BUNDLE_MEDIA_TYPE, COSIGN_SIGN_PREDICATE],
         [SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE],
+        [SIGSTORE_BUNDLE_MEDIA_TYPE, SPDX_PREDICATE],
       ]);
       const sig = JSON.parse(reg.manifests.get(index.manifests[0]!.digest)!.bytes.toString("utf-8")) as { subject: { digest: string }; layers: Array<{ mediaType: string; digest: string }> };
       expect(sig.subject.digest).toBe(digest);
@@ -278,10 +308,69 @@ describe("the OCI target", () => {
 
       // A stage run again finds both and signs nothing.
       const again = await target!.stage(ctx);
-      expect(signer.calls).toHaveLength(2);
-      expect(again.items.filter((i) => i.attachment === "signature").map((i) => i.present)).toEqual([true]);
+      expect(signer.calls).toHaveLength(3);
+      expect(again.items.filter((i) => i.attachment === "signature" || i.attachment === "attestation").map((i) => i.present)).toEqual([true, true, true]);
       const published = await target!.reveal(ctx, staged);
-      expect(published.items.filter((i) => i.attachment === "attestation")).toHaveLength(1);
+      expect(published.items.filter((i) => i.attachment === "attestation")).toHaveLength(2);
+    } finally {
+      await reg.close();
+    }
+  });
+
+  test("signs the SBOM made from the layers and the scan's findings as attestations, names the Dockerfile's pinned bases in the SLSA statement, and does not sign again", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-sign-3", token: "tok-sign-3" });
+    try {
+      const dir = temp();
+      const { digest } = writeOciLayout(join(dir, "dist", "images", "api.tar-layout"));
+      const archive = "dist/images/api.tar-layout";
+      writeLockfile(dir);
+      const pinned = `sha256:${"a".repeat(64)}`;
+      writeFileSync(join(dir, "Dockerfile"), `FROM cgr.dev/acme/node:22@${pinned} AS build\nFROM alpine:3.20\nFROM build\n`);
+      const repository = `${reg.host}/acme/api`;
+      const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "oci", image: archive, repository })], {});
+      const signer = fakeSigner();
+      const scanner = fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1", "pkg:deb/debian/zlib@1.2.13"] });
+      const ctx = context(dir, {
+        env: { ...GITHUB_ENV, OCI_USERNAME: "robot", OCI_PASSWORD: "pw-sign-3" },
+        signing: { signer, identity: IDENTITY },
+        scan: { scanner, policy: {}, vex: [] },
+        releaseImages: [{ name: "api", dockerfile: "Dockerfile", archive }],
+      });
+      const report = await scanBeforeStage({ targets: [target!], ctx, scan: ctx.scan! });
+      const signed = { ...ctx, scanReport: report };
+
+      const plan = await target!.plan(signed);
+      expect(plan.filter((i) => i.attachment === "attestation").map((i) => [i.name, i.predicateType])).toEqual([
+        ["SLSA provenance", SLSA_PROVENANCE_PREDICATE],
+        ["SBOM attestation", SPDX_PREDICATE],
+        ["scan attestation", COSIGN_VULN_PREDICATE],
+      ]);
+
+      const staged = await target!.stage(signed);
+      expect(signer.calls).toEqual([`statement ${COSIGN_SIGN_PREDICATE}`, `statement ${SLSA_PROVENANCE_PREDICATE}`, `statement ${SPDX_PREDICATE}`, `statement ${COSIGN_VULN_PREDICATE}`]);
+      const index = JSON.parse(reg.manifests.get(referrersTagOf(digest))!.bytes.toString("utf-8")) as { manifests: Array<{ digest: string; annotations: Record<string, string> }> };
+      const statementOf = (predicateType: string): InTotoStatement => {
+        const m = index.manifests.find((x) => x.annotations[BUNDLE_PREDICATE_ANNOTATION] === predicateType)!;
+        const manifest = JSON.parse(reg.manifests.get(m.digest)!.bytes.toString("utf-8")) as { layers: Array<{ digest: string }> };
+        return (JSON.parse(reg.blobs.get(manifest.layers[0]!.digest)!.toString("utf-8")) as { statement: InTotoStatement }).statement;
+      };
+      // The SBOM is the predicate, over the image; the findings are cosign's vulnerability predicate.
+      expect(statementOf(SPDX_PREDICATE)).toMatchObject({ subject: [{ digest: { sha256: digest.slice(7) } }], predicate: { spdxVersion: "SPDX-2.3" } });
+      const vuln = statementOf(COSIGN_VULN_PREDICATE);
+      expect(vuln.predicate).toMatchObject({ scanner: { uri: "pkg:generic/fake-grype", version: "v0.0.1" } });
+      expect(JSON.stringify(vuln.predicate)).toContain("CVE-2026-50003");
+      // Only the base the Dockerfile pins by digest is named, once, beside the commit.
+      const slsa = statementOf(SLSA_PROVENANCE_PREDICATE).predicate as { buildDefinition: { resolvedDependencies: Array<{ uri: string; digest: Record<string, string> }> } };
+      expect(slsa.buildDefinition.resolvedDependencies.map((d) => d.uri)).toEqual([expect.stringMatching(/^git\+/), "pkg:docker/cgr.dev/acme/node@" + pinned]);
+      expect(slsa.buildDefinition.resolvedDependencies[1]!.digest).toEqual({ sha256: "a".repeat(64) });
+
+      // A stage run again finds all four bundles and signs nothing.
+      const again = await target!.stage(signed);
+      expect(signer.calls).toHaveLength(4);
+      expect(again.items.filter((i) => i.attachment === "signature" || i.attachment === "attestation").map((i) => i.present)).toEqual([true, true, true, true]);
+
+      // The record names each bundle by predicate type and what it signs, which release verify --sigstore checks.
+      expect(staged.items.filter((i) => i.attachment === "attestation").map((i) => i.predicateType)).toEqual([SLSA_PROVENANCE_PREDICATE, SPDX_PREDICATE, COSIGN_VULN_PREDICATE]);
     } finally {
       await reg.close();
     }

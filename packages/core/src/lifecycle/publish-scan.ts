@@ -489,5 +489,29 @@ export function findingsAttachment(report: ScanReport, digest: string): { name: 
   return { name: SCAN_FINDINGS_FILE, mediaType: SCAN_FINDINGS_MEDIA_TYPE, bytes: new Uint8Array(Buffer.from(`${JSON.stringify(doc, sortedJsonReplacer, 2)}\n`, "utf-8")) };
 }
 
+/**
+ * The predicate of cosign's vulnerability attestation
+ * (`https://cosign.sigstore.dev/attestation/vuln/v1`) for the image `digest`
+ * (#5468): the scanner, its version and database, and in `result` the
+ * findings document the `scan.json` referrer holds, each with what the
+ * policy made of it. Null when the report has no subject for the image. No
+ * clock is read, so the same scan gives the same predicate.
+ */
+export function vulnAttestationPredicate(report: ScanReport, digest: string): Record<string, unknown> | null {
+  const found = findingsAttachment(report, digest);
+  if (!found) return null;
+  const [tool, ...rest] = report.scanner.split(" ");
+  const version = rest.join(" ");
+  return {
+    scanner: {
+      uri: `pkg:generic/${tool}`,
+      ...(version ? { version } : {}),
+      db: { ...(report.database?.version ? { version: report.database.version } : {}), ...(report.database?.built ? { lastUpdate: report.database.built } : {}) },
+      result: JSON.parse(Buffer.from(found.bytes).toString("utf-8")) as unknown,
+    },
+    metadata: { ...(report.database?.built ? { scanFinishedOn: report.database.built } : {}) },
+  };
+}
+
 /** The target name and kind the scan's record lines are written under. */
 export const SCAN_RECORD_TARGET = { key: "scan", kind: "scan" as const, name: "scan" };
