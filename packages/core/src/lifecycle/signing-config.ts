@@ -16,7 +16,11 @@ import { z } from "zod";
  * file from the member, or `env://NAME`, a variable holding the PEM, whose
  * password is in `passwordEnv` (default `COSIGN_PASSWORD`). `publicKey` is
  * the PEM a verify checks against: required with `key`, and with `kms` in
- * place of asking the KMS. `rekor: false` writes no transparency log entry.
+ * place of asking the KMS. `fulcio` and `rekor` name a private Sigstore
+ * instance, a Fulcio (keyless only) and a Rekor, and `trustRoot` the
+ * Sigstore `trusted_root.json`, from the member, that signs and verifies
+ * against it; a private instance needs it. `rekor: false` (kms and key only)
+ * writes no transparency log entry.
  */
 export type SigningConfig =
   | boolean
@@ -28,7 +32,9 @@ export type SigningConfig =
       key?: string;
       passwordEnv?: string;
       publicKey?: string;
-      rekor?: false;
+      fulcio?: string;
+      rekor?: string | false;
+      trustRoot?: string;
     };
 
 /** The KMS schemes cosign takes a key reference in. */
@@ -77,6 +83,11 @@ export function signingConfigProblems(c: Exclude<SigningConfig, boolean>): strin
   if (c.key === undefined && c.passwordEnv !== undefined) out.push("passwordEnv is the password of a key, and no key is named");
   if (!keyed && c.publicKey !== undefined) out.push("publicKey verifies a key's signatures, and no key or kms is named");
   if (!keyed && c.rekor === false) out.push("rekor: false leaves the transparency log out, and a keyless signature needs it");
+  if (keyed && c.fulcio !== undefined) out.push(`fulcio issues keyless certificates, and ${mode} signs with no certificate`);
+  for (const [k, v] of [["fulcio", c.fulcio], ["rekor", c.rekor]] as const) {
+    if (typeof v === "string" && !/^https?:\/\/[^/]/.test(v)) out.push(`${k} ${JSON.stringify(v)} is not an http(s) URL`);
+  }
+  if ((c.fulcio !== undefined || typeof c.rekor === "string") && c.trustRoot === undefined) out.push("a private Fulcio or Rekor needs trustRoot, the trusted_root.json that signs and verifies against it");
   if (c.key !== undefined && c.key.startsWith("env://") && !/^env:\/\/[A-Za-z_][A-Za-z0-9_]*$/.test(c.key)) out.push(`key ${JSON.stringify(c.key)} is not env://NAME`);
   return out;
 }
@@ -98,7 +109,9 @@ export const SigningConfigSchema = z.union([
       key: z.string().min(1).optional(),
       passwordEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "a variable name").optional(),
       publicKey: z.string().min(1).optional(),
-      rekor: z.literal(false).optional(),
+      fulcio: z.string().min(1).optional(),
+      rekor: z.union([z.string().min(1), z.literal(false)]).optional(),
+      trustRoot: z.string().min(1).optional(),
     })
     .strict()
     .superRefine((c, ctx) => {

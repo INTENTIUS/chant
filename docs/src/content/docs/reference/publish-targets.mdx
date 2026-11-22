@@ -741,6 +741,21 @@ export default {
 
 The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, `publish-signing-key-missing` when a [key](#signing-with-a-key) or [KMS key](#signing-with-a-kms-key) can't sign, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater, cargo, maven, nuget and rubygems targets are not signed.
 
+### A private Sigstore instance
+
+A team that may not write its release identities to the public log runs its own Fulcio and Rekor. `release.signing.fulcio` and `rekor` name them, and `trustRoot` names the instance's `trusted_root.json`, committed in the member, which a private Fulcio or Rekor requires:
+
+```ts
+export default {
+  release: {
+    signing: { fulcio: "https://fulcio.sigstore.internal", rekor: "https://rekor.sigstore.internal", trustRoot: "sigstore/trusted_root.json" },
+    publish: [{ type: "oci", image: "dist/api.oci.tar", repository: "registry.internal/acme/api" }],
+  },
+};
+```
+
+cosign then signs with `--use-signing-config=false`, so it does not read public Sigstore's signing config, with `--fulcio-url`, `--rekor-url` and `--trusted-root`, and `chant release verify --sigstore` checks each bundle with `--trusted-root`. The Fulcio must trust the CI's OIDC issuer. A key or a KMS key signs with no Fulcio, and takes `rekor` and `trustRoot` to log to a private Rekor. A missing trusted root refuses the publish with `publish-signing-trust-root-missing`, the doctor reports it as `signing-trust-root`, and verify leaves each bundle unchecked.
+
 ### Signing with a key
 
 A team that can't sign with a CI job's OIDC token, such as one releasing from Forgejo, a `chant ci serve` host or an air-gapped runner, signs with a cosign key or a [KMS key](#signing-with-a-kms-key) instead. `release.signing.key` names the key, a file from the member or `env://NAME` for a variable that holds the PEM, and `publicKey` names its public half, committed in the member, which `chant release verify --sigstore` checks the bundles against:

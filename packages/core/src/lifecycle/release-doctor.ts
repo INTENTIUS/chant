@@ -343,12 +343,21 @@ async function checkSigning(
     if ("reason" in id) checks.push(missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, KEYLESS_FIX));
     else checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
   } else {
-    const refused = signingReadiness(setting, ctx.env, ctx.cwd);
+    const refused = signingReadiness({ ...setting, trustRoot: undefined }, ctx.env, ctx.cwd);
     const held = refused !== null && /not set here$/.test(refused.reason);
     const what = setting.mode === "kms" ? `the KMS key ${setting.kms}` : `the key ${setting.key}`;
     if (refused === null) checks.push({ check: "signing-key", status: "ok", message: `${why} signs with ${what}, verified with ${setting.publicKey ?? setting.kms}` });
     else if (held && ctx.environment.from === "cut") checks.push({ check: "signing-key", status: "unknown", message: `${refused.reason}; this is the cut job, and the release workflow gives the key's variables to the publish step alone, so only a run of the publish can test this` });
     else checks.push(missing(ctx, "signing-key", `${why} signs with ${what}, and ${refused.reason}`, refused.fix));
+  }
+  // #5458: a private Sigstore instance's trusted root.
+  if (setting.trustRoot) {
+    const at = [setting.fulcio ? `Fulcio ${setting.fulcio}` : null, setting.rekor ? `Rekor ${setting.rekor}` : null].filter(Boolean).join(" and ");
+    checks.push(
+      existsSync(resolve(ctx.cwd, setting.trustRoot))
+        ? { check: "signing-trust-root", status: "ok", message: `${setting.trustRoot} is the trusted root${at ? ` of ${at}` : ""}` }
+        : { check: "signing-trust-root", status: "fail", message: `release.signing.trustRoot names ${setting.trustRoot}, which is not there, so cosign can't trust the private Sigstore instance`, fix: "Commit the instance's trusted_root.json where release.signing.trustRoot names it." },
+    );
   }
   const signer = injected ?? cosignSigner(ctx.env, ctx.redactor);
   const gone = signer.unavailable();

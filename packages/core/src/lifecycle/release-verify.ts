@@ -195,7 +195,8 @@ export async function recordedSignatures(cwd: string, releaseDigest: string): Pr
  * is checked with `release.signing.publicKey`, else the KMS reference
  * (which cosign asks for the public key), else the key the publish
  * recorded, from the member, and without the transparency log when the
- * config says `rekor: false`.
+ * config says `rekor: false`. A private instance's bundles are checked
+ * against the `release.signing.trustRoot` it names.
  */
 export async function verifySigstore(req: {
   cwd: string;
@@ -214,7 +215,10 @@ export async function verifySigstore(req: {
   const config = (await loadChantConfig(req.cwd).catch(() => null))?.config.release?.signing;
   const setting = resolveSigning(config ?? true, new Set());
   const env = req.env ?? process.env;
-  const verifier = req.verifier ?? cosignVerifier(env, cosignPath(env), { tlog: setting.tlog });
+  // #5458: a private instance's trusted root, from the member.
+  const trustRoot = setting.trustRoot ? resolve(req.cwd, setting.trustRoot) : undefined;
+  const verifier = req.verifier ?? cosignVerifier(env, cosignPath(env), { tlog: setting.tlog, ...(trustRoot ? { trustRoot } : {}) });
+  const noTrustRoot = trustRoot && !existsSync(trustRoot) ? `release.signing.trustRoot names ${setting.trustRoot}, which is not there` : null;
   const missing = verifier.unavailable();
   const checks: SigstoreCheck[] = [];
   for (const { kind, target, item } of recorded) {
@@ -236,6 +240,10 @@ export async function verifySigstore(req: {
     const done = (status: SigstoreCheck["status"], reason: string) => checks.push({ ...base, status, reason });
     if (!id) {
       done("unchecked", setting.mode === "keyless" ? "the record names no identity for it; set release.signing.identity and issuer" : "the record names no public key for it; set release.signing.publicKey");
+      continue;
+    }
+    if (noTrustRoot) {
+      done("unchecked", noTrustRoot);
       continue;
     }
     if (missing) {

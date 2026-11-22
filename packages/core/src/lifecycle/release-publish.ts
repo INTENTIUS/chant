@@ -503,6 +503,7 @@ export interface PublishRefusal {
     | "publish-signing-no-oidc"
     | "publish-signing-tool-missing"
     | "publish-signing-key-missing"
+    | "publish-signing-trust-root-missing"
     | "publish-scan-tool-missing"
     | "publish-scan-vex-missing"
     | "publish-config-invalid"

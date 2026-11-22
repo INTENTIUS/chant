@@ -106,6 +106,10 @@ export interface SigningSetting {
   publicKey?: string;
   /** False when the signature goes to no transparency log (`rekor: false`). */
   tlog: boolean;
+  /** A private Sigstore instance: its Fulcio (keyless), its Rekor, and the trusted root, from the member, that signs and verifies against it. */
+  fulcio?: string;
+  rekor?: string;
+  trustRoot?: string;
 }
 
 /** Whether a publish signs: `release.signing` first, then the `supply-chain` group. */
@@ -133,6 +137,9 @@ export function resolveSigning(config: SigningConfig | undefined, groups: Readon
       ...(c.kms ? { kms: c.kms, env: kmsEnvOf(c.kms, c.env) } : {}),
       ...(c.key && !c.kms ? { key: c.key, passwordEnv: c.passwordEnv ?? COSIGN_PASSWORD_ENV } : {}),
       ...(c.publicKey ? { publicKey: c.publicKey } : {}),
+      ...(c.fulcio ? { fulcio: c.fulcio } : {}),
+      ...(typeof c.rekor === "string" ? { rekor: c.rekor } : {}),
+      ...(c.trustRoot ? { trustRoot: c.trustRoot } : {}),
     };
   }
   return groups.has("supply-chain") ? { on: true, from: "supply-chain", warning: null, mode: "keyless", tlog: true } : { on: false, from: "off", warning: null, mode: "keyless", tlog: true };
@@ -428,13 +435,26 @@ export interface CosignSignOptions {
   key?: string;
   passwordEnv?: string;
   tlog?: boolean;
+  /** A private instance: Fulcio and Rekor URLs, and the trusted root's absolute path. */
+  fulcio?: string;
+  rekor?: string;
+  trustRoot?: string;
 }
 
-/** The flags `cosign sign-blob` and `attest-blob` get for `o`, before their own. */
+/**
+ * The flags `cosign sign-blob` and `attest-blob` get for `o`, before their
+ * own. A private instance or `tlog: false` turns off cosign's signing config,
+ * which names public Sigstore, and names the services itself.
+ */
 export function cosignSigningFlags(o: CosignSignOptions): string[] {
   const flags: string[] = [];
   if (o.mode !== "keyless" && o.key) flags.push("--key", o.key);
-  if (o.tlog === false) flags.push("--use-signing-config=false", "--tlog-upload=false");
+  const fulcio = o.mode === "keyless" ? o.fulcio : undefined;
+  if (o.tlog === false || fulcio || o.rekor) flags.push("--use-signing-config=false");
+  if (fulcio) flags.push("--fulcio-url", fulcio);
+  if (o.tlog === false) flags.push("--tlog-upload=false");
+  else if (o.rekor) flags.push("--rekor-url", o.rekor);
+  if (o.trustRoot) flags.push("--trusted-root", o.trustRoot);
   return flags;
 }
 
@@ -477,15 +497,16 @@ export function cosignSigner(env: NodeJS.ProcessEnv, redactor: Redactor, cosign 
 const cosignType = (predicateType: string): string => (predicateType === SLSA_PROVENANCE_PREDICATE ? "slsaprovenance1" : predicateType);
 const hexOf = (digest: string): string => (digest.includes(":") ? digest.split(":")[1]! : digest);
 
-/** How cosign verifies (#5458): `tlog: false` for a signature that went to no transparency log. */
+/** How cosign verifies (#5458): `tlog: false` for a signature that went to no transparency log, and a private instance's trusted root (an absolute path). */
 export interface CosignVerifyOptions {
   tlog?: boolean;
+  trustRoot?: string;
 }
 
-/** The flags a cosign verify gets for `id`: the certificate's identity and issuer, or `--key`. */
+/** The flags a cosign verify gets for `id`: the certificate's identity and issuer, or `--key`, and the trusted root of a private instance. */
 export function cosignVerifyFlags(id: SigningIdentity, o: CosignVerifyOptions = {}): string[] {
   const who = isKeyIdentity(id) ? ["--key", id.key] : ["--certificate-identity-regexp", id.identity, "--certificate-oidc-issuer", id.issuer];
-  return [...who, ...(o.tlog === false ? ["--insecure-ignore-tlog=true"] : [])];
+  return [...who, ...(o.tlog === false ? ["--insecure-ignore-tlog=true"] : []), ...(o.trustRoot ? ["--trusted-root", o.trustRoot] : [])];
 }
 
 /** A {@link SigstoreVerifier} that runs cosign. Image checks read the registry with docker's credentials. */
@@ -525,7 +546,7 @@ export interface SigningContext {
 
 /** Why a publish that should sign can't, before anything is sent. */
 export interface SigningRefusal {
-  code: "publish-signing-no-oidc" | "publish-signing-tool-missing" | "publish-signing-key-missing";
+  code: "publish-signing-no-oidc" | "publish-signing-tool-missing" | "publish-signing-key-missing" | "publish-signing-trust-root-missing";
   /** What is missing, in a clause. */
   reason: string;
   fix: string;
@@ -556,6 +577,9 @@ export const KEYLESS_FIX = "Publish from a CI job with an OIDC token (GitHub Act
  * Null when it can, else the refusal.
  */
 export function signingReadiness(setting: SigningSetting, env: NodeJS.ProcessEnv, cwd: string): SigningRefusal | null {
+  if (setting.trustRoot && !existsSync(resolve(cwd, setting.trustRoot))) {
+    return { code: "publish-signing-trust-root-missing", reason: `release.signing.trustRoot names ${setting.trustRoot}, which is not there, so cosign can't trust the private Sigstore instance`, fix: "Commit the instance's trusted_root.json where release.signing.trustRoot names it." };
+  }
   if (setting.mode === "kms") {
     const unset = (setting.env ?? []).filter((v) => !env[v]);
     if (unset.length > 0) return { code: "publish-signing-key-missing", reason: `the credentials of ${setting.kms} are read from ${unset.join(", ")}, which ${unset.length === 1 ? "is" : "are"} not set here`, fix: `Give the publish step ${unset.join(", ")}, as chant release workflow does from the repository's secrets, or name the variables in release.signing.env.` };
@@ -584,12 +608,17 @@ export function signingReadiness(setting: SigningSetting, env: NodeJS.ProcessEnv
 export function prepareSigning(setting: SigningSetting, req: { env: NodeJS.ProcessEnv; cwd: string; redactor: Redactor; signer?: Signer }): { context: SigningContext } | { refusal: SigningRefusal } {
   const refused = signingReadiness(setting, req.env, req.cwd);
   if (refused) return { refusal: refused };
+  const instance = {
+    ...(setting.fulcio ? { fulcio: setting.fulcio } : {}),
+    ...(setting.rekor ? { rekor: setting.rekor } : {}),
+    ...(setting.trustRoot ? { trustRoot: resolve(req.cwd, setting.trustRoot) } : {}),
+  };
   const options: CosignSignOptions =
     setting.mode === "key"
-      ? { mode: "key", key: keyEnvOf(setting.key!) !== null ? setting.key! : resolve(req.cwd, setting.key!), passwordEnv: setting.passwordEnv ?? COSIGN_PASSWORD_ENV, tlog: setting.tlog }
+      ? { mode: "key", key: keyEnvOf(setting.key!) !== null ? setting.key! : resolve(req.cwd, setting.key!), passwordEnv: setting.passwordEnv ?? COSIGN_PASSWORD_ENV, tlog: setting.tlog, ...instance }
       : setting.mode === "kms"
-        ? { mode: "kms", key: setting.kms!, tlog: setting.tlog }
-        : { mode: "keyless" };
+        ? { mode: "kms", key: setting.kms!, tlog: setting.tlog, ...instance }
+        : { mode: "keyless", ...instance };
   const signer = req.signer ?? cosignSigner(req.env, req.redactor, cosignPath(req.env), options);
   const missing = signer.unavailable();
   if (missing) return { refusal: { code: "publish-signing-tool-missing", reason: missing, fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it." } };

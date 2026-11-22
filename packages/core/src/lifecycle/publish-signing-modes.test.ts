@@ -361,3 +361,88 @@ describe("kms mode", () => {
     }
   });
 });
+
+describe("a private Fulcio and Rekor", () => {
+  const FULCIO = "https://fulcio.sigstore.test";
+  const REKOR = "https://rekor.sigstore.test";
+
+  test("the config names the instance and its trusted root, and refuses a private service without one", () => {
+    expect(resolveSigning({ fulcio: FULCIO, rekor: REKOR, trustRoot: "sigstore/trusted_root.json" }, none)).toMatchObject({ mode: "keyless", fulcio: FULCIO, rekor: REKOR, trustRoot: "sigstore/trusted_root.json", tlog: true });
+    expect(signingConfigProblems({ fulcio: FULCIO })).toEqual([expect.stringContaining("needs trustRoot")]);
+    expect(signingConfigProblems({ rekor: "rekor.internal" })).toEqual([expect.stringContaining("not an http(s) URL"), expect.stringContaining("needs trustRoot")]);
+    expect(signingConfigProblems({ key: "k", publicKey: "p", fulcio: FULCIO, trustRoot: "t" })).toEqual([expect.stringContaining("fulcio issues keyless certificates")]);
+    expect(signingConfigProblems({ kms: "hashivault://k", rekor: REKOR, trustRoot: "t" })).toEqual([]);
+    expect(signingConfigProblems({ trustRoot: "t" })).toEqual([]);
+  });
+
+  test("cosign signs against the instance, with its own signing config off, and verifies against the trusted root", () => {
+    expect(cosignSigningFlags({ mode: "keyless", fulcio: FULCIO, rekor: REKOR, trustRoot: "/m/trusted_root.json" })).toEqual(["--use-signing-config=false", "--fulcio-url", FULCIO, "--rekor-url", REKOR, "--trusted-root", "/m/trusted_root.json"]);
+    // A key signs with no Fulcio, and logs to the private Rekor.
+    expect(cosignSigningFlags({ mode: "kms", key: "hashivault://k", fulcio: FULCIO, rekor: REKOR, trustRoot: "/t" })).toEqual(["--key", "hashivault://k", "--use-signing-config=false", "--rekor-url", REKOR, "--trusted-root", "/t"]);
+    expect(cosignVerifyFlags({ issuer: "https://i", identity: "^x" }, { trustRoot: "/m/trusted_root.json" })).toEqual(["--certificate-identity-regexp", "^x", "--certificate-oidc-issuer", "https://i", "--trusted-root", "/m/trusted_root.json"]);
+  });
+
+  test("a missing trusted root is refused before cosign runs", () => {
+    const setting = resolveSigning({ fulcio: FULCIO, rekor: REKOR, trustRoot: "sigstore/trusted_root.json" }, none);
+    expect(signingReadiness(setting, {}, temp())).toMatchObject({ code: "publish-signing-trust-root-missing" });
+  });
+
+  const compiler: TargetCompiler = {
+    async compile(env): Promise<CompiledTarget> {
+      return { env, params: [], components: ["api"], buildSteps: {}, buildInputs: {}, componentFiles: { api: "api.component.ts" }, templates: [{ component: "api", path: "dist/api.json", content: `{"env":"${env}"}\n` }] };
+    },
+    async buildArtifacts(): Promise<ReleaseArtifact[]> {
+      return [];
+    },
+  };
+  const API = "https://api.github.test";
+  const GITHUB_ENV = {
+    GITHUB_ACTIONS: "true",
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.test",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "id-request-token",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_REPOSITORY: "acme/api",
+    GITHUB_WORKFLOW_REF: "acme/api/.github/workflows/chant-release.yml@refs/tags/release/v4",
+    GITHUB_REF: "refs/tags/release/v4",
+  };
+  let r: TestRepo;
+  beforeAll(async () => {
+    r = new TestRepo("signing-private");
+    repos.push(r);
+    r.write(
+      "chant.config.ts",
+      `export default { environments: ["dev"], release: { signing: { fulcio: "${FULCIO}", rekor: "${REKOR}", trustRoot: "sigstore/trusted_root.json" }, publish: [{ type: "forge", forge: "github", repo: "acme/api", api: "${API}", assets: ["dist/api.tar.gz"] }] } };\n`,
+    );
+    r.write("api.component.ts", "export const api = {};\n");
+    r.write(".gitignore", "node_modules\n");
+    r.write("dist/api.tar.gz", "asset bytes");
+    r.write("sigstore/trusted_root.json", '{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1"}\n');
+    writeLockfile(r.dir);
+    const head = r.commit("init");
+    r.git(["tag", `ci/green/${head}`]);
+    await cutRelease({ cwd: r.dir, compiler, label: "v4", actor: "alice", env: {}, now: () => new Date("2026-11-21T11:00:00.000Z") });
+  }, 120_000);
+
+  test("signs through the private instance and release verify checks against its trusted root, with cosign faked", async () => {
+    const cosign = fakeCosign();
+    const forge = startFakeForge("github", API, "acme/api");
+    const env = { PATH: process.env.PATH, ...GITHUB_ENV, GITHUB_TOKEN: "ghs_private", CHANT_COSIGN: cosign.path };
+    const plan = await preparePublish({ cwd: r.dir, ref: "v4", env, deps: { fetch: forge.fetch } });
+    if ("refusal" in plan) throw new Error(plan.refusal.message);
+    const ctx = publishContext(plan, { cwd: r.dir, env, log: () => undefined });
+    await runPublish({ cwd: r.dir, release: plan.release, label: plan.label, targets: plan.targets, ctx });
+    const root = join(r.dir, "sigstore/trusted_root.json");
+    const signs = cosign.calls().filter((c) => c.args[0] === "sign-blob" || c.args[0] === "attest-blob");
+    expect(signs.length).toBeGreaterThan(0);
+    for (const c of signs) expect(c.args).toEqual(expect.arrayContaining(["--use-signing-config=false", "--fulcio-url", FULCIO, "--rekor-url", REKOR, "--trusted-root", root]));
+
+    const download = join(dirname(r.dir), "download-private");
+    mkdirSync(download);
+    for (const a of forge.releases[0]!.assets) writeFileSync(join(download, a.name), a.bytes);
+    const verified = await verifySigstore({ cwd: r.dir, releaseDigest: plan.release.releaseDigest, assetsDir: download, env });
+    expect(verified.status).toBe("verified");
+    const verifies = cosign.calls().filter((c) => c.args[0]!.startsWith("verify"));
+    expect(verifies.length).toBe(verified.checks.length);
+    for (const c of verifies) expect(c.args).toEqual(expect.arrayContaining(["--trusted-root", root, "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com"]));
+  });
+});
