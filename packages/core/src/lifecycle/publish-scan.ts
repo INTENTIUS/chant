@@ -354,8 +354,8 @@ export function readVexSources(cwd: string, sources: readonly string[] | undefin
   });
 }
 
-/** One line per blocking finding, for the refusal. */
-function blockingLines(subject: SubjectScan): string[] {
+/** One line per blocking finding, for the refusal: the publish's, and the cut's (./release-cut-scan.ts). */
+export function blockingLines(subject: SubjectScan): string[] {
   return subject.blocking.map((b) => `${subject.name}: ${b.finding.cveId} (${b.finding.severity}) in ${b.finding.package} ${b.finding.installedVersion}${b.finding.fixedVersion ? `, fixed in ${b.finding.fixedVersion}` : ""} [${b.reason}]`);
 }
 
