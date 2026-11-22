@@ -39,6 +39,7 @@ import yaml from "js-yaml";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import { isCloudAssembly } from "@intentius/chant/cdk/assembly";
+import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
 import { CF_SCHEMA } from "./import/parser";
 import { AwsReadError, cfnQuery, describeStackResources, xmlLeaves, xmlMembers, type AwsReadClientOptions } from "./api/read-client";
 
@@ -335,13 +336,21 @@ export async function readDeployedStacks(
     }
     try {
       const client: AwsReadClientOptions = { ...options, region };
-      const described = await cfnQuery("DescribeStacks", { StackName: name }, client);
+      // One command reads a stack once (#2498): the graph's lint pass builds
+      // the project too, and both builds call buildRoots.
+      const { described, template, resources } = await memoLiveRead(
+        liveReadKey("aws-cfn-stack", { name, region, endpoint: options.endpoint ?? null }),
+        async () => {
+          const described = await cfnQuery("DescribeStacks", { StackName: name }, client);
+          report.status = /<StackStatus>([^<]*)<\/StackStatus>/.exec(described)?.[1];
+          const body = xmlLeaves(await cfnQuery("GetTemplate", { StackName: name, TemplateStage: "Processed" }, client)).TemplateBody;
+          const template = body ? parseTemplate(body) : undefined;
+          if (!template) throw new Error(`the template CloudFormation holds for ${name} is not one chant can read`);
+          return { described, template, resources: await describeStackResources(name, client) };
+        },
+      );
       report.status = /<StackStatus>([^<]*)<\/StackStatus>/.exec(described)?.[1];
       for (const m of xmlMembers(described, "Outputs")) if (m.OutputKey) report.outputs[m.OutputKey] = m.OutputValue ?? "";
-      const body = xmlLeaves(await cfnQuery("GetTemplate", { StackName: name, TemplateStage: "Processed" }, client)).TemplateBody;
-      const template = body ? parseTemplate(body) : undefined;
-      if (!template) throw new Error(`the template CloudFormation holds for ${name} is not one chant can read`);
-      const resources = await describeStackResources(name, client);
       report.read = true;
       deployed.push({ name, template, resources, report });
     } catch (e) {
