@@ -44,11 +44,11 @@ describe("latestVersionPerProvider", () => {
     const paths = [
       "schemas/2022-01-01/Microsoft.Storage.json",
       "schemas/2023-06-01/Microsoft.Storage.json",
-      "schemas/2023-01-01/Microsoft.Network.json",
+      "schemas/2023-01-01/Microsoft.KeyVault.json",
     ];
     const result = latestVersionPerProvider(paths);
     expect(result.get("Microsoft.Storage")?.map((f) => f.apiVersion)).toEqual(["2023-06-01"]);
-    expect(result.get("Microsoft.Network")?.map((f) => f.apiVersion)).toEqual(["2023-01-01"]);
+    expect(result.get("Microsoft.KeyVault")?.map((f) => f.apiVersion)).toEqual(["2023-01-01"]);
   });
 });
 
