@@ -270,7 +270,14 @@ function isCutIntents(v: unknown): v is ReleaseCutIntent[] {
 /** The green gate a cut passed (#5149), `release.green`. */
 export type ReleaseCutGreen =
   | { source: "chant"; tag: string }
-  | { source: "forge-checks"; forge: string; checks: string[] }
+  | {
+      source: "forge-checks";
+      forge: string;
+      /** The other workflows' checks on the commit. */
+      checks: string[];
+      /** terragucci issue 1531: the jobs of the cut's own run that counted, under `--own-run-jobs`. Absent when none did. */
+      ownRun?: string[];
+    }
   | { source: "none" };
 
 /** Whether `v` reads as a {@link ReleaseCutGreen}. */
@@ -278,7 +285,10 @@ export function isCutGreen(v: unknown): v is ReleaseCutGreen {
   if (!v || typeof v !== "object") return false;
   const g = v as Record<string, unknown>;
   if (g.source === "chant") return typeof g.tag === "string";
-  if (g.source === "forge-checks") return typeof g.forge === "string" && Array.isArray(g.checks) && g.checks.every((c) => typeof c === "string");
+  if (g.source === "forge-checks") {
+    const names = (v: unknown) => Array.isArray(v) && v.every((c) => typeof c === "string");
+    return typeof g.forge === "string" && names(g.checks) && (g.ownRun === undefined || names(g.ownRun));
+  }
   return g.source === "none";
 }
 

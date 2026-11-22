@@ -655,6 +655,13 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--wait-checks") {
       // `chant release cut --wait-checks [--timeout-minutes <n>]` (#5438): wait for the commit's pending forge checks.
       result.waitChecks = true;
+    } else if (arg === "--own-run-jobs") {
+      // `chant release cut --own-run-jobs <name,...>` (terragucci#1531): the jobs of the cut's own run that count under forge-checks.
+      // `chant pipeline spec --stage <stage> --own-run-jobs <name,...>`: the jobs the stage's release-cut hook passes.
+      const raw = args[++i];
+      const names = (raw ?? "").split(",").map((n) => n.trim());
+      if (!raw || raw.startsWith("-") || names.some((n) => n === "" || /\s/.test(n))) throw new Error(`--own-run-jobs needs job names joined by commas, such as check,wave-1-dev: got ${JSON.stringify(raw ?? "")}`);
+      result.ownRunJobs = [...new Set(names)];
     } else if (arg === "--replacement") {
       // `chant release deprecate|yank --replacement <label>` (#5163).
       result.replacement = args[++i];

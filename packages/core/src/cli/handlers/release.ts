@@ -175,7 +175,13 @@ async function artifactPublishesOf(cwd: string): Promise<import("../../lifecycle
 export function describeGreen(green: import("../../lifecycle/release-store").ReleaseCutGreen | undefined | null): string {
   if (!green) return "no green gate recorded";
   if (green.source === "chant") return `green by ${green.tag.slice(0, green.tag.lastIndexOf("/"))} tag`;
-  if (green.source === "forge-checks") return `green by ${green.checks.length} ${green.forge} check(s): ${green.checks.join(", ")}`;
+  if (green.source === "forge-checks") {
+    const others = `green by ${green.checks.length} ${green.forge} check(s): ${green.checks.join(", ")}`;
+    // terragucci issue 1531: the jobs of the cut's own run that counted.
+    if (!green.ownRun || green.ownRun.length === 0) return others;
+    const own = `${green.ownRun.length} job(s) of the cut's own run: ${green.ownRun.join(", ")}`;
+    return green.checks.length > 0 ? `${others}; and ${own}` : `green by ${own}`;
+  }
   return "no green gate (release.green: none)";
 }
 
@@ -851,6 +857,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.channel ? { channel: args.channel } : {}),
       ...(lane !== undefined ? { lane } : {}),
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
+      ...(args.ownRunJobs && args.ownRunJobs.length > 0 ? { ownRunJobs: args.ownRunJobs } : {}),
       ...(args.waitChecks
         ? { waitForChecks: { ...(args.ciTimeoutMinutes !== undefined ? { timeoutMs: args.ciTimeoutMinutes * 60_000 } : {}), onNote: (line: string) => console.error(line) } }
         : {}),

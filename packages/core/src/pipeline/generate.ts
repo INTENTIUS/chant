@@ -30,7 +30,7 @@ import { environmentSetForgeVariables } from "../op/op-waves-environment-sets";
 import { activeProductWords } from "../ci-product-words";
 import { opWaveBinArgv, type OpWaveJob } from "../op/op-waves";
 import type { PipelineSpec } from "./spec";
-import { stageWavesSpec } from "./stages";
+import { releaseCutOwnRunJobs, stageWavesSpec } from "./stages";
 import { stageAgentKeyEnvs, stageAgentSteps } from "./agent-steps";
 
 /**
@@ -91,9 +91,13 @@ async function pluginOf(name: string): Promise<LexiconPlugin | null> {
   }
 }
 
-/** The command a wave job renders its stage's spec with: `<bin> pipeline spec --stage <stage>`. */
-export function pipelineSpecCommand(stage: string, bin?: string): string[] {
-  return [...opWaveBinArgv(bin), "pipeline", "spec", "--stage", stage];
+/**
+ * The command a wave job renders its stage's spec with: `<bin> pipeline
+ * spec --stage <stage>`, and `--own-run-jobs` with the jobs the stage's
+ * release cut counts (terragucci#1531), when there are any.
+ */
+export function pipelineSpecCommand(stage: string, bin?: string, ownRunJobs: readonly string[] = []): string[] {
+  return [...opWaveBinArgv(bin), "pipeline", "spec", "--stage", stage, ...(ownRunJobs.length > 0 ? ["--own-run-jobs", ownRunJobs.join(",")] : [])];
 }
 
 /** The file the first stage's wave jobs write their rendered spec over. */
@@ -111,13 +115,18 @@ export async function generatePipeline(spec: PipelineSpec, lexicon: string, opti
     const first = spec.stages[0]!.name;
     const bin = options.bin ?? activeProductWords().bin;
     const { identity, member, ...waveOptions } = options;
-    const shape = withStageIdentity(stageWavesSpec(spec, first), first, identity, member);
-    const waves = found.generateOpWavesPipeline(shape, {
-      ...waveOptions,
-      ...(bin ? { bin } : {}),
-      specFile: pipelineStageSpecFile(spec, first),
-      renderSpec: { command: pipelineSpecCommand(first, bin) },
-    });
+    const generate = found.generateOpWavesPipeline.bind(found);
+    const render = (ownRunJobs: readonly string[]) =>
+      generate(withStageIdentity(stageWavesSpec(spec, first, { ownRunJobs }), first, identity, member), {
+        ...waveOptions,
+        ...(bin ? { bin } : {}),
+        specFile: pipelineStageSpecFile(spec, first),
+        renderSpec: { command: pipelineSpecCommand(first, bin, ownRunJobs) },
+      });
+    let waves = render([]);
+    // terragucci#1531: the merge's release cut counts the jobs its wave depended on, named as this render named them.
+    const ownRunJobs = spec.release?.cut === false ? [] : releaseCutOwnRunJobs(waves.jobs, waveOptions.firstWaveNeeds ?? []);
+    if (ownRunJobs.length > 0) waves = render(ownRunJobs);
     const later = spec.stages.slice(1);
     const promote = later.length === 0
       ? []

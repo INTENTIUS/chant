@@ -1,12 +1,15 @@
 /**
  * `chant pipeline` (#5324): the member's folded pipeline.
  *
- *   pipeline spec [--stage <stage>] [--at <commit>]
+ *   pipeline spec [--stage <stage> [--own-run-jobs <name,...>]] [--at <commit>]
  *       print the folded spec, or with --stage that stage's op-waves spec.
  *       With --at, or CHANT_WAVES_SPEC_AT set (a wave job's render), the file
  *       is folded as it stood at that commit, and a commit with no pipeline
  *       prints nothing and exits 0, which a wave job reads as a spec absent
  *       at base. A file outside the subset exits 1 with its finding.
+ *       --own-run-jobs <name,...> (with --stage): the jobs the first stage's
+ *       release-cut hook passes to release cut (terragucci#1531), which
+ *       `pipeline generate` writes into the wave jobs' render command.
  *   pipeline generate <github|gitlab|forgejo> [--output <dir>] [--format json]
  *       write the merge's waves workflow and the promote workflow
  */
@@ -22,7 +25,7 @@ import { formatBold, formatError, formatSuccess } from "../format";
 import type { CommandContext } from "../registry";
 import { DEFAULT_OP_PIPELINE_DIRS } from "./run-generate";
 
-const USAGE = "chant pipeline spec [--stage <stage>] [--at <commit>] | chant pipeline generate <github|gitlab|forgejo> [--output <dir>] [--format json]";
+const USAGE = "chant pipeline spec [--stage <stage> [--own-run-jobs <name,...>]] [--at <commit>] | chant pipeline generate <github|gitlab|forgejo> [--output <dir>] [--format json]";
 
 function refused(read: Extract<PipelineRead, { status: "refused" }>): number {
   console.error(formatError({ message: `${read.line}`, hint: "A pipeline file stays inside the TypeScript-as-data subset: it is folded, never run." }));
@@ -40,7 +43,8 @@ export async function runPipelineSpec(ctx: CommandContext): Promise<number> {
   }
   if (read.status === "refused") return refused(read);
   try {
-    const out = args.lockStage ? stageWavesSpec(read.spec, args.lockStage) : read.spec;
+    if (args.ownRunJobs && !args.lockStage) throw new Error("--own-run-jobs goes with --stage: it names the jobs that stage's release-cut hook counts");
+    const out = args.lockStage ? stageWavesSpec(read.spec, args.lockStage, args.ownRunJobs ? { ownRunJobs: args.ownRunJobs } : {}) : read.spec;
     console.log(JSON.stringify(out, null, 2));
     return 0;
   } catch (err) {

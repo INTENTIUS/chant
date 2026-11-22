@@ -430,6 +430,13 @@ export interface ParsedArgs {
   /** `chant release cut --wait-checks [--timeout-minutes <n>]` (#5438): under release.green forge-checks, wait for the commit's pending checks. */
   waitChecks?: boolean;
   /**
+   * `chant release cut --own-run-jobs <name,...>` (terragucci#1531): under
+   * release.green forge-checks, the jobs of the cut's own run that count.
+   * `chant pipeline spec --own-run-jobs <name,...>`: the jobs the stage's
+   * release-cut hook passes.
+   */
+  ownRunJobs?: string[];
+  /**
    * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
    * — post the note and the commit status on this forge, with the client
    * read from the CI job's environment.

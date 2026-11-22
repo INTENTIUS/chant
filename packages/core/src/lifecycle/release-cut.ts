@@ -189,6 +189,9 @@ export const RELEASE_CUT_WAIT_CHECKS_FLOOR = NEXT_RELEASE;
 /** The first chant whose `chant release cut` runs the publish's vulnerability scan before anything is recorded or tagged, refusing with `publish-scan-failed` so a release the scan blocks spends no label, and whose dry run refuses a scanner that can't run (#5446). */
 export const RELEASE_CUT_SCAN_FLOOR = NEXT_RELEASE;
 
+/** The first chant whose `chant release cut` takes `--own-run-jobs <name,...>`, which under `forge-checks` counts the named finished jobs of the cut's own run and records them on the cut line, and whose pipeline release-cut hook passes the jobs its wave depended on (terragucci issue 1531). */
+export const RELEASE_CUT_OWN_RUN_JOBS_FLOOR = NEXT_RELEASE;
+
 /** `--wait-checks` ran out of time with checks still running (#5438). */
 class ChecksWaitTimeout extends Error {}
 
@@ -229,6 +232,15 @@ export interface CutRequest {
    * refused with what it waited on. The other gates read nothing from the
    * forge and ignore it. Absent, the checks are read once.
    */
+  /**
+   * Under `forge-checks`, the jobs of the cut's own run that count
+   * (terragucci issue 1531, `--own-run-jobs`): each the forge reports must
+   * have passed, and a run in which it reports none of them is refused.
+   * The pipeline's release-cut hook passes the jobs its wave depended on.
+   * Absent or empty, the cut's run is left out whole. The other gates
+   * ignore it.
+   */
+  ownRunJobs?: readonly string[];
   waitForChecks?: {
     timeoutMs?: number;
     sleep?: (ms: number) => Promise<void>;
@@ -616,7 +628,8 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
       const read = req.forgeChecks ?? forgeChecksReader(await forgeChecksTarget(cwd, req.env ?? process.env), req.env ?? process.env);
       const branch = green?.branch ?? trunkBranch(top);
       const wait = req.waitForChecks;
-      if (!wait) verdict = await read(commit, branch);
+      const ownRunJobs = req.ownRunJobs && req.ownRunJobs.length > 0 ? req.ownRunJobs : undefined;
+      if (!wait) verdict = await read(commit, branch, ownRunJobs);
       else {
         // #5438: the loop `chant ci verdict --wait` waits with.
         const { waitOnForge } = await import("../workspace/ci-green-forge");
@@ -631,7 +644,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
           ...(wait.now ? { now: wait.now } : {}),
           ...(wait.onNote ? { onNote: wait.onNote } : {}),
           look: async () => {
-            const v = await read(commit, branch);
+            const v = await read(commit, branch, ownRunJobs);
             if (v.green || !checksPending(v)) return { done: v };
             const open = v.checks.filter((c) => c.state === "pending").map((c) => `${c.name} (${c.status})`);
             const line = `waiting on ${v.forge}: ${open.join(", ")}`;
@@ -652,13 +665,15 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     }
     if (verdict === null) {
       // The wait ran out of time; notGreen says on what.
-    } else if (verdict.green) passed = { source: "forge-checks", forge: verdict.forge, checks: verdict.checks };
+    } else if (verdict.green) passed = { source: "forge-checks", forge: verdict.forge, checks: verdict.checks, ...(verdict.ownRun && verdict.ownRun.length > 0 ? { ownRun: verdict.ownRun } : {}) };
     else {
       notGreen = {
         message: `commit ${commit.slice(0, 12)} is not green: ${verdict.why}, so no release is cut from it`,
         fix: verdict.ownRunOnly
-          ? "Run the workflows that check the commit on push, or set release.green in chant.config.ts to \"chant\" (ci/green tags) for a commit whose checks are the release job's own."
-          : req.waitForChecks
+          ? "Run a workflow that checks the commit on push, or name the jobs of this run that check it before the cut with --own-run-jobs <job,...>, as a pipeline's release-cut hook does."
+          : verdict.ownRunMissing
+            ? "Name the jobs as the forge reports them: the check run's name on GitHub, the <job> of a <workflow> / <job> (<event>) status on Forgejo, the job's name in the pipeline on GitLab."
+            : req.waitForChecks
             ? "Cut once its checks have passed, or check out a commit whose checks passed."
             : "Cut once its checks have passed (--wait-checks waits for the ones still running), or check out a commit whose checks passed.",
         tag: `forge-checks/${commit}`,

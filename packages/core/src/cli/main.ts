@@ -491,9 +491,10 @@ CI:
                         a run of its own.
 
 Pipeline:
-  pipeline spec [--stage <stage>] [--at <commit>]
+  pipeline spec [--stage <stage> [--own-run-jobs <name,...>]] [--at <commit>]
                         Print the folded .chant/pipeline.ts, or one stage's
-                        op-waves spec; --at folds it as it stood at a commit
+                        op-waves spec; --at folds it as it stood at a commit;
+                        --own-run-jobs names the jobs its release cut counts
   pipeline generate <github|gitlab|forgejo> [--output <dir>] [--format json]
                         Write the merge's waves workflow and the promote
                         workflow for each stage after the first
