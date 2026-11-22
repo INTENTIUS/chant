@@ -317,9 +317,13 @@ async function checkForgeChecks(ctx: Ctx, commit: string | undefined): Promise<D
 
 /**
  * Sigstore signing (#5164), when `release.signing` or the `supply-chain`
- * group turns it on and an `oci` or `forge` target signs: whether this job
- * has the OIDC token the certificate is issued for, and cosign 3. Null when
- * the publish does not sign.
+ * group turns it on and an `oci`, `forge` or `pypi` target signs: whether
+ * this job can sign in the mode the config names, and cosign 3. Keyless
+ * needs the OIDC token the certificate is issued for (`signing-oidc`); a key
+ * (#5458) needs its file or variable, its password variable and its public
+ * key (`signing-key`). The release workflow gives the key's variables to the
+ * publish step alone, so in the cut job (`--from cut`) a missing one is
+ * unknown rather than a failure. Null when the publish does not sign.
  */
 async function checkSigning(
   ctx: Ctx,
@@ -328,18 +332,21 @@ async function checkSigning(
   groups: ReadonlySet<import("../workspace/security").SecurityGroup>,
   injected: DoctorDeps["signer"],
 ): Promise<DoctorTarget | null> {
-  const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
+  const { resolveSigning, signingReadiness, signingIdentity, cosignSigner, KEYLESS_FIX } = await import("./publish-signing");
   const setting = resolveSigning(config, groups);
   if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge" || d.type === "pypi")) return null;
   const why = setting.from === "config" ? "release.signing" : "the supply-chain group";
   const checks: DoctorCheck[] = [];
-  const id = signingIdentity(ctx.env);
-  if ("reason" in id) {
-    checks.push(
-      missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), or set release.signing: false."),
-    );
+  if (setting.mode === "keyless") {
+    const id = signingIdentity(ctx.env);
+    if ("reason" in id) checks.push(missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, KEYLESS_FIX));
+    else checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
   } else {
-    checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
+    const refused = signingReadiness(setting, ctx.env, ctx.cwd);
+    const held = refused !== null && /is not set here$/.test(refused.reason);
+    if (refused === null) checks.push({ check: "signing-key", status: "ok", message: `${why} signs with the ${setting.mode} ${setting.key}, verified with ${setting.publicKey}` });
+    else if (held && ctx.environment.from === "cut") checks.push({ check: "signing-key", status: "unknown", message: `${refused.reason}; this is the cut job, and the release workflow gives the key's variables to the publish step alone, so only a run of the publish can test this` });
+    else checks.push(missing(ctx, "signing-key", `${why} signs with a ${setting.mode}, and ${refused.reason}`, refused.fix));
   }
   const signer = injected ?? cosignSigner(ctx.env, ctx.redactor);
   const gone = signer.unavailable();

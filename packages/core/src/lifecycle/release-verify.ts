@@ -154,8 +154,8 @@ export interface SigstoreCheck {
   attachment: "signature" | "attestation";
   /** What it signs, each name and digest. */
   signs: Array<{ name: string; digest: string }>;
-  /** The identity it was checked against. */
-  identity: { issuer: string; identity: string } | null;
+  /** The identity it was checked against: a certificate's issuer and identity, or (#5458) the public key. */
+  identity: import("./publish-signing").SigningIdentity | null;
   status: "verified" | "failed" | "unchecked";
   reason: string;
 }
@@ -189,9 +189,12 @@ export async function recordedSignatures(cwd: string, releaseDigest: string): Pr
  * release's are read from `assetsDir`, where its assets were downloaded
  * (such as `gh release download <tag> -D <dir>`): each bundle must be the
  * bytes the record names, and a file beside it must be the digest it signs.
- * The identity is `release.signing.identity` and `issuer` when the config
- * names them, else the one the publish recorded: a workflow of the
- * repository the publish ran in.
+ * A keyless bundle is checked against `release.signing.identity` and
+ * `issuer` when the config names them, else the ones the publish recorded:
+ * a workflow of the repository the publish ran in. A key's bundle (#5458)
+ * is checked with `release.signing.publicKey`, else the public key the
+ * publish recorded, from the member, and without the transparency log when
+ * the config says `rekor: false`.
  */
 export async function verifySigstore(req: {
   cwd: string;
@@ -202,26 +205,36 @@ export async function verifySigstore(req: {
 }): Promise<SigstoreVerification> {
   const { existsSync, readFileSync } = await import("node:fs");
   const { join, resolve } = await import("node:path");
-  const { cosignVerifier } = await import("./publish-signing");
+  const { cosignVerifier, cosignPath, isKeyIdentity, resolveSigning } = await import("./publish-signing");
   const { bytesDigest } = await import("./publish-targets");
   const { loadChantConfig } = await import("../config");
   const recorded = await recordedSignatures(req.cwd, req.releaseDigest);
   if (recorded.length === 0) return { status: "none", checks: [], reason: "the publish record holds no Sigstore signature for this release" };
   const config = (await loadChantConfig(req.cwd).catch(() => null))?.config.release?.signing;
-  const pinned = typeof config === "object" ? config : {};
-  const verifier = req.verifier ?? cosignVerifier(req.env ?? process.env);
+  const setting = resolveSigning(config ?? true, new Set());
+  const env = req.env ?? process.env;
+  const verifier = req.verifier ?? cosignVerifier(env, cosignPath(env), { tlog: setting.tlog });
   const missing = verifier.unavailable();
   const checks: SigstoreCheck[] = [];
   for (const { kind, target, item } of recorded) {
     const attachment = item.attachment as "signature" | "attestation";
     const signs = item.signs ?? [];
-    const issuer = pinned.issuer ?? item.sigstore?.issuer;
-    const identity = pinned.identity ?? item.sigstore?.identity;
-    const id = issuer && identity ? { issuer, identity } : null;
+    const was = item.sigstore;
+    let id: import("./publish-signing").SigningIdentity | null;
+    if (setting.mode !== "keyless" || (was && isKeyIdentity(was))) {
+      // A key's signature: the public key the config names, else the one recorded, from the member.
+      const key = setting.publicKey ?? (was && isKeyIdentity(was) ? was.key : undefined);
+      id = key ? { key: /^[a-z][a-z0-9+.-]*:\/\//i.test(key) ? key : resolve(req.cwd, key) } : null;
+    } else {
+      const recordedId = was && !isKeyIdentity(was) ? was : undefined;
+      const issuer = setting.issuer ?? recordedId?.issuer;
+      const identity = setting.identity ?? recordedId?.identity;
+      id = issuer && identity ? { issuer, identity } : null;
+    }
     const base = { name: item.name, kind, target, attachment, signs, identity: id };
     const done = (status: SigstoreCheck["status"], reason: string) => checks.push({ ...base, status, reason });
     if (!id) {
-      done("unchecked", "the record names no identity for it; set release.signing.identity and issuer");
+      done("unchecked", setting.mode === "keyless" ? "the record names no identity for it; set release.signing.identity and issuer" : "the record names no public key for it; set release.signing.publicKey");
       continue;
     }
     if (missing) {

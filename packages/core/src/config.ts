@@ -13,6 +13,7 @@ import { evaluateProjectConfig } from "./config-sandbox";
 import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
 import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
 import { PublishDeclarationSchema, type PublishDeclaration } from "./lifecycle/publish-declaration";
+import { SigningConfigSchema } from "./lifecycle/signing-config";
 
 // The environment and ownership helpers that read a config already loaded
 // live in ./config-environments.ts, which loads nothing, so a bundle that
@@ -234,13 +235,8 @@ export const ChantConfigSchema = z.object({
     sources: z.array(z.string().min(1)).min(1).optional(),
     // #5150: the tag a cut makes, as a template, and the floating tag a publish moves.
     tag: z.union([z.string().min(1), z.object({ name: z.string().min(1), floating: z.string().min(1).optional() }).strict()]).optional(),
-    // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false.
-    signing: z
-      .union([
-        z.boolean(),
-        z.object({ identity: z.string().min(1).optional(), issuer: z.string().min(1).optional() }).strict(),
-      ])
-      .optional(),
+    // #5164: Sigstore signatures and SLSA provenance at publish; on under the supply-chain group unless false. #5458: keyless or a key.
+    signing: SigningConfigSchema.optional(),
     // #5446: the vulnerability scan before the stage; on under the supply-chain group unless false.
     scan: z.union([z.boolean(), z.object({ db: z.string().min(1).optional() }).strict()]).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
@@ -669,10 +665,11 @@ export interface ChantConfig {
      * to name the certificate identity (a regular expression) and OIDC issuer
      * `chant release verify --sigstore` expects, signs images and forge assets
      * keylessly with the CI job's OIDC token and adds SLSA provenance. On by
-     * default under the `supply-chain` group; `false` turns it off there. See
-     * ./lifecycle/publish-signing.ts.
+     * default under the `supply-chain` group; `false` turns it off there.
+     * `{ key, publicKey }` signs with a cosign key instead (#5458). See
+     * ./lifecycle/signing-config.ts and ./lifecycle/publish-signing.ts.
      */
-    signing?: import("./lifecycle/publish-signing").SigningConfig;
+    signing?: import("./lifecycle/signing-config").SigningConfig;
     /**
      * The vulnerability scan before the stage (#5446): `true`, or `{ db }` to
      * read the scanner's database from that directory without updating it.

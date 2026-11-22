@@ -47,6 +47,8 @@ export interface ReleaseWorkflowContext {
   doctor: boolean;
   /** The publish signs with Sigstore (#5164). */
   signing: boolean;
+  /** The variables the signing step alone gets (#5458): a key held in a variable and its password. */
+  signingEnv: string[];
   /** The publish scans before the stage (#5446). */
   scan: boolean;
   /** The green gate the cut checks (#5149). */
@@ -79,8 +81,11 @@ export type ReleaseStepJob = "cut" | "publish";
  * - `idTokens`: GitLab publish job only, entries under its `id_tokens:`
  *   beside `SIGSTORE_ID_TOKEN`, as lines indented four spaces for the name
  *   and six for `aud`.
+ * - `publishEnv`: GitHub and Forgejo publish job only, `NAME: value` entries
+ *   of the `env:` of the step that runs `chant release publish` (or `chant
+ *   workspace train publish`), and of no other step (#5458).
  */
-export type ReleaseStepSlot = "afterCheckout" | "prepare" | "beforeCut" | "afterCut" | "beforeBuild" | "afterBuild" | "beforePublish" | "artifactPaths" | "jobKeys" | "idTokens";
+export type ReleaseStepSlot = "afterCheckout" | "prepare" | "beforeCut" | "afterCut" | "beforeBuild" | "afterBuild" | "beforePublish" | "artifactPaths" | "jobKeys" | "idTokens" | "publishEnv";
 
 /** A step: a shell line, which the job writes as its forge writes one (`- run: ...`, a script entry), or `lines` placed as they are. */
 export type ReleaseStepItem = string | { lines: string[] };

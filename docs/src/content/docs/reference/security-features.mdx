@@ -19,7 +19,7 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | SBOM on every target | off: a target with no SBOM source publishes without one | `sbom` on the target | `supply-chain` | `security-sbom-disabled`, `security-sbom-unsourced` |
 | OIDC provenance | off: a plan field | `--require-provenance` | `supply-chain` | `security-publish-no-provenance` |
 | Cut needs a green gate | off: `release.green: "none"` cuts with a warning | `release.green` other than `none` | `supply-chain` | none |
-| Sigstore signatures and SLSA provenance on images and forge assets | off: nothing is signed | `release.signing` | `supply-chain` | none |
+| Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key | off: nothing is signed | `release.signing` (`key` for a cosign key) | `supply-chain` | none |
 | Vulnerability scan before anything is pushed | off: a publish pushes without scanning | `release.scan` | `supply-chain` | none |
 | Release image bases pinned by digest | off: a `FROM` by tag builds from whatever the tag names that day | pin each `FROM` as `name:tag@sha256:<digest>` | `supply-chain` | `security-image-base-unpinned` |
 | SBOM and verify steps on components | off | a `generate-sbom` or `verify` step | `supply-chain` | `security-component-no-sbom`, `security-component-no-verify` |

@@ -21,8 +21,9 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `release-revoked` | The release's commit is [revoked](/chant/cli/release/cut/#revoked-releases). |
 | `release-unsigned` | No cut of the release is signed, and the workspace names a `release` gate in `identity.gates` or opts into `verified-releases` ([#4049](https://github.com/INTENTIUS/chant/issues/4049), [#4168](https://github.com/INTENTIUS/chant/issues/4168)). |
 | `release-signature-unverified` | Under the same settings, no cut's signature verifies for its actor against `.chant/allowed_signers` at base, or, under a `release` gate, the signer is not in the gate's class. |
-| `publish-provenance-missing` | `--require-provenance` is given, and the run has no OIDC token. |
+| `publish-provenance-missing` | `--require-provenance` is given, the run has no OIDC token, and the publish signs no SLSA statement with a key (`release.signing.key`). The message names what is missing. |
 | `publish-signing-no-oidc` | The publish signs with Sigstore (`release.signing`, or the `supply-chain` group), an `oci` or `forge` target is declared, and the run has no OIDC token cosign can sign with: a GitHub Actions job without `id-token: write`, a GitLab CI job without `SIGSTORE_ID_TOKEN`, or a workstation. |
+| `publish-signing-key-missing` | The publish signs with a key (`release.signing.key`), and its variable, its file, its password variable or its public key is missing. |
 | `publish-signing-tool-missing` | Under the same settings, cosign 3 is not on `PATH` and `CHANT_COSIGN` does not name it. |
 | `publish-scan-tool-missing` | The publish scans before the stage (`release.scan`, or the `supply-chain` group), an `oci`, `forge` or `npm` target is declared, and grype (or trivy) is not on `PATH` or named by `CHANT_GRYPE` (`CHANT_TRIVY`), or, with an `oci` target, syft is not there either (`CHANT_SYFT`). |
 | `publish-scan-vex-missing` | Under the same settings, a file `vulnPolicy.vexSources` names is not there. |

@@ -226,6 +226,14 @@ export interface ReleaseWorkflowInput {
    */
   signing?: boolean;
   /**
+   * The variables the signing step alone gets (#5458): a `release.signing.key`
+   * held in a variable and its password. On GitHub and Forgejo the step that
+   * runs `chant release publish` reads each from the repository's secret of
+   * the same name ({@link signingStepEnv}); GitLab hands CI/CD variables to
+   * every job, so its file names none.
+   */
+  signingEnv?: string[];
+  /**
    * The publish scans what it would put out before the stage (#5446):
    * `release.scan` or the `supply-chain` group, with an `oci`, `forge` or
    * `npm` target. The jobs download grype and syft pinned by SHA-256
@@ -302,7 +310,7 @@ export { NPM_TRUSTED_PUBLISHING_MIN, NPM_TRUSTED_PUBLISHING_SETUP, NPM_TRUSTED_P
 export { RELEASE_BINFMT_IMAGE, qemuArchitectures, qemuSetup } from "./release-steps/qemu";
 export { RELEASE_ARTIFACTS_ARTIFACT, RELEASE_ARTIFACTS_STAGE } from "./release-steps/artifacts";
 export { goreleaserSetup } from "./release-steps/goreleaser";
-export { cosignSetup } from "./release-steps/signing";
+export { cosignSetup, signingStepEnv } from "./release-steps/signing";
 export { scanSetup } from "./release-steps/scan";
 export { pullLoginEnv, pullLoginLine, pullLoginSetup } from "./release-steps/pull";
 export { RELEASE_DIGESTS_FILE, RELEASE_DIGESTS_PATHS, RELEASE_IMAGES_ARTIFACT } from "./release-steps/images";
@@ -366,6 +374,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     version: input.version === true,
     doctor: shape === "dispatch" ? p.doctor !== false : p.doctor === true,
     signing: input.signing === true,
+    signingEnv: input.signingEnv ?? [],
     scan: input.scan === true,
     green,
     builds,
@@ -408,7 +417,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       const setup = toolchainLines(resolveToolchains(b.build.toolchains !== undefined ? b.build.toolchains : p.toolchains === false ? false : own ? undefined : p.toolchains, own ? new Set(b.files) : files, own ? (dir === "." ? null : dir) : root, false));
       return { ...b.build, member: b.member, memberDir: b.dir, path: dir, setup };
     });
-    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, scan: input.scan === true, green, builds: [] };
+    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, signingEnv: input.signingEnv ?? [], scan: input.scan === true, green, builds: [] };
     return renderTrainWorkflow({
       forge: input.forge,
       env: input.train.env,
@@ -432,6 +441,8 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       ...(t.artifacts && t.goreleaser ? { goreleaser: ((g) => (input.forge === "gitlab" ? g.gitlab : g.github))(goreleaserSetup(input.forge, [root, t.goreleaserDir].filter((d): d is string => !!d && d !== ".").join("/") || null, p, setsUpGo(p, input.projectFiles, root))) } : {}),
       ...(input.signing ? { signing: true } : {}),
       ...(input.forge === "gitlab" ? { idTokens: stepLines(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("idTokens"), (l) => l) } : {}),
+      // #5458: the signing step's own variables.
+      publishEnv: publishStepEnv(releaseJobSteps({ ...trainContext, job: "publish", label: '"$CHANT_RELEASE_TRAIN"' })("publishEnv")),
       doctor: p.trigger === "dispatch" && p.doctor !== false,
       verify: input.groups.has("verified-releases"),
       ...(trainBuilds.length > 0 ? { builds: trainBuilds } : {}),
@@ -520,6 +531,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     ...step("afterBuild"),
     ...step("beforePublish"),
     `      - run: ${chant} release publish ${label} ${flags}`,
+    ...publishStepEnv(at("publishEnv")),
   ];
   if (after.length > 0) {
     lines.push(
@@ -541,6 +553,12 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
 /** A job's steps as lines: each shell line as the job writes one, and each feature's own lines as they are. */
 function stepLines(items: readonly ReleaseStepItem[], run: (line: string) => string): string[] {
   return items.flatMap((i) => (typeof i === "string" ? [run(i)] : i.lines));
+}
+
+/** The `env:` of the step that runs the publish, from the `publishEnv` slot (#5458): nothing when it is empty. */
+export function publishStepEnv(items: readonly ReleaseStepItem[]): string[] {
+  const entries = stepLines(items, (l) => `          ${l}`);
+  return entries.length > 0 ? ["        env:", ...entries] : [];
 }
 
 /** A GitLab publish job's `id_tokens:`: `SIGSTORE_ID_TOKEN`, and the entries the features add. */
@@ -671,6 +689,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     ...step("afterBuild"),
     ...step("beforePublish"),
     run(`${chant} release publish ${label} ${flags}`),
+    ...publishStepEnv(at("publishEnv")),
   ];
   if (after.length > 0) {
     lines.push(
@@ -1025,6 +1044,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...publishStep("afterBuild"),
     ...publishStep("beforePublish"),
     `      - run: ${o.chant} release publish "$CHANT_RELEASE_LABEL" ${o.flags}`,
+    ...publishStepEnv(publish("publishEnv")),
   ];
   if (o.after.length > 0) {
     lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...jobPermissions(o.extra, { contents: "read" }, "after"), ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
@@ -1260,8 +1280,15 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const pullRegistries = releaseImagePulls([...(release?.images ?? []), ...memberImages]);
   const memberArtifacts = memberReleases.flatMap((r) => r.artifacts ?? []);
   const allTargets = [...(release?.publish ?? []), ...memberReleases.flatMap((r) => r.publish ?? [])];
-  const { resolveSigning } = await import("../lifecycle/publish-signing");
-  const signs = [release, ...memberReleases].some((r) => resolveSigning(r?.signing, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi"));
+  const { resolveSigning, signingStepVariables } = await import("../lifecycle/publish-signing");
+  // #5458: a key signs the SLSA statement that meets --require-provenance with no CI OIDC token, so under supply-chain it signs for any target.
+  const signsFor = (r: (typeof memberReleases)[number] | undefined) => {
+    const setting = resolveSigning(r?.signing, groups);
+    const targets = r?.publish ?? [];
+    return setting.on && (targets.some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi") || (setting.mode !== "keyless" && groups.has("supply-chain") && targets.length > 0));
+  };
+  const signs = [release, ...memberReleases].some(signsFor);
+  const signingEnv = [...new Set([release, ...memberReleases].filter(signsFor).flatMap((r) => signingStepVariables(resolveSigning(r?.signing, groups))))];
   // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
   const { resolveScan } = await import("../lifecycle/publish-scan");
   const scans = [release, ...memberReleases].some((r) => resolveScan(r?.scan, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "npm"));
@@ -1309,6 +1336,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     })(),
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
+    ...(signingEnv.length > 0 ? { signingEnv } : {}),
     ...(scans ? { scan: true } : {}),
     ...(pullRegistries.length > 0 ? { pullRegistries } : {}),
     ...(allTargets.length > 0 ? { publish: allTargets } : {}),

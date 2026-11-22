@@ -22,12 +22,13 @@
  * It then says whether the run has an OIDC token to sign provenance with
  * ({@link detectProvenance}). Under `supply-chain` it warns when there is
  * none, before any target runs; `--require-provenance` refuses instead
- * (`publish-provenance-missing`). Without either, provenance is only the
- * plan's `provenance` field.
+ * (`publish-provenance-missing`), unless the run signs the release's SLSA
+ * statement another way (#5458): with a key (`release.signing.key`). Without
+ * either, provenance is only the plan's `provenance` field.
  * When `release.signing` or `supply-chain` asks for Sigstore signing and an
  * OCI, forge or pypi target is declared (#5164, ./publish-signing.ts), a run that
- * can't sign keylessly is refused (`publish-signing-no-oidc`,
- * `publish-signing-tool-missing`).
+ * can't sign in its mode is refused (`publish-signing-no-oidc`,
+ * `publish-signing-key-missing`, `publish-signing-tool-missing`).
  * When `release.scan` or `supply-chain` asks for the scan before the stage
  * (#5446, ./publish-scan.ts), a run without the scanner is refused
  * (`publish-scan-tool-missing`), and {@link runPublish} scans what the
@@ -126,8 +127,8 @@ export interface PublishItem {
   signs?: Array<{ name: string; digest: string }>;
   /** On a Sigstore bundle over a statement (#5164): the statement's predicate type. */
   predicateType?: string;
-  /** On a Sigstore bundle (#5164): the OIDC issuer and the identity (a regular expression) its certificate was issued to. */
-  sigstore?: { issuer: string; identity: string };
+  /** On a Sigstore bundle (#5164): the OIDC issuer and the identity (a regular expression) its certificate was issued to, or (#5458) the public key that verifies a key's signature. */
+  sigstore?: import("./publish-signing").SigningIdentity;
   /** The SBOM file an npm package carries at its root (#4049). */
   sbom?: string;
   /** The notes a forge release is given (#4658), which a dry run prints. */
@@ -500,6 +501,7 @@ export interface PublishRefusal {
     | "publish-provenance-missing"
     | "publish-signing-no-oidc"
     | "publish-signing-tool-missing"
+    | "publish-signing-key-missing"
     | "publish-scan-tool-missing"
     | "publish-scan-vex-missing"
     | "publish-config-invalid"
@@ -689,49 +691,47 @@ export async function preparePublish(req: {
 
   const env = req.env ?? process.env;
   const provenance = detectProvenance(env);
-  if (req.requireProvenance && !provenance.oidc) {
-    return {
-      refusal: {
-        code: "publish-provenance-missing",
-        message: `${name} would be published without OIDC provenance, and --require-provenance asks for it: ${provenance.reason}`,
-        fix: "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), or drop --require-provenance.",
-      },
-    };
-  }
-  const warning = provenance.oidc || !groups.has("supply-chain")
-    ? null
-    : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
   // #5164: Sigstore signing, when release.signing or supply-chain asks for it and a target signs.
-  const { resolveSigning, signingIdentity, cosignSigner } = await import("./publish-signing");
+  const { resolveSigning, prepareSigning } = await import("./publish-signing");
   const { loadChantConfig: loadConfig } = await import("../config");
   const signingConfig = (await loadConfig(cwd).catch(() => null))?.config.release?.signing;
   const setting = resolveSigning(signingConfig, groups);
-  let signing: PublishPlan["signing"] = null;
   const signs = targets.filter((t) => t.kind === "oci" || t.kind === "forge" || t.kind === "pypi");
-  if (setting.on && signs.length > 0) {
-    const why = setting.from === "config" ? "release.signing in chant.config.ts" : "the supply-chain group";
-    const id = signingIdentity(env);
-    if ("reason" in id) {
+  const why = setting.from === "config" ? "release.signing in chant.config.ts" : "the supply-chain group";
+  // #5458: with no CI OIDC token, a statement this run signs (with a key, or keylessly on a forge whose token npm does not take) is the provenance.
+  const prepared = setting.on && (signs.length > 0 || (req.requireProvenance && !provenance.oidc)) ? prepareSigning(setting, { env, cwd, redactor: createRedactor(env), ...(req.deps?.signer ? { signer: req.deps.signer } : {}) }) : null;
+  const signedStatement = prepared !== null && "context" in prepared;
+  if (req.requireProvenance && !provenance.oidc && !signedStatement) {
+    const missing = !setting.on
+      ? `${provenance.reason}, and the publish signs no SLSA statement (release.signing is off)`
+      : prepared && "refusal" in prepared
+        ? setting.mode === "keyless"
+          ? prepared.refusal.reason
+          : `${provenance.reason}, and the ${setting.mode} that would sign the SLSA statement can't: ${prepared.refusal.reason}`
+        : provenance.reason;
+    return {
+      refusal: {
+        code: "publish-provenance-missing",
+        message: `${name} would be published without OIDC provenance or a signed SLSA statement, and --require-provenance asks for one: ${missing}`,
+        fix: prepared && "refusal" in prepared && setting.mode !== "keyless" ? prepared.refusal.fix : "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), sign with a key (release.signing.key), or drop --require-provenance.",
+      },
+    };
+  }
+  const warning = provenance.oidc || signedStatement || !groups.has("supply-chain")
+    ? null
+    : `this publish runs without OIDC, so what it publishes carries no provenance: ${provenance.reason}. Publish from CI to get provenance.`;
+  let signing: PublishPlan["signing"] = null;
+  if (setting.on && signs.length > 0 && prepared) {
+    if ("refusal" in prepared) {
       return {
         refusal: {
-          code: "publish-signing-no-oidc",
-          message: `${name} would be signed with Sigstore, as ${why} asks, and this run can't sign keylessly: ${id.reason}`,
-          fix: "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), or set release.signing: false.",
+          code: prepared.refusal.code,
+          message: `${name} would be signed with Sigstore, as ${why} asks, and ${prepared.refusal.reason}`,
+          fix: prepared.refusal.fix,
         },
       };
     }
-    const signer = req.deps?.signer ?? cosignSigner(env, createRedactor(env));
-    const missing = signer.unavailable();
-    if (missing) {
-      return {
-        refusal: {
-          code: "publish-signing-tool-missing",
-          message: `${name} would be signed with Sigstore, as ${why} asks, and ${missing}`,
-          fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.",
-        },
-      };
-    }
-    signing = { signer, identity: id.identity };
+    signing = prepared.context;
   }
   // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
   const { resolveScan, toolReleaseScanner, readVexSources } = await import("./publish-scan");

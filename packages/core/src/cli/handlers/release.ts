@@ -1069,7 +1069,7 @@ export async function runReleasePublish(ctx: CommandContext): Promise<number> {
   if (signingWarning) console.error(formatWarning({ message: signingWarning }));
   if (prepared.scanWarning) console.error(formatWarning({ message: prepared.scanWarning }));
   if (prepared.scan && !args.json) say(`  scanning for known vulnerabilities with ${prepared.scan.scanner.name} before anything is pushed`);
-  if (prepared.signing && !args.json) say(`  signing images and forge assets with Sigstore (${prepared.signing.signer.name}) as ${prepared.signing.identity.identity}, issuer ${prepared.signing.identity.issuer}`);
+  if (prepared.signing && !args.json) say(`  signing images and forge assets with Sigstore (${prepared.signing.signer.name}) as ${(await import("../../lifecycle/publish-signing")).describeSigningIdentity(prepared.signing.identity)}`);
   // #4168 4.3: a release cut with --channel moves that tag, not latest.
   const pctx = publishContext(prepared, { cwd, tag: prepared.channel, log: (line) => (args.json ? undefined : console.error(`    ${line}`)) });
 
