@@ -12,6 +12,9 @@ import type { GraphIR } from "@intentius/chant/graph-ir";
 import { runGraph } from "@intentius/chant/cli/handlers/graph";
 import { readPackageKinds, substituteGraphConfig } from "../../../packages/core/src/workspace/kinds";
 import { awsPlugin } from "./plugin";
+import { readCloudFormationMember } from "./workspace-member";
+
+const propsOf = (entities: Map<string, unknown>, id: string) => (entities.get(id) as { props: Record<string, unknown> }).props;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageDir = join(here, "..");
@@ -66,6 +69,96 @@ describe("cloudformation member graph block (#3179)", () => {
       "net/WebPolicy -> net/Assets via PolicyDocument (Arn)",
       "net/WebPolicy -> net/WebRole via Roles",
     ]);
+  });
+});
+
+describe("lint over a member's template", () => {
+  const template = `AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  store:
+    Type: AWS::S3::Bucket
+  storePolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref store
+      PolicyDocument:
+        Statement:
+          - Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt store.Arn, !Sub "\${store.Arn}/*"]
+            Condition: { Bool: { "aws:SecureTransport": "false" } }
+`;
+
+  async function memberWith(files: Record<string, string>): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "chant-cfn-lint-"));
+    scratch.push(dir);
+    for (const [name, text] of Object.entries(files)) await writeFile(join(dir, name), text);
+    return dir;
+  }
+
+  const findings = (ir: GraphIR) => ((ir.meta?.lint as { findings: Array<{ ruleId: string; message: string }> }).findings ?? []);
+
+  test("a Ref and a GetAtt between the template's resources are not WAW070 errors", async () => {
+    const { ir, err, exit } = await graphOf(await memberWith({ "template.yaml": template }));
+    expect(exit, err.join("\n")).toBe(0);
+    expect(findings(ir).filter((f) => f.ruleId === "WAW070")).toEqual([]);
+    expect(ir.edges.map((e) => `${e.from} -> ${e.to} via ${e.viaAttr}`)).toContain("net/storePolicy -> net/store via Bucket");
+  });
+
+  test("the S3 check sees the bucket policy that denies non-TLS requests", async () => {
+    const { ir } = await graphOf(await memberWith({ "template.yaml": template }));
+    expect(findings(ir).map((f) => f.message).filter((m) => /non-TLS/.test(m))).toEqual([]);
+  });
+
+  test("with two templates, references resolve to the resources of their own template", async () => {
+    const dir = await memberWith({ "a.yaml": template, "b.yaml": template });
+    const { ir } = await graphOf(dir);
+    expect(findings(ir).filter((f) => f.ruleId === "WAW070" || /non-TLS/.test(f.message))).toEqual([]);
+    const props = propsOf(readCloudFormationMember({ member: { dir, label: "net" } }).entities, "net/b/storePolicy");
+    expect(props.Bucket).toEqual({ Ref: "net/b/store" });
+    expect((props.PolicyDocument as { Statement: Array<{ Resource: unknown }> }).Statement[0]!.Resource).toEqual([
+      { "Fn::GetAtt": ["net/b/store", "Arn"] },
+      { "Fn::Sub": "${store.Arn}/*" },
+    ]);
+  });
+
+  test("a parameter, a pseudo parameter and a name the template does not declare keep their names", async () => {
+    const dir = await memberWith({
+      "template.yaml": `AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  Env:
+    Type: String
+Resources:
+  store:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - { Key: env, Value: !Ref Env }
+        - { Key: account, Value: !Ref "AWS::AccountId" }
+        - { Key: other, Value: !GetAtt Elsewhere.Arn }
+`,
+    });
+    const props = propsOf(readCloudFormationMember({ member: { dir, label: "net" } }).entities, "net/store");
+    expect(props.Tags).toEqual([
+      { Key: "env", Value: { Ref: "Env" } },
+      { Key: "account", Value: { Ref: "AWS::AccountId" } },
+      { Key: "other", Value: { "Fn::GetAtt": ["Elsewhere", "Arn"] } },
+    ]);
+  });
+
+  test("a JSON template's dotted Fn::GetAtt names the node, in the list form", async () => {
+    const dir = await memberWith({
+      "template.json": JSON.stringify({
+        AWSTemplateFormatVersion: "2010-09-09",
+        Resources: {
+          store: { Type: "AWS::S3::Bucket" },
+          topic: { Type: "AWS::SNS::Topic", Properties: { DisplayName: { "Fn::GetAtt": "store.Arn" } } },
+        },
+      }),
+    });
+    const props = propsOf(readCloudFormationMember({ member: { dir, label: "net" } }).entities, "net/topic");
+    expect(props.DisplayName).toEqual({ "Fn::GetAtt": ["net/store", "Arn"] });
   });
 });
 
