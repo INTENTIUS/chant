@@ -100,7 +100,7 @@ import { checkoutStep, concurrency, emitWorkflowYAML, jobTokenEnv, onTrigger, op
 import { assertReviewSplit, reviewJobs, reviewNoteJobName } from "./review-jobs";
 import { AGENT_ALERT_SCHEDULE, isFactTrigger, resolveAgentSpec, type OpAgentSpec } from "@intentius/chant/ci-agent";
 import { activeProductWords } from "@intentius/chant/ci-product-words";
-import { agentJobName, agentPushJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
+import { agentJobName, agentPushJobName, driftFoundJob, driftFoundJobName, driftRunOutputs, driftRunStep, githubAgentJobs } from "./agent-jobs";
 import { commitJobName, commitPushJobName, findingRunOutputs, findingRunStep, githubCommitJobs } from "./commit-jobs";
 import { resolveCommitSpec, type CommitSettings } from "@intentius/chant/ci-commit";
 import { assertScheduledOpCloud, scheduledOpUpdateJobName, withoutTokenRequestLine } from "@intentius/chant/scheduled-op-cloud";
@@ -689,6 +689,7 @@ export function buildGithubOpPipelineDocs(
                 : {}),
           steps,
         },
+        ...(driftAgent || update ? { [driftFoundJobName(jobName)]: driftFoundJob(jobName, spec.runner) } : {}),
         ...(update
           ? {
               [scheduledOpUpdateJobName(jobName)]: updateJob(jobName, update, {
@@ -822,12 +823,13 @@ export function generateGithubOpPipeline(
 /** The id of the run step that says whether an update's drift check found drift (#4631). */
 const DRIFT_FLAG_STEP_ID = "drift-check";
 
-/** The Op's run step when an update follows it (#4631): `drift=true` as an output on chant's drift code, and the run's own exit code. */
+/** The Op's run step when an update follows it (#4631): `drift=true` as an output on chant's drift code, which ends the step green so the job publishes it, and the run's own exit code otherwise. */
 function driftFlagStep(invocation: string, env: Record<string, string>): Record<string, unknown> {
   return {
     id: DRIFT_FLAG_STEP_ID,
     env,
-    run: ["set +e", invocation, "code=$?", `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then echo "drift=true" >>"$GITHUB_OUTPUT"; fi`, 'exit "$code"'].join("\n"),
+    // Forgejo publishes outputs only from a successful job (terragucci#1528): drift ends the step green and the found job carries the red.
+    run: ["set +e", invocation, "code=$?", `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then echo "drift=true" >>"$GITHUB_OUTPUT"; exit 0; fi`, 'exit "$code"'].join("\n"),
   };
 }
 

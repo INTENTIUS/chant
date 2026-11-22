@@ -115,8 +115,10 @@ export function agentCommentIf(forge: "github" | "forgejo", comment: string, bar
 /**
  * The drift Op's run step (#4616): the run with its output kept as the
  * drift for the agent, `drift=true` among the step's outputs when it exits
- * with chant's `drift` code, and the output handed on. The step still exits
- * with the run's code. The run appends the drift issues it keeps to the file
+ * with chant's `drift` code, and the output handed on. The step exits with
+ * the run's code, except on drift: it exits 0 so the job succeeds and the
+ * forge publishes its outputs (Forgejo does so for a successful job only,
+ * terragucci#1528), and the found job ({@link driftFoundJob}) carries the red. The run appends the drift issues it keeps to the file
  * `CHANT_DRIFT_ISSUE_FILE` names (`keepDriftIssue`), and the step hands
  * their numbers on as `drift_issues` (#5463).
  */
@@ -133,8 +135,29 @@ export function driftRunStep(invocation: string, env: Record<string, string>, fo
       'code=$(cat "${RUNNER_TEMP:-/tmp}/chant-run.code")',
       `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then echo "drift=true" >>"$GITHUB_OUTPUT"; fi`,
       `if [ -s "$CHANT_DRIFT_ISSUE_FILE" ]; then echo "drift_issues=$(tr -cs '0-9' ',' <"$CHANT_DRIFT_ISSUE_FILE" | sed 's/^,//; s/,$//')" >>"$GITHUB_OUTPUT"; fi`,
+      // Forgejo publishes a job's outputs only when the job succeeds, so drift ends the step green; the found job carries the red.
+      `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then exit 0; fi`,
       'exit "$code"',
     ].join("\n"),
+  };
+}
+
+/** The name of the job that fails a run which found drift (terragucci#1528): the drift Op's job, then `-found`. */
+export function driftFoundJobName(jobName: string): string {
+  return `${jobName}-found`;
+}
+
+/**
+ * The job after a drift Op's job that exits with chant's `drift` code when
+ * the Op found drift, so the run still shows red on a forge that publishes
+ * outputs only from a successful job (terragucci#1528).
+ */
+export function driftFoundJob(after: string, runner?: CiRunner): Record<string, unknown> {
+  return {
+    needs: after,
+    if: `needs.${after}.outputs.drift == 'true'`,
+    "runs-on": githubRunsOn(runner),
+    steps: [{ name: "Fail the run that found drift", run: `echo "${after} found drift"\nexit ${CHANT_EXIT.drift}` }],
   };
 }
 
