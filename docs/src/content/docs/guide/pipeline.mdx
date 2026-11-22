@@ -15,7 +15,7 @@ A stage is an environment in promotion order: `dev`, then `staging`, then `prod`
 
 1. A pull request plans as before. When it changes the pipeline, its plan note shows the folded spec's diff.
 2. The merge applies the first stage's waves, each behind the stage's gate, read from the pipeline at the base commit.
-3. Once the first stage's last wave applied, the merge cuts a release from the applied commit with `chant release cut auto --yes --wait-checks`, which follows the member's `release.green` setting. Under `forge-checks` the cut waits for the other push workflows still running on the merge commit.
+3. Once the first stage's last wave applied, the merge cuts a release from the applied commit with `chant release cut auto --first 0.1.0 --yes --wait-checks`, which follows the member's `release.green` setting. Under `forge-checks` the cut waits for the other push workflows still running on the merge commit, and counts the jobs of its own run that its wave depended on (the product's `firstWaveNeeds` jobs, such as its check, and the earlier waves' jobs) through `--own-run-jobs`, so a merge commit that only this run checks still gets its release. A follow-on run of a later wave, or a run that is started again for the commit, has none of those jobs, so the cut there names none and waits for a check from another workflow. The member's first merge cuts its first release at `0.1.0`, or at the version `release.first` names, and each later merge bumps the previous release.
 4. Each later stage takes that release through `chant components promote --to <stage> --release <label>`, behind that stage's gate. A person runs it, or starts the generated promote job.
 
 The control repo's `<product>-applied` dispatch goes out after the first stage, the one a merge applies.
@@ -83,6 +83,8 @@ With a pipeline, `components promote` reads it at the default branch's tip:
 - A promote that skips a stage is refused. With `--allow-skip` it passes only through each skipped stage's gate, `<stage>-skip`, and the skip is recorded on `_gates/shop/applied.jsonl`.
 - A release someone rejected at the stage's gate does not enter the stage, and is not skipped past it. The promote exits 8 and names who rejected it and why.
 - Under a gate whose `approval` is `sealed`, only an approval sealed by a signer at the tip counts, as it does for a wave.
+
+A component run into a stage, `chant run --components all --env staging`, waits at the same gate: under `--release` it binds the release's digest, so the approval a promote waited on lets the run through too. A stage whose policy is `never` goes straight to its components' own gates. A redeploy, a rollback and a fan-out into the stage wait at the gate too. See [A run into a pipeline stage](/chant/components/orchestration/#a-run-into-a-pipeline-stage).
 
 ### Stages that apply through a step
 

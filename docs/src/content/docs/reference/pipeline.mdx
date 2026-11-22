@@ -25,7 +25,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `name` | the pipeline's name: lowercase letters, digits, `-`, `_`. Stage gates and skips are recorded under it |
 | `stages` | the stages in promotion order, first to last; at least one |
 | `defaults` | op-waves settings every stage shares: `op`, `step` or `plan` and `apply`, `runner`, `notify`, `respond`, `evidence`, `approvals` without `quorum`, `hooks`, `holds`, `point` |
-| `release` | `{ cut, label, bin }`: the merge cuts a release once the first stage applied. `cut` defaults to `true`, `label` to `auto`, `bin` to `["chant"]` |
+| `release` | `{ cut, label, bin, first }`: the merge cuts a release once the first stage applied. `cut` defaults to `true`, `label` to `auto`, `bin` to `["chant"]`. `first` is the version an `auto` cut takes when the member has no release in its ledger or its version tags, so a repository's first merge cuts its first release; it defaults to `0.1.0` |
 | `control` | the control repo told once the first stage applied, as an op-waves spec's `control` |
 
 ## Stage
@@ -82,7 +82,7 @@ A group whose rules a gate's targets leave out is dropped, and a gate left with 
 | each wave's `gate`, `approval`, `environment`, `failureTolerance` | the wave's own, else the stage's |
 | `approvals.quorum`, `holds`, `point` | the stage's gate, else `defaults` |
 | `hooks` | `defaults.hooks`, then the stage's |
-| the last wave's `hooks.after.apply` | on the first stage, `<bin> release cut <label> --yes`, unless `release.cut` is `false`; then `<bin> pipeline artifacts publish --stage <name>` when the stage has `publish` |
+| the last wave's `hooks.after.apply` | on the first stage, `<bin> release cut <label> --first <first> --yes --wait-checks --own-run-jobs <jobs>` (`--first` with the label `auto`, or with `release.first` set; `--own-run-jobs` with the jobs the last wave's jobs depend on and the product's `firstWaveNeeds`, as `pipeline generate` names them), unless `release.cut` is `false`; then `<bin> pipeline artifacts publish --stage <name>` when the stage has `publish` |
 | `control` | on the first stage, the pipeline's `control` |
 | `release` | `defaults.release`; with a `defaults.step` and run targets that some other stage lacks (targets that name environments), `component` is `defaults.release.component`, else the pipeline's name |
 
@@ -187,7 +187,7 @@ A hold, a freeze window, a pause and a rejection refuse an urgent promote as the
 | Command | Does |
 |---|---|
 | `chant build` | folds the file and writes `.chant/pipeline.json`; a finding fails the build |
-| `chant pipeline spec [--stage <stage>] [--at <commit>]` | prints the folded spec, or one stage's op-waves spec |
+| `chant pipeline spec [--stage <stage> [--own-run-jobs <name,...>]] [--at <commit>]` | prints the folded spec, or one stage's op-waves spec; `--own-run-jobs` gives the jobs its release cut counts, which `pipeline generate` writes into the wave jobs' render command |
 | `chant pipeline generate <github\|gitlab\|forgejo> [--output <dir>]` | writes the first stage's waves workflow and the `<pipeline>-promote` workflow |
 | `chant pipeline artifacts publish --stage <stage> [--release <ref>] [--dry-run] [--json]` | publishes the stage's artifacts for the release named, else the release cut from `HEAD`, reading `publish` from the pipeline on the default branch |
 | `chant pipeline artifacts read --stage <stage> [--release <ref>] [--name <artifact>] [--from <dir>] [--json]` | prints a stage's artifacts for the release named, else the one in `CHANT_CONTROL_RELEASE`, else the release it last published for. `--name` prints one value; `--from` reads another repository's `chant/lifecycle` |

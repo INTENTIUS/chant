@@ -175,7 +175,13 @@ async function artifactPublishesOf(cwd: string): Promise<import("../../lifecycle
 export function describeGreen(green: import("../../lifecycle/release-store").ReleaseCutGreen | undefined | null): string {
   if (!green) return "no green gate recorded";
   if (green.source === "chant") return `green by ${green.tag.slice(0, green.tag.lastIndexOf("/"))} tag`;
-  if (green.source === "forge-checks") return `green by ${green.checks.length} ${green.forge} check(s): ${green.checks.join(", ")}`;
+  if (green.source === "forge-checks") {
+    const others = `green by ${green.checks.length} ${green.forge} check(s): ${green.checks.join(", ")}`;
+    // terragucci issue 1531: the jobs of the cut's own run that counted.
+    if (!green.ownRun || green.ownRun.length === 0) return others;
+    const own = `${green.ownRun.length} job(s) of the cut's own run: ${green.ownRun.join(", ")}`;
+    return green.checks.length > 0 ? `${others}; and ${own}` : `green by ${own}`;
+  }
   return "no green gate (release.green: none)";
 }
 
@@ -581,6 +587,10 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     return 1;
   }
   let label = positional ?? args.label ?? null;
+  if (args.first !== undefined && label !== AUTO_LABEL) {
+    console.error(formatError({ message: "--first names the label of a computed first release, and the cut is given its label", hint: "Cut auto --first <version>, or give the label itself, such as 0.1.0." }));
+    return 1;
+  }
   if (args.pre !== undefined && label !== AUTO_LABEL) {
     console.error(formatError({ message: "--pre names the prerelease id of a computed label, and the cut is given its label", hint: "Cut auto --pre <id>, or give the prerelease label itself, such as 1.5.0-rc.0." }));
     return 1;
@@ -596,7 +606,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   // --dry-run is the default without --yes, and keeps a run with --yes a dry run.
   const dryRun = args.yes !== true || args.dryRun === true;
   const cwd = resolve(".");
-  const { spawnTargetCompiler, ReleaseCompileError, RELEASE_LABEL_ENV } = await import("../../components/release-compile");
+  const { spawnTargetCompiler, releaseChildCommand, ReleaseCompileError, RELEASE_LABEL_ENV } = await import("../../components/release-compile");
   const { cutRelease, planRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");
   const { ReleaseLabelError } = await import("../../lifecycle/release-store");
   const { pushLifecycleRebasing, getHeadCommit } = await import("../../lifecycle/git");
@@ -672,7 +682,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       const rn = await import("../../lifecycle/release-next");
       try {
         if (label === AUTO_LABEL) {
-          computed = await rn.nextRelease({ cwd, ...(commit ? { at: commit } : {}), ...(args.pre !== undefined ? { pre: args.pre } : {}) });
+          computed = await rn.nextRelease({ cwd, ...(commit ? { at: commit } : {}), ...(args.pre !== undefined ? { pre: args.pre } : {}), ...(args.first !== undefined ? { first: args.first } : {}) });
           label = computed.label;
           intents = computed.intents;
         } else if (label !== null && top && commit) {
@@ -735,7 +745,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // #4657: the images release.images declares are built first, and their digests handed to the build command.
     const declaredImages = await releaseImagesOf(cutCwd);
     const digestsFile = declaredImages.length > 0 ? join(tmpdir(), `chant-release-digests-${process.pid}.json`) : undefined;
-    const compiler = spawnTargetCompiler({ ...compileInputs(ctx, params, cutCwd, label), ...(digestsFile ? { releaseDigests: digestsFile } : {}) });
+    // #5474: the compile child runs through the member's release.bin (`yodel chant`), else this chant as it was started.
+    const compiler = spawnTargetCompiler({ ...compileInputs(ctx, params, cutCwd, label), ...(digestsFile ? { releaseDigests: digestsFile } : {}) }, releaseChildCommand(cutCwd));
     const buildImages = digestsFile
       ? async (at: string) => {
           const { buildReleaseImages, checkImagesOutsideGoreleaser, writeReleaseDigests, ReleaseImageError } = await import("../../lifecycle/release-images");
@@ -847,6 +858,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(args.channel ? { channel: args.channel } : {}),
       ...(lane !== undefined ? { lane } : {}),
       ...(args.overrideGreen ? { overrideGreen: true } : {}),
+      ...(args.ownRunJobs && args.ownRunJobs.length > 0 ? { ownRunJobs: args.ownRunJobs } : {}),
       ...(args.waitChecks
         ? { waitForChecks: { ...(args.ciTimeoutMinutes !== undefined ? { timeoutMs: args.ciTimeoutMinutes * 60_000 } : {}), onNote: (line: string) => console.error(line) } }
         : {}),
@@ -1390,9 +1402,10 @@ export async function runReleaseCandidates(ctx: CommandContext): Promise<number>
 }
 
 /**
- * `release next [--at <sha>] [--pre <id>] [--json]` (#5159): the label the
- * next release of this member carries, from the conventional commits and
- * the intent files since its previous release. The label alone goes to
+ * `release next [--at <sha>] [--pre <id>] [--first <version>] [--json]`
+ * (#5159): the label the next release of this member carries, from the
+ * conventional commits and the intent files since its previous release, or
+ * `--first` when it has none. The label alone goes to
  * stdout, so a script can read it; why goes to stderr.
  */
 export async function runReleaseNext(ctx: CommandContext): Promise<number> {
@@ -1403,7 +1416,7 @@ export async function runReleaseNext(ctx: CommandContext): Promise<number> {
   await fetchLifecycle({ cwd }).catch(() => false);
   let doc: import("../../lifecycle/release-next").NextRelease;
   try {
-    doc = await rn.nextRelease({ cwd, ...(args.at ? { at: args.at } : {}), ...(args.pre !== undefined ? { pre: args.pre } : {}) });
+    doc = await rn.nextRelease({ cwd, ...(args.at ? { at: args.at } : {}), ...(args.pre !== undefined ? { pre: args.pre } : {}), ...(args.first !== undefined ? { first: args.first } : {}) });
   } catch (err) {
     if (!(err instanceof rn.ReleaseNextError)) throw err;
     if (args.json) console.log(JSON.stringify({ error: { code: err.code, message: err.message, ...(err.fix ? { fix: err.fix } : {}) } }, null, 2));
@@ -1425,6 +1438,11 @@ export async function runReleaseNext(ctx: CommandContext): Promise<number> {
   console.log(doc.label);
   if (doc.alreadyCut) {
     console.error(`  ${doc.at.slice(0, 12)} is already released as ${doc.label}`);
+    return 0;
+  }
+  if (doc.from.source === "first") {
+    console.error(`  the first release: the member has no previous release, and --first names ${doc.from.label}${doc.intents.length > 0 ? `; ${doc.intents.length} intent file${doc.intents.length === 1 ? "" : "s"}` : ""}`);
+    if (tag) console.error(`  tag ${tag}`);
     return 0;
   }
   const n = doc.commits.length;

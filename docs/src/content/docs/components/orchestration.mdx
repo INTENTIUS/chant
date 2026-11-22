@@ -51,6 +51,22 @@ That approval predates environment- and plan-bound component gates (#2574) and r
 
 `v0.80.0` warned about it. It printed one warning per component and gate when a gate passed on an approval that recorded no plan.
 
+### A run into a pipeline stage
+
+When the member's [pipeline](/chant/guide/pipeline/) has a stage named after `--env`, `chant run --components <selector> --env <stage>` first waits at that stage's gate, the gate a promote into the stage waits at. The gate is `<stage>` under the pipeline's name, read from `.chant/pipeline.ts` at the default branch's tip, so a branch that edits the stage's gate is still judged by the merged one. Its approval mode, quorum, rejections and the release's risk count as they do for a promote.
+
+- Under `--release <label|digest>` the gate binds the release's digest, so one `chant approve shop staging --env staging --plan <release digest>` lets both the promote and the run into `staging` through.
+- Without a release it binds a digest of the components the run applies, each taken as its plan digest above. The same checkout and flags give the same digest.
+- A stage whose gate policy is `never`, an environment the pipeline has no stage for, and a member with no pipeline at the tip run with their components' own gates alone.
+
+A gate that waits records its pending fact, prints the `chant approve` line and exits 3, or the code `--gated-exit` names, before any component runs. A pipeline that does not fold at the tip stops the run with exit 1. A promote passes the stage's gate itself and deploys without passing it again.
+
+`chant components redeploy <stage>`, `chant components rollback <stage>` and `chant components fan-out --env <stage>` wait at the same gate, bound the same way:
+
+- A rollback under `--release` binds the release's digest. A redeploy, a rollback of one `--component` and a fan-out bind the digest of the components they apply.
+- A fan-out with `--gate` or `--wave-gate` waits at its own gate, under the `fan-out` op, in place of the stage's.
+- `chant components rollback <stage> --requested` waits at the stage's rollback gate, `<stage>-rollback`, in place of the stage's gate.
+
 ## Generate mode
 
 The same declarations synthesize plain CI YAML through the [GitHub](/chant/lexicons/github/), [GitLab](/chant/lexicons/gitlab/), or [Forgejo](/chant/lexicons/forgejo/) lexicon. Pipeline files still exist, but nobody maintains them by hand, and a cross-cutting change is one edit to the generator. The generated YAML is a thin trigger and runner; the deploy logic stays in the component, not the YAML.

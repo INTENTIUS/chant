@@ -5,7 +5,7 @@
 
 import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { REPO } from "../workspace/__fixtures__/contract-repo";
@@ -17,6 +17,7 @@ import {
   compileEnvironment,
   recordedInputRefs,
   ReleaseCompileError,
+  releaseChildCommand,
   spawnTargetCompiler,
   templateRefs,
   withOnlyArchiveSteps,
@@ -240,4 +241,80 @@ describe("spawnTargetCompiler (#4764)", () => {
       expect(target.templates).toEqual([{ component: "api", path: "api.template.json", content: `{"Resources":{}}` }]);
     });
   }, 60_000);
+});
+
+describe("the release cut's compile child runs through the member's release.bin (#5474)", () => {
+  /** A member's `.chant/pipeline.ts`, with `release` as given. */
+  function pipelineFile(dir: string, release: string): void {
+    mkdirSync(join(dir, ".chant"), { recursive: true });
+    writeFileSync(
+      join(dir, ".chant", "pipeline.ts"),
+      `import { pipeline } from "@intentius/chant/pipeline";
+
+export default pipeline({
+  name: "shop",
+  defaults: { op: "shop", step: { kind: "pulumi-up", stack: "{target}" }, runner: "ubuntu-latest" },
+  stages: [{ name: "staging", waves: [{ name: "staging", runs: [{ target: "staging" }] }], gate: { policy: "never" } }],
+  ${release}
+});
+`,
+    );
+  }
+
+  /** A stand-in for a product's bin: records the words it was started with and writes the target for the env it was given. */
+  function fakeBin(dir: string, name: string): { command: string[]; seen: () => string[] } {
+    const script = join(dir, `${name}.cjs`);
+    const seen = join(dir, `${name}.argv.json`);
+    writeFileSync(
+      script,
+      `const fs = require("node:fs");
+const argv = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(argv));
+const env = argv[argv.indexOf("--env") + 1];
+fs.writeFileSync(process.env.CHANT_RELEASE_COMPILE_RESULT, JSON.stringify({ env, components: [], params: [], templates: [], buildSteps: {}, buildInputs: {}, componentFiles: {} }));
+`,
+    );
+    return { command: [process.execPath, script], seen: () => JSON.parse(readFileSync(seen, "utf-8")) as string[] };
+  }
+
+  test("a member with release.bin compiles through it, with chant as the fallback", async () => {
+    await withTestDir(async (dir) => {
+      const yodel = fakeBin(dir, "yodel");
+      const own = fakeBin(dir, "own");
+      pipelineFile(dir, `release: { bin: ${JSON.stringify([...yodel.command, "chant"])} },`);
+      const command = releaseChildCommand(dir, own.command);
+      expect(command).toEqual({ command: [...yodel.command, "chant"], fallback: own.command });
+      const target = await spawnTargetCompiler({ projectDir: dir }, command).compile("pipeline-dev");
+      expect(target.env).toBe("pipeline-dev");
+      expect(yodel.seen()).toEqual(["chant", "release", "compile", "--env", "pipeline-dev", "--json"]);
+      expect(existsSync(join(dir, "own.argv.json"))).toBe(false);
+    });
+  });
+
+  test("a member without release.bin compiles through chant", async () => {
+    await withTestDir(async (dir) => {
+      const own = fakeBin(dir, "own");
+      pipelineFile(dir, `release: { cut: true },`);
+      expect(releaseChildCommand(dir, own.command)).toEqual({ command: own.command });
+      const target = await spawnTargetCompiler({ projectDir: dir }, releaseChildCommand(dir, own.command)).compile("staging");
+      expect(target.env).toBe("staging");
+      expect(own.seen()).toEqual(["release", "compile", "--env", "staging", "--json"]);
+    });
+  });
+
+  test("a member with no pipeline compiles through chant", async () => {
+    await withTestDir(async (dir) => {
+      expect(releaseChildCommand(dir, ["chant-own"])).toEqual({ command: ["chant-own"] });
+    });
+  });
+
+  test("a release.bin that is not on the PATH falls back to chant", async () => {
+    await withTestDir(async (dir) => {
+      const own = fakeBin(dir, "own");
+      pipelineFile(dir, `release: { bin: ["chant-5474-not-installed", "chant"] },`);
+      const target = await spawnTargetCompiler({ projectDir: dir }, releaseChildCommand(dir, own.command)).compile("staging");
+      expect(target.env).toBe("staging");
+      expect(own.seen()).toEqual(["release", "compile", "--env", "staging", "--json"]);
+    });
+  });
 });

@@ -88,3 +88,30 @@ describe("the failed-verify agent on Forgejo", () => {
     expect(all).not.toMatch(/chant (run|approve)\b|components (promote|rollback)|--admin|\bterraform apply\b|\bpulumi up\b/);
   });
 });
+
+// terragucci#1528: Forgejo publishes a job's outputs only when it succeeds.
+describe("the drift job on Forgejo publishes its outputs (terragucci#1528)", () => {
+  const spec: ScheduledOpSpec = { name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, runner: "agents", agent: { on: "drift" } };
+  const d = parseYAML(generateForgejoOpPipeline([spec]).files[0]!.yaml) as unknown as { jobs: Record<string, { needs?: string; if?: string; "runs-on"?: unknown; steps: Array<{ id?: string; run?: string }> }> };
+
+  test("the drift job exits 0 on drift with drift=true written", () => {
+    const run = d.jobs["drift-app"]!.steps.find((s) => s.id === "chant-run")!.run!;
+    expect(run).toContain('echo "drift=true"');
+    expect(run).toContain('if [ "$code" -eq 2 ]; then exit 0; fi');
+  });
+
+  test("the found job needs the drift job, runs on drift, and exits with the drift code", () => {
+    const found = d.jobs["drift-app-found"]!;
+    expect(found.needs).toBe("drift-app");
+    expect(found.if).toBe("needs.drift-app.outputs.drift == 'true'");
+    expect(found["runs-on"]).toBe("agents");
+    expect(found.steps.at(-1)!.run).toMatch(/exit 2$/);
+  });
+
+  test("an update's job has a found job too, and an Op with neither has none", () => {
+    const u = parseYAML(generateForgejoOpPipeline([{ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, update: { command: "x" } }]).files[0]!.yaml) as unknown as { jobs: Record<string, unknown> };
+    expect(u.jobs["drift-app-found"]).toBeDefined();
+    const n = parseYAML(generateForgejoOpPipeline([{ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" } }]).files[0]!.yaml) as unknown as { jobs: Record<string, unknown> };
+    expect(n.jobs["drift-app-found"]).toBeUndefined();
+  });
+});

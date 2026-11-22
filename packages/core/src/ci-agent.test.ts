@@ -287,7 +287,7 @@ describe("agent run", () => {
 });
 
 describe("agent land", () => {
-  function landed(o: { settings?: AgentSettings; decision?: Record<string, unknown>; rc?: string; git?: AgentGit; open?: PullRequest; runs?: OpRunRecord[] } = {}) {
+  function landed(o: { settings?: AgentSettings; decision?: Record<string, unknown>; rc?: string; git?: AgentGit; open?: PullRequest; runs?: OpRunRecord[]; env?: Record<string, string> } = {}) {
     const d = dir();
     const settings = o.settings ?? commentSettings();
     writeFileSync(join(d, AGENT_DECISION_FILE), JSON.stringify({ version: 1, name: settings.name, on: settings.on, go: true, sha: HEAD, pr: 7, started: NOW.toISOString(), ...(o.decision ?? {}) }));
@@ -298,16 +298,18 @@ describe("agent land", () => {
     const records: OpRunRecordInput[] = [];
     const opened: unknown[] = [];
     const edited: unknown[] = [];
+    const issueComments: Array<{ issue: number; body: string }> = [];
     const input: LandInput = {
       settings,
       words,
       dir: d,
       workDir: join(d, "land"),
-      env: {},
+      env: o.env ?? {},
       event: event("/plywood agent add a tag"),
       forge: {
         pullRequestHead: async () => ({ sha: HEAD, branch: "feat", open: true, sameRepo: true }),
         addComment: async (_pr, body) => (replies.push(body), { id: replies.length }),
+        addIssueComment: async (issue, body) => (issueComments.push({ issue, body }), { id: issueComments.length }),
         findPullRequest: async () => o.open,
         openPullRequest: async (spec) => (opened.push(spec), { number: 9, url: "http://forge/pulls/9", title: spec.title, body: spec.body, head: spec.head }),
         editPullRequest: async (pr, change) => (edited.push({ pr, change }), undefined),
@@ -318,7 +320,7 @@ describe("agent land", () => {
       record: async (r) => void records.push(r),
       now: () => NOW,
     };
-    return landAgentChange(input).then((out) => ({ out, replies, pushes, records, opened, edited }));
+    return landAgentChange(input).then((out) => ({ out, replies, pushes, records, opened, edited, issueComments }));
   }
 
   test("a comment's change is pushed to the pull request's branch, said, and recorded", async () => {
@@ -362,6 +364,38 @@ describe("agent land", () => {
     expect(again.out.result).toBe("updated");
     expect(again.pushes[0]!.lease).toBe(`refs/heads/plywood/agent/plywood-drift-app:${tip}`);
     expect(again.edited).toHaveLength(1);
+  });
+
+  // #5463: the drift Op hands its issues on, and the drift issue hears about the pull request once.
+  test("a drift run comments its pull request's URL on the drift issue, and a later run that edits it adds none", async () => {
+    const settings = driftSettings();
+    const env = { CHANT_AGENT_DRIFT_ISSUES: "12" };
+    const first = await landed({ settings, decision: { pr: undefined }, env });
+    expect(first.out.result).toBe("opened");
+    expect(first.issueComments).toEqual([{ issue: 12, body: expect.stringContaining("http://forge/pulls/9") }]);
+    expect(first.issueComments[0]!.body).toMatch(/^plywood: the agent opened http:\/\/forge\/pulls\/9 /);
+    expect(first.records[0]!.outcomes!.agent).toMatchObject({ result: "opened", pr: 9, driftIssues: [12] });
+
+    // The record of that run, as the next run reads it from the ledger.
+    const earlier: OpRunRecord = { version: 1, id: "r1", ...first.records[0]!, started: "2026-10-27T06:00:00Z", ended: "2026-10-27T06:01:00Z" } as OpRunRecord;
+    const open = { number: 9, url: "http://forge/pulls/9", title: "t", body: "b", head: "plywood/agent/plywood-drift-app" };
+    const again = await landed({ settings, decision: { pr: undefined }, git: fakeGit({ remoteTip: "c".repeat(40) }), open, runs: [earlier], env });
+    expect(again.out.result).toBe("updated");
+    expect(again.issueComments).toEqual([]);
+    expect(again.records[0]!.outcomes!.agent).not.toHaveProperty("driftIssues");
+
+    // A new drift issue for the same pull request still hears about it, once.
+    const newer = await landed({ settings, decision: { pr: undefined }, git: fakeGit({ remoteTip: "c".repeat(40) }), open, runs: [earlier], env: { CHANT_AGENT_DRIFT_ISSUES: "12,13" } });
+    expect(newer.issueComments.map((c) => c.issue)).toEqual([13]);
+  });
+
+  test("a drift run with no drift issue handed on, and a comment run, comment on no issue", async () => {
+    const drift = await landed({ settings: driftSettings(), decision: { pr: undefined }, env: { CHANT_AGENT_DRIFT_ISSUES: "" } });
+    expect(drift.out.result).toBe("opened");
+    expect(drift.issueComments).toEqual([]);
+    const comment = await landed({ env: { CHANT_AGENT_DRIFT_ISSUES: "12" } });
+    expect(comment.out.result).toBe("pushed");
+    expect(comment.issueComments).toEqual([]);
   });
 
   test("a drift branch with a person's commit on it is left alone", async () => {

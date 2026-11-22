@@ -419,6 +419,8 @@ export interface ParsedArgs {
   channel?: string;
   /** `chant release next --pre <id>` and `chant release cut auto --pre <id>` (#5159): the next label is a prerelease of the computed version, `<version>-<id>.<n>`. */
   pre?: string;
+  /** `chant release next --first <version>` and `chant release cut auto --first <version>` (terragucci#1526): the label when the member has no previous release. */
+  first?: string;
   /** `chant release deprecate|yank --replacement <label>` (#5163): the release to move to instead. */
   replacement?: string;
   /** `chant release yank --forge-release prerelease|draft|delete` (#5163): how a yank leaves the forge release. */
@@ -427,6 +429,13 @@ export interface ParsedArgs {
   overrideGreen?: boolean;
   /** `chant release cut --wait-checks [--timeout-minutes <n>]` (#5438): under release.green forge-checks, wait for the commit's pending checks. */
   waitChecks?: boolean;
+  /**
+   * `chant release cut --own-run-jobs <name,...>` (terragucci#1531): under
+   * release.green forge-checks, the jobs of the cut's own run that count.
+   * `chant pipeline spec --own-run-jobs <name,...>`: the jobs the stage's
+   * release-cut hook passes.
+   */
+  ownRunJobs?: string[];
   /**
    * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
    * — post the note and the commit status on this forge, with the client

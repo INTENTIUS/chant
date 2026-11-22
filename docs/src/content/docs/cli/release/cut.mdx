@@ -48,7 +48,7 @@ The cut refuses before it writes anything when:
 
 The code is printed in square brackets at the end of the message. The dry run refuses with the same codes, and also with `release-label-taken` when the label already names a release of another commit.
 
-`auto` in place of the label cuts the label [`release next`](/chant/cli/release/next/) computes for the commit being cut, and refuses with its codes. `--pre <id>` goes with `auto` only. Every cut with a label, `auto` or typed, consumes the [intent files](/chant/cli/release/next/#intent-files) at the commit that name the member: its cut line lists them, and the dry run prints them.
+`auto` in place of the label cuts the label [`release next`](/chant/cli/release/next/) computes for the commit being cut, and refuses with its codes. `--pre <id>` and `--first <version>`, the label of a member's first release when it has no previous one, go with `auto` only. Every cut with a label, `auto` or typed, consumes the [intent files](/chant/cli/release/next/#intent-files) at the commit that name the member: its cut line lists them, and the dry run prints them.
 
 ## Checks before the cut
 
@@ -192,9 +192,23 @@ A check that failed or has not finished refuses the cut, and so does a commit wi
 chant release cut auto --yes --wait-checks --timeout-minutes 30
 ```
 
+`--own-run-jobs <name,...>` counts the named jobs of the cut's own run beside the checks of the other workflows. Each named job the forge reports must have passed, and with `--wait-checks` the cut waits for one still running. The rest of the run, such as the cut's own job and the jobs queued behind it, stays out of the judgement. When the forge reports none of the named jobs, the cut refuses with `release-commit-not-green`. A job is matched by the name the forge reports for it:
+
+| Forge | Name |
+|---|---|
+| GitHub | The check run's name, which is the job's `name:` or else its id. |
+| Forgejo | The job in the status context `<workflow> / <job> (<event>)`. |
+| GitLab | The job's name in the cut's pipeline. |
+
+A [pipeline](/chant/guide/pipeline/)'s merge cut passes the jobs its wave depended on, so a merge commit that only the pipeline's own run checks is judged by the jobs that ran before the apply. The `chant` and `none` gates read nothing from the forge and cut the same with the flag.
+
+```bash
+chant release cut auto --yes --wait-checks --own-run-jobs check,wave-1-dev
+```
+
 `none` is refused with `release-green-none-refused` when the declaration at base turns on the `supply-chain` or `verified-releases` [security group](/chant/reference/security-features/), or names a `release` gate in `identity.gates`: those ask for releases a green gate passed.
 
-The cut line records the gate the commit passed as `green`: `{ "source": "chant", "tag": "ci/green/<sha>" }`, `{ "source": "forge-checks", "forge": "github", "checks": ["build", "test"] }`, or `{ "source": "none" }`. A cut under an override records the override instead. The dry run and the cut print it, [`release verify`](/chant/cli/release/verify/) shows it for each cut, and the publish's [provenance statement](/chant/reference/publish-targets/#the-provenance-statement) carries it. `--override-green` works under `forge-checks` as under `chant`: the override's `tag` is then `forge-checks/<sha>`.
+The cut line records the gate the commit passed as `green`: `{ "source": "chant", "tag": "ci/green/<sha>" }`, `{ "source": "forge-checks", "forge": "github", "checks": ["build", "test"] }` (with `"ownRun": ["check", "wave-1-dev"]` for the jobs of the cut's own run that counted), or `{ "source": "none" }`. A cut under an override records the override instead. The dry run and the cut print it, [`release verify`](/chant/cli/release/verify/) shows it for each cut, and the publish's [provenance statement](/chant/reference/publish-targets/#the-provenance-statement) carries it. `--override-green` works under `forge-checks` as under `chant`: the override's `tag` is then `forge-checks/<sha>`.
 
 ## The label in the build
 

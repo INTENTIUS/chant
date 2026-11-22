@@ -1347,6 +1347,27 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   }
   // #4695: the components a run under a release left alone, recorded after a successful run.
   const skipped: Skipped = new Map();
+  const releasePrepare = underRelease ? releaseRunPrepare(underRelease, projectPath, env, { deployUnchanged: ctx.args.deployUnchanged === true, skipped }) : undefined;
+  // #5475: a run into an environment a pipeline stage gates waits at that stage's gate, read at base as a promote reads it.
+  const { runStageGate } = await import("./stage-gate");
+  const stageGate = await runStageGate(projectPath, env, underRelease?.releaseDigest);
+  if (typeof stageGate === "number") {
+    if (stageGate === 3) events?.settle("gated");
+    else events?.settle("failed", `stage "${env}"'s gate stopped the run`);
+    return stageGate === 3 ? gatedExit : stageGate;
+  }
+  let stageStop: number | undefined;
+  const prepare: import("../../components/cli-support").RunComponentsOptions["prepare"] =
+    stageGate && !underRelease
+      ? async (components) => {
+          // Without a release, the gate binds the components this run applies, once they are resolved.
+          const { runStageDigest } = await import("../../pipeline/run-gate");
+          const code = await stageGate(runStageDigest(components, env, projectPath, targets));
+          if (code === undefined) return { components };
+          stageStop = code;
+          return { error: `stage "${env}"'s gate stopped the run` };
+        }
+      : releasePrepare;
   let result: RunComponentsResult;
   try {
     // #4594: ci.lockGrain, and on the resource grain each step's row lease in the pull-request loop's rows file.
@@ -1363,11 +1384,16 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
       sandbox: ctx.args.sandbox,
       buildParams: paramsResolution.provenance,
       ...(onPlan ? { onPlan } : {}),
-      ...(underRelease ? { prepare: releaseRunPrepare(underRelease, projectPath, env, { deployUnchanged: ctx.args.deployUnchanged === true, skipped }) } : {}),
+      ...(prepare ? { prepare } : {}),
     });
   } catch (err) {
     events?.settle("failed", err instanceof Error ? err.message : String(err));
     throw err;
+  }
+  if (stageStop !== undefined) {
+    if (stageStop === 3) events?.settle("gated");
+    else events?.settle("failed", `stage "${env}"'s gate stopped the run`);
+    return stageStop === 3 ? gatedExit : stageStop;
   }
   // A run that never reached its components (a bad selector, a cycle) still ends its stream.
   if (result.success) events?.settle("ok");

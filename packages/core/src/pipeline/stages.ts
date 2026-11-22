@@ -23,6 +23,7 @@
  */
 
 import { assertOpWavesSpec, type OpWave, type OpWaveHook, type OpWaveHooks, type OpWavesSpec } from "../op/op-waves";
+import type { OpWaveJob } from "../op/op-waves";
 import type { PromotionStep } from "../workspace/promotion-order";
 import type { PipelineFreezeWindow, PipelineSpec, PipelineStage } from "./spec";
 
@@ -41,16 +42,57 @@ export function promotionOrderOf(spec: Pick<PipelineSpec, "stages">): PromotionS
   return spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
 }
 
+/** The version a pipeline's `auto` cut takes when the member has no release yet (terragucci#1526). */
+export const PIPELINE_FIRST_VERSION = "0.1.0";
+
 /**
  * The hook a merge's first stage cuts its release with. It passes
  * `--wait-checks` (#5438): under `release.green: forge-checks` the cut waits
  * for the other push workflows still running on the merge commit, and the
- * other gates ignore it.
+ * other gates ignore it. An `auto` cut passes `--first <release.first>`
+ * (default {@link PIPELINE_FIRST_VERSION}), as does another label when
+ * `release.first` is set (a product's word for auto), so the merge of a member with no
+ * release yet cuts its first one instead of failing after the apply
+ * (terragucci#1526, sql-yodeler#406).
+ *
+ * With `ownRunJobs`, the jobs of the run the cut's wave depended on
+ * ({@link releaseCutOwnRunJobs}), it passes `--own-run-jobs` (terragucci#1531),
+ * so under `forge-checks` a merge commit that no other workflow checks is
+ * judged by the jobs that ran before the apply in the same run.
  */
-export function releaseCutHook(spec: Pick<PipelineSpec, "release">): OpWaveHook | undefined {
+export function releaseCutHook(spec: Pick<PipelineSpec, "release">, ownRunJobs: readonly string[] = []): OpWaveHook | undefined {
   if (spec.release?.cut === false) return undefined;
   const bin = spec.release?.bin ?? ["chant"];
-  return { name: "release-cut", command: [...bin, "release", "cut", spec.release?.label ?? "auto", "--yes", "--wait-checks"] };
+  const label = spec.release?.label ?? "auto";
+  // A product's own word for auto takes --first when the product sets release.first.
+  const first = spec.release?.first !== undefined ? ["--first", spec.release.first] : label === "auto" ? ["--first", PIPELINE_FIRST_VERSION] : [];
+  const own = ownRunJobs.length > 0 ? ["--own-run-jobs", ownRunJobs.join(",")] : [];
+  return { name: "release-cut", command: [...bin, "release", "cut", label, ...first, "--yes", "--wait-checks", ...own] };
+}
+
+/**
+ * The jobs of a run the release cut counts (terragucci#1531): the product's
+ * `firstWaveNeeds`, and every job each of the last wave's jobs depends on,
+ * through `needs`, so whichever of them runs the cut has seen them finish.
+ * `jobs` are the waves' jobs as the generator named them.
+ */
+export function releaseCutOwnRunJobs(jobs: readonly Pick<OpWaveJob, "jobName" | "wave" | "needs">[], firstWaveNeeds: readonly string[] = []): string[] {
+  const byName = new Map(jobs.map((j) => [j.jobName, j]));
+  const upstream = (name: string): Set<string> => {
+    const out = new Set<string>();
+    const todo = [...(byName.get(name)?.needs ?? [])];
+    while (todo.length > 0) {
+      const n = todo.pop()!;
+      if (out.has(n)) continue;
+      out.add(n);
+      todo.push(...(byName.get(n)?.needs ?? []));
+    }
+    return out;
+  };
+  const lastWave = Math.max(0, ...jobs.map((j) => j.wave));
+  const last = jobs.filter((j) => j.wave === lastWave).map((j) => upstream(j.jobName));
+  const common = last.length === 0 ? [] : [...last[0]!].filter((n) => last.every((s) => s.has(n)));
+  return [...new Set([...firstWaveNeeds, ...common])];
 }
 
 /**
@@ -107,10 +149,12 @@ function stageReleaseNames(spec: PipelineSpec, stage: PipelineStage): OpWavesSpe
  * stage also carries the release cut and the control dispatch, since it is
  * the stage a merge applies. A canary wave with no soak of its own takes
  * the stage's (#5327). A stage whose step's targets name environments
- * records its releases under the pipeline's component (#5427). Throws on a
- * stage the pipeline lacks, or a spec no job could run.
+ * records its releases under the pipeline's component (#5427).
+ * `ownRunJobs` are the jobs the first stage's release cut counts
+ * (terragucci#1531, `pipeline spec --own-run-jobs`). Throws on a stage the
+ * pipeline lacks, or a spec no job could run.
  */
-export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
+export function stageWavesSpec(spec: PipelineSpec, name: string, options: { ownRunJobs?: readonly string[] } = {}): OpWavesSpec {
   const index = spec.stages.findIndex((s) => s.name === name);
   if (index < 0) throw new Error(`the pipeline "${spec.name}" has no stage "${name}"; its stages are ${spec.stages.map((s) => s.name).join(", ")}`);
   const stage = spec.stages[index]!;
@@ -129,7 +173,7 @@ export function stageWavesSpec(spec: PipelineSpec, name: string): OpWavesSpec {
       // #5327: a canary wave that declares no soak takes the stage's, so a product's waves.canary needs no key of its own.
       ...(w.canary && w.soak === undefined && stage.soak !== undefined ? { soak: structuredClone(stage.soak) } : {}),
     };
-    const cut = first && k === stage.waves.length - 1 ? releaseCutHook(spec) : undefined;
+    const cut = first && k === stage.waves.length - 1 ? releaseCutHook(spec, options.ownRunJobs) : undefined;
     const publish = cut ? artifactsPublishHook(spec, stage.name) : undefined;
     if (cut) wave.hooks = joinHooks(wave.hooks, { after: { apply: publish ? [cut, publish] : [cut] } });
     return wave;

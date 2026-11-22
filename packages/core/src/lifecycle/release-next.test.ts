@@ -187,6 +187,19 @@ describe("nextRelease", () => {
     expect(await code(nextRelease({ cwd: dir }))).toBe("release-intent-invalid");
   });
 
+  test("--first is the label of a member with no previous release, and is not read once it has one (terragucci#1526)", async () => {
+    const dir = repo();
+    const first = commit(dir, "feat: start", { "src/a.ts": "1" });
+    const code = async (p: Promise<unknown>) => p.then(() => null, (e: unknown) => (e instanceof ReleaseNextError ? e.code : e));
+    expect(await nextRelease({ cwd: dir, first: "0.1.0" })).toMatchObject({ label: "0.1.0", bump: null, alreadyCut: false, from: { label: "0.1.0", commit: first, source: "first" }, commits: [] });
+    expect((await nextRelease({ cwd: dir, first: "v1.0.0", pre: "rc" })).label).toBe("v1.0.0-rc.0");
+    for (const bad of ["0.1", "0.1.0-rc.0", "0.1.0+b", "latest"]) expect(await code(nextRelease({ cwd: dir, first: bad }))).toBe("release-next-first-invalid");
+    await cut(dir, first, "0.1.0");
+    expect(await nextRelease({ cwd: dir, first: "0.1.0" })).toMatchObject({ label: "0.1.0", alreadyCut: true });
+    commit(dir, "fix: close it", { "src/a.ts": "2" });
+    expect(await nextRelease({ cwd: dir, first: "5.0.0" })).toMatchObject({ label: "0.1.1", from: { label: "0.1.0", source: "ledger" } });
+  });
+
   test("a member counts the commits in its own directory only", async () => {
     const dir = repo();
     commit(dir, "chore: start", { "api/a.ts": "1", "web/b.ts": "1" });

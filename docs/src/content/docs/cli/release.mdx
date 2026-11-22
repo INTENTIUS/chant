@@ -7,10 +7,10 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <name=value>]... [--params-file <file>]
+chant release cut [<label>|auto [--pre <id>] [--first <version>]] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <name=value>]... [--params-file <file>]
                   [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green]
                   [--image <component>=<repository>@sha256:<hex>]... [--json]
-chant release next [--at <sha>] [--pre <id>] [--json]
+chant release next [--at <sha>] [--pre <id>] [--first <version>] [--json]
 chant release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
 chant release candidates [--env <env>] [--branch <branch>] [--lane <name>] [--forge-issues] [--json]
 chant release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)... [--yes] [--json]

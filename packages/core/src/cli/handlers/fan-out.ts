@@ -386,6 +386,20 @@ async function fanOut(ctx: CommandContext, projectPath: string, config: ChantCon
     return 0;
   }
 
+  // #5475: a fan-out with no gate of its own into an environment a pipeline stage gates waits at that stage's gate, as a run does,
+  // bound to the components the fan-out selected. `--gate` and `--wave-gate` hold it through a person's approval of their own.
+  if (!gate && !waveGate) {
+    const { awaitStageGate } = await import("./stage-gate");
+    const selected = new Set(derived.plan.order);
+    const stopped = await awaitStageGate({
+      projectPath,
+      env: args.env ?? "local",
+      components: derived.components.filter((c) => selected.has(c.name)),
+      ...(targets ? { targets } : {}),
+    });
+    if (stopped !== undefined) return stopped;
+  }
+
   const seededOutputs: Record<string, Record<string, unknown>> = {};
   for (const file of args.seedOutputs ?? []) {
     try {

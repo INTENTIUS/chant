@@ -186,7 +186,8 @@ describe("a commit whose only checks are the cut's own run", () => {
     const err = await refusal(cutRelease(request(r, read, { waitForChecks: { sleep: async () => {}, now: () => 0 } })));
     expect(err.code).toBe("release-commit-not-green");
     expect(err.message).toContain(ownOnly("github", 2));
-    expect(err.fix).toContain('release.green in chant.config.ts to "chant"');
+    expect(err.fix).toContain("--own-run-jobs <job,...>");
+    expect(err.fix).not.toContain('"chant"');
   });
 
   test("Forgejo and GitLab: the same", async () => {
@@ -210,7 +211,7 @@ describe("a commit whose only checks are the cut's own run", () => {
 
 describe("the pipeline's release-cut hook", () => {
   test("passes --wait-checks, through the declared bin and label", () => {
-    expect(releaseCutHook({})?.command).toEqual(["chant", "release", "cut", "auto", "--yes", "--wait-checks"]);
+    expect(releaseCutHook({})?.command).toEqual(["chant", "release", "cut", "auto", "--first", "0.1.0", "--yes", "--wait-checks"]);
     expect(releaseCutHook({ release: { bin: ["npx", "--no-install", "plywood"], label: "next" } })?.command).toEqual(["npx", "--no-install", "plywood", "release", "cut", "next", "--yes", "--wait-checks"]);
     expect(releaseCutHook({ release: { cut: false } })).toBeUndefined();
   });

@@ -134,7 +134,7 @@ describe("each stage's op-waves spec", () => {
     expect(dev.labels).toEqual({ Env: "dev" });
     expect(dev.control).toEqual({ repo: "github.com/acme/control", member: "shop", op: "deploy" });
     expect(dev.waves[0]!.gate).toBe("never");
-    expect(dev.waves[0]!.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["chant", "release", "cut", "auto", "--yes", "--wait-checks"] }]);
+    expect(dev.waves[0]!.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["chant", "release", "cut", "auto", "--first", "0.1.0", "--yes", "--wait-checks"] }]);
   });
 
   test("a later stage takes its gate, quorum, holds, environment and tolerance, and no cut or dispatch", () => {
@@ -152,6 +152,16 @@ describe("each stage's op-waves spec", () => {
     expect(stageWavesSpec(off, "dev").waves[0]!.hooks).toBeUndefined();
     const bin = asPipelineSpec({ ...spec, release: { bin: ["npx", "--no-install", "plywood"], label: "next" } });
     expect(stageWavesSpec(bin, "dev").waves[0]!.hooks?.after?.apply?.[0]!.command).toEqual(["npx", "--no-install", "plywood", "release", "cut", "next", "--yes", "--wait-checks"]);
+  });
+
+  test("release.first names the version of a member's first release, which an auto cut takes by default at 0.1.0 (terragucci#1526)", () => {
+    const named = asPipelineSpec({ ...spec, release: { first: "1.0.0" } });
+    expect(stageWavesSpec(named, "dev").waves[0]!.hooks?.after?.apply?.[0]!.command).toEqual(["chant", "release", "cut", "auto", "--first", "1.0.0", "--yes", "--wait-checks"]);
+    const word = asPipelineSpec({ ...spec, release: { bin: ["plywood"], label: "next", first: "0.0.1" } });
+    expect(stageWavesSpec(word, "dev").waves[0]!.hooks?.after?.apply?.[0]!.command).toEqual(["plywood", "release", "cut", "next", "--first", "0.0.1", "--yes", "--wait-checks"]);
+    const typed = asPipelineSpec({ ...spec, release: { label: "2.0.0" } });
+    expect(stageWavesSpec(typed, "dev").waves[0]!.hooks?.after?.apply?.[0]!.command).toEqual(["chant", "release", "cut", "2.0.0", "--yes", "--wait-checks"]);
+    expect(pipelineSpecProblems({ ...spec, release: { first: "0.1" } })).toContain("release.first must be a release version, such as 0.1.0 or v1.0.0");
   });
 
   test("an unknown stage is refused with the stages it has", () => {
@@ -299,7 +309,7 @@ describe("the product helpers on each product's config shape", () => {
     expect(d.stages.map((s) => [s.name, s.gate?.policy, s.gate?.approval])).toEqual([["dev", "never", undefined], ["staging", "on-destructive", undefined], ["prod", "always", "sealed"]]);
     expect(d.stages[2]!.gate?.quorum).toEqual([{ count: 2, roles: ["sre"], notAuthor: true }]);
     expect(d.stages[2]!.forgeEnvironment).toEqual({ name: "production" });
-    expect(stageWavesSpec(asPipelineSpec(d), "dev").waves[0]!.hooks?.after?.apply?.[0]!.command).toEqual(["terragucci", "release", "cut", "auto", "--yes", "--wait-checks"]);
+    expect(stageWavesSpec(asPipelineSpec(d), "dev").waves[0]!.hooks?.after?.apply?.[0]!.command).toEqual(["terragucci", "release", "cut", "auto", "--first", "0.1.0", "--yes", "--wait-checks"]);
   });
 
   test("plywood: named approval rules, a hold and a freeze window", () => {

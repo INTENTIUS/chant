@@ -107,8 +107,39 @@ describe("the drift agent", () => {
   });
 
   test("the push job opens or updates the agent's pull request", () => {
-    expect(push.needs).toBe("drift-app-agent");
+    expect(push.needs).toEqual(["drift-app-agent", "drift-app"]);
+    expect(push.if).toBe("always() && needs.drift-app-agent.result == 'success'");
     expect(push.steps.at(-1)!.name).toBe("Open or update the agent's pull request");
+  });
+
+  test("the Op's job hands its drift issues to the push job (#5463)", () => {
+    const run = op.steps.find((s) => s.id === "chant-run")!;
+    expect(run.run).toContain('export CHANT_DRIFT_ISSUE_FILE="$PWD/.chant/agent/drift-issues.txt"');
+    expect(run.run).toContain('echo "drift_issues=');
+    expect(op.outputs?.drift_issues).toBe("${{ steps.chant-run.outputs.drift_issues }}");
+    expect(push.steps.at(-1)!.env?.CHANT_AGENT_DRIFT_ISSUES).toBe("${{ needs.drift-app.outputs.drift_issues }}");
+  });
+
+  test("the Op's job exits 0 on drift so its outputs are published, and a found job carries the red (terragucci#1528)", () => {
+    const run = op.steps.find((s) => s.id === "chant-run")!.run!;
+    expect(run).toContain('if [ "$code" -eq 2 ]; then exit 0; fi');
+    expect(run.indexOf('echo "drift=true"')).toBeLessThan(run.indexOf("then exit 0"));
+    expect(run.trim().endsWith('exit "$code"')).toBe(true);
+    const found = doc.jobs["drift-app-found"]!;
+    expect(found.needs).toBe("drift-app");
+    expect(found.if).toBe("needs.drift-app.outputs.drift == 'true'");
+    expect(found["runs-on"]).toBe("ubuntu-latest");
+    expect(found.steps.at(-1)!.run).toMatch(/exit 2$/);
+  });
+
+  test("the found job uses the Op's runner", () => {
+    const { doc: d } = gen({ ...DRIFT, runner: { group: "infra", labels: ["linux"] } });
+    expect(d.jobs["drift-app-found"]!["runs-on"]).toEqual({ group: "infra", labels: ["linux"] });
+  });
+
+  test("an Op with no agent and no update has no found job", () => {
+    const { doc: d } = gen({ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, findingMode: "issue" });
+    expect(d.jobs["drift-app-found"]).toBeUndefined();
   });
 
   test("refuses a drift agent on a push trigger", () => {

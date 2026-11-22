@@ -54,6 +54,22 @@ describe("an update on drift (#4631)", () => {
     expect(JSON.stringify(check)).not.toContain("role/update");
   });
 
+  test("the drift job exits 0 on drift, and a found job carries the red (terragucci#1528)", () => {
+    const d = gen(spec);
+    const run = d.jobs["plywood-drift-dev"]!.steps.find((s) => s.id === "drift-check")!.run!;
+    expect(run).toContain('echo "drift=true" >>"$GITHUB_OUTPUT"; exit 0; fi');
+    expect(run.trim().endsWith('exit "$code"')).toBe(true);
+    const found = d.jobs["plywood-drift-dev-found"] as unknown as Job & { "runs-on": string };
+    expect(found.needs).toBe("plywood-drift-dev");
+    expect(found.if).toBe("needs.plywood-drift-dev.outputs.drift == 'true'");
+    expect(found["runs-on"]).toBe("ubuntu-latest");
+    expect(found.steps.at(-1)!.run).toMatch(/exit 2$/);
+  });
+
+  test("an update-less Op has no found job", () => {
+    expect(gen(DRIFT).jobs["plywood-drift-dev-found"]).toBeUndefined();
+  });
+
   test("the update job runs after a drift, trades for its own identity first, and runs the command", () => {
     expect(update.needs).toBe("plywood-drift-dev");
     expect(update.if).toBe("always() && needs.plywood-drift-dev.outputs.drift == 'true'");

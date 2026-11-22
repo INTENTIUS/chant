@@ -41,6 +41,8 @@ import {
   AGENT_DECISION_FILE,
   AGENT_DIR,
   AGENT_DRIFT_FILE,
+  AGENT_DRIFT_ISSUES_ENV,
+  AGENT_DRIFT_ISSUES_FILE,
   AGENT_PATCH_FILE,
   AGENT_RC_FILE,
   AGENT_RELAY_KEY_ENV,
@@ -113,8 +115,12 @@ export function agentCommentIf(forge: "github" | "forgejo", comment: string, bar
 /**
  * The drift Op's run step (#4616): the run with its output kept as the
  * drift for the agent, `drift=true` among the step's outputs when it exits
- * with chant's `drift` code, and the output handed on. The step still exits
- * with the run's code.
+ * with chant's `drift` code, and the output handed on. The step exits with
+ * the run's code, except on drift: it exits 0 so the job succeeds and the
+ * forge publishes its outputs (Forgejo does so for a successful job only,
+ * terragucci#1528), and the found job ({@link driftFoundJob}) carries the red. The run appends the drift issues it keeps to the file
+ * `CHANT_DRIFT_ISSUE_FILE` names (`keepDriftIssue`), and the step hands
+ * their numbers on as `drift_issues` (#5463).
  */
 export function driftRunStep(invocation: string, env: Record<string, string>, forge: "github" | "forgejo"): Record<string, unknown> {
   return {
@@ -124,17 +130,40 @@ export function driftRunStep(invocation: string, env: Record<string, string>, fo
       "set +e",
       `mkdir -p ${AGENT_DIR}`,
       ...handoverTrap(AGENT_DIR, forge, DRIFT_HANDED),
+      `export CHANT_DRIFT_ISSUE_FILE="$PWD/${AGENT_DIR}/${AGENT_DRIFT_ISSUES_FILE}"`,
       `{ ${invocation}; echo "$?" >"\${RUNNER_TEMP:-/tmp}/chant-run.code"; } 2>&1 | tee ${AGENT_DIR}/${AGENT_DRIFT_FILE}`,
       'code=$(cat "${RUNNER_TEMP:-/tmp}/chant-run.code")',
       `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then echo "drift=true" >>"$GITHUB_OUTPUT"; fi`,
+      `if [ -s "$CHANT_DRIFT_ISSUE_FILE" ]; then echo "drift_issues=$(tr -cs '0-9' ',' <"$CHANT_DRIFT_ISSUE_FILE" | sed 's/^,//; s/,$//')" >>"$GITHUB_OUTPUT"; fi`,
+      // Forgejo publishes a job's outputs only when the job succeeds, so drift ends the step green; the found job carries the red.
+      `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then exit 0; fi`,
       'exit "$code"',
     ].join("\n"),
   };
 }
 
-/** The drift Op job's outputs: the handed-on drift and the drift flag. */
+/** The name of the job that fails a run which found drift (terragucci#1528): the drift Op's job, then `-found`. */
+export function driftFoundJobName(jobName: string): string {
+  return `${jobName}-found`;
+}
+
+/**
+ * The job after a drift Op's job that exits with chant's `drift` code when
+ * the Op found drift, so the run still shows red on a forge that publishes
+ * outputs only from a successful job (terragucci#1528).
+ */
+export function driftFoundJob(after: string, runner?: CiRunner): Record<string, unknown> {
+  return {
+    needs: after,
+    if: `needs.${after}.outputs.drift == 'true'`,
+    "runs-on": githubRunsOn(runner),
+    steps: [{ name: "Fail the run that found drift", run: `echo "${after} found drift"\nexit ${CHANT_EXIT.drift}` }],
+  };
+}
+
+/** The drift Op job's outputs: the handed-on drift, the drift flag and the drift issues (#5463). */
 export function driftRunOutputs(forge: "github" | "forgejo"): Record<string, string> {
-  return { ...handoverOutputs(AGENT_DRIFT_STEP_ID, forge), drift: `\${{ steps.${AGENT_DRIFT_STEP_ID}.outputs.drift }}` };
+  return { ...handoverOutputs(AGENT_DRIFT_STEP_ID, forge), drift: `\${{ steps.${AGENT_DRIFT_STEP_ID}.outputs.drift }}`, drift_issues: `\${{ steps.${AGENT_DRIFT_STEP_ID}.outputs.drift_issues }}` };
 }
 
 /** The agent job and the push job. */
@@ -181,8 +210,10 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
     ],
   };
   const token = i.tokenEnv ? githubSecretOrJobToken(i.tokenEnv) : GITHUB_JOB_TOKEN;
+  // #5463: a drift agent's push job also reads the drift Op's job, for the drift issues it hands on.
+  const drift = !comment && !alert;
   const push: Record<string, unknown> = {
-    needs: i.jobName,
+    needs: drift ? [i.jobName, i.after!] : i.jobName,
     if: `always() && needs.${i.jobName}.result == 'success'`,
     "runs-on": githubRunsOn(i.runner),
     container: i.image,
@@ -195,7 +226,7 @@ export function githubAgentJobs(i: GithubAgentJobsInput): { agent: Record<string
       ...before,
       {
         name: comment ? "Push the change to the pull request" : "Open or update the agent's pull request",
-        env: { [PUSH_TOKEN_ENV]: token, GITHUB_TOKEN: token, ...relayKey, ...(i.forge === "forgejo" ? { CHANT_FORGEJO_TOKEN: token } : {}) },
+        env: { [PUSH_TOKEN_ENV]: token, GITHUB_TOKEN: token, ...relayKey, ...(i.forge === "forgejo" ? { CHANT_FORGEJO_TOKEN: token } : {}), ...(drift ? { [AGENT_DRIFT_ISSUES_ENV]: `\${{ needs.${i.after!}.outputs.drift_issues }}` } : {}) },
         run: [...agentGitAuthLines(PUSH_TOKEN_ENV, "x-access-token"), lines.land].join("\n"),
       },
     ],

@@ -28,6 +28,20 @@
  *   ({@link RELEASE_CUT_WAIT_MINUTES} unless `--timeout-minutes` says). The
  *   pipeline's release-cut hook passes it, so the merge's cut waits for the
  *   other push workflows on the merge commit.
+ *
+ *   `chant release cut --own-run-jobs <name,...>` (terragucci issue 1531)
+ *   counts the named jobs of the cut's own run beside the other workflows'
+ *   checks. The pipeline's release-cut hook passes the jobs its wave
+ *   depended on, so a merge commit that nothing else checks is judged by
+ *   the jobs that ran before the apply in the same run. Each named job the
+ *   forge reports must have passed, one still running is waited on under
+ *   `--wait-checks`, and the run's other entries (the cut's own job, jobs
+ *   queued behind it) are still left out. A run in which the forge reports
+ *   none of the named jobs is refused. A job is matched by the name the
+ *   forge reports for it: GitHub's check run name, the job part of
+ *   Forgejo's `<workflow> / <job> (<event>)` status context, and the job's
+ *   name in the GitLab pipeline. The cut line records the jobs that counted
+ *   (`green.ownRun`).
  * - `none`: no gate. The cut prints a warning and records that it had none.
  *   Refused under the `supply-chain` or `verified-releases` security groups
  *   and under a `release` gate in `identity.gates`.
@@ -72,14 +86,23 @@ export interface ForgeCheck {
 
 /** What the forge says of a commit's checks. */
 export type ForgeChecksVerdict =
-  | { green: true; forge: ForgeKind; checks: string[] }
+  | {
+      green: true;
+      forge: ForgeKind;
+      checks: string[];
+      /** terragucci issue 1531: the jobs of the cut's own run that counted, under `--own-run-jobs`. */
+      ownRun?: string[];
+    }
   | {
       green: false;
       forge: ForgeKind;
       why: string;
+      /** The other workflows' checks, then the named jobs of the cut's own run the forge reports. */
       checks: ForgeCheck[];
       /** #5438: the commit's only checks are the cut's own run, which the reader leaves out. */
       ownRunOnly?: true;
+      /** terragucci issue 1531: the forge reports none of the jobs `--own-run-jobs` names. */
+      ownRunMissing?: true;
     };
 
 /** The forge could not be asked: none is known, a token is missing, or the forge answered with an error. */
@@ -95,8 +118,20 @@ export class ForgeChecksUnavailableError extends Error {
   }
 }
 
-/** Reads a commit's checks; a test hands in a fake. */
-export type ForgeChecksReader = (commit: string, branch: string | null) => Promise<ForgeChecksVerdict>;
+/**
+ * Reads a commit's checks; a test hands in a fake. `ownRunJobs` names the
+ * jobs of the cut's own run that count (terragucci issue 1531); absent or
+ * empty, the whole run is left out.
+ */
+export type ForgeChecksReader = (commit: string, branch: string | null, ownRunJobs?: readonly string[]) => Promise<ForgeChecksVerdict>;
+
+/** The named jobs of the cut's own run a reader found, for {@link judgeChecks}. */
+export interface OwnRunJobs {
+  /** The names `--own-run-jobs` gave. */
+  named: readonly string[];
+  /** The forge's entry for each named job it reports, newest attempt of each. */
+  found: ForgeCheck[];
+}
 
 const PENDING = new Set(["queued", "in_progress", "waiting", "requested", "pending", "running", "created", "preparing", "waiting_for_resource", "scheduled", "manual"]);
 const PASSED = new Set(["success", "neutral", "skipped", "warning"]);
@@ -119,8 +154,25 @@ export function checksPending(verdict: ForgeChecksVerdict): boolean {
  * and each of `required` is among them. `own` counts the checks of the
  * cut's own run the reader left out, so a commit with no other check is
  * refused with a message that names them (#5438).
+ *
+ * With `ownRun` naming jobs (terragucci issue 1531), the named jobs of the
+ * cut's own run the forge reports are judged beside `checks`: each must
+ * have passed, one still running keeps the verdict pending, and a run in
+ * which the forge reports none of them is refused.
  */
-export function judgeChecks(forge: ForgeKind, checks: ForgeCheck[], required: readonly string[], own = 0): ForgeChecksVerdict {
+export function judgeChecks(forge: ForgeKind, others: ForgeCheck[], required: readonly string[], own = 0, ownRun?: OwnRunJobs): ForgeChecksVerdict {
+  const named = ownRun && ownRun.named.length > 0 ? ownRun : undefined;
+  if (named && named.found.length === 0) {
+    return {
+      green: false,
+      forge,
+      checks: others,
+      ownRunMissing: true,
+      why: `the cut counts the jobs ${named.named.join(", ")} of its own run, and ${forge} reports none of them on it, so the run gives no evidence that the commit passed them`,
+    };
+  }
+  const found = named ? named.found : [];
+  const checks = [...others, ...found];
   const names = new Set(checks.map((c) => c.name));
   const missing = required.filter((r) => !names.has(r));
   const failed = checks.filter((c) => c.state === "failure");
@@ -139,7 +191,23 @@ export function judgeChecks(forge: ForgeKind, checks: ForgeCheck[], required: re
   if (failed.length > 0) return { green: false, forge, checks, why: `${failed.length === 1 ? "a check" : `${failed.length} checks`} did not pass on ${forge}: ${list(failed)}` };
   if (pending.length > 0) return { green: false, forge, checks, why: `${pending.length === 1 ? "a check has" : `${pending.length} checks have`} not finished on ${forge}: ${list(pending)}` };
   if (missing.length > 0) return { green: false, forge, checks, why: `the branch requires ${missing.join(", ")}, which ${forge} does not report on it` };
-  return { green: true, forge, checks: [...names].sort() };
+  const ownNames = new Set(found.map((c) => c.name));
+  return { green: true, forge, checks: [...new Set(others.map((c) => c.name))].sort(), ...(named ? { ownRun: [...ownNames].sort() } : {}) };
+}
+
+/**
+ * The job a Forgejo status context names (terragucci issue 1531): Forgejo
+ * writes `<workflow> / <job> (<event>)`, so `pipeline / check (push)` names
+ * `check`. A context of another shape is its own name.
+ */
+export function forgejoContextJob(context: string): string {
+  const m = /^.* \/ (.+) \([^()]*\)$/.exec(context);
+  return m ? m[1]! : context;
+}
+
+/** The names `--own-run-jobs` gave, less the job the cut runs in, which is still running and never counts. */
+function namedJobs(ownRunJobs: readonly string[] | undefined, self: string | undefined): Set<string> {
+  return new Set((ownRunJobs ?? []).filter((n) => n !== "" && n !== self));
 }
 
 /** A reading of a check with what orders it among the reruns of the same check. */
@@ -223,8 +291,11 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
     const repo = `/repos/${target.repo}`;
     // The release workflow's own runs on the commit, this one and any earlier attempt, are not checks of it.
     const workflowPath = env.GITHUB_WORKFLOW_REF ? /^[^/]+\/[^/]+\/(.+?)@/.exec(env.GITHUB_WORKFLOW_REF)?.[1] : undefined;
-    return async (sha, branch) => {
+    return async (sha, branch, ownRunJobs) => {
       const runId = new Set(env.GITHUB_RUN_ID ? [env.GITHUB_RUN_ID] : []);
+      // terragucci issue 1531: the jobs of this run, and only this run, that the cut counts.
+      const named = namedJobs(ownRunJobs, env.GITHUB_JOB);
+      const ownReadings: Reading[] = [];
       if (workflowPath) {
         const runs = await get(`${repo}/actions/runs?head_sha=${sha}&per_page=100`, true);
         for (const r of isObject(runs) && Array.isArray(runs.workflow_runs) ? runs.workflow_runs.filter(isObject) : []) {
@@ -240,13 +311,15 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           const name = str(r.name);
           const url = str(r.details_url) ?? str(r.html_url);
           if (!name) continue;
-          if (inRun(url, runId)) {
-            own++;
-            continue;
-          }
           const status = str(r.status) ?? "unknown";
           const conclusion = str(r.conclusion) ?? null;
           const app = isObject(r.app) ? String(r.app.id ?? r.app.slug ?? "") : "";
+          if (inRun(url, runId)) {
+            if (named.has(name) && inRun(url, env.GITHUB_RUN_ID)) {
+              ownReadings.push({ key: name, at: time(r.completed_at, r.started_at), id: num(r.id), check: { name, state: checkState(status, conclusion), status: status === "completed" ? (conclusion ?? status) : status, ...(url ? { url } : {}) } });
+            } else own++;
+            continue;
+          }
           runReadings.push({
             key: `${app}\0${name}`,
             at: time(r.completed_at, r.started_at),
@@ -283,26 +356,31 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           }
         }
       }
-      return judgeChecks("github", newestByName(checks), required, own);
+      return judgeChecks("github", newestByName(checks), required, own, { named: [...named], found: newestRuns(ownReadings) });
     };
   }
 
   if (target.kind === "forgejo") {
     const runNumber = env.FORGEJO_RUN_NUMBER ?? env.GITHUB_RUN_NUMBER;
     const repo = `/repos/${target.repo}`;
-    return async (sha, branch) => {
+    return async (sha, branch, ownRunJobs) => {
       const combined = await get(`${repo}/commits/${sha}/status?limit=100`);
+      const named = namedJobs(ownRunJobs, env.GITHUB_JOB);
       let own = 0;
       const readings: Reading[] = [];
+      const ownReadings: Reading[] = [];
       for (const s of isObject(combined) && Array.isArray(combined.statuses) ? combined.statuses.filter(isObject) : []) {
         const name = str(s.context);
         const url = str(s.target_url);
         if (!name) continue;
+        const state = str(s.status) ?? str(s.state) ?? "unknown";
         if (inRun(url, runNumber)) {
-          own++;
+          // terragucci issue 1531: a named job of the cut's run counts, by the job its context names.
+          const job = forgejoContextJob(name);
+          if (named.has(job)) ownReadings.push({ key: job, at: time(s.updated_at, s.created_at), id: num(s.id), check: { name: job, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) } });
+          else own++;
           continue;
         }
-        const state = str(s.status) ?? str(s.state) ?? "unknown";
         readings.push({ key: name, at: time(s.updated_at, s.created_at), id: num(s.id), check: { name, state: state === "error" ? "failure" : checkState(state), status: state, ...(url ? { url } : {}) } });
       }
       const checks = newestRuns(readings);
@@ -315,7 +393,7 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
           for (const ctx of Array.isArray(p.status_check_contexts) ? p.status_check_contexts : []) if (typeof ctx === "string" && !required.includes(ctx)) required.push(ctx);
         }
       }
-      return judgeChecks("forgejo", newestByName(checks), required, own);
+      return judgeChecks("forgejo", newestByName(checks), required, own, { named: [...named], found: newestRuns(ownReadings) });
     };
   }
 
@@ -323,8 +401,9 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
   // A release started from "Run pipeline" or the API is such a pipeline itself, as are earlier attempts of it.
   const ownSource = ["web", "api", "trigger"].includes(env.CI_PIPELINE_SOURCE ?? "") ? env.CI_PIPELINE_SOURCE : undefined;
   const project = `/projects/${encodeURIComponent(target.repo)}`;
-  return async (sha) => {
+  return async (sha, _branch, ownRunJobs) => {
     const got = await get(`${project}/pipelines?sha=${encodeURIComponent(sha)}&per_page=100&order_by=id&sort=desc`);
+    const named = namedJobs(ownRunJobs, env.CI_JOB_NAME);
     const checks: ForgeCheck[] = [];
     const seen = new Set<string>();
     let own = 0;
@@ -343,7 +422,23 @@ export function forgeChecksReader(target: ForgeTarget, env: Record<string, strin
       const url = str(p.web_url);
       checks.push({ name, state: status === "canceled" ? "failure" : checkState(status), status, ...(url ? { url } : {}) });
     }
-    return judgeChecks("gitlab", checks, [], own);
+    // terragucci issue 1531: the named jobs of the cut's own pipeline, by their names in it; the cut's own job never counts.
+    const ownReadings: Reading[] = [];
+    if (named.size > 0 && pipelineId) {
+      for (let page = 1; page <= 20; page++) {
+        const jobs = await get(`${project}/pipelines/${encodeURIComponent(pipelineId)}/jobs?per_page=100&page=${page}`);
+        const list = Array.isArray(jobs) ? jobs.filter(isObject) : [];
+        for (const j of list) {
+          const name = str(j.name);
+          if (!name || !named.has(name) || (env.CI_JOB_ID !== undefined && String(j.id) === env.CI_JOB_ID)) continue;
+          const status = str(j.status) ?? "unknown";
+          const url = str(j.web_url);
+          ownReadings.push({ key: name, at: time(j.finished_at, j.started_at, j.created_at), id: num(j.id), check: { name, state: status === "canceled" ? "failure" : checkState(status), status, ...(url ? { url } : {}) } });
+        }
+        if (list.length < 100) break;
+      }
+    }
+    return judgeChecks("gitlab", checks, [], own, { named: [...named], found: newestRuns(ownReadings) });
   };
 }
 

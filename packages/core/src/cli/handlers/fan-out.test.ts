@@ -59,6 +59,18 @@ vi.mock("../../components/auto-release", async () => {
   return { ...actual, maybeRecordAutoRelease: async () => ({ recorded: false, reason: "opted-out" }) };
 });
 
+// #5475: the pipeline stage that gates an environment, set per test; none by default, as a member without a pipeline reads.
+let gatedStage: import("../../pipeline/spec").PipelineSpec | null = null;
+vi.mock("../../pipeline/run-gate", async () => {
+  const actual = await vi.importActual<typeof import("../../pipeline/run-gate")>("../../pipeline/run-gate");
+  return {
+    ...actual,
+    runStageAtBase: (_cwd: string, env: string) =>
+      gatedStage?.stages.some((s) => s.name === env) ? { status: "gated", spec: gatedStage, base: "b".repeat(40) } : { status: "none" },
+    pipelineGateProofAt: async () => undefined,
+  };
+});
+
 const { CapabilityRegistry } = await import("../../components/capability");
 const { memoryGateLedgerPort } = await import("../../op/gate");
 const { runComponentsFanOut } = await import("./fan-out");
@@ -138,6 +150,7 @@ let outSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   sealedGates.clear();
   vi.clearAllMocks();
+  gatedStage = null;
   ran = [];
   failing = [];
   refusal = {};
@@ -1012,5 +1025,51 @@ describe("a seed's outputs, read from the deployed estate (#4104)", () => {
     liveOutputs = { net: { TopicArn: "arn:deployed" } };
     expect(await runComponentsFanOut(ctx({ base: "main", env: "test", dryRun: true }))).toBe(0);
     expect(outputsRead).toEqual([]);
+  });
+});
+
+describe("a fan-out into a stage the pipeline gates waits at the stage's gate (#5475)", () => {
+  beforeEach(async () => {
+    const { asPipelineSpec } = await import("../../pipeline/spec");
+    const wave = (target: string) => [{ name: target, runs: [{ target }] }];
+    gatedStage = asPipelineSpec({
+      name: "shop",
+      stages: [
+        { name: "dev", waves: wave("dev"), gate: { policy: "never" } },
+        { name: "prod", waves: wave("prod"), gate: { policy: "always" } },
+      ],
+    });
+  });
+
+  test("with no gate of its own it waits at gate prod before anything runs, and the approval lets the set through", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "prod" }))).toBe(3);
+    expect(ran).toEqual([]);
+    expect(gateLedger.appended).toEqual([expect.objectContaining({ op: "shop", gate: "prod", environment: "prod" })]);
+    const pending = gateLedger.appended[0]!;
+    expect(stderr()).toContain(`Approve it with: chant approve shop prod --env prod --plan ${pending.planDigest}`);
+
+    gateLedger = memoryGateLedgerPort({
+      pending: [pending],
+      resolutions: [{ version: 1, kind: "resolution", op: "shop", gate: "prod", resolvedBy: "operator", timestamp: new Date(Date.parse(pending.timestamp) + 1000).toISOString(), planDigest: pending.planDigest, environment: "prod" }],
+    });
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "prod" }))).toBe(0);
+    expect(ran).toContain("net");
+    expect(gateLedger.appended).toEqual([]);
+  });
+
+  test("a stage whose gate is never runs as before", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "dev" }))).toBe(0);
+    expect(ran).toContain("net");
+    expect(gateLedger.appended).toEqual([]);
+  });
+
+  test("--gate holds it through the fan-out's own gate, and the stage's gate is not read", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "prod", gate: "release" }))).toBe(3);
+    expect(gateLedger.appended).toEqual([expect.objectContaining({ op: "fan-out", gate: "release" })]);
+  });
+
+  test("a dry run reads no gate", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", env: "prod", dryRun: true }))).toBe(0);
+    expect(gateLedger.appended).toEqual([]);
   });
 });
