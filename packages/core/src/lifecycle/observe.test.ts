@@ -3,6 +3,8 @@ import { observeResources, collectAmbient, carryAnnotations } from "./observe";
 import { observation } from "../observation";
 import type { ObservationLexicon, ResourceMetadata } from "../lexicon";
 import type { BuildResult } from "../build";
+import { resolve } from "node:path";
+import { buildLiveGraphIr } from "../graph-ir";
 
 // The per-stack scoped build (#1162) resolves each stack's `src` through the
 // real `build`. Mock it so the test controls what each src yields — a stack
@@ -269,7 +271,6 @@ describe("observeResources", () => {
   });
 
   it("with per-stack src (#1162): describeResources gets each stack's SCOPED bare names, not the whole-project build's names", async () => {
-    const { resolve } = await import("node:path");
     // The whole-project build disambiguates colliding names by module path;
     // each stack's scoped src reports the bare names it actually deploys.
     scopedBuilds[resolve("east/src")] = ["server", "vpc"];
@@ -321,6 +322,42 @@ describe("observeResources", () => {
     });
     const call = scopedBuildOptions.find((c) => c.src.endsWith("gcp-net/src"));
     expect(call?.options).toEqual({ config: { gcp: { project: "three-cloud" } } });
+  });
+
+  it("qualifies the ids a scoped stack's metadata names, not only its keys (#5490)", async () => {
+    scopedBuilds[resolve("svc/src")] = ["service", "app"];
+    const plugins = [
+      awsPlugin(() => ({
+        observation: "v1",
+        resources: {
+          service: { type: "AWS::ECS::Service", status: "ACTIVE" },
+          app: { type: "Custom::App", status: "OK" },
+          child: { type: "Custom::Child", status: "OK", component: "app" },
+          dep: { type: "AWS::EC2::VPC", status: "OK", referencedBy: ["service"] },
+        },
+        undeclared: {
+          "Task/c/1": { type: "AWS::ECS::Task", status: "RUNNING", ownerChain: { root: "declared", entity: "service" } },
+          stray: { type: "AWS::ECS::Task", status: "RUNNING", ownerChain: { root: "foreign" } },
+        },
+        rootReads: { "terraform.roots.r": { depth: "plan" } },
+      }) as unknown as Record<string, ResourceMetadata>),
+    ];
+    const result = await observeResources("my-stack", plugins, mockBuild(), {
+      stacks: [{ name: "my-stack", src: "svc/src" }],
+    });
+    const res = result.observations[0].resources;
+    expect(res["my-stack::child"].component).toBe("my-stack::app");
+    expect(res["my-stack::dep"].referencedBy).toEqual(["my-stack::service"]);
+    const undeclared = result.undeclared?.[0].resources ?? {};
+    expect(undeclared["my-stack::Task/c/1"].ownerChain).toEqual({ root: "declared", entity: "my-stack::service" });
+    expect(undeclared["my-stack::stray"].ownerChain).toEqual({ root: "foreign" });
+    // Root reads are keyed by root, not node, and survive the qualification.
+    expect(result.rootReads).toEqual({ "terraform.roots.r": { depth: "plan" } });
+    // The graph a consumer draws names an owner that is a node in it.
+    const ir = buildLiveGraphIr([...result.observations, ...(result.undeclared ?? [])]);
+    const task = ir.nodes.find((n) => n.kind === "AWS::ECS::Task" && n.id.endsWith("Task/c/1"));
+    expect(task?.runtimeOwner).toBe("my-stack::service");
+    expect(ir.nodes.some((n) => n.id === task?.runtimeOwner)).toBe(true);
   });
 
   it("with an empty stacks array — falls back to the single unstacked call", async () => {

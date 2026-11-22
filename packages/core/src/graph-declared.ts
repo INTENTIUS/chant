@@ -58,3 +58,32 @@ export async function buildDeclaredPerStack(
   const groups: GraphIR["groups"] = Object.keys(byStack).length ? { byStack } : {};
   return { nodes, edges, groups, ...(exports.length ? { exports } : {}), ...(imports.length ? { imports } : {}) };
 }
+
+/**
+ * Put each overlaid node a scoped stack's read qualified `${stack}::${id}`
+ * into that stack's `byStack` group (#5490). The source-anchored overlay
+ * keeps the declared canvas's groups, which list only declared nodes, so a
+ * runtime child or a foreign object the read found in a stack (an ECS task
+ * under its service) was drawn outside every stack box. The prefix is the
+ * stack's own name, given in config and written by the read, so membership is
+ * read off the id rather than guessed. A node with no stack prefix (a
+ * dependency, keyed by physical id across stacks) stays ungrouped.
+ */
+export function groupStackNodes(ir: GraphIR, stackNames: readonly string[]): GraphIR {
+  if (stackNames.length === 0) return ir;
+  const byStack: Record<string, string[]> = Object.fromEntries(
+    Object.entries(ir.groups.byStack ?? {}).map(([k, v]) => [k, [...v]]),
+  );
+  let changed = false;
+  for (const name of stackNames) {
+    const prefix = `${name}::`;
+    const members = new Set(byStack[name] ?? []);
+    for (const n of ir.nodes) {
+      if (!n.id.startsWith(prefix) || members.has(n.id)) continue;
+      members.add(n.id);
+      changed = true;
+    }
+    if (members.size > 0) byStack[name] = [...members].sort();
+  }
+  return changed ? { ...ir, groups: { ...ir.groups, byStack } } : ir;
+}
