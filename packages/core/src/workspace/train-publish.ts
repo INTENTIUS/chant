@@ -464,12 +464,12 @@ async function runTrain(req: {
   const keyOf = (p: Prepared, t: PublishTarget) => `${p.m.member}\u0000${t.key}`;
   const shown = (p: Prepared, t: PublishTarget) => `${p.m.member}: ${t.name}`;
 
-  const write = async (p: Prepared, target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" }, step: import("../lifecycle/publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>) => {
+  const write = async (p: Prepared, target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" | "scan" }, step: import("../lifecycle/publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>, scanned?: import("../lifecycle/publish-scan").ScanRecord) => {
     if (!req.record) return;
     try {
       const runId = resolveRunId(undefined, p.ctx.env).runId;
       await appendPublishRecord(
-        { version: 1, releaseDigest: p.m.releaseDigest, label: p.plan.label, target: target.key, kind: target.kind, name: target.name, step, items, state, runId, timestamp: req.now().toISOString() },
+        { version: 1, releaseDigest: p.m.releaseDigest, label: p.plan.label, target: target.key, kind: target.kind, name: target.name, step, items, state, ...(scanned ? { scan: scanned } : {}), runId, timestamp: req.now().toISOString() },
         p.plan.redactor,
         { cwd: p.dir },
       );
@@ -514,14 +514,20 @@ async function runTrain(req: {
     const progress = req.progressOfMember.get(p.m.member)!;
     const toScan = p.plan.targets.filter((t) => !progress.revealed.has(t.key) && !progress.staged.has(t.key));
     if (toScan.length === 0) continue;
-    const { scanBeforeStage } = await import("../lifecycle/publish-scan");
+    const { scanBeforeStage, scanRecord, PublishScanError, SCAN_RECORD_TARGET } = await import("../lifecycle/publish-scan");
     say(`  ${p.m.member}: scanning with ${p.ctx.scan.scanner.name} before anything is pushed`);
+    let report: import("../lifecycle/publish-scan").ScanReport;
     try {
-      scans.push({ member: p.m.member, report: await scanBeforeStage({ targets: toScan, ctx: p.ctx, scan: p.ctx.scan, say: (l) => say(`  ${p.m.member}:${l}`) }) });
+      report = await scanBeforeStage({ targets: toScan, ctx: p.ctx, scan: p.ctx.scan, say: (l) => say(`  ${p.m.member}:${l}`) });
     } catch (err) {
+      if (err instanceof PublishScanError) await write(p, SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(err.report));
       const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
       throw new TrainPublishRunError(e.code, p.plan.redactor.redact(`${p.m.member}: ${e.message}`), e.fix, p.m.member, "scan", [], []);
     }
+    await write(p, SCAN_RECORD_TARGET, "scanned", [], {}, scanRecord(report));
+    scans.push({ member: p.m.member, report });
+    // The member's stage attaches an image's findings beside its SBOM.
+    p.ctx = { ...p.ctx, scanReport: report };
   }
 
   // Pass 1: stage every target that holds back what it stages, before any reveal.

@@ -51,7 +51,7 @@ import { IMAGE_SBOM_FILE, imageSbom, memberSbom, releaseProvenance, type Attachm
 import type { SbomDocument } from "../components/verbs/sbom-generator";
 import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE, cosignSignStatement, slsaProvenanceStatement } from "./publish-signing";
 import { readCredential, type Credential } from "./publish-credentials";
-import { sbomDocumentOf } from "./publish-scan";
+import { findingsAttachment, sbomDocumentOf } from "./publish-scan";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
@@ -582,12 +582,19 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     if (!fromLayers(ctx)) return memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`);
     return imageSbom(ctx, (await layerSbom(ctx, layout.top.digest)).bytes, image, layout.top.digest);
   };
-  /** The SBOM and the provenance statement, each with the artifact manifest that refers to the image. */
+  /** #5446: the findings referrer, once the scan before the stage ran in this publish. */
+  const findingsOf = (ctx: PublishContext, digest: string): Attachment | null => {
+    const f = ctx.scanReport ? findingsAttachment(ctx.scanReport, digest) : null;
+    return f ? { kind: "scan", ...f, digest: bytesDigest(f.bytes) } : null;
+  };
+  /** The SBOM, the provenance statement and the scan's findings, each with the artifact manifest that refers to the image. */
   const referrers = async (ctx: PublishContext, layout: LayoutImage, opts: { sbom: boolean } = { sbom: true }): Promise<Referrer[]> => {
     const subject = { mediaType: layout.top.mediaType, digest: layout.top.digest, size: layout.top.bytes.byteLength };
     const files = [
       opts.sbom ? await sbomOf(ctx, layout) : null,
       releaseProvenance(ctx, [{ name: `${decl.repository}@${layout.top.digest}`, digest: layout.top.digest }]),
+      // #5446: what the scan before the stage found in the image, beside its SBOM.
+      findingsOf(ctx, layout.top.digest),
     ].filter((a): a is Attachment => a !== null);
     return files.map((attachment) => {
       const manifest = referrerManifest(attachment, subject);
@@ -815,7 +822,10 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
           ctx.log(`tagged ${p.digest} ${p.tag}`);
         }
         const signed = (staged?.items ?? []).filter((i) => i.attachment === "signature" || i.attachment === "attestation").map(({ present: _present, ...i }) => i);
-        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...(await referrers(ctx, layout)).map(referrerItem), ...signed] };
+        // #5446: the findings referrer the stage pushed, which a resumed reveal can't make again.
+        const listed = (await referrers({ ...ctx, scanReport: undefined }, layout)).map(referrerItem);
+        const findings = (staged?.items ?? []).filter((i) => i.attachment === "scan").map(({ present: _present, ...i }) => i);
+        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...listed, ...findings, ...signed] };
       } finally {
         layout.cleanup();
       }

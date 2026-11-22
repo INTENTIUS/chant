@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRedactor } from "./publish-credentials";
 import { PublishDeclarationSchema } from "./publish-declaration";
-import { DEFAULT_RELEASE_SCANNER, resolveScan, scanBeforeStage, scannerArgs, scannerEnv, scanToolPath, syftArgs, type ScanContext } from "./publish-scan";
+import { DEFAULT_RELEASE_SCANNER, findingsAttachment, parseScanDatabase, PublishScanError, resolveScan, SCAN_FINDINGS_FILE, SCAN_FINDINGS_MEDIA_TYPE, SCAN_RECORD_TARGET, scanBeforeStage, scannerArgs, scannerEnv, scanRecord, scanToolPath, syftArgs, type ScanContext } from "./publish-scan";
+import { parsePublishRecords, publishProgress } from "./publish-record";
 import { createPublishTargets } from "./publish-targets";
 import { PublishRunError, runPublish, type PublishContext, type PublishItem } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
@@ -56,8 +57,8 @@ describe("when a publish scans", () => {
     expect(scanToolPath("grype", {})).toBe("grype");
     expect(scanToolPath("syft", { CHANT_SYFT: "/tmp/syft/syft" })).toBe("/tmp/syft/syft");
     expect(scannerArgs("grype", "/x/sbom.spdx.json", null)).toEqual(["sbom:/x/sbom.spdx.json", "-o", "json"]);
-    expect(scannerEnv("grype", { A: "1" }, "/db")).toEqual({ A: "1", GRYPE_DB_CACHE_DIR: "/db", GRYPE_DB_AUTO_UPDATE: "false", GRYPE_DB_VALIDATE_AGE: "false" });
-    expect(scannerEnv("grype", { A: "1" }, null)).toEqual({ A: "1" });
+    expect(scannerEnv("grype", { A: "1" }, "/db")).toEqual({ A: "1", GRYPE_CHECK_FOR_APP_UPDATE: "false", GRYPE_DB_CACHE_DIR: "/db", GRYPE_DB_AUTO_UPDATE: "false", GRYPE_DB_VALIDATE_AGE: "false" });
+    expect(scannerEnv("grype", { A: "1" }, null)).toEqual({ A: "1", GRYPE_CHECK_FOR_APP_UPDATE: "false" });
     expect(scannerArgs("trivy", "/x/s.json", "/db")).toEqual(["sbom", "--quiet", "--format", "json", "--cache-dir", "/db", "--skip-db-update", "/x/s.json"]);
     const dir = temp();
     expect(syftArgs(dir, "/o.json")[1]).toBe(`oci-dir:${dir}`);
@@ -223,6 +224,61 @@ describe("the image's SBOM is the one made from its layers (#5446)", () => {
       expect(subjects.map((s) => s.name.split(" of ")[0])).toEqual([expect.stringContaining("@sha256:"), "image.spdx.json"]);
       const doc = pushedSbom(reg, (await declared!.stage(ctx)).items).doc;
       expect(doc.name).toBe("declared");
+    } finally {
+      await reg.close();
+    }
+  });
+});
+
+describe("what the scan found is kept with the release (#5446)", () => {
+  test("the scanner's database version is read from grype's and trivy's JSON", () => {
+    expect(parseScanDatabase("grype", JSON.stringify({ schemaVersion: "v6.0.2", built: "2026-11-20T00:12:00Z", path: "/db", valid: true }))).toEqual({ version: "v6.0.2", built: "2026-11-20T00:12:00Z" });
+    expect(parseScanDatabase("trivy", JSON.stringify({ Version: "0.60.0", VulnerabilityDB: { Version: 2, UpdatedAt: "2026-11-20T06:00:00Z" } }))).toEqual({ version: "2", built: "2026-11-20T06:00:00Z" });
+    expect(parseScanDatabase("grype", "not json")).toBeNull();
+    expect(parseScanDatabase("trivy", "{}")).toBeNull();
+  });
+
+  test("a scanned line holds every finding with what the policy made of it, and a reader of the record accepts it", async () => {
+    const dir = temp();
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false);
+    writeLockfile(dir);
+    const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], {});
+    const scanner = { ...fakeReleaseScanner(), database: async () => ({ version: "v6.0.2", built: "2026-11-20T00:12:00Z" }) };
+    const err = (await scanBeforeStage({ targets, ctx: context(dir, null), scan: { scanner, policy: {}, vex: [] } }).catch((e: unknown) => e)) as PublishScanError;
+    expect(err).toBeInstanceOf(PublishScanError);
+    const record = scanRecord(err.report);
+    expect(record).toEqual({
+      scanner: "fake-grype v0.0.1",
+      database: { version: "v6.0.2", built: "2026-11-20T00:12:00Z" },
+      subjects: [{ target: "npm (1 package)", name: "the lockfile of @acme/core@1.4.0", packages: expect.any(Number), findings: [{ id: "CVE-2026-50001", severity: "critical", package: "left-pad", version: "1.3.0", fixedVersion: "1.3.1", outcome: "severity-threshold" }] }],
+    });
+    const line = JSON.stringify({ version: 1, releaseDigest: "sha256:r", label: "v1.4.0", target: SCAN_RECORD_TARGET.key, kind: "scan", name: "scan", step: "scan-failed", items: [], state: {}, scan: record, runId: "r", timestamp: "2026-11-21T00:00:00.000Z" });
+    const parsed = parsePublishRecords(line);
+    expect(parsed.malformed).toBe(0);
+    expect(parsed.records[0]).toMatchObject({ step: "scan-failed", scan: record });
+    // A scan line is no target's progress, so a resume does not take it for a stage.
+    expect(publishProgress(parsed.records).staged.size).toBe(0);
+  });
+
+  test("the stage pushes an image's findings beside its SBOM, and the reveal lists them", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-find-1", token: "tok-find-1" });
+    try {
+      const dir = temp();
+      const { digest } = writeOciLayout(join(dir, "image"));
+      LOCK_CLEAN(dir);
+      const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: `${reg.host}/acme/api` })], {});
+      const scanner = { ...fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1", "pkg:deb/debian/zlib@1.2.13"] }), database: async () => ({ version: "v6.0.2" }) };
+      const ctx = context(dir, { scanner, policy: {}, vex: [] }, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-find-1" } });
+      const run = await runPublish({ cwd: dir, release: ctx.release, label: ctx.label, targets: [target!], ctx, record: false });
+      const findings = run.published[0]!.items.find((i) => i.attachment === "scan")!;
+      expect(findings.name).toBe(SCAN_FINDINGS_FILE);
+      const manifest = JSON.parse(reg.manifests.get(findings.digest!)!.bytes.toString("utf-8")) as { artifactType: string; subject: { digest: string }; layers: Array<{ digest: string }> };
+      expect(manifest.artifactType).toBe(SCAN_FINDINGS_MEDIA_TYPE);
+      expect(manifest.subject.digest).toBe(digest);
+      const doc = JSON.parse(reg.blobs.get(manifest.layers[0]!.digest)!.toString("utf-8")) as { scanner: string; database: unknown; subject: string; subjects: Array<{ findings: Array<{ id: string; outcome: string }> }> };
+      expect(doc).toMatchObject({ scanner: "fake-grype v0.0.1", database: { version: "v6.0.2" }, subject: digest });
+      expect(doc.subjects[0]!.findings).toEqual([expect.objectContaining({ id: "CVE-2026-50003", outcome: "reported" })]);
+      expect(findingsAttachment(run.scan!, "sha256:other")).toBeNull();
     } finally {
       await reg.close();
     }

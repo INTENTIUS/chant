@@ -183,7 +183,7 @@ interface Asset {
   bytes: Uint8Array;
   digest: string;
   /** Set on the SBOM and the provenance statement chant attaches (#4049). */
-  attachment?: "sbom" | "provenance";
+  attachment?: "sbom" | "provenance" | "scan";
 }
 
 /** A Sigstore bundle the stage signs and uploads beside the files (#5164). */

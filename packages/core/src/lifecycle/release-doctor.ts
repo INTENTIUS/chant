@@ -31,6 +31,12 @@
  * When the publish signs with Sigstore (#5164, ./publish-signing.ts), the
  * doctor checks what signing needs from the job it runs in: the OIDC token
  * cosign signs with (`signing-oidc`) and cosign 3 (`signing-cosign`).
+ *
+ * When the publish scans before the stage (#5446, ./publish-scan.ts), the
+ * doctor checks that the scanner runs, and syft when an `oci` target is
+ * declared (`scan-tool`), and says where the scanner's database comes from
+ * (`scan-database`). On a workstation a missing scanner is a warning, so a
+ * cut is not started with a publish that would be refused.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -119,6 +125,8 @@ export interface DoctorDeps {
   signer?: Pick<import("./publish-signing").Signer, "name" | "unavailable">;
   /** The cargo executable. Default `cargo`. */
   cargo?: string;
+  /** What would scan before the stage (#5446). Default: grype or trivy and syft, as the publish runs them. */
+  scanner?: Pick<import("./publish-scan").ReleaseScanner, "name" | "unavailable">;
 }
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -184,6 +192,9 @@ export async function releaseDoctor(req: {
   /** `release.signing` (#5164), and the workspace's security groups, which decide whether the publish signs. */
   signing?: import("./publish-signing").SigningConfig;
   groups?: ReadonlySet<import("../workspace/security").SecurityGroup>;
+  /** `release.scan` (#5446) and `vulnPolicy.scanner`, which with the groups decide whether and with what the publish scans. */
+  scan?: import("./publish-scan").ReleaseScanConfig;
+  scanner?: "grype" | "trivy";
   deps?: DoctorDeps;
 }): Promise<DoctorReport> {
   const env = req.env ?? process.env;
@@ -212,6 +223,8 @@ export async function releaseDoctor(req: {
   if (req.green === "forge-checks") targets.push(await checkForgeChecks(ctx, req.commit));
   const signing = await checkSigning(ctx, req.publish, req.signing, req.groups ?? new Set(), deps.signer);
   if (signing) targets.push(signing);
+  const scan = await checkScan(ctx, req.publish, req.scan, req.groups ?? new Set(), req.scanner, deps.scanner);
+  if (scan) targets.push(scan);
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
@@ -317,6 +330,39 @@ async function checkSigning(
   const gone = signer.unavailable();
   checks.push(gone ? missing(ctx, "signing-cosign", gone, "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.") : { check: "signing-cosign", status: "ok", message: `${signer.name} signs` });
   return { kind: "signing", name: "Sigstore signing", checks };
+}
+
+/**
+ * The scan before the stage (#5446), when `release.scan` or the
+ * `supply-chain` group turns it on and an `oci`, `forge` or `npm` target is
+ * declared: whether the scanner runs, and syft for an image's SBOM, and
+ * where the scanner's database comes from. Null when the publish does not scan.
+ */
+async function checkScan(
+  ctx: Ctx,
+  publish: readonly PublishDeclaration[],
+  config: import("./publish-scan").ReleaseScanConfig | undefined,
+  groups: ReadonlySet<import("../workspace/security").SecurityGroup>,
+  tool: "grype" | "trivy" | undefined,
+  injected: DoctorDeps["scanner"],
+): Promise<DoctorTarget | null> {
+  const { resolveScan, toolReleaseScanner } = await import("./publish-scan");
+  const setting = resolveScan(config, groups);
+  if (!setting.on || !publish.some((d) => d.type === "oci" || d.type === "forge" || d.type === "npm")) return null;
+  const why = setting.from === "config" ? "release.scan" : "the supply-chain group";
+  const images = publish.some((d) => d.type === "oci");
+  const db = setting.db ? resolve(ctx.cwd, setting.db) : null;
+  const scanner = injected ?? toolReleaseScanner(ctx.env, { tool: tool ?? "grype", db, redactor: ctx.redactor });
+  const gone = scanner.unavailable({ images });
+  const checks: DoctorCheck[] = [
+    gone
+      ? missing(ctx, "scan-tool", `${why} scans what the publish puts out before anything is pushed, and ${gone}`, "Install grype (or trivy) and syft, as chant release workflow does in the job, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; or set release.scan: false.")
+      : { check: "scan-tool", status: "ok", message: `${scanner.name} scans${images ? ", and syft makes each image's SBOM from its layers" : ""}` },
+    db
+      ? { check: "scan-database", status: "ok", message: `the scanner reads its database from ${db} and does not update it` }
+      : { check: "scan-database", status: "ok", message: "the scanner downloads its database on first use, which needs the network; release.scan.db names a directory that holds one for a job without it" },
+  ];
+  return { kind: "scan", name: "vulnerability scan", checks };
 }
 
 /** A credential the publish needs and this environment lacks: a failure in CI, a warning on a workstation. */

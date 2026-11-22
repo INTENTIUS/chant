@@ -19,6 +19,7 @@ import {
   trainFit,
   ReleaseInitError,
   tagTemplateOf,
+  SUPPLY_CHAIN_NOTE,
   type InitPackage,
   type ProjectFacts,
 } from "./release-init";
@@ -756,5 +757,21 @@ describe("a workflow that already publishes to npm (#5235)", () => {
       log.mockRestore();
       err.mockRestore();
     }
+  });
+});
+
+describe("the supply-chain group (#5446)", () => {
+  test("init leaves security as it is, and says what the group would add unless the workspace already opts in", () => {
+    const plain = repo({ "package.json": JSON.stringify({ name: "@acme/app", version: "1.0.0" }) }, { origin: "git@github.com:acme/app.git" });
+    const facts = detectProject(plain);
+    expect(facts.security).toBeUndefined();
+    const plan = planRelease(facts, PLAN);
+    expect(plan.notes).toContain(SUPPLY_CHAIN_NOTE);
+    expect(JSON.stringify(plan.release)).not.toContain("supply-chain");
+
+    const opted = repo({ "package.json": JSON.stringify({ name: "@acme/app", version: "1.0.0" }), "chant.workspace.json": JSON.stringify({ name: "acme", schema: 1, members: [], security: ["supply-chain"] }) }, { origin: "git@github.com:acme/app.git" });
+    const optedFacts = detectProject(opted);
+    expect(optedFacts.security).toEqual(["supply-chain"]);
+    expect(planRelease(optedFacts, PLAN).notes).not.toContain(SUPPLY_CHAIN_NOTE);
   });
 });

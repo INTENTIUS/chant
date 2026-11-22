@@ -399,6 +399,24 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     destination: "the forge that hosts the remote, through the GitHub CLI and its own credentials",
     why: "`gh pr list` to find the scope's open pull request, then `gh pr create` or `gh pr edit` with the staged summary and the patch digest (#2550). On a Forgejo or GitLab job the same calls go over REST through `pr-forge.ts` instead (#3798).",
   },
+  {
+    binary: "grype",
+    subcommand: "db",
+    command: "chant release publish --yes, when the publish scans (release.scan or the supply-chain group)",
+    file: "packages/core/src/lifecycle/publish-scan.ts",
+    phase: "apply",
+    destination: "grype's vulnerability database server",
+    why: "The scan before the stage runs `grype sbom:<file> -o json` on each SBOM, and grype downloads its database on first use and when its copy is stale; `grype db status -o json` then reads the database's version for the publish record. With `release.scan.db` set, grype reads the database in that directory and downloads nothing. Update checks are turned off, and syft, which makes an image's SBOM from its local archive, reaches nothing.",
+  },
+  {
+    binary: "trivy",
+    subcommand: "sbom",
+    command: "chant release publish --yes, when the publish scans with vulnPolicy.scanner: \"trivy\"",
+    file: "packages/core/src/lifecycle/publish-scan.ts",
+    phase: "apply",
+    destination: "trivy's vulnerability database registry",
+    why: "`trivy sbom --format json <file>` downloads trivy's database on first use. With `release.scan.db` set it runs with `--cache-dir <db> --skip-db-update` and downloads nothing.",
+  },
 ];
 
 // ── The catalogue ────────────────────────────────────────────────────────────

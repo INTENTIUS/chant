@@ -32,6 +32,12 @@
  * `PATH`. The scanner downloads its database over the network on first use;
  * `release.scan.db` names a directory that already holds one, which the
  * scan then reads without updating it.
+ *
+ * What the scan found, with the scanner's name and its database's version
+ * and build time, is appended to `_releases/publishes.jsonl` as a `scanned`
+ * or `scan-failed` line ({@link scanRecord}), and an image's findings are
+ * pushed beside its SBOM as a referrer ({@link findingsAttachment}), so a
+ * reader of the release sees what was known when it shipped.
  */
 
 import { execFile, execFileSync } from "node:child_process";
@@ -46,7 +52,18 @@ import { parseGrypeOutput, parseTrivyOutput, type ScannerTool, type VulnFinding 
 import { createVulnGateCapability, VulnGateFailedError, type BlockingFinding, type VulnPolicy } from "../components/verbs/vuln-gate";
 import type { SuppressedFinding } from "../components/verbs/vex";
 import type { Redactor } from "./publish-credentials";
+import { sortedJsonReplacer } from "../utils";
+import { NEXT_RELEASE } from "../release-floors";
 import { PublishTargetError, type PublishContext, type PublishTarget } from "./release-publish";
+
+/**
+ * The first chant whose release publish scans before the stage (#5446):
+ * `release.scan`, on under the `supply-chain` group; an image's SBOM made
+ * from its layers; the `scanned` and `scan-failed` lines of the publish
+ * record and the `scan.json` referrer; grype and syft in the rendered
+ * release workflow; and the doctor's `scan-tool` check.
+ */
+export const RELEASE_SCAN_FLOOR = NEXT_RELEASE;
 
 /** `release.scan` in `chant.config.ts`: `true`, `false`, or `{ db }` to scan with a database already on disk. */
 export type ReleaseScanConfig = boolean | { db?: string };
@@ -108,6 +125,16 @@ export interface ReleaseScanner {
   imageSbom(archive: string): Promise<SbomDocument>;
   /** Every known vulnerability `sbom` lists. */
   scan(sbom: SbomDocument): Promise<VulnFinding[]>;
+  /** The scanner's database: its version and when it was built, or null when it can't say. */
+  database?(): Promise<ScanDatabase | null>;
+}
+
+/** The vulnerability database a scan read. */
+export interface ScanDatabase {
+  /** The schema or database version, as the scanner prints it. */
+  version?: string;
+  /** When the database was built (grype) or last updated (trivy). */
+  built?: string;
 }
 
 /** What the publish scans with: the scanner, the gate's policy and the VEX documents it applies. */
@@ -134,6 +161,8 @@ export interface SubjectScan {
 /** What the scan before the stage found. */
 export interface ScanReport {
   scanner: string;
+  /** The database the scanner read, or null when it can't say. */
+  database: ScanDatabase | null;
   subjects: SubjectScan[];
 }
 
@@ -164,8 +193,10 @@ const run = promisify(execFile);
 
 /** The environment a scanner runs with: with `db`, its database there and never updated. */
 export function scannerEnv(tool: ScannerTool, env: NodeJS.ProcessEnv, db: string | null): NodeJS.ProcessEnv {
-  if (db === null || tool !== "grype") return env;
-  return { ...env, GRYPE_DB_CACHE_DIR: db, GRYPE_DB_AUTO_UPDATE: "false", GRYPE_DB_VALIDATE_AGE: "false" };
+  if (tool !== "grype") return env;
+  const quiet = { ...env, GRYPE_CHECK_FOR_APP_UPDATE: "false" };
+  if (db === null) return quiet;
+  return { ...quiet, GRYPE_DB_CACHE_DIR: db, GRYPE_DB_AUTO_UPDATE: "false", GRYPE_DB_VALIDATE_AGE: "false" };
 }
 
 /** The arguments the scanner runs with on an SBOM file. */
@@ -212,7 +243,7 @@ export function toolReleaseScanner(env: NodeJS.ProcessEnv, opts: { tool?: Scanne
       try {
         const out = join(dir, "image.spdx.json");
         try {
-          await run(syft, syftArgs(archive, out), { env, maxBuffer: 64 * 1024 * 1024 });
+          await run(syft, syftArgs(archive, out), { env: { ...env, SYFT_CHECK_FOR_APP_UPDATE: "false" }, maxBuffer: 64 * 1024 * 1024 });
         } catch (err) {
           throw new PublishTargetError("publish-scan-tool-failed", `syft could not read the image in ${archive}: ${tail(err)}`, "Check that the archive is an OCI image layout, as chant release images writes it.");
         }
@@ -245,7 +276,35 @@ export function toolReleaseScanner(env: NodeJS.ProcessEnv, opts: { tool?: Scanne
         rmSync(dir, { recursive: true, force: true });
       }
     },
+    async database() {
+      try {
+        const args = tool === "trivy" ? ["version", "--format", "json", ...(db !== null ? ["--cache-dir", db] : [])] : ["db", "status", "-o", "json"];
+        const { stdout } = await run(bin, args, { env: scannerEnv(tool, env, db), maxBuffer: 4 * 1024 * 1024 });
+        return parseScanDatabase(tool, stdout);
+      } catch {
+        return null;
+      }
+    },
   };
+}
+
+/** The database version `grype db status -o json` or `trivy version --format json` prints, or null. */
+export function parseScanDatabase(tool: ScannerTool, stdout: string): ScanDatabase | null {
+  let doc: Record<string, unknown>;
+  try {
+    doc = JSON.parse(stdout) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const str = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v) : undefined);
+  if (tool === "trivy") {
+    const v = (doc.VulnerabilityDB ?? null) as Record<string, unknown> | null;
+    if (!v) return null;
+    const out = { ...(str(v.Version) ? { version: str(v.Version)! } : {}), ...(str(v.UpdatedAt) ? { built: str(v.UpdatedAt)! } : {}) };
+    return Object.keys(out).length > 0 ? out : null;
+  }
+  const out = { ...(str(doc.schemaVersion) ? { version: str(doc.schemaVersion)! } : {}), ...(str(doc.built) ? { built: str(doc.built)! } : {}) };
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 /** The SBOM document of `bytes`, an SPDX or CycloneDX JSON file. */
@@ -329,7 +388,8 @@ export async function scanBeforeStage(req: { targets: readonly PublishTarget[]; 
       }
     }
   }
-  const report: ScanReport = { scanner: scan.scanner.name, subjects };
+  const database = scan.scanner.database ? await scan.scanner.database().catch(() => null) : null;
+  const report: ScanReport = { scanner: scan.scanner.name, database, subjects };
   const blocked = subjects.filter((s) => s.blocking.length > 0);
   if (blocked.length > 0) {
     const lines = blocked.flatMap(blockingLines);
@@ -341,3 +401,85 @@ export async function scanBeforeStage(req: { targets: readonly PublishTarget[]; 
   }
   return report;
 }
+
+/** The media type of an image's findings referrer. */
+export const SCAN_FINDINGS_MEDIA_TYPE = "application/vnd.intentius.chant.scan.v1+json";
+/** The file name an image's findings are attached under. */
+export const SCAN_FINDINGS_FILE = "scan.json";
+
+/** One finding as the record and the referrer keep it. */
+export interface RecordedFinding {
+  id: string;
+  severity: string;
+  package: string;
+  version: string;
+  fixedVersion?: string;
+  /** Why it blocked, or `warning`, `suppressed`, or `reported` when the policy neither blocks nor warns on it. */
+  outcome: BlockingFinding["reason"] | "warning" | "suppressed" | "reported";
+  inKev?: boolean;
+  epss?: number;
+}
+
+/** One subject as the record keeps it. */
+export interface RecordedSubject {
+  target: string;
+  name: string;
+  digest?: string;
+  packages?: number;
+  findings: RecordedFinding[];
+}
+
+/** What a `scanned` or `scan-failed` line of `_releases/publishes.jsonl` holds (#5446). */
+export interface ScanRecord {
+  scanner: string;
+  database: ScanDatabase | null;
+  subjects: RecordedSubject[];
+}
+
+/** The findings of one subject, each with what the policy made of it, sorted. */
+function recordedFindings(s: SubjectScan): RecordedFinding[] {
+  const key = (f: VulnFinding) => `${f.cveId} ${f.package} ${f.installedVersion}`;
+  const outcome = new Map<string, RecordedFinding["outcome"]>();
+  for (const f of s.findings) outcome.set(key(f), "reported");
+  for (const f of s.warnings) outcome.set(key(f), "warning");
+  for (const x of s.suppressed) outcome.set(key(x.finding), "suppressed");
+  for (const b of s.blocking) outcome.set(key(b.finding), b.reason);
+  const seen = new Set<string>();
+  return s.findings
+    .filter((f) => !seen.has(key(f)) && seen.add(key(f)))
+    .map((f) => ({
+      id: f.cveId,
+      severity: f.severity,
+      package: f.package,
+      version: f.installedVersion,
+      ...(f.fixedVersion ? { fixedVersion: f.fixedVersion } : {}),
+      outcome: outcome.get(key(f)) ?? "reported",
+      ...(f.inKev !== undefined ? { inKev: f.inKev } : {}),
+      ...(f.epss !== undefined ? { epss: f.epss } : {}),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id) || a.package.localeCompare(b.package) || a.version.localeCompare(b.version));
+}
+
+/** The report as a record line keeps it. */
+export function scanRecord(report: ScanReport): ScanRecord {
+  return {
+    scanner: report.scanner,
+    database: report.database,
+    subjects: report.subjects.map((s) => ({ target: s.target, name: s.name, ...(s.digest ? { digest: s.digest } : {}), ...(s.packages !== undefined ? { packages: s.packages } : {}), findings: recordedFindings(s) })),
+  };
+}
+
+/**
+ * The findings referrer of the image `digest` (#5446): the scanner, its
+ * database and what the scan found in the image, as sorted JSON, so the same
+ * scan attaches the same bytes. Null when the report has no subject for it.
+ */
+export function findingsAttachment(report: ScanReport, digest: string): { name: string; mediaType: string; bytes: Uint8Array } | null {
+  const subjects = scanRecord(report).subjects.filter((s) => s.digest === digest);
+  if (subjects.length === 0) return null;
+  const doc = { scanner: report.scanner, database: report.database, subject: digest, subjects: subjects.map(({ target: _t, digest: _d, ...rest }) => rest) };
+  return { name: SCAN_FINDINGS_FILE, mediaType: SCAN_FINDINGS_MEDIA_TYPE, bytes: new Uint8Array(Buffer.from(`${JSON.stringify(doc, sortedJsonReplacer, 2)}\n`, "utf-8")) };
+}
+
+/** The target name and kind the scan's record lines are written under. */
+export const SCAN_RECORD_TARGET = { key: "scan", kind: "scan" as const, name: "scan" };

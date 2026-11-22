@@ -530,3 +530,31 @@ describe("maven, nuget and rubygems (#5232)", () => {
     expect(JSON.stringify(ci)).not.toContain("gems-minted");
   });
 });
+
+describe("the scan before the stage (#5446)", () => {
+  const ociDecl = { type: "oci", image: "dist/app.tar", repository: "ghcr.io/acme/app" } as unknown as PublishDeclaration;
+  const scanCheck = (env: NodeJS.ProcessEnv, scanner: { name: string; unavailable: (o: { images: boolean }) => string | null }, over: { scan?: boolean | { db?: string }; groups?: Set<"supply-chain"> } = { scan: true }) =>
+    releaseDoctor({ cwd: mkdtempSync(join(tmpdir(), "chant-doctor-scan-")), publish: [ociDecl], env, releaseWorkflow: null, ...over, deps: { fetch: fakeFetch([]).fetch, scanner } }).then((r) => r.targets.find((t) => t.kind === "scan"));
+
+  test("reports the scanner and syft when the publish scans, and nothing when it does not", async () => {
+    const asked: boolean[] = [];
+    const ok = await scanCheck({}, { name: "grype v0.121.1", unavailable: (o) => (asked.push(o.images), null) });
+    expect(ok?.checks.map((c) => [c.check, c.status])).toEqual([["scan-tool", "ok"], ["scan-database", "ok"]]);
+    expect(ok?.checks[0]!.message).toContain("syft");
+    expect(asked).toEqual([true]);
+    expect(await scanCheck({}, { name: "grype", unavailable: () => null }, {})).toBeUndefined();
+    expect(await scanCheck({}, { name: "grype", unavailable: () => null }, { groups: new Set(["supply-chain"]) })).toBeDefined();
+    expect(await scanCheck({}, { name: "grype", unavailable: () => null }, { scan: false, groups: new Set(["supply-chain"]) })).toBeUndefined();
+    const offline = await scanCheck({}, { name: "grype", unavailable: () => null }, { scan: { db: "scan-db" } });
+    expect(offline?.checks[1]!.message).toMatch(/scan-db and does not update it$/);
+  });
+
+  test("warns on a workstation when the scanner is missing, and fails in CI", async () => {
+    const gone = { name: "grype", unavailable: () => "grype is not there: install grype on PATH, or set CHANT_GRYPE to it" };
+    const ws = await scanCheck({}, gone);
+    expect(ws?.checks[0]).toMatchObject({ check: "scan-tool", status: "warn" });
+    expect(ws?.checks[0]!.message).toContain("grype is not there");
+    const ci = await scanCheck({ GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/app" }, gone);
+    expect(ci?.checks[0]).toMatchObject({ check: "scan-tool", status: "fail" });
+  });
+});

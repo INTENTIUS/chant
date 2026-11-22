@@ -55,7 +55,7 @@ export const PACKAGE_SBOM_FILES = ["sbom.spdx.json", "sbom.cdx.json", "sbom.cycl
 
 /** One file attached to what a target publishes. */
 export interface Attachment {
-  kind: "sbom" | "provenance";
+  kind: "sbom" | "provenance" | "scan";
   /** The file name it is attached under. */
   name: string;
   mediaType: string;

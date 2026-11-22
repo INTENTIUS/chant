@@ -9,8 +9,11 @@
  * the state its reveal needs (a draft release's id); one that revealed gets
  * a `revealed` line. The `release.verify` commands (#5157) get a `verified`
  * or `verify-failed` line, under the target `verify:<hex>` of kind `verify`,
- * with the failing command's name and exit status in its state; the lines of
- * targets are what a resume reads. Each line is pushed as soon as it is written, so a CI
+ * with the failing command's name and exit status in its state. The scan
+ * before the stage (#5446) gets a `scanned` or `scan-failed` line, under the
+ * target `scan` of kind `scan`, whose `scan` holds the scanner, its
+ * database's version and every finding with what the policy made of it.
+ * The lines of targets are what a resume reads. Each line is pushed as soon as it is written, so a CI
  * job that resumes on a fresh checkout reads it after `fetchLifecycle`.
  *
  * Why a record and not only the registries: a registry says whether a version
@@ -41,11 +44,13 @@ export interface PublishRecord {
   label: string | null;
   /** The target's key ({@link PublishTarget.key}). */
   target: string;
-  kind: PublishTarget["kind"] | "verify";
+  kind: PublishTarget["kind"] | "verify" | "scan";
   /** The target's name, for a reader. */
   name: string;
-  step: "staged" | "revealed" | "verified" | "verify-failed";
+  step: "staged" | "revealed" | "verified" | "verify-failed" | "scanned" | "scan-failed";
   items: PublishItem[];
+  /** On a `scanned` or `scan-failed` line (#5446): what the scan before the stage found. */
+  scan?: import("./publish-scan").ScanRecord;
   /** What the reveal needs, on a `staged` line; `{}` on a `revealed` one. */
   state: Record<string, string>;
   runId: string;
@@ -64,7 +69,7 @@ export function parsePublishRecords(text: string | null): { records: PublishReco
         r.version === 1 &&
         typeof r.releaseDigest === "string" &&
         typeof r.target === "string" &&
-        (r.step === "staged" || r.step === "revealed" || r.step === "verified" || r.step === "verify-failed") &&
+        (r.step === "staged" || r.step === "revealed" || r.step === "verified" || r.step === "verify-failed" || r.step === "scanned" || r.step === "scan-failed") &&
         Array.isArray(r.items) &&
         typeof r.timestamp === "string";
       if (!ok) {

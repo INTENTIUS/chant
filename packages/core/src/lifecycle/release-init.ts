@@ -135,6 +135,8 @@ export interface ProjectFacts {
   tags: TagHistory;
   /** `ci.green` is declared or `ci/green/` tags exist. */
   chantCi: boolean;
+  /** The security groups `chant.workspace.json` at the root turns on (#5446). Absent: none. */
+  security?: string[];
   /** `.gitignore` ignores `dist/`. */
   distIgnored: boolean;
   /** `.gitignore` ignores `build/`, where an image beside goreleaser's dist is written (#5269). */
@@ -504,7 +506,21 @@ export function detectProject(root: string): ProjectFacts {
     distIgnored: /^\/?dist\/?\s*$/m.test(gitignore) || /^\/?dist\/\*\s*$/m.test(gitignore),
     buildIgnored: /^\/?build\/?\s*$/m.test(gitignore) || /^\/?build\/\*\s*$/m.test(gitignore),
     registries: detectRegistryProjects(root),
+    ...(Array.isArray(chantDecl?.security) ? { security: (chantDecl?.security as unknown[]).filter((g): g is string => typeof g === "string") } : {}),
   };
+}
+
+/**
+ * The note init prints when the workspace does not opt into `supply-chain`
+ * (#5446): init leaves `security` as it is, since under the group an npm
+ * package that carries no SBOM is refused and init writes none into it.
+ */
+export const SUPPLY_CHAIN_NOTE =
+  'The supply-chain security group is off. Adding "security": ["supply-chain"] to chant.workspace.json scans every image and SBOM for known vulnerabilities before anything is pushed, signs images and forge assets with Sigstore, and requires OIDC provenance and an SBOM on every target, so each npm package must carry one (npm sbom writes it).';
+
+/** {@link SUPPLY_CHAIN_NOTE}, unless the workspace already opts into the group. */
+function supplyChainNote(facts: Pick<ProjectFacts, "security">, notes: string[]): void {
+  if (!(facts.security ?? []).includes("supply-chain")) notes.push(SUPPLY_CHAIN_NOTE);
 }
 
 /** A command that publishes to npm: `npm publish`, `pnpm publish`, `yarn publish` or `yarn npm publish`. */
@@ -889,6 +905,7 @@ export function planRelease(facts: ProjectFacts, opts: PlanOptions): ReleaseInit
 
   const h = facts.tags.prefix;
   const readsHistory = h !== null && (tag.legacy.includes(h) || tag.template === `${h}{version}`);
+  supplyChainNote(facts, notes);
   return { release, reasons, notes, registry, workflowFile, goreleaserPatch, readsHistory };
 }
 
@@ -1214,6 +1231,7 @@ export function planTrain(facts: ProjectFacts, opts: PlanOptions): ReleaseTrainP
   // #5216: a GitLab job token cannot push the train's tags.
   if (forge === "gitlab") registry.push(`GitLab: include ${workflowFile} from .gitlab-ci.yml, and store a project access token with write_repository as the masked CI/CD variable CHANT_RELEASE_TOKEN; the cut and publish jobs push with it.`);
   const workspaceName = memberNameOf({ name: facts.origin?.repo.split("/").pop() ?? node.root.name ?? null, dir: facts.path ?? "workspace" }) || "workspace";
+  supplyChainNote(facts, notes);
   return { release, members: members.map(({ name, dir, package: pkg, release: r }) => ({ name, dir, package: pkg, release: r })), workspaceName, reasons, notes, registry, workflowFile, env };
 }
 

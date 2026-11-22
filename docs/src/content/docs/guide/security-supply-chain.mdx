@@ -17,8 +17,9 @@ Under `supply-chain`:
 - A publish with no OIDC token warns that what it publishes carries no provenance. Without the group, provenance is only a field in the plan. `--require-provenance` refuses instead, with or without the group.
 - `chant release cut` refuses `release.green: "none"` (`release-green-none-refused`), so every release passed a [green gate](/chant/cli/release/cut/#the-green-gate).
 - An `oci` or `forge` target signs what it publishes with Sigstore and adds SLSA provenance, keylessly with the CI job's OIDC token. A publish that can't sign is refused (`publish-signing-no-oidc`, `publish-signing-tool-missing`). `release.signing: false` in `chant.config.ts` turns it off with a warning. [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures) has the details.
+- `chant release publish` scans what it would put out for known vulnerabilities before anything is pushed or signed, and stops with `publish-scan-failed` on a finding the policy blocks. `release.scan: false` turns it off with a warning. [The scan before the stage](#the-scan-before-the-stage) has the details.
 
-An SBOM comes from the file a target's `sbom` names, else from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first.
+An SBOM comes from the file a target's `sbom` names. With none named, an image's SBOM is the one the scan made from the image's layers, so it lists the OS packages in the image. Every other SBOM comes from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first.
 
 ## Opt in
 
@@ -29,6 +30,8 @@ Add the group to `security` in `chant.workspace.json`, at the top level for ever
 ```
 
 A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
+
+`chant release init` does not add the group. It writes no `chant.workspace.json` for a single release, and under the group an npm package that carries no SBOM is refused, which a new project's packages usually don't yet. Add the group once the packages carry one.
 
 ## Fill the gaps
 
@@ -41,3 +44,24 @@ A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
 | `security-publish-no-provenance` | Pass `--require-provenance` in the publish job, which runs in CI with an OIDC token. |
 | `security-component-no-sbom` | Add a `generateSbom` step to the member's components. |
 | `security-component-no-verify` | Add a `verify` step before the deploy steps. |
+
+## The scan before the stage
+
+A publish stages every target before it reveals any, but staging is not private: an `oci` target pushes the image's layers, manifest and referrers by digest, and anyone can pull it by digest from then on. So the scan runs first, before any target stages and before anything is signed, on what each target would put out:
+
+- each `oci` target's image, from its local archive (which `chant release images` already checked against the release's digests), through an SBOM syft makes from the image's layers;
+- the SBOM each `forge` target attaches beside its assets, goreleaser and nfpm files among them;
+- the SBOM each npm package carries, or, for a package with none, one written from the member's lockfile.
+
+Each SBOM goes through the gate a component's `vuln-gate` step runs, with the project's `vulnPolicy` in `chant.config.ts`: `failSeverity` (default `critical`), `fixableOnly`, `failOnKev`, the EPSS thresholds, and the VEX files `vexSources` names. A finding the policy blocks stops the publish with `publish-scan-failed` and the list of findings, and nothing reaches a registry: no layer, manifest or referrer. Fix the dependency or the base image and build the release again, or record a VEX statement when the finding is not exploitable.
+
+The scanner is grype, or trivy with `vulnPolicy.scanner: "trivy"`, and syft makes an image's SBOM. A publish finds them in `CHANT_GRYPE`, `CHANT_TRIVY` and `CHANT_SYFT`, else on `PATH`, and is refused (`publish-scan-tool-missing`) without them. The workflow `chant release workflow` renders installs grype and syft at versions pinned by SHA-256, on GitHub, GitLab and Forgejo and in a train's jobs, with nothing to add to `release.workflow`. `chant release doctor` reports a missing scanner before a cut: a warning on a workstation, a failure in CI.
+
+The scanner downloads its vulnerability database on first use, which needs the network. For a job without it, `release.scan: { db: "<dir>" }` names a directory that already holds the database, and the scan reads it there without updating it.
+
+What the scan found stays with the release:
+
+- the publish record, `_releases/publishes.jsonl` on `chant/lifecycle`, gets a `scanned` or `scan-failed` line with the scanner, its database's version and build time, and every finding with what the policy made of it;
+- each image gets a `scan.json` referrer beside its SBOM (`application/vnd.intentius.chant.scan.v1+json`) with the same findings for that image, so `oras discover` or `cosign tree` lists it under the image's digest.
+
+`release.scan: true` turns the scan on without the group.

@@ -1145,7 +1145,9 @@ function describeItem(i: import("../../lifecycle/release-publish").PublishItem):
           ? `${i.name} (Sigstore signature)`
           : i.attachment === "attestation"
             ? `${i.name} (SLSA provenance, Sigstore)`
-            : i.name;
+            : i.attachment === "scan"
+              ? `${i.name} (vulnerability scan findings)`
+              : i.name;
   if (i.notes !== undefined) return `${i.name} to ${i.destination}:\n${i.notes.trimEnd().split("\n").map((l) => `      ${l}`.trimEnd()).join("\n")}`;
   return `${what} to ${i.destination}${i.sbom ? `, carrying ${i.sbom}` : ""}`;
 }

@@ -103,8 +103,9 @@ export interface PublishItem {
    * Set on a file attached to what the target publishes: an SBOM or the
    * release's provenance statement (#4049), or a Sigstore bundle (#5164), a
    * `signature` over a file or an image, or an `attestation`, SLSA provenance.
+   * `scan` is what the scan before the stage found in an image (#5446).
    */
-  attachment?: "sbom" | "provenance" | "signature" | "attestation";
+  attachment?: "sbom" | "provenance" | "signature" | "attestation" | "scan";
   /** On a Sigstore bundle (#5164): what it signs, each name and digest. An image is named `<repository>@<digest>`. */
   signs?: Array<{ name: string; digest: string }>;
   /** On a Sigstore bundle over a statement (#5164): the statement's predicate type. */
@@ -254,6 +255,8 @@ export interface PublishContext extends PublishContextBase {
   signing?: import("./publish-signing").SigningContext | null;
   /** Set when the publish scans before the stage (#5446): the scanner, the policy and the VEX documents. Null or absent: nothing is scanned. */
   scan?: import("./publish-scan").ScanContext | null;
+  /** What the scan before the stage found (#5446), set once it ran: the OCI target attaches an image's findings beside its SBOM. */
+  scanReport?: import("./publish-scan").ScanReport;
 }
 
 /** A target refused or failed. The message never holds a credential. */
@@ -995,7 +998,8 @@ export async function runPublish(req: {
   const { appendPublishRecord, publishProgress, readPublishRecords } = await import("./publish-record");
   const { pushLifecycleReport } = await import("./git");
   const { resolveRunId } = await import("./release-ledger");
-  const { cwd, release, label, targets, ctx } = req;
+  const { cwd, release, label, targets } = req;
+  let ctx = req.ctx;
   const say = req.say ?? (() => undefined);
   const now = req.now ?? (() => new Date());
   const record = req.record ?? true;
@@ -1003,11 +1007,11 @@ export async function runPublish(req: {
   const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
   let recordWarning: string | null = null;
 
-  const write = async (target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" }, step: import("./publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>) => {
+  const write = async (target: Pick<PublishTarget, "key" | "name"> & { kind: PublishTarget["kind"] | "verify" | "scan" }, step: import("./publish-record").PublishRecord["step"], items: PublishItem[], state: Record<string, string>, scanned?: import("./publish-scan").ScanRecord) => {
     if (!record) return;
     try {
       await appendPublishRecord(
-        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, runId, timestamp: now().toISOString() },
+        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, ...(scanned ? { scan: scanned } : {}), runId, timestamp: now().toISOString() },
         ctx.redactor,
         { cwd },
       );
@@ -1052,15 +1056,19 @@ export async function runPublish(req: {
   // #5446: scan what the targets would put out, before anything stages or is signed. A target an earlier run staged is out already.
   let scanReport: import("./publish-scan").ScanReport | undefined;
   const toScan = targets.filter((t) => !progress.revealed.has(t.key) && !progress.staged.has(t.key));
-  if (ctx.scan && toScan.length > 0) {
-    const { scanBeforeStage } = await import("./publish-scan");
-    say(`  scanning with ${ctx.scan.scanner.name} before anything is pushed`);
+  if (req.ctx.scan && toScan.length > 0) {
+    const { scanBeforeStage, scanRecord, PublishScanError, SCAN_RECORD_TARGET } = await import("./publish-scan");
+    say(`  scanning with ${req.ctx.scan.scanner.name} before anything is pushed`);
     try {
-      scanReport = await scanBeforeStage({ targets: toScan, ctx, scan: ctx.scan, say });
+      scanReport = await scanBeforeStage({ targets: toScan, ctx: req.ctx, scan: req.ctx.scan, say });
     } catch (err) {
+      if (err instanceof PublishScanError) await write(SCAN_RECORD_TARGET, "scan-failed", [], {}, scanRecord(err.report));
       const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
       throw new PublishRunError(e.code, ctx.redactor.redact(e.message), e.fix, "scan", stagedNames, revealedNames);
     }
+    await write(SCAN_RECORD_TARGET, "scanned", [], {}, scanRecord(scanReport));
+    // The stage attaches an image's findings beside its SBOM.
+    ctx = { ...ctx, scanReport };
   }
   for (const target of targets) {
     if (progress.revealed.has(target.key)) {
