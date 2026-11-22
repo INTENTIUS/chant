@@ -41,6 +41,7 @@ const JSON_FLAG: Record<ReadContractCommand, string[]> = {
   search: ["--json"],
   "search --capabilities": ["--json"],
   drift: [],
+  state: ["--json"],
 };
 
 /** The smallest reader that conforms, with a hook to misbehave. */
