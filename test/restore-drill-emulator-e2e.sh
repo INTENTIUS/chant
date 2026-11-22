@@ -46,6 +46,7 @@ command -v docker >/dev/null 2>&1 || skip "docker not installed"
 docker info >/dev/null 2>&1 || skip "docker daemon not reachable"
 command -v aws >/dev/null 2>&1 || skip "aws CLI not installed"
 command -v node >/dev/null 2>&1 || skip "node not installed"
+[ -S /var/run/docker.sock ] || skip "no docker socket at /var/run/docker.sock (Floci starts each RDS instance's database container through it)"
 
 # ── Keep real cloud credentials out ──────────────────────────────────────────
 for v in $(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
@@ -58,6 +59,11 @@ export PATH="$ROOT/node_modules/.bin:$PATH"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@chant.dev GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@chant.dev
 
 cleanup() {
+  # Floci backs each RDS instance with a database container it starts through
+  # the docker socket. Delete the instances first so none outlives the emulator.
+  for id in $(aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text 2>/dev/null); do
+    aws rds delete-db-instance --db-instance-identifier "$id" --skip-final-snapshot >/dev/null 2>&1 || true
+  done
   docker rm -f "$FLOCI_NAME" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
@@ -65,7 +71,11 @@ trap cleanup EXIT
 
 # ── 0. Boot Floci ────────────────────────────────────────────────────────────
 echo "=== 0. Floci on :$FLOCI_PORT ==="
-docker run -d --rm -p "127.0.0.1:${FLOCI_PORT}:4566" --name "$FLOCI_NAME" "$FLOCI_IMAGE" >/dev/null
+# The docker socket is mounted because Floci starts a real database container
+# for each RDS instance. Without it create-db-instance fails with a socket error.
+docker run -d --rm -p "127.0.0.1:${FLOCI_PORT}:4566" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  --name "$FLOCI_NAME" "$FLOCI_IMAGE" >/dev/null
 for _ in $(seq 1 30); do
   curl -fs "${AWS_ENDPOINT_URL}/_localstack/health" 2>/dev/null | grep -q '"cloudformation"' && break
   sleep 2
