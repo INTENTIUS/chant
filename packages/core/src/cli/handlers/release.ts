@@ -859,6 +859,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
       ...(build ? { build } : {}),
       ...(check ? { check } : {}),
       ...(intents.length > 0 ? { intents: intents.map(({ path, added, bump }) => ({ path, added, bump })) } : {}),
+      // #5446: the scan's lines go to stderr, so the stdout of --json holds the cut's document alone.
+      log: (line: string) => console.error(line),
     };
 
     if (dryRun) {

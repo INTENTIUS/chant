@@ -11,7 +11,9 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { cutRelease } from "../lifecycle/release-cut";
+import { spawnSync } from "node:child_process";
+import { cutRelease, ReleaseCutError } from "../lifecycle/release-cut";
+import { fakeReleaseScanner, layerSpdx } from "../lifecycle/__fixtures__/scan-fakes";
 import type { ReleaseArtifact } from "../lifecycle/release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { seedFakeNpmRegistry, writeFakeNpm } from "../lifecycle/__fixtures__/publish-fakes";
@@ -228,6 +230,45 @@ describe("release.train.check", () => {
     expect(result).toBe(3);
     expect(stdout).toBe("");
     expect(stderr).toContain("built");
+  });
+});
+
+describe("the scan at each member's cut (#5446)", () => {
+  test("a member whose scan refuses stops the train: it is not cut or tagged, no train is recorded, and no tag reaches the remote", async () => {
+    const x = setup();
+    // lex scans, and the SBOM its package carries lists a critical left-pad.
+    x.r.write("release/lex/chant.config.ts", member("lex").replace("release: {", "release: { scan: true,"));
+    x.r.write("pkgs/lex/sbom.spdx.json", layerSpdx("lex", ["pkg:npm/left-pad@1.3.0"]));
+    const head = x.r.commit("lex scans");
+    x.r.git(["tag", `ci/green/${head}`]);
+    const remote = join(dirname(x.r.dir), "remote.git");
+    spawnSync("git", ["init", "-q", "--bare", remote]);
+    x.r.git(["remote", "add", "origin", remote]);
+    const scanner = fakeReleaseScanner();
+    const cut: string[] = [];
+    // The in-process cut of each member, as `chant release cut --at` runs it, with the fake scanner.
+    const scanningCutter: MemberCutter = async (m, commit, o) => {
+      if (!o.yes) return { tag: null };
+      try {
+        await cutRelease({ cwd: join(o.root, m.dir), compiler, label: m.label, actor: "alice", env: {}, npmPublished: () => true, now: () => new Date("2026-11-22T10:00:00.000Z"), publishDeps: { releaseScanner: scanner, npm: x.npm } });
+      } catch (err) {
+        if (err instanceof ReleaseCutError) throw new TrainCutError("train-cut-failed", `the cut of ${m.member} at ${m.label} failed: ${err.message} [${err.code}]`);
+        throw err;
+      }
+      cut.push(m.member);
+      const tag = `release/npm/${m.member}/${m.label}`;
+      x.r.git(["tag", tag, commit]);
+      return { tag };
+    };
+    const err = await cutTrain({ cwd: x.nested, env: "npm", at: head, registry: npmVersions(x.npm), yes: true, cutter: scanningCutter, actor: "alice" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TrainCutError);
+    expect((err as TrainCutError).message).toContain("the cut of lex at 1.0.1 failed: no release was cut:");
+    expect((err as TrainCutError).message).toContain("CVE-2026-50001 (critical) in left-pad 1.3.0");
+    expect((err as TrainCutError).message).toContain("[publish-scan-failed]");
+    expect(cut).not.toContain("lex");
+    expect(x.r.git(["tag", "--list", "release/npm/lex/*", "release-train/*"]).trim()).toBe("");
+    expect((await readReleaseTrains(x.nested, "npm")).records).toEqual([]);
+    expect(spawnSync("git", ["ls-remote", "--tags", remote], { encoding: "utf-8" }).stdout.trim()).toBe("");
   });
 });
 

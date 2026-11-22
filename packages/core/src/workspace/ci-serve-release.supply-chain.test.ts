@@ -93,7 +93,8 @@ describe("a release served by ci serve --release under supply-chain (#5462)", ()
     writeOciLayout(join(r.dir, "image"));
     head = r.commit("init");
     r.git(["tag", `ci/green/${head}`]);
-    await cutRelease({ cwd: r.dir, compiler, label: "v1", actor: "alice", env: {}, now: () => new Date("2026-11-21T10:00:00.000Z") });
+    // #5446: the cut scans too under the group, here with a scanner that finds nothing to block, so the tests below exercise the publish's own scan.
+    await cutRelease({ cwd: r.dir, compiler, label: "v1", actor: "alice", env: {}, now: () => new Date("2026-11-21T10:00:00.000Z"), publishDeps: { releaseScanner: fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1"] }) } });
   }, 120_000);
   afterAll(async () => {
     await reg?.close();

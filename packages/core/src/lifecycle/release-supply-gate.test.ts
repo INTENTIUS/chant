@@ -15,6 +15,7 @@ import { COSIGN_SIGN_PREDICATE, SLSA_PROVENANCE_PREDICATE, type SigstoreVerifier
 import { appendPublishRecord, type PublishRecord } from "./publish-record";
 import { scanRecorded, supplyChainGate } from "./release-supply-gate";
 import { cutRelease } from "./release-cut";
+import { fakeReleaseScanner } from "./__fixtures__/scan-fakes";
 import type { ReleaseArtifact } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { TestRepo } from "../workspace/trust/test-repo";
@@ -62,7 +63,7 @@ async function member(publish: string, extra = "") {
   r.write("api.component.ts", "export const api = {};\n");
   const head = r.commit("init");
   r.git(["tag", `ci/green/${head}`]);
-  const { release } = (await cutRelease({ cwd: r.dir, compiler, label: "v1", actor: "alice", env: {}, now: () => new Date("2026-10-17T10:00:00.000Z") })) as unknown as { release: { releaseDigest: string } };
+  const { release } = (await cutRelease({ cwd: r.dir, compiler, label: "v1", actor: "alice", env: {}, now: () => new Date("2026-10-17T10:00:00.000Z"), publishDeps: { releaseScanner: fakeReleaseScanner() } })) as unknown as { release: { releaseDigest: string } };
   return { r, digest: release.releaseDigest };
 }
 

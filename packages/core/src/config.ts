@@ -677,7 +677,8 @@ export interface ChantConfig {
      * grype (#5451). Every image a target pushes, scanned through an SBOM of its layers, and
      * every SBOM the publish attaches goes through the gate `vulnPolicy`
      * configures, and a blocking finding stops the publish before anything is
-     * pushed. On by default under the `supply-chain` group; `false` turns it
+     * pushed. `chant release cut` runs the same scan before it records or
+     * tags the release (./lifecycle/release-cut-scan.ts). On by default under the `supply-chain` group; `false` turns it
      * off there. `{ dbMaxAgeHours }` refuses a publish whose scanner database
      * was built longer ago than that (`publish-scan-db-stale`, #5464); under a
      * security profile the shorter of it and the profile's hours applies. See

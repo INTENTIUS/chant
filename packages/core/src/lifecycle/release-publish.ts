@@ -51,7 +51,6 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { resolve as resolvePath } from "node:path";
 import type { Release } from "./release-store";
 import { stampedChanges, type ReleaseVersionConfig } from "./release-version";
 import { createRedactor, type Redactor } from "./publish-credentials";
@@ -740,41 +739,13 @@ export async function preparePublish(req: {
     signing = prepared.context;
   }
   // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
-  const { resolveScan, toolReleaseScanner, readVexSources } = await import("./publish-scan");
+  // The cut runs the same scan before the tag (./release-cut-scan.ts), from the same context.
   const fullConfig = (await loadConfig(cwd).catch(() => null))?.config;
-  const scanSetting = resolveScan(fullConfig?.release?.scan, groups);
-  let scan: PublishPlan["scan"] = null;
-  const scanned = targets.filter((t) => t.scanSubjects);
-  if (scanSetting.on && scanned.length > 0) {
-    const why = scanSetting.from === "config" ? "release.scan in chant.config.ts" : "the supply-chain group";
-    const db = scanSetting.db ? resolvePath(cwd, scanSetting.db) : null;
-    const { withImageScanner } = await import("./publish-scan-wiz");
-    const redactor = createRedactor(env);
-    const scanner = req.deps?.releaseScanner ?? withImageScanner(scanSetting, env, toolReleaseScanner(env, { tool: fullConfig?.vulnPolicy?.scanner ?? "grype", db, redactor }), { redactor });
-    const missing = scanner.unavailable({ images: scanned.some((t) => t.kind === "oci") });
-    if (missing) {
-      return {
-        refusal: {
-          code: "publish-scan-tool-missing",
-          message: `${name} would be scanned for known vulnerabilities before anything is pushed, as ${why} asks, and ${missing}`,
-          fix: "Install grype (or trivy) and syft in the job, as chant release workflow does, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; with imageScanner wiz, set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET and put wizcli on PATH; or set release.scan: false.",
-        },
-      };
-    }
-    let vex: string[];
-    try {
-      vex = readVexSources(cwd, fullConfig?.vulnPolicy?.vexSources);
-    } catch (err) {
-      const e = err as PublishTargetError;
-      return { refusal: { code: "publish-scan-vex-missing", message: e.message, ...(e.fix ? { fix: e.fix } : {}) } };
-    }
-    const { resolveVulnPolicy } = await import("../config");
-    // #5464: the oldest database the publish takes, from release.scan.dbMaxAgeHours or a security profile.
-    const { profilesOf, scanDatabaseBound } = await import("../workspace/security-profiles");
-    const scanConfig = fullConfig?.release?.scan;
-    const dbAge = scanDatabaseBound(typeof scanConfig === "object" ? scanConfig.dbMaxAgeHours : undefined, profilesOf(source.declaration));
-    scan = { scanner, policy: fullConfig ? resolveVulnPolicy(fullConfig) : {}, vex, ...(dbAge ? { dbAge } : {}) };
-  }
+  const { resolveScanContext } = await import("./publish-scan-context");
+  const resolvedScan = await resolveScanContext({ cwd, name, targets, config: fullConfig, groups, declaration: source.declaration, env, ...(req.deps?.releaseScanner ? { scanner: req.deps.releaseScanner } : {}) });
+  if ("refusal" in resolvedScan) return { refusal: resolvedScan.refusal };
+  const scan: PublishPlan["scan"] = resolvedScan.scan;
+  const scanSetting = { warning: resolvedScan.warning };
   // #5150: the tag release.tag gives the label, as the cut made it, and the floating tag the publish moves.
   const { memberTags, ReleaseTagError } = await import("./release-tag");
   let tags: MemberTags;
