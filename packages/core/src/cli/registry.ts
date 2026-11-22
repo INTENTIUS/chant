@@ -741,7 +741,7 @@ export interface ParsedArgs {
   branch?: string;
   /** `chant ci workflow --workflow <name>`, repeatable (#3573): a workflow whose completion triggers a tick, beside those the scan finds. Also `chant ci init --workflow <name>` (#4168 step 6), the prescribed workflow to set up. */
   ciWorkflows?: string[];
-  /** `chant ci init --security <group>`, repeatable (#4168 step 6): a security group to turn on. */
+  /** `chant ci init --security <group|profile>`, repeatable (#4168 step 6): a security group, or a security profile (#5464), to turn on. */
   securityGroups?: string[];
   /** `chant ci run plan|apply --commit <sha>` (#4094): the commit the job runs at. Default `HEAD`. */
   commit?: string;

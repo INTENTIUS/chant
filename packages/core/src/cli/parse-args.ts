@@ -918,9 +918,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.branch = args[++i];
       if (!result.branch || result.branch.startsWith("-")) throw new Error("--branch needs a branch name: --branch <branch>");
     } else if (arg === "--security") {
-      // `chant ci init --security <group>`, repeatable (#4168 step 6): a security group to turn on.
+      // `chant ci init --security <group|profile>`, repeatable (#4168 step 6, #5464): a security group or profile to turn on.
       const group = args[++i];
-      if (!group || group.startsWith("-")) throw new Error("--security needs a group: --security verified-releases|supply-chain|who-ran-it|review-rules|isolated-runners");
+      if (!group || group.startsWith("-")) throw new Error("--security needs a group or a profile: --security verified-releases|supply-chain|who-ran-it|review-rules|isolated-runners|fedramp-moderate|cccs-medium");
       result.securityGroups = [...(result.securityGroups ?? []), group];
     } else if (arg === "--workflow") {
       // `chant ci workflow --workflow <name>`, repeatable (#3573)

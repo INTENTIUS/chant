@@ -468,7 +468,7 @@ CI:
                         own and pushes it for review; the target branch is never
                         written
   ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge
-              [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
+              [--forge github|gitlab|forgejo] [--security <group|profile>]... [--yes]
                         Set the workspace up for a prescribed delivery workflow:
                         print what it would write as a diff, then write it on
                         --yes or a yes at the prompt and run the generators. A

@@ -31,7 +31,7 @@ chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--int
                   [--build-command <line> [--land]] [--release] [ci run's job flags]
 chant ci serve --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
-chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
+chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group|profile>]... [--yes]
 chant ci check [--base <rev>] [--branch <default>] [<target>...] [--output <dir>] [--json]
 chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> [--member <name>] --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
 chant ci evidence sign --from-job <job> --check-id <id>[,<id>...] [--claims <dir>] [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
@@ -835,7 +835,7 @@ The proposal is printed first: each file as a diff, then each generator. Nothing
 |---|---|
 | `--workflow <name>` | `trunk-curated`, `trunk-curated+apply-on-merge` or `apply-before-merge`. Required. |
 | `--forge <forge>` | `github`, `gitlab` or `forgejo`. Inferred from `.github/workflows`, `.forgejo/workflows` or `.gitlab-ci.yml`. |
-| `--security <group>` | Add a security group to the top-level `security`, repeatable. Without it no group is turned on. |
+| `--security <group\|profile>` | Add a security group, or a [security profile](/chant/reference/security-profiles/) (`fedramp-moderate`, `cccs-medium`) that turns every group on, to the top-level `security`, repeatable. Without it nothing is turned on. |
 | `--yes` | Write and run without asking. |
 
 ## ci workflow

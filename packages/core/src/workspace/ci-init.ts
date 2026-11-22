@@ -1,5 +1,5 @@
 /**
- * `chant ci init --workflow <name> [--forge <forge>] [--security <group>]...
+ * `chant ci init --workflow <name> [--forge <forge>] [--security <group|profile>]...
  * [--yes]` (#4168 step 6, section 9): set a workspace up for a prescribed
  * delivery workflow (../ci-workflow.ts).
  *
@@ -12,8 +12,9 @@
  * - The declaration gains `ci.workflow`, a `ci.green` block when it has none
  *   (one phase per GitHub workflow, its jobs as the check runs, and the
  *   workflows a pull request runs as `preMerge`), and `preMerge` when the
- *   block has none. `--security` adds groups to the top-level `security`;
- *   without it no group is turned on, and the groups are listed.
+ *   block has none. `--security` adds groups, or the security profiles
+ *   `fedramp-moderate` and `cccs-medium` (#5464), to the top-level
+ *   `security`; without it nothing is turned on, and both are listed.
  * - A member that builds with chant and declares no component gets a
  *   `<member>.component.ts` stub with a gate and a TODO line, which WSP151
  *   keeps reporting until someone fills the stub in. A `chant.config.ts`
@@ -44,11 +45,15 @@ import { CI_GREEN_WORKFLOW_FILE, jobCheckRuns, readWorkflowSources, workflowsHol
 import { findWorkspaceRoot } from "../project-root";
 import { parseDeclaration, readDeclaration, WorkspaceReadError, type CiWorkflow, type Declaration } from "./declaration";
 import { staticPromotionOrder } from "./promotion-order";
-import { SECURITY_GROUPS, type SecurityGroup } from "./security";
+import { SECURITY_GROUPS, type SecurityEntry } from "./security";
+import { SECURITY_PROFILES } from "./security-profiles";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { RELEASE_WORKFLOW_FORGES, type ReleaseWorkflowForge } from "./release-workflow";
 
-const USAGE = "chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]";
+const USAGE = "chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group|profile>]... [--yes]";
+
+/** What `--security` takes: a group, or a profile that turns every group on (#5464). */
+const SECURITY_ENTRIES: readonly string[] = [...SECURITY_GROUPS, ...SECURITY_PROFILES];
 
 
 /** The environments a config with none is given. */
@@ -80,7 +85,8 @@ export interface CiInitProposal {
 export interface CiInitOptions {
   workflow: CiWorkflow;
   forge?: ReleaseWorkflowForge;
-  security?: readonly SecurityGroup[];
+  /** Groups and profiles to add to the top-level `security`. */
+  security?: readonly SecurityEntry[];
 }
 
 const memberDir = (dir: string) => (dir === "." ? "" : dir);
@@ -233,7 +239,7 @@ export function proposeCiInit(root: string, options: CiInitOptions): CiInitPropo
     ci.green = { ...ci.green, preMerge: pick.length > 0 ? pick : declared.slice(0, 1) };
   }
   const next: Record<string, unknown> = { ...raw, ci };
-  const security = [...new Set([...((raw.security as SecurityGroup[] | undefined) ?? []), ...(options.security ?? [])])];
+  const security = [...new Set([...((raw.security as SecurityEntry[] | undefined) ?? []), ...(options.security ?? [])])];
   if (security.length > 0) next.security = security;
   const after = editDeclarationText(text, raw, next);
   const proposed = parseDeclaration(after, current.file);
@@ -380,9 +386,9 @@ export async function runCiInit(ctx: CommandContext): Promise<number> {
     return 1;
   }
   const security = args.securityGroups ?? [];
-  const unknown = security.filter((g) => !(SECURITY_GROUPS as readonly string[]).includes(g));
+  const unknown = security.filter((g) => !SECURITY_ENTRIES.includes(g));
   if (unknown.length > 0) {
-    console.error(formatError({ message: `--security ${unknown.join(", ")} is not a group; the groups are ${SECURITY_GROUPS.join(", ")}`, hint: USAGE }));
+    console.error(formatError({ message: `--security ${unknown.join(", ")} is not a group or a profile; the groups are ${SECURITY_GROUPS.join(", ")}, and the profiles ${SECURITY_PROFILES.join(", ")}`, hint: USAGE }));
     return 1;
   }
   const found = findWorkspaceRoot(process.cwd());
@@ -393,7 +399,7 @@ export async function runCiInit(ctx: CommandContext): Promise<number> {
   const root = realpathSync(found.dir);
   let proposal: CiInitProposal;
   try {
-    proposal = proposeCiInit(root, { workflow: workflow as CiWorkflow, ...(args.forge ? { forge: args.forge as ReleaseWorkflowForge } : {}), security: security as SecurityGroup[] });
+    proposal = proposeCiInit(root, { workflow: workflow as CiWorkflow, ...(args.forge ? { forge: args.forge as ReleaseWorkflowForge } : {}), security: security as SecurityEntry[] });
   } catch (err) {
     console.error(formatError({ message: `chant ci init: ${err instanceof WorkspaceReadError ? err.describe() : (err as Error).message}`, hint: USAGE }));
     return 1;
@@ -413,7 +419,7 @@ export async function runCiInit(ctx: CommandContext): Promise<number> {
     console.log("");
   }
   for (const n of proposal.notes) console.log(`Note: ${n}`);
-  if (security.length === 0) console.log(`No security group is turned on. Add one later with chant ci init --workflow ${workflow} --security <group>: ${SECURITY_GROUPS.join(", ")}.`);
+  if (security.length === 0) console.log(`No security group is turned on. Add one later with chant ci init --workflow ${workflow} --security <group>: ${SECURITY_GROUPS.join(", ")}, or a profile that turns every group on: ${SECURITY_PROFILES.join(", ")}.`);
   console.log("");
 
   let write = !!args.yes;
