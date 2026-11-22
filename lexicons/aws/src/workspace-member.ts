@@ -239,7 +239,8 @@ export function readCloudFormationMember(opts: { member: AwsMemberConfig; deploy
       }
     }
   }
-  if (templates.length === 0) warnings.push(`${member.kind ?? "cloudformation"} member "${label}" has no CloudFormation template directly in ${source}`);
+  // A member that names stacks has said where its templates are; a stack that was not read has its own warning.
+  if (templates.length === 0 && !stackReports) warnings.push(`${member.kind ?? "cloudformation"} member "${label}" has no CloudFormation template directly in ${source}`);
 
   return {
     entities,
@@ -361,7 +362,7 @@ export async function readDeployedStacks(
         code === "ValidationError" && /does not exist/i.test(err.message)
           ? `no stack named ${name} in ${region}`
           : needsCredentials
-            ? `${err.message}; ${NEEDS}`
+            ? `${err.message.replace(/[.\s]+$/, "")}; ${NEEDS}`
             : err.message;
       warnings.push(`cloudformation member "${label}": stack "${name}" in ${region} was not read: ${report.reason}`);
     }
