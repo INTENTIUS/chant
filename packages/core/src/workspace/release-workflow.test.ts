@@ -10,7 +10,7 @@ import { IMAGE_PINS } from "../image-pins";
 import { TOOL_PINS } from "../tool-pins";
 import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
-import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
+import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleasePipelineConfig, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 import { trainIdScript } from "./release-train-workflow";
 import { resolveTagTemplate, type MemberTags } from "../lifecycle/release-tag";
@@ -622,7 +622,7 @@ describe("release-only adoption (#5149)", () => {
     expect(green).toContain('commit="$GITHUB_SHA"');
     expect(green).not.toContain("ci last-green");
     expect(doc.permissions).toEqual({ contents: "read" });
-    expect(doc.jobs.cut!.permissions).toEqual({ contents: "write", checks: "read", statuses: "read" });
+    expect(doc.jobs.cut!.permissions).toEqual({ contents: "write", checks: "read", statuses: "read", actions: "read" });
     expect(doc.jobs.gate!.permissions).toEqual({ contents: "read" });
     expect(doc.jobs.cut!.env).toEqual({ CHANT_RELEASE_COMMIT: "${{ needs.gate.outputs.commit }}", CHANT_RELEASE_LABEL: "${{ needs.gate.outputs.label }}", GITHUB_TOKEN: "${{ github.token }}" });
   });
@@ -1375,5 +1375,76 @@ describe("the pull login for release.images (#5457)", () => {
     expect(text).toContain('CGR_PASSWORD: "${{ secrets.CHAINGUARD_TOKEN }}"');
     expect(text).not.toContain(`CGR_PASSWORD: ${secretRef("CGR_PASSWORD")}`);
     expect(text).toContain(`CGR_USERNAME: ${secretRef("CGR_USERNAME")}`);
+  });
+});
+
+describe("the cut's own scopes (#5486, #5491)", () => {
+  const ghcrPull = { registry: "ghcr.io", usernameEnv: "PULL_USERNAME", passwordEnv: "PULL_PASSWORD" };
+  const runToken = { PULL_USERNAME: "${{ github.actor }}", PULL_PASSWORD: "${{ github.token }}" };
+  const ghcrTarget = { type: "oci" as const, image: "dist/images/app.tar", repository: "ghcr.io/acme/app" };
+  const doc = (over: Partial<ReleaseWorkflowInput>, pipeline: ReleasePipelineConfig = {}): GhDoc =>
+    parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), images: true, ...over, pipeline: { trigger: "dispatch", ...pipeline } })) as GhDoc;
+
+  test("#5486: packages: read in the config reaches the cut, and the ghcr.io push keeps packages: write", () => {
+    const d = doc({ pullRegistries: [ghcrPull], publish: [ghcrTarget] }, { permissions: { packages: "read" }, env: runToken });
+    expect(d.jobs.cut!.permissions).toEqual({ contents: "write", packages: "read" });
+    expect(d.jobs.publish!.permissions).toEqual({ contents: "write", "id-token": "write", packages: "write" });
+    expect(d.jobs.gate!.permissions).toEqual({ contents: "read" });
+  });
+
+  test("a ghcr.io pull with the run's token gives the cut packages: read without the config asking", () => {
+    const d = doc({ pullRegistries: [ghcrPull] }, { env: runToken });
+    expect(d.jobs.cut!.permissions).toEqual({ contents: "write", packages: "read" });
+    // A dispatched publish checks the cut's archives and pulls nothing.
+    expect(d.jobs.publish!.permissions).toEqual({ contents: "write", "id-token": "write" });
+    // The GITHUB_TOKEN secret is the run's token too.
+    const secret = doc({ pullRegistries: [{ ...ghcrPull, passwordEnv: "GITHUB_TOKEN" }] });
+    expect(secret.jobs.cut!.permissions).toEqual({ contents: "write", packages: "read" });
+  });
+
+  test("on a tag the publish job builds the images again, so it reads packages too", () => {
+    const d = doc({ pullRegistries: [ghcrPull] }, { trigger: "tag", env: runToken });
+    expect(d.jobs.publish!.permissions).toEqual({ contents: "write", "id-token": "write", packages: "read" });
+    // A ghcr.io push still writes.
+    const push = doc({ pullRegistries: [ghcrPull], publish: [ghcrTarget] }, { trigger: "tag", env: runToken });
+    expect(push.jobs.publish!.permissions!.packages).toBe("write");
+  });
+
+  test("a config's packages: write is for the push: the cut gets no packages scope from it, and never write", () => {
+    expect(doc({}, { permissions: { packages: "write" } }).jobs.cut!.permissions).toEqual({ contents: "write" });
+    expect(doc({ pullRegistries: [ghcrPull] }, { permissions: { packages: "write" }, env: runToken }).jobs.cut!.permissions).toEqual({ contents: "write", packages: "read" });
+  });
+
+  test("no packages scope for the cut: a ghcr.io pull with its own token, a pull from elsewhere with the run's token, a ghcr.io push, or another forge", () => {
+    const plain = doc({});
+    expect(plain.jobs.cut!.permissions).toEqual({ contents: "write" });
+    expect(doc({ pullRegistries: [ghcrPull] }).jobs.cut!.permissions).toEqual({ contents: "write" });
+    expect(doc({ pullRegistries: [ghcrPull] }, { env: { ...runToken, PULL_PASSWORD: "${{ secrets.GHCR_PULL }}" } }).jobs.cut!.permissions).toEqual({ contents: "write" });
+    expect(doc({ pullRegistries: [{ ...ghcrPull, registry: "cgr.dev" }] }, { env: runToken }).jobs.cut!.permissions).toEqual({ contents: "write" });
+    expect(doc({ publish: [ghcrTarget] }).jobs.cut!.permissions).toEqual({ contents: "write" });
+    const forgejo = parseYAML(renderReleaseWorkflow({ forge: "forgejo", groups: new Set(), images: true, pullRegistries: [ghcrPull], pipeline: { trigger: "dispatch", env: runToken } })) as GhDoc;
+    expect(forgejo.jobs.cut!.permissions).toEqual({ contents: "write" });
+  });
+
+  test("#5491: under forge-checks the cut reads actions, to find the release workflow's earlier runs; no other job does", () => {
+    const d = doc({ green: "forge-checks", images: false });
+    expect(d.jobs.cut!.permissions).toEqual({ contents: "write", checks: "read", statuses: "read", actions: "read" });
+    expect(d.jobs.gate!.permissions).toEqual({ contents: "read" });
+    expect(d.jobs.publish!.permissions!.actions).toBeUndefined();
+    // The workaround renders as it did: the config's scope goes to the cut and the publish job.
+    const own = doc({ green: "forge-checks", images: false }, { permissions: { actions: "read" } });
+    expect(own.jobs.cut!.permissions!.actions).toBe("read");
+    expect(own.jobs.publish!.permissions!.actions).toBe("read");
+    // Without forge-checks, or on Forgejo, which lists no runs, nothing is added.
+    expect(doc({ images: false }).jobs.cut!.permissions!.actions).toBeUndefined();
+    const forgejo = parseYAML(renderReleaseWorkflow({ forge: "forgejo", groups: new Set(), green: "forge-checks", pipeline: { trigger: "dispatch" } })) as GhDoc;
+    expect(forgejo.jobs.cut!.permissions!.actions).toBeUndefined();
+  });
+
+  test("#5491: a train's cut under forge-checks reads actions too", () => {
+    const d = parseYAML(renderReleaseWorkflow({ forge: "github", groups: new Set(), green: "forge-checks", pipeline: { trigger: "dispatch" }, train: { env: "npm" } })) as GhDoc;
+    const cut = Object.entries(d.jobs).find(([k]) => k === "cut" || k.endsWith("-cut"))![1];
+    expect(cut.permissions!.actions).toBe("read");
+    for (const [k, job] of Object.entries(d.jobs)) if (job !== cut) expect(job.permissions?.actions, k).toBeUndefined();
   });
 });

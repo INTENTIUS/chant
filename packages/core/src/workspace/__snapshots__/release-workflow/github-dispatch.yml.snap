@@ -2174,6 +2174,7 @@ jobs:
       contents: write
       checks: read
       statuses: read
+      actions: read
     env:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
@@ -3180,6 +3181,7 @@ jobs:
       id-token: write
       checks: read
       statuses: read
+      actions: read
     defaults:
       run:
         working-directory: packages/app

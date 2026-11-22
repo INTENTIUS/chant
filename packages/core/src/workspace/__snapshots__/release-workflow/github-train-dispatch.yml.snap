@@ -1389,6 +1389,7 @@ jobs:
       contents: write
       checks: read
       statuses: read
+      actions: read
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
