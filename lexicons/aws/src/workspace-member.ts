@@ -155,6 +155,36 @@ function collectNames(value: unknown, out: Name[]): void {
   }
 }
 
+/**
+ * A copy of a resource's properties whose `Ref` and `Fn::GetAtt` name the
+ * template's resources by their node ids. The node ids are the logical ids of
+ * the template the graph's lint pass builds, so a reference left as the
+ * source's logical id would name nothing there. Parameters, pseudo parameters
+ * and names the template does not declare keep their names. An `Fn::Sub`
+ * keeps its text: no check reads the names in it, and core draws an edge of
+ * its own from a `${Node.Attr}` there, without the attribute, in place of the
+ * one drawn here.
+ */
+function rekey(value: unknown, keyOf: Map<string, string>): unknown {
+  if (Array.isArray(value)) return value.map((v) => rekey(v, keyOf));
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (k === "Ref" && typeof v === "string") {
+      out[k] = keyOf.get(v) ?? v;
+    } else if (k === "Fn::GetAtt" && (Array.isArray(v) || typeof v === "string")) {
+      const dot = typeof v === "string" ? v.indexOf(".") : -1;
+      const [id, ...attr] = Array.isArray(v) ? v : dot > 0 ? [v.slice(0, dot), v.slice(dot + 1)] : [v];
+      const key = typeof id === "string" ? keyOf.get(id) : undefined;
+      // The list form, since a node id may hold a dot the string form would split on.
+      out[k] = key ? [key, ...attr.map((a) => rekey(a, keyOf))] : rekey(v, keyOf);
+    } else {
+      out[k] = rekey(v, keyOf);
+    }
+  }
+  return out;
+}
+
 /** The directory a CDK app synthesizes into: cdk.json's `output`, else `cdk.out`. */
 function cdkOutput(dir: string): string {
   try {
@@ -219,7 +249,7 @@ export function readCloudFormationMember(opts: { member: AwsMemberConfig; deploy
         lexicon: "aws",
         entityType: resource.Type as string,
         kind: "resource",
-        props: { ...(resource.Properties ?? {}) },
+        props: rekey(resource.Properties ?? {}, keyOf) as Record<string, unknown>,
         references: [...references.values()],
         [DECLARABLE_MARKER]: true,
       } as unknown as Declarable;
