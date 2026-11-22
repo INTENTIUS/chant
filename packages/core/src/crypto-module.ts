@@ -44,7 +44,7 @@ export interface CryptoModuleDeps {
   getFips?: () => number;
   versions?: { node?: string; openssl?: string };
   /** Try one algorithm; throws when it can't be fetched. */
-  fetch?: (algorithm: "sha256" | "ecdsa-p256" | "ed25519") => void;
+  tryAlgorithm?: (algorithm: "sha256" | "ecdsa-p256" | "ed25519") => void;
 }
 
 function tryFetch(algorithm: "sha256" | "ecdsa-p256" | "ed25519"): void {
@@ -65,12 +65,12 @@ const attempt = (f: () => void): FipsFetch => {
 /** What this process's crypto runs on. */
 export function cryptoModule(deps: CryptoModuleDeps = {}): CryptoModuleReport {
   const fips = (deps.getFips ?? getFips)() === 1;
-  const fetch = deps.fetch ?? tryFetch;
+  const fetchAlgorithm = deps.tryAlgorithm ?? tryFetch;
   return {
     node: deps.versions?.node ?? process.version,
     openssl: deps.versions?.openssl ?? process.versions.openssl ?? "unknown",
     fips,
-    fetches: fips ? { sha256: attempt(() => fetch("sha256")), ecdsaP256: attempt(() => fetch("ecdsa-p256")), ed25519: attempt(() => fetch("ed25519")) } : null,
+    fetches: fips ? { sha256: attempt(() => fetchAlgorithm("sha256")), ecdsaP256: attempt(() => fetchAlgorithm("ecdsa-p256")), ed25519: attempt(() => fetchAlgorithm("ed25519")) } : null,
   };
 }
 
@@ -169,7 +169,7 @@ export function describeCosignBinary(c: CosignBinary): string {
  * per publish.
  */
 export function cryptoRecord(env: NodeJS.ProcessEnv, deps: CryptoModuleDeps & { read?: (path: string) => Buffer } = {}): CryptoRecord {
-  const m = cryptoModule({ ...deps, fetch: deps.fetch ?? (() => undefined) });
+  const m = cryptoModule({ ...deps, tryAlgorithm: deps.tryAlgorithm ?? (() => undefined) });
   const out: CryptoRecord = { node: m.node, openssl: m.openssl, fips: m.fips };
   if (env.CHANT_COSIGN) {
     const c = cosignBinary(env, deps.read ? { read: deps.read } : {});

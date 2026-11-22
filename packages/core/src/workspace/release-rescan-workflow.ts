@@ -53,7 +53,7 @@ const grype = (forge: ReleaseWorkflowForge, p: ReleasePipelineConfig) => scanSet
 export function renderRescanWorkflow(input: RescanWorkflowInput): string {
   for (const v of input.registryEnv) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) throw new Error(`release.publish: ${JSON.stringify(v)} is not a variable name`);
   const run = `${input.chant} release scan --deployed`;
-  const fetch = "git fetch origin chant/lifecycle:chant/lifecycle";
+  const fetchLifecycle = "git fetch origin chant/lifecycle:chant/lifecycle";
   if (input.forge === "gitlab") {
     const cd = input.root ? [`cd ${input.root}`] : [];
     const tools = grype("gitlab", input.pipeline).flatMap((s) => ("run" in s ? [s.run] : []));
@@ -62,7 +62,7 @@ export function renderRescanWorkflow(input: RescanWorkflowInput): string {
       'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"',
       "unset chant_auth",
     ];
-    const script = [...cd, ...(input.install ? [input.install] : []), ...tools, ...auth, fetch, run];
+    const script = [...cd, ...(input.install ? [input.install] : []), ...tools, ...auth, fetchLifecycle, run];
     return [
       `# Runs for a pipeline schedule: create one under CI/CD, Schedules, with the cron expression ${JSON.stringify(input.schedule)}.`,
       `# CHANT_RELEASE_TOKEN is a project access token with write_repository, as a masked CI/CD variable; ${input.registryEnv.join(" and ") || "the registry's credentials"} are CI/CD variables too.`,
@@ -99,7 +99,7 @@ export function renderRescanWorkflow(input: RescanWorkflowInput): string {
     "    steps:",
     ...githubSetup(undefined, [...chantSetup, ...extra.githubSteps]),
     ...(input.install ? [`      - run: ${input.install}`] : []),
-    `      - run: ${fetch}`,
+    `      - run: ${fetchLifecycle}`,
     `      - run: ${run}`,
     "",
   ].join("\n");

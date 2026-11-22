@@ -27,14 +27,14 @@ const VERSIONS = { node: "v22.11.0", openssl: "3.0.15+quic" };
 
 describe("cryptoModule", () => {
   test("FIPS mode off: the versions and the default provider, and nothing is fetched", () => {
-    const r = cryptoModule({ getFips: () => 0, versions: VERSIONS, fetch: () => { throw new Error("not called"); } });
+    const r = cryptoModule({ getFips: () => 0, versions: VERSIONS, tryAlgorithm: () => { throw new Error("not called"); } });
     expect(r).toEqual({ node: "v22.11.0", openssl: "3.0.15+quic", fips: false, fetches: null });
     expect(cryptoModuleBroken(r)).toBeNull();
     expect(describeCryptoModule(r)).toBe("Node v22.11.0 on OpenSSL 3.0.15+quic; FIPS mode off, so digests and runner-key signatures use OpenSSL's default provider");
   });
 
   test("FIPS mode on: each algorithm is fetched, and the line never calls the module validated", () => {
-    const r = cryptoModule({ getFips: () => 1, versions: VERSIONS, fetch: (a) => { if (a === "ed25519") throw new Error("unsupported"); } });
+    const r = cryptoModule({ getFips: () => 1, versions: VERSIONS, tryAlgorithm: (a) => { if (a === "ed25519") throw new Error("unsupported"); } });
     expect(r.fips).toBe(true);
     expect(r.fetches).toEqual({ sha256: { ok: true }, ecdsaP256: { ok: true }, ed25519: { ok: false, reason: "unsupported" } });
     expect(cryptoModuleBroken(r)).toBeNull();
@@ -45,7 +45,7 @@ describe("cryptoModule", () => {
   });
 
   test("FIPS mode on with no provider for SHA-256 is broken", () => {
-    const r = cryptoModule({ getFips: () => 1, versions: VERSIONS, fetch: (a) => { if (a === "sha256") throw new Error("no fips provider"); } });
+    const r = cryptoModule({ getFips: () => 1, versions: VERSIONS, tryAlgorithm: (a) => { if (a === "sha256") throw new Error("no fips provider"); } });
     expect(cryptoModuleBroken(r)).toBe("FIPS mode is on, and no loaded provider supplies SHA-256 (no fips provider) under fips=yes");
   });
 
@@ -101,9 +101,9 @@ describe("the doctors report the crypto module", () => {
     const dir = temp();
     const off = await doctorCommand(dir, { crypto: { getFips: () => 0, versions: VERSIONS } });
     expect(off.checks.find((c) => c.name === "crypto-module")).toEqual({ name: "crypto-module", status: "pass", message: expect.stringContaining("FIPS mode off") });
-    const on = await doctorCommand(dir, { crypto: { getFips: () => 1, versions: VERSIONS, fetch: () => undefined } });
+    const on = await doctorCommand(dir, { crypto: { getFips: () => 1, versions: VERSIONS, tryAlgorithm: () => undefined } });
     expect(on.checks.find((c) => c.name === "crypto-module")?.message).toContain("FIPS mode on");
-    const broken = await doctorCommand(dir, { crypto: { getFips: () => 1, versions: VERSIONS, fetch: (a) => { if (a === "ecdsa-p256") throw new Error("gone"); } } });
+    const broken = await doctorCommand(dir, { crypto: { getFips: () => 1, versions: VERSIONS, tryAlgorithm: (a) => { if (a === "ecdsa-p256") throw new Error("gone"); } } });
     expect(broken.checks.find((c) => c.name === "crypto-module")).toMatchObject({ status: "warn", message: expect.stringContaining("ECDSA P-256 (gone)") });
   });
 
@@ -121,7 +121,7 @@ describe("the doctors report the crypto module", () => {
       deps: {
         fetch,
         signer: { name: "cosign", unavailable: () => null },
-        crypto: { getFips: () => 1, versions: VERSIONS, fetch: () => undefined },
+        crypto: { getFips: () => 1, versions: VERSIONS, tryAlgorithm: () => undefined },
         cosignBinary: () => ({ path: "/opt/fips/cosign", from: "CHANT_COSIGN", sha256: "ab".repeat(32), pinned: null }),
       },
     });
@@ -130,7 +130,7 @@ describe("the doctors report the crypto module", () => {
     const build = report.targets.find((t) => t.kind === "signing")?.checks.find((c) => c.check === "signing-cosign-build");
     expect(build).toMatchObject({ status: "ok", message: expect.stringContaining("CHANT_COSIGN names /opt/fips/cosign") });
 
-    const broken = await releaseDoctor({ cwd: dir, publish: [], env: {}, releaseWorkflow: null, deps: { crypto: { getFips: () => 1, versions: VERSIONS, fetch: () => { throw new Error("none"); } } } });
+    const broken = await releaseDoctor({ cwd: dir, publish: [], env: {}, releaseWorkflow: null, deps: { crypto: { getFips: () => 1, versions: VERSIONS, tryAlgorithm: () => { throw new Error("none"); } } } });
     expect(broken.targets.find((t) => t.kind === "crypto")?.checks).toEqual([expect.objectContaining({ check: "crypto-module", status: "warn" })]);
   });
 });
