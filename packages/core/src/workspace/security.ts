@@ -124,7 +124,7 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Cut needs a green gate", byDefault: "off: `release.green: \"none\"` cuts with a warning", setting: "`release.green` other than `none`", group: "supply-chain", codes: [] },
   { feature: "Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key", byDefault: "off: nothing is signed", setting: "`release.signing` (`kms` for a KMS key, `key` for a cosign key, `fulcio`, `rekor` and `trustRoot` for a private Sigstore instance)", group: "supply-chain", codes: [] },
   // #5446: images and attached SBOMs scanned before the stage, with the vulnPolicy gate.
-  { feature: "Vulnerability scan before anything is pushed", byDefault: "off: a publish pushes without scanning", setting: "`release.scan`", group: "supply-chain", codes: [] },
+  { feature: "Vulnerability scan at the cut, before anything is tagged, and again before anything is pushed", byDefault: "off: a cut tags and a publish pushes without scanning", setting: "`release.scan`", group: "supply-chain", codes: [] },
   // #5467: promote checks what the publish recorded.
   { feature: "Promote checks the image signatures and the scan record", byDefault: "off: promote deploys a release whatever its publish recorded", setting: "none: the group turns it on", group: "supply-chain", codes: [] },
   // #5457: release.images Dockerfiles start from bases pinned by digest.
@@ -140,7 +140,7 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   // #5464: what a security profile adds beyond the groups.
   { feature: "`chant lifecycle gc` keeps change sets and releases for at least the profile's days", byDefault: "off: `retention` may be any number of days", setting: "`retention` in `chant.workspace.json`", group: null, codes: ["profile-retention-short"], profiles: SECURITY_PROFILES },
   { feature: "Release and apply gates take approvals from people", byDefault: "off: a gate may name any class or none", setting: "`identity.gates.<gate>` with `class: \"human\"`", group: null, codes: ["profile-gate-not-human"], profiles: SECURITY_PROFILES },
-  { feature: "Publish refuses a scanner database older than a bound", byDefault: "off: the scan reads whatever database it has", setting: "`release.scan.dbMaxAgeHours`", group: null, codes: ["profile-scan-off", "profile-scan-db-unbounded"], profiles: SECURITY_PROFILES },
+  { feature: "Cut and publish refuse a scanner database older than a bound", byDefault: "off: the scan reads whatever database it has", setting: "`release.scan.dbMaxAgeHours`", group: null, codes: ["profile-scan-off", "profile-scan-db-unbounded"], profiles: SECURITY_PROFILES },
   { feature: "Signatures made in a crypto module the team names", byDefault: "off: the upstream cosign build signs", setting: "`release.signing.kms`, or `CHANT_COSIGN` in the release config", group: null, codes: ["profile-signing-off", "profile-signing-module"], profiles: SECURITY_PROFILES },
   { feature: "ECDSA P-256 runner keys", byDefault: "off: Ed25519 and P-256 keys are both taken", setting: "`chant ci serve --setup-key --key-type ecdsa-p256`", group: null, codes: ["profile-runner-key-eddsa"], profiles: SECURITY_PROFILES },
   { feature: "Secrets file", byDefault: "off", setting: "`--secrets`", group: null, codes: [] },

@@ -21,7 +21,7 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | OIDC provenance | off: a plan field | `--require-provenance` | `supply-chain` | `security-publish-no-provenance` |
 | Cut needs a green gate | off: `release.green: "none"` cuts with a warning | `release.green` other than `none` | `supply-chain` | none |
 | Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key | off: nothing is signed | `release.signing` (`kms` for a KMS key, `key` for a cosign key, `fulcio`, `rekor` and `trustRoot` for a private Sigstore instance) | `supply-chain` | none |
-| Vulnerability scan before anything is pushed | off: a publish pushes without scanning | `release.scan` | `supply-chain` | none |
+| Vulnerability scan at the cut, before anything is tagged, and again before anything is pushed | off: a cut tags and a publish pushes without scanning | `release.scan` | `supply-chain` | none |
 | Promote checks the image signatures and the scan record | off: promote deploys a release whatever its publish recorded | none: the group turns it on | `supply-chain` | none |
 | Release image bases pinned by digest | off: a `FROM` by tag builds from whatever the tag names that day | pin each `FROM` as `name:tag@sha256:<digest>` | `supply-chain` | `security-image-base-unpinned` |
 | SBOM and verify steps on components | off | a `generate-sbom` or `verify` step | `supply-chain` | `security-component-no-sbom`, `security-component-no-verify` |
@@ -34,7 +34,7 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Apply jobs require a runner-start statement | off | `--require-runner-start` | `isolated-runners` | `security-runner-start-no-key`, `security-runner-start-no-role`, `security-trust-unreadable` |
 | `chant lifecycle gc` keeps change sets and releases for at least the profile's days | off: `retention` may be any number of days | `retention` in `chant.workspace.json` | `fedramp-moderate`, `cccs-medium` | `profile-retention-short` |
 | Release and apply gates take approvals from people | off: a gate may name any class or none | `identity.gates.<gate>` with `class: "human"` | `fedramp-moderate`, `cccs-medium` | `profile-gate-not-human` |
-| Publish refuses a scanner database older than a bound | off: the scan reads whatever database it has | `release.scan.dbMaxAgeHours` | `fedramp-moderate`, `cccs-medium` | `profile-scan-off`, `profile-scan-db-unbounded` |
+| Cut and publish refuse a scanner database older than a bound | off: the scan reads whatever database it has | `release.scan.dbMaxAgeHours` | `fedramp-moderate`, `cccs-medium` | `profile-scan-off`, `profile-scan-db-unbounded` |
 | Signatures made in a crypto module the team names | off: the upstream cosign build signs | `release.signing.kms`, or `CHANT_COSIGN` in the release config | `fedramp-moderate`, `cccs-medium` | `profile-signing-off`, `profile-signing-module` |
 | ECDSA P-256 runner keys | off: Ed25519 and P-256 keys are both taken | `chant ci serve --setup-key --key-type ecdsa-p256` | `fedramp-moderate`, `cccs-medium` | `profile-runner-key-eddsa` |
 | Secrets file | off | `--secrets` | none | none |
