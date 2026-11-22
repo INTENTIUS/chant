@@ -365,6 +365,12 @@ export interface PrForge {
    * {@link upsertComment} would overwrite the last.
    */
   addComment(pr: number, body: string): Promise<AddedComment>;
+  /**
+   * Post a new comment on issue `issue` (#5463): GitHub's and Forgejo's
+   * issue comments, GitLab's issue notes. Every call adds one. A drift agent
+   * tells the drift issue about its pull request with it.
+   */
+  addIssueComment?(issue: number, body: string): Promise<AddedComment>;
   setStatus(sha: string, status: ForgeStatus): Promise<void>;
   /**
    * GitHub and Forgejo (#4097): set a commit status from a runner's job, one
@@ -808,6 +814,7 @@ interface Threads {
   openIssue(title: string, body: string): Promise<Thread | undefined>;
   editIssue(n: number, title: string, body: string): Promise<Thread | undefined>;
   closeIssue(n: number, comment: string | undefined): Promise<void>;
+  addIssueComment(n: number, body: string): Promise<Thread | undefined>;
 }
 
 const carries = (body: string, marker: string, match: MarkerMatch["match"]): boolean =>
@@ -875,12 +882,11 @@ function sameIssue(open: IssueFinding, finding: IssueFinding, sameWhen: TrackIss
 }
 
 /** The recipes every client shares, over its own {@link Threads}. */
-function threadCalls(t: Threads): Pick<PrForge, "upsertComment" | "upsertNote" | "findComment" | "addComment" | "trackIssue" | "findIssue" | "upsertIssue"> {
+function threadCalls(t: Threads): Pick<PrForge, "upsertComment" | "upsertNote" | "findComment" | "addComment" | "addIssueComment" | "trackIssue" | "findIssue" | "upsertIssue"> {
+  const added = (made: Thread | undefined): AddedComment => ({ id: made?.id ?? 0, ...(made?.url ? { url: made.url } : {}) });
   return {
-    async addComment(pr, body) {
-      const made = await t.addComment(pr, body);
-      return { id: made?.id ?? 0, ...(made?.url ? { url: made.url } : {}) };
-    },
+    addComment: async (pr, body) => added(await t.addComment(pr, body)),
+    addIssueComment: async (n, body) => added(await t.addIssueComment(n, body)),
     async findIssue(marker, opts = {}) {
       if (!marker) throw new Error("the issue needs a marker to be found");
       const i = (await t.openIssues(marker)).filter(ownedBy(marker, opts)).sort((a, b) => a.id - b.id)[0];
@@ -976,6 +982,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
   };
   const t: Threads = {
     comments: async (pr) => threads(await api.list(`${repo}/issues/${pr}/comments`, pageParams, pageSize)),
+    // An issue and a pull request share GitHub's and Forgejo's comments.
     addComment: async (pr, body) => thread(await api.call("POST", `${repo}/issues/${pr}/comments`, { body })),
     editComment: async (_pr, id, body) => thread(await api.call("PATCH", `${repo}/issues/comments/${id}`, { body })),
     async openIssues() {
@@ -991,6 +998,7 @@ function githubShaped(kind: "github" | "forgejo", opts: GithubForgeOptions): Git
       if (comment) await api.call("POST", `${repo}/issues/${n}/comments`, { body: comment });
       await api.call("PATCH", `${repo}/issues/${n}`, { state: "closed" });
     },
+    addIssueComment: (n, body) => t.addComment(n, body),
   };
   const postStatus = async (sha: string, state: ForgeStatusState, context: string, description: string, url?: string): Promise<void> => {
     await api.call("POST", `${repo}/statuses/${sha}`, {
@@ -1452,6 +1460,7 @@ export function gitlabForge(opts: GitlabForgeOptions): PrForge {
       if (comment) await api.call("POST", `${project}/issues/${n}/notes`, { body: comment });
       await api.call("PUT", `${project}/issues/${n}`, { state_event: "close" });
     },
+    addIssueComment: async (n, body) => note(await api.call("POST", `${project}/issues/${n}/notes`, { body })),
   };
   const authorsOf = async (mr: number): Promise<string[]> => {
     const logins = new Set<string>();

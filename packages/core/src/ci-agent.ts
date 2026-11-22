@@ -64,9 +64,13 @@ import { sortedJsonReplacer } from "./sorted-json";
 import type { OpRunRecord, OpRunRecordInput } from "./op/runtime";
 import type { RunOrigin } from "./lifecycle/release-ledger";
 import type { PrForge } from "./pr-forge";
+import { NEXT_RELEASE } from "./release-floors";
 
 /** The first chant with the agent job and the scheduled Op spec's `agent` and `runner` (#4616). Products feature-detect on it. */
 export const CI_AGENT_FLOOR = "0.124.55";
+
+/** The first chant whose drift Op hands its drift issues to the agent jobs, whose drift agent comments its pull request's URL on each once (#5463), and whose `keepDriftIssue` writes the issue's number to `CHANT_DRIFT_ISSUE_FILE`. */
+export const AGENT_DRIFT_ISSUE_FLOOR = NEXT_RELEASE;
 
 /** What starts an agent run. */
 export type AgentTrigger = "comment" | "drift" | "alert" | "apply-failed" | "schedule" | "verify-failed";
@@ -251,6 +255,21 @@ export const AGENT_DIR = ".chant/agent";
 export const AGENT_HEAD_REF = "refs/chant/agent-head";
 /** The file the drift Op's job leaves its output in, for the drift prompt. */
 export const AGENT_DRIFT_FILE = "drift.txt";
+/** The file the drift Op's run appends its drift issues' numbers to (`CHANT_DRIFT_ISSUE_FILE`, #5463), in the agent directory. */
+export const AGENT_DRIFT_ISSUES_FILE = "drift-issues.txt";
+/** The variable the push job reads the drift Op's issues from: numbers, separated by commas or spaces (#5463). */
+export const AGENT_DRIFT_ISSUES_ENV = "CHANT_AGENT_DRIFT_ISSUES";
+
+/** The issue numbers in `value` (from {@link AGENT_DRIFT_ISSUES_ENV}), each once, in order. Anything that is not a number is left out. */
+export function driftIssueNumbers(value: string | undefined): number[] {
+  const out: number[] = [];
+  for (const word of (value ?? "").split(/[\s,]+/)) {
+    if (!/^[1-9][0-9]{0,9}$/.test(word)) continue;
+    const n = Number(word);
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
 export const AGENT_DECISION_FILE = "decision.json";
 export const AGENT_PROMPT_FILE = "prompt.txt";
 export const AGENT_PATCH_FILE = "change.patch";
@@ -1043,7 +1062,7 @@ export interface LandInput {
   env: Record<string, string | undefined>;
   event?: unknown;
   /** A write client. */
-  forge: Pick<PrForge, "pullRequestHead" | "addComment" | "findPullRequest" | "openPullRequest" | "editPullRequest">;
+  forge: Pick<PrForge, "pullRequestHead" | "addComment" | "addIssueComment" | "findPullRequest" | "openPullRequest" | "editPullRequest">;
   git: AgentGit;
   /** Push `HEAD` of `cwd` to `ref`, with `lease` (`<ref>:<sha>`, or `<ref>:` for a new branch) when given. */
   push: (o: { cwd: string; ref: string; lease?: string }) => void;
@@ -1086,6 +1105,8 @@ export function agentRunRecordInput(o: {
   failures?: Array<{ op: string; member: string }>;
   /** For `on: "verify-failed"` (#5339): the stage, kind, check and member of each failed verify or soak the run answers. */
   verifies?: Array<{ stage: string; kind: "verify" | "soak"; check: string; member: string }>;
+  /** For `on: "drift"` (#5463): the drift issues the run commented the pull request on. */
+  driftIssues?: number[];
 }): OpRunRecordInput {
   const ok = o.result === "pushed" || o.result === "opened" || o.result === "updated" || o.result === "summarized" || o.result === "answered";
   const durationMs = Math.max(0, Date.parse(o.ended) - Date.parse(o.started)) || 0;
@@ -1105,6 +1126,7 @@ export function agentRunRecordInput(o: {
     ...(o.alerts ? { alerts: o.alerts } : {}),
     ...(o.failures ? { failures: o.failures } : {}),
     ...(o.verifies ? { verifies: o.verifies } : {}),
+    ...(o.driftIssues && o.driftIssues.length > 0 ? { driftIssues: o.driftIssues } : {}),
   };
   return {
     op: o.settings.name,
@@ -1147,6 +1169,8 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
   let took:
     | { facts: string[]; member: string; window?: { from: string; until: string }; alerts?: Array<{ source: string; sourceId: string }>; failures?: Array<{ op: string; member: string }>; verifies?: Array<{ stage: string; kind: "verify" | "soak"; check: string; member: string }> }
     | undefined;
+  // #5463: the drift issues this run told about its pull request.
+  const toldIssues: number[] = [];
   let alerts: AlertRecord[] = [];
   let failures: ApplyFailedRecord[] = [];
   let verifies: VerifyFailedRecord[] = [];
@@ -1182,6 +1206,7 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
           ...(commitSha ? { gitSha: commitSha } : {}),
           ...(i.runOrigin ? { runOrigin: i.runOrigin } : {}),
           ...(took ? { facts: took.facts, member: took.member, ...(took.window ? { window: took.window } : {}), ...(took.alerts ? { alerts: took.alerts } : {}), ...(took.failures ? { failures: took.failures } : {}), ...(took.verifies ? { verifies: took.verifies } : {}) } : {}),
+          ...(toldIssues.length > 0 ? { driftIssues: toldIssues } : {}),
         }),
       );
     } catch (e) {
@@ -1403,15 +1428,44 @@ export async function landAgentChange(i: LandInput): Promise<LandOutcome> {
           "",
           "Nothing was applied, approved or merged.",
         ].join("\n");
+  // #5463: a drift run tells each drift issue the drift Op handed on about the pull request, once: an issue an earlier
+  // run of this agent already told about the same pull request hears nothing again.
+  const tellDriftIssues = async (number: number, url: string | undefined): Promise<void> => {
+    if (s.on !== "drift" || number <= 0) return;
+    const issues = driftIssueNumbers(i.env[AGENT_DRIFT_ISSUES_ENV]);
+    if (issues.length === 0) return;
+    const told = new Set(
+      earlier.flatMap((r) => {
+        const o = r.outcomes?.agent as { pr?: unknown; driftIssues?: unknown } | undefined;
+        return o?.pr === number && Array.isArray(o.driftIssues) ? o.driftIssues.filter((n): n is number => typeof n === "number") : [];
+      }),
+    );
+    const add = i.forge.addIssueComment?.bind(i.forge);
+    for (const n of issues) {
+      if (told.has(n)) continue;
+      if (!add) {
+        console.error(`${product}: this forge client posts no issue comment, so #${n} was not told about the ${what}`);
+        continue;
+      }
+      try {
+        await add(n, `${product}: the agent opened ${url ?? `${what} #${number}`} to bring the code in line with this drift. A person reviews it, and nothing is applied until it merges.`);
+        toldIssues.push(n);
+      } catch (e) {
+        console.error(`${product}: could not comment on the drift issue #${n}: ${errText(e)}`);
+      }
+    }
+  };
   try {
     const open = await i.forge.findPullRequest(branch);
     if (open) {
       await i.forge.editPullRequest(open.number, { title, body });
       pr = open.number;
+      await tellDriftIssues(open.number, open.url);
       return finish({ result: "updated", reason: `updated #${open.number} from ${branch}`, commit: commitSha, ...(open.url ? { pullRequest: open.url } : {}), paths }, `the agent replaced the change on ${code(branch)} with ${code(commitSha.slice(0, 8))} for ${s.on === "drift" ? "newer drift" : `a newer ${noun}`}.`);
     }
     const made = await i.forge.openPullRequest({ head: branch, title, body });
     pr = made.number > 0 ? made.number : undefined;
+    await tellDriftIssues(made.number, made.url);
     return finish({ result: "opened", reason: `opened ${made.url ?? `#${made.number}`} from ${branch}`, commit: commitSha, ...(made.url ? { pullRequest: made.url } : {}), paths });
   } catch (e) {
     return finish({ result: "failed", reason: `pushed ${branch}, and could not open or update its ${what} (${errText(e)})`, commit: commitSha, paths });

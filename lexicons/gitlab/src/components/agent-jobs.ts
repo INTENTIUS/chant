@@ -48,6 +48,7 @@ import {
   AGENT_DECISION_FILE,
   AGENT_DIR,
   AGENT_DRIFT_FILE,
+  AGENT_DRIFT_ISSUES_FILE,
   AGENT_GITLAB_TOKEN_ENV,
   AGENT_HEAD_REF,
   AGENT_RELAY_KEY_ENV,
@@ -111,13 +112,18 @@ const LEDGER_FETCH = "git fetch -q --no-tags origin '+refs/heads/chant/lifecycle
 /**
  * The drift Op's script lines (#4616): the run with its output kept for the
  * agent, and `CHANT_AGENT_DRIFT=1` in a dotenv when it exits with chant's
- * `drift` code. The job still exits with the run's code.
+ * `drift` code. The job still exits with the run's code. The run appends the
+ * drift issues it keeps to the file `CHANT_DRIFT_ISSUE_FILE` names
+ * (`keepDriftIssue`), and the dotenv hands their numbers on as
+ * `CHANT_AGENT_DRIFT_ISSUES` (#5463).
  */
 export function gitlabDriftRunLines(invocation: string): string[] {
   return [
     `mkdir -p ${AGENT_DIR}`,
+    `export CHANT_DRIFT_ISSUE_FILE="$PWD/${AGENT_DIR}/${AGENT_DRIFT_ISSUES_FILE}"`,
     `set +e; { ${invocation}; echo "$?" > ${AGENT_DIR}/code; } 2>&1 | tee ${AGENT_DIR}/${AGENT_DRIFT_FILE}; code=$(cat ${AGENT_DIR}/code); set -e`,
     `if [ "$code" -eq ${CHANT_EXIT.drift} ]; then echo "CHANT_AGENT_DRIFT=1" > ${DRIFT_DOTENV}; else echo "CHANT_AGENT_DRIFT=0" > ${DRIFT_DOTENV}; fi`,
+    `if [ -s "$CHANT_DRIFT_ISSUE_FILE" ]; then echo "CHANT_AGENT_DRIFT_ISSUES=$(tr -cs '0-9' ',' <"$CHANT_DRIFT_ISSUE_FILE" | sed 's/^,//; s/,$//')" >> ${DRIFT_DOTENV}; fi`,
     'exit "$code"',
   ];
 }
@@ -199,7 +205,8 @@ export function gitlabAgentJobs(i: GitlabAgentJobsInput): { agent: Record<string
     environment: { name: gitlabAgentEnvironment(i.jobName), action: "access" },
     variables,
     rules,
-    needs: [{ job: i.jobName, artifacts: true }],
+    // #5463: a drift agent's push job takes the drift Op's dotenv too, for the drift issues it hands on.
+    needs: [{ job: i.jobName, artifacts: true }, ...(comment || alert ? [] : [{ job: i.after!.job, artifacts: true }])],
     script: [
       // The agent job leaves a decision whenever it ran; with none, the drift check found nothing.
       ...(comment ? [] : [`if [ ! -f ${dir}/${AGENT_DECISION_FILE} ]; then echo "the agent did not run"; exit 0; fi`]),

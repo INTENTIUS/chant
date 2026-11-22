@@ -63,6 +63,13 @@ describe("the drift agent on GitLab", () => {
     expect(doc["drift-app-agent-push"]!.script[0]).toContain("decision.json");
   });
 
+  test("the drift check hands its drift issues to the push job through its dotenv (#5463)", () => {
+    const op = doc["drift-app"]!;
+    expect(op.script.join("\n")).toContain('export CHANT_DRIFT_ISSUE_FILE="$PWD/.chant/agent/drift-issues.txt"');
+    expect(op.script.join("\n")).toContain('echo "CHANT_AGENT_DRIFT_ISSUES=');
+    expect(doc["drift-app-agent-push"]!.needs).toEqual([{ job: "drift-app-agent", artifacts: true }, { job: "drift-app", artifacts: true }]);
+  });
+
   test("a runner group is refused", () => {
     expect(() => gen({ name: "drift-app", trigger: { kind: "cron", schedule: "0 6 * * *" }, runner: { group: "infra" } })).toThrow(/runner group/);
   });

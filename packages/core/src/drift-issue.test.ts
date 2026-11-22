@@ -5,6 +5,10 @@
 
 import { describe, expect, test } from "vitest";
 import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { driftIssueNumbers } from "./ci-agent";
 import { driftIssueBody, driftIssueFingerprint, driftIssueMarker, driftRunFingerprint, keepDriftIssue, type DriftIssueInput, type DriftIssueRecord, type DriftIssueWords } from "./drift-issue";
 import { forgejoForge, githubForge, gitlabForge, type ForgeFetch, type PrForge } from "./pr-forge";
 
@@ -115,6 +119,30 @@ describe("keepDriftIssue (#4790)", () => {
 
       // Drift found after a close opens a fresh issue: a closed one is never reopened.
       expect(await keepDriftIssue(forge, input)).toMatchObject({ action: "opened", number: 3 });
+    });
+  }
+
+  // #5463: the drift Op's job hands the issue on to its agent jobs.
+  test("the issue a run found drift for is appended to the issue file, and a clean run appends nothing", async () => {
+    const { forge } = fakeForge("github");
+    const file = join(mkdtempSync(join(tmpdir(), "chant-drift-issue-")), "drift-issues.txt");
+    const input: DriftIssueInput = { words, environment: "infra/prod", records: [bucket], issueFile: file };
+    await keepDriftIssue(forge, { ...input, records: [role] });
+    expect(existsSync(file)).toBe(false);
+    await keepDriftIssue(forge, input);
+    await keepDriftIssue(forge, { ...input, environment: "infra/dev" });
+    await keepDriftIssue(forge, input);
+    expect(readFileSync(file, "utf8")).toBe("1\n2\n1\n");
+    expect(driftIssueNumbers(readFileSync(file, "utf8").replace(/\n/g, ","))).toEqual([1, 2]);
+    expect(driftIssueNumbers("3 x,0,-4, 5")).toEqual([3, 5]);
+  });
+
+  for (const kind of ["github", "forgejo", "gitlab"] as const) {
+    test(`${kind}: addIssueComment posts on the issue (#5463)`, async () => {
+      const { forge, issues } = fakeForge(kind);
+      await keepDriftIssue(forge, { words, environment: "infra/prod", records: [bucket] });
+      await forge.addIssueComment!(1, "plywood: the agent opened https://forge/pr/9");
+      expect(issues[0]!.comments).toEqual(["plywood: the agent opened https://forge/pr/9"]);
     });
   }
 

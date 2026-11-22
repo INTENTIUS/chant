@@ -107,8 +107,17 @@ describe("the drift agent", () => {
   });
 
   test("the push job opens or updates the agent's pull request", () => {
-    expect(push.needs).toBe("drift-app-agent");
+    expect(push.needs).toEqual(["drift-app-agent", "drift-app"]);
+    expect(push.if).toBe("always() && needs.drift-app-agent.result == 'success'");
     expect(push.steps.at(-1)!.name).toBe("Open or update the agent's pull request");
+  });
+
+  test("the Op's job hands its drift issues to the push job (#5463)", () => {
+    const run = op.steps.find((s) => s.id === "chant-run")!;
+    expect(run.run).toContain('export CHANT_DRIFT_ISSUE_FILE="$PWD/.chant/agent/drift-issues.txt"');
+    expect(run.run).toContain('echo "drift_issues=');
+    expect(op.outputs?.drift_issues).toBe("${{ steps.chant-run.outputs.drift_issues }}");
+    expect(push.steps.at(-1)!.env?.CHANT_AGENT_DRIFT_ISSUES).toBe("${{ needs.drift-app.outputs.drift_issues }}");
   });
 
   test("refuses a drift agent on a push trigger", () => {

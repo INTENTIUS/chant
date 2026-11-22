@@ -32,13 +32,23 @@
  * const r = await keepDriftIssue(forge, { words, environment: "acme/prod", records });
  * ```
  *
- * The module imports types only, apart from `node:crypto`, so a product's
- * bundle gains this file and nothing else (`drift-issue-bundle.test.ts`).
+ * A drift issue the run opened, updated or kept is appended, by number, to
+ * the file `CHANT_DRIFT_ISSUE_FILE` names (#5463). The drift Op's job that
+ * chant generates sets it, and hands the numbers to its agent jobs, so an
+ * agent that opens a pull request for the drift comments its URL on the
+ * issue. Unset, nothing is written.
+ *
+ * The module imports types only, apart from `node:crypto` and `node:fs`, so a
+ * product's bundle gains this file and nothing else (`drift-issue-bundle.test.ts`).
  */
 
 import { createHash } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import type { DriftAttribute, DriftRecord, DriftStatus } from "./drift-record";
 import type { IssueResult, MarkerMatch, PrForge } from "./pr-forge";
+
+/** The variable naming the file a drift issue's number is appended to, which the drift Op's generated job sets (#5463). */
+export const DRIFT_ISSUE_FILE_ENV = "CHANT_DRIFT_ISSUE_FILE";
 
 /** The statuses that are drift for the issue: present and different, or gone. */
 export const DRIFT_ISSUE_STATUSES: readonly DriftStatus[] = ["drifted", "missing"];
@@ -106,6 +116,8 @@ export interface DriftIssueInput {
   observedAt?: string;
   /** How the marker is found, and whose issues count (`trackIssue`'s {@link MarkerMatch}). */
   match?: MarkerMatch;
+  /** The file the issue's number is appended to when the run found drift. Default: the file `CHANT_DRIFT_ISSUE_FILE` names, if set. */
+  issueFile?: string;
   /**
    * The statuses that are drift. Default {@link DRIFT_ISSUE_STATUSES}. A
    * read with no snapshot gives a declared object the provider lacks as
@@ -239,6 +251,9 @@ export async function keepDriftIssue(forge: Pick<PrForge, "trackIssue">, input: 
     const fingerprint = driftIssueFingerprint(input.records, input.statuses);
     const body = driftIssueBody({ ...input, marker }, fingerprint);
     const r = await forge.trackIssue(marker, { title: words.title(factsOf(input)), body }, { ...match, sameWhen: driftFingerprintLine(words.product, fingerprint) });
+    // #5463: the drift Op's job hands the issue to its agent jobs.
+    const file = input.issueFile ?? process.env[DRIFT_ISSUE_FILE_ENV];
+    if (file && r.number !== undefined) appendFileSync(file, `${r.number}\n`);
     return kept(r, { fingerprint });
   }
   const facts = factsOf(input);
