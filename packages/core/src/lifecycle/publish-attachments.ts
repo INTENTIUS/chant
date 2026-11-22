@@ -14,7 +14,10 @@
  * release's signature is the only provenance there is.
  *
  * The SBOM is an SPDX or CycloneDX JSON document. A target attaches the file
- * its declaration's `sbom` names; with none named, the OCI and forge targets
+ * its declaration's `sbom` names. With none named, an OCI target whose
+ * publish scans before the stage (#5446) attaches the SBOM syft made from
+ * the image's layers ({@link imageSbom}), which lists its OS packages; the
+ * other OCI targets and the forge targets
  * write one from the member's `package-lock.json` or `pom.xml` with the
  * hermetic writer `generate-sbom` uses (../components/verbs/bom-writer.ts),
  * dated with the cut's time, so a publish run again writes the same bytes.
@@ -101,6 +104,33 @@ export function releaseProvenance(ctx: PublishContext, subjects: ReadonlyArray<{
     },
   };
   return attachment("provenance", PROVENANCE_FILE, IN_TOTO_MEDIA_TYPE, json(statement));
+}
+
+/** The file name of an image's SBOM made from its layers (#5446). */
+export const IMAGE_SBOM_FILE = "sbom.spdx.json";
+
+/**
+ * The SBOM attached to an image, from the SPDX document syft made of its
+ * layers (#5446). syft names each document with a new namespace and the
+ * time it ran, so those are set from the image and the cut: the document's
+ * name is `subject`, its namespace names the image's digest, and it is
+ * dated with the cut's time. The same image attaches the same bytes on
+ * every run, and a resumed stage finds the referrer an earlier run pushed.
+ * Throws `publish-sbom-invalid` for a document that is not SPDX JSON.
+ */
+export function imageSbom(ctx: Pick<PublishContext, "cut">, layers: string, subject: string, digest: string): Attachment {
+  let doc: Record<string, unknown>;
+  try {
+    doc = JSON.parse(layers) as Record<string, unknown>;
+  } catch {
+    throw invalid(`the SBOM made from the layers of ${subject}`);
+  }
+  if (typeof doc.spdxVersion !== "string") throw invalid(`the SBOM made from the layers of ${subject}`);
+  const at = new Date(ctx.cut?.timestamp ?? 0);
+  const created = (Number.isNaN(at.getTime()) ? new Date(0) : at).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const info = (doc.creationInfo && typeof doc.creationInfo === "object" ? doc.creationInfo : {}) as Record<string, unknown>;
+  const fixed = { ...doc, name: subject, documentNamespace: `https://intentius.io/chant/sbom/${digest.replace(":", "/")}`, creationInfo: { ...info, created } };
+  return attachment("sbom", IMAGE_SBOM_FILE, SBOM_MEDIA_TYPES.spdx, json(fixed));
 }
 
 /** The media type of an SBOM document, or null when `bytes` is neither SPDX nor CycloneDX JSON. */

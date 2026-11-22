@@ -47,7 +47,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
+import { IMAGE_SBOM_FILE, imageSbom, memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
+import type { SbomDocument } from "../components/verbs/sbom-generator";
 import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE, cosignSignStatement, slsaProvenanceStatement } from "./publish-signing";
 import { readCredential, type Credential } from "./publish-credentials";
 import { sbomDocumentOf } from "./publish-scan";
@@ -559,11 +560,33 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
       digest,
     };
   };
+  /**
+   * #5446: whether the image's SBOM is the one made from its layers: the
+   * publish scans (so syft is there and checked) and the declaration names
+   * no SBOM file and does not turn it off.
+   */
+  const fromLayers = (ctx: PublishContext): boolean => decl.sbom === undefined && !!ctx.scan;
+  /** #5446: the SBOM made from the image's layers, made once per image in a run; the scan and the stage share it. */
+  const layerSboms = new Map<string, Promise<SbomDocument>>();
+  const layerSbom = (ctx: PublishContext, digest: string): Promise<SbomDocument> => {
+    let made = layerSboms.get(digest);
+    if (!made) {
+      made = ctx.scan!.scanner.imageSbom(memberFile(ctx.cwd, decl.image));
+      layerSboms.set(digest, made);
+    }
+    return made;
+  };
+  /** The image's SBOM: the file the declaration names, else the one made from its layers when the publish scans, else one from the member's lockfile. */
+  const sbomOf = async (ctx: PublishContext, layout: LayoutImage): Promise<Attachment | null> => {
+    const image = `${decl.repository}@${layout.top.digest}`;
+    if (!fromLayers(ctx)) return memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`);
+    return imageSbom(ctx, (await layerSbom(ctx, layout.top.digest)).bytes, image, layout.top.digest);
+  };
   /** The SBOM and the provenance statement, each with the artifact manifest that refers to the image. */
-  const referrers = (ctx: PublishContext, layout: LayoutImage): Referrer[] => {
+  const referrers = async (ctx: PublishContext, layout: LayoutImage, opts: { sbom: boolean } = { sbom: true }): Promise<Referrer[]> => {
     const subject = { mediaType: layout.top.mediaType, digest: layout.top.digest, size: layout.top.bytes.byteLength };
     const files = [
-      memberSbom(ctx, decl.sbom, `${decl.repository}@${layout.top.digest}`, `oci ${decl.repository}`),
+      opts.sbom ? await sbomOf(ctx, layout) : null,
       releaseProvenance(ctx, [{ name: `${decl.repository}@${layout.top.digest}`, digest: layout.top.digest }]),
     ].filter((a): a is Attachment => a !== null);
     return files.map((attachment) => {
@@ -709,20 +732,29 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async plan(ctx) {
       const layout = inspect(ctx);
       try {
-        return [item(ctx, layout.top.digest, platformTags(ctx, layout)), ...referrers(ctx, layout).map(referrerItem), ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
+        // #5446: an SBOM made from the layers is made when the image stages, so the plan names it without a digest.
+        const planned = fromLayers(ctx)
+          ? [{ name: IMAGE_SBOM_FILE, destination: `${decl.repository}, a referrer of the image, made from its layers when staged`, attachment: "sbom" as const }, ...(await referrers(ctx, layout, { sbom: false })).map(referrerItem)]
+          : (await referrers(ctx, layout)).map(referrerItem);
+        return [item(ctx, layout.top.digest, platformTags(ctx, layout)), ...planned, ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
       } finally {
         layout.cleanup();
       }
     },
-    /** #5446: the archive, scanned through an SBOM of its layers, and the SBOM the stage attaches. */
+    /**
+     * #5446: the image, through the SBOM made from its layers, which is the
+     * SBOM the stage attaches; and a file the declaration names as its SBOM,
+     * scanned too. With `sbom: false` the image is still scanned.
+     */
     async scanSubjects(ctx) {
       const layout = inspect(ctx);
       try {
         const image = `${decl.repository}@${layout.top.digest}`;
-        const sbom = memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`);
+        const declared = typeof decl.sbom === "string" ? memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`) : null;
+        const layers = ctx.scan ? await layerSbom(ctx, layout.top.digest) : null;
         return [
-          { target: this.name, name: image, image: memberFile(ctx.cwd, decl.image), digest: layout.top.digest },
-          ...(sbom ? [{ target: this.name, name: `${sbom.name} of ${image}`, sbom: sbomDocumentOf(sbom.bytes, "attached"), digest: layout.top.digest }] : []),
+          ...(layers ? [{ target: this.name, name: image, sbom: layers, digest: layout.top.digest }] : [{ target: this.name, name: image, image: memberFile(ctx.cwd, decl.image), digest: layout.top.digest }]),
+          ...(declared ? [{ target: this.name, name: `${declared.name} of ${image}`, sbom: sbomDocumentOf(declared.bytes, "attached"), digest: layout.top.digest }] : []),
         ];
       } finally {
         layout.cleanup();
@@ -731,7 +763,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     async stage(ctx) {
       const layout = inspect(ctx);
       try {
-        const attached = referrers(ctx, layout);
+        const attached = await referrers(ctx, layout);
         const { cred, registry } = connect(ctx);
         const staged: PublishItem = { ...item(ctx, layout.top.digest, platformTags(ctx, layout)), name: decl.image };
         const items: PublishItem[] = [];
@@ -783,7 +815,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
           ctx.log(`tagged ${p.digest} ${p.tag}`);
         }
         const signed = (staged?.items ?? []).filter((i) => i.attachment === "signature" || i.attachment === "attestation").map(({ present: _present, ...i }) => i);
-        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...referrers(ctx, layout).map(referrerItem), ...signed] };
+        return { target: this.name, destination: this.destination, items: [item(ctx, layout.top.digest, perPlatform), ...(await referrers(ctx, layout)).map(referrerItem), ...signed] };
       } finally {
         layout.cleanup();
       }

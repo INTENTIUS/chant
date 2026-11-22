@@ -14,10 +14,10 @@ import { createRedactor } from "./publish-credentials";
 import { PublishDeclarationSchema } from "./publish-declaration";
 import { DEFAULT_RELEASE_SCANNER, resolveScan, scanBeforeStage, scannerArgs, scannerEnv, scanToolPath, syftArgs, type ScanContext } from "./publish-scan";
 import { createPublishTargets } from "./publish-targets";
-import { PublishRunError, runPublish, type PublishContext } from "./release-publish";
+import { PublishRunError, runPublish, type PublishContext, type PublishItem } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
 import { startFakeRegistry, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
-import { fakeReleaseScanner } from "./__fixtures__/scan-fakes";
+import { fakeReleaseScanner, layerSpdx } from "./__fixtures__/scan-fakes";
 
 const dirs: string[] = [];
 afterAll(() => {
@@ -79,10 +79,10 @@ describe("the scan before the stage", () => {
       expect(err).toBeInstanceOf(PublishRunError);
       expect(err).toMatchObject({ code: "publish-scan-failed", step: "scan", staged: [], revealed: [] });
       expect((err as Error).message).toContain(`${reg.host}/acme/api@${digest}: CVE-2026-50002 (critical) in debian/openssl 3.0.11-1, fixed in 3.0.15-1`);
-      // The low zlib finding does not block, and the attached lockfile SBOM was scanned too.
+      // The low zlib finding does not block. The image is scanned through the SBOM of its layers, which is the one it would be published with.
       expect((err as Error).message).not.toContain("CVE-2026-50003");
       expect(scanner.calls[0]).toMatch(/^image .*\/image$/);
-      expect(scanner.calls.slice(1)).toEqual(["scan syft", "scan attached"]);
+      expect(scanner.calls.slice(1)).toEqual(["scan syft"]);
       expect(reg.requests).toEqual([]);
       expect(reg.manifests.size).toBe(0);
       expect(reg.blobs.size).toBe(0);
@@ -101,11 +101,10 @@ describe("the scan before the stage", () => {
       const scanner = fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1", "pkg:deb/debian/zlib@1.2.13"] });
       const ctx = context(dir, { scanner, policy: {}, vex: [] }, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-scan-2" } });
       const run = await runPublish({ cwd: dir, release: ctx.release, label: ctx.label, targets, ctx, record: false });
-      expect(run.scan?.subjects.map((s) => [s.findings.map((f) => f.cveId), s.blocking.length])).toEqual([
-        [["CVE-2026-50003"], 0],
-        [[], 0],
-      ]);
+      expect(run.scan?.subjects.map((s) => [s.findings.map((f) => f.cveId), s.blocking.length])).toEqual([[["CVE-2026-50003"], 0]]);
       expect(reg.manifests.size).toBeGreaterThan(0);
+      // syft ran once: the scan and the stage share the SBOM of the layers.
+      expect(scanner.calls.filter((c) => c.startsWith("image "))).toHaveLength(1);
     } finally {
       await reg.close();
     }
@@ -160,5 +159,72 @@ describe("the scan before the stage", () => {
   test("with no target that has anything to scan, the report is empty", async () => {
     const report = await scanBeforeStage({ targets: [], ctx: context(temp(), null), scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [] } });
     expect(report.subjects).toEqual([]);
+  });
+});
+
+describe("the image's SBOM is the one made from its layers (#5446)", () => {
+  /** The SBOM referrer a stage pushed: its item and the document. */
+  const pushedSbom = (reg: Awaited<ReturnType<typeof startFakeRegistry>>, items: PublishItem[]) => {
+    const item = items.find((i) => i.attachment === "sbom")!;
+    const manifest = JSON.parse(reg.manifests.get(item.digest!)!.bytes.toString("utf-8")) as { layers: Array<{ digest: string }> };
+    return { item, doc: JSON.parse(reg.blobs.get(manifest.layers[0]!.digest)!.toString("utf-8")) as { name: string; documentNamespace: string; creationInfo: { created: string }; packages: Array<{ externalRefs: Array<{ referenceLocator: string }> }> } };
+  };
+
+  test("a publish that scans attaches the layers' SBOM, which lists the OS packages, dated with the cut and named for the image", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-sbom-1", token: "tok-sbom-1" });
+    try {
+      const dir = temp();
+      const { digest } = writeOciLayout(join(dir, "image"));
+      LOCK_CLEAN(dir);
+      const repository = `${reg.host}/acme/api`;
+      const decl = PublishDeclarationSchema.parse({ type: "oci", image: "image", repository });
+      const scanner = fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1", "pkg:deb/debian/zlib@1.2.13"] });
+      const cut = { actor: "a", label: "v1.4.0", timestamp: "2026-11-20T10:00:00.000Z", runId: null, signature: null };
+      const ctx = context(dir, { scanner, policy: {}, vex: [] }, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-sbom-1" }, cut });
+
+      const [target] = await createPublishTargets([decl], {});
+      const plan = await target!.plan(ctx);
+      expect(plan.find((i) => i.attachment === "sbom")).toEqual({ name: "sbom.spdx.json", destination: `${repository}, a referrer of the image, made from its layers when staged`, attachment: "sbom" });
+      expect(scanner.calls).toEqual([]);
+
+      const staged = await target!.stage(ctx);
+      const { doc } = pushedSbom(reg, staged.items);
+      expect(doc.packages.flatMap((p) => p.externalRefs.map((r) => r.referenceLocator))).toEqual(["pkg:deb/debian/openssl@3.0.15-1", "pkg:deb/debian/zlib@1.2.13"]);
+      expect(doc.name).toBe(`${repository}@${digest}`);
+      expect(doc.documentNamespace).toBe(`https://intentius.io/chant/sbom/sha256/${digest.slice(7)}`);
+      expect(doc.creationInfo.created).toBe("2026-11-20T10:00:00Z");
+
+      // Another run makes the same bytes, so the referrer is found and not pushed again.
+      const [again] = await createPublishTargets([decl], {});
+      const second = await again!.stage(ctx);
+      expect(second.items.find((i) => i.attachment === "sbom")).toMatchObject({ digest: pushedSbom(reg, staged.items).item.digest, present: true });
+    } finally {
+      await reg.close();
+    }
+  });
+
+  test("a publish that does not scan keeps the lockfile SBOM, and a declared sbom file wins over the layers", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-sbom-2", token: "tok-sbom-2" });
+    try {
+      const dir = temp();
+      writeOciLayout(join(dir, "image"));
+      writeLockfile(dir);
+      const env = { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-sbom-2" };
+      const [plain] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: `${reg.host}/acme/plain` })], {});
+      const lockfile = pushedSbom(reg, (await plain!.stage(context(dir, null, { env }))).items).doc as unknown as { creationInfo: { creators: string[] } };
+      expect(lockfile.creationInfo.creators.join(" ")).toContain("chant-lockfile-sbom");
+
+      writeFileSync(join(dir, "image.spdx.json"), layerSpdx("declared", ["pkg:npm/left-pad@1.3.1"]));
+      const scanner = fakeReleaseScanner();
+      const [declared] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: `${reg.host}/acme/declared`, sbom: "image.spdx.json" })], {});
+      const ctx = context(dir, { scanner, policy: { failSeverity: "critical" }, vex: [] }, { env });
+      // The image still goes through the scan, and so does the declared file.
+      const subjects = await declared!.scanSubjects!(ctx);
+      expect(subjects.map((s) => s.name.split(" of ")[0])).toEqual([expect.stringContaining("@sha256:"), "image.spdx.json"]);
+      const doc = pushedSbom(reg, (await declared!.stage(ctx)).items).doc;
+      expect(doc.name).toBe("declared");
+    } finally {
+      await reg.close();
+    }
   });
 });
