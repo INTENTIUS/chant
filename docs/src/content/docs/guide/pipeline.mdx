@@ -84,7 +84,7 @@ With a pipeline, `components promote` reads it at the default branch's tip:
 - A release someone rejected at the stage's gate does not enter the stage, and is not skipped past it. The promote exits 8 and names who rejected it and why.
 - Under a gate whose `approval` is `sealed`, only an approval sealed by a signer at the tip counts, as it does for a wave.
 
-A component run into a stage, `chant run --components all --env staging`, waits at the same gate: under `--release` it binds the release's digest, so the approval a promote waited on lets the run through too. A stage whose policy is `never` goes straight to its components' own gates. See [A run into a pipeline stage](/chant/components/orchestration/#a-run-into-a-pipeline-stage).
+A component run into a stage, `chant run --components all --env staging`, waits at the same gate: under `--release` it binds the release's digest, so the approval a promote waited on lets the run through too. A stage whose policy is `never` goes straight to its components' own gates. A redeploy, a rollback and a fan-out into the stage wait at the gate too. See [A run into a pipeline stage](/chant/components/orchestration/#a-run-into-a-pipeline-stage).
 
 ### Stages that apply through a step
 

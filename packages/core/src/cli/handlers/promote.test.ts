@@ -188,6 +188,18 @@ vi.mock("../../workspace/workspace-gates", () => ({
   },
 }));
 
+// #5475: the pipeline stage that gates an environment, set per test; none by default, as a member without a pipeline reads.
+let gatedStage: import("../../pipeline/spec").PipelineSpec | null = null;
+vi.mock("../../pipeline/run-gate", async () => {
+  const actual = await vi.importActual<typeof import("../../pipeline/run-gate")>("../../pipeline/run-gate");
+  return {
+    ...actual,
+    runStageAtBase: (_cwd: string, env: string) =>
+      gatedStage?.stages.some((s) => s.name === env) ? { status: "gated", spec: gatedStage, base: "b".repeat(40) } : { status: "none" },
+    pipelineGateProofAt: async () => undefined,
+  };
+});
+
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
 
@@ -240,6 +252,7 @@ let logs: string[];
 beforeEach(() => {
   sealedGates.clear();
   releaseGatePort = null;
+  gatedStage = null;
   storedChangeSets.clear();
   storeFails = false;
   knownReleases.clear();
@@ -1467,5 +1480,88 @@ describe("a gate step applies only in the environments it names (#5401)", () => 
     expect(await promoteTo("prod")).toBe(3);
     expect(ran).toEqual([]);
     expect(releaseGatePort!.appended.at(-1)).toMatchObject({ op: "release", gate: "release", environment: "prod", releaseDigest: release.releaseDigest });
+  });
+});
+
+describe("a redeploy or a rollback into a stage the pipeline gates waits at the stage's gate (#5475)", () => {
+  const prod = (digest: string, timestamp: string, runId: string): ReleaseRecord => ({ ...staging, env: "prod", digest, timestamp, runId });
+  let port: ReturnType<typeof import("../../op/gate").memoryGateLedgerPort>;
+
+  beforeEach(async () => {
+    const { asPipelineSpec } = await vi.importActual<typeof import("../../pipeline/spec")>("../../pipeline/spec");
+    const wave = (target: string) => [{ name: target, runs: [{ target }] }];
+    gatedStage = asPipelineSpec({
+      name: "shop",
+      stages: [
+        { name: "staging", waves: wave("staging"), gate: { policy: "never" } },
+        { name: "prod", waves: wave("prod"), gate: { policy: "always" } },
+      ],
+    });
+    const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
+    port = releaseGatePort = memoryGateLedgerPort();
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [prod("sha256:old", "2026-01-01T00:00:00.000Z", "run-1"), prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+  });
+
+  const at = (verb: "redeploy" | "rollback", a: Partial<ParsedArgs> = {}) =>
+    ctx({ migrateFrom: undefined, migrateTo: undefined, path: verb, extraPositional: "prod", component: "api", ...a });
+
+  /** Approve the pending fact the gate recorded, as `chant approve shop prod --env prod --plan <digest>` does. */
+  const approvePending = async () => {
+    const pending = port.appended.at(-1)!;
+    await port.appendResolution!({ version: 1, op: "shop", gate: "prod", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(), planDigest: pending.planDigest!, environment: "prod" });
+    return pending;
+  };
+
+  for (const verb of ["redeploy", "rollback"] as const) {
+    const run = verb === "redeploy" ? runComponentsRedeploy : runComponentsRollback;
+
+    test(`a ${verb} whose components carry no gate waits at gate prod, and its approval lets it through`, async () => {
+      expect(await run(at(verb))).toBe(3);
+      expect(ran).toEqual([]);
+      expect(appendReleaseRecordMock).not.toHaveBeenCalled();
+      expect(port.appended).toEqual([expect.objectContaining({ op: "shop", gate: "prod", environment: "prod" })]);
+      const pending = port.appended[0]!;
+      expect(errors.join("\n")).toContain(`Approve it with: chant approve shop prod --env prod --plan ${pending.planDigest}`);
+
+      await approvePending();
+      expect(await run(at(verb))).toBe(0);
+      expect(ran).toEqual(["prod:apply"]);
+      // The run after the approval bound the same digest, so it recorded no second pending fact.
+      expect(port.appended).toHaveLength(1);
+    });
+  }
+
+  test("a dry run reads no gate", async () => {
+    expect(await runComponentsRedeploy(at("redeploy", { dryRun: true, json: true }))).toBe(0);
+    expect(port.appended).toEqual([]);
+  });
+
+  test("an environment the pipeline has no gated stage for runs as before", async () => {
+    gatedStage = { ...gatedStage!, stages: gatedStage!.stages.filter((s) => s.name !== "prod") };
+    expect(await runComponentsRedeploy(at("redeploy"))).toBe(0);
+    expect(ran).toEqual(["prod:apply"]);
+    expect(port.appended).toEqual([]);
+  });
+
+  test("a rollback under a release binds the release's digest", async () => {
+    const release = makeRelease({
+      member: null,
+      commit: "abc123".padEnd(40, "0"),
+      artifactDigests: [{ component: "api", kind: "image", path: "api.tar", digest: "sha256:api" }],
+      targets: [{ env: "prod", templates: [], params: [] }],
+    });
+    releaseFixture = { release, label: "v1.0.0" };
+    knownReleases.set(release.releaseDigest, release);
+    knownLabels.set(release.releaseDigest, "v1.0.0");
+    readReleaseLedgerMock.mockResolvedValue({
+      records: [{ ...prod("sha256:api", "2026-01-01T00:00:00.000Z", "run-1"), releaseDigest: release.releaseDigest }, prod("sha256:new", "2026-01-02T00:00:00.000Z", "run-2")],
+      malformed: 0,
+    });
+    expect(await runComponentsRollback(at("rollback", { component: undefined, release: "v1.0.0" }))).toBe(3);
+    expect(ran).toEqual([]);
+    expect(port.appended.at(-1)).toMatchObject({ op: "shop", gate: "prod", environment: "prod", planDigest: release.releaseDigest });
   });
 });

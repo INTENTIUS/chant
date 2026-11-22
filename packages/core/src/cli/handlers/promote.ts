@@ -575,6 +575,13 @@ async function deployPlanIn(
     renderPlan(verb, plan, removed);
     skippedLines();
   }
+  // #5475: a redeploy or a rollback into an environment a pipeline stage gates waits at that stage's gate, as a run does.
+  // A promote passed the stage's gate before it got here, and a rollback `--requested` passed the stage's rollback gate.
+  if (verb !== "promote" && !args.rollbackRequested) {
+    const { awaitStageGate } = await import("./stage-gate");
+    const stopped = await awaitStageGate({ projectPath: project.projectPath, env: plan.to, components: prepared, ...(under ? { releaseDigest: under.release.releaseDigest } : {}) });
+    if (stopped !== undefined) return stopped;
+  }
   // #4045: the pinned templates are written for this run and removed after it.
   const { writePinnedTemplates, removePinnedTemplates } = await import("../../components/release-promote");
   const tidy = () => {
