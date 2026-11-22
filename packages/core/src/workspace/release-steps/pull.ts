@@ -24,6 +24,20 @@ export function pullLoginEnv(forge: ReleaseWorkflowForge, p: ReleasePipelineConf
   return Object.fromEntries(pulls.flatMap((r) => [r.usernameEnv, r.passwordEnv]).filter((v) => p.env?.[v] === undefined).map((v) => [v, secret(v)]));
 }
 
+/** A forge expression that is the run's own token. */
+const RUN_TOKEN = /\$\{\{\s*(github\.token|secrets\.GITHUB_TOKEN)\s*\}\}/;
+
+/**
+ * On GitHub, a login to `ghcr.io` whose password is the run's own token
+ * (#5486): `github.token`, or the `GITHUB_TOKEN` secret, set in
+ * `release.workflow.env` or read from the secret of the same name. That token
+ * reads a private package only with `packages: read`.
+ */
+export function pullsGhcrWithRunToken(forge: ReleaseWorkflowForge, p: ReleasePipelineConfig, pulls: readonly ReleaseImagePull[]): boolean {
+  if (forge !== "github") return false;
+  return pulls.some((r) => /^ghcr\.io$/i.test(r.registry) && RUN_TOKEN.test(p.env?.[r.passwordEnv] ?? secret(r.passwordEnv)));
+}
+
 /**
  * One step per registry that logs docker in before the build, with the
  * username and password its variables hold. The login takes a static pair,

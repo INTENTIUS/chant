@@ -26,7 +26,8 @@ export const NPM_TRUSTED_PUBLISHING_SETUP = `have="$(npm --version)"; if [ "$(pr
  *   runner's is older.
  *
  * `release.workflow` wins: a scope, variable or the same setup line it names
- * is not added again. Other forges, and configs without such targets, get
+ * is not added again, except that a `packages: read` there does not take the
+ * push's `packages: write` away (#5486). Other forges, and configs without such targets, get
  * nothing.
  */
 export function targetExtras(forge: ReleaseWorkflowForge, targets: ReadonlyArray<ReleaseWorkflowTarget>, p: ReleasePipelineConfig): Pick<ReleasePipelineConfig, "permissions" | "env" | "setup"> {
@@ -35,7 +36,8 @@ export function targetExtras(forge: ReleaseWorkflowForge, targets: ReadonlyArray
     (t) => (t.type === "oci" && /^ghcr\.io\//.test(t.repository ?? "") && !t.usernameEnv && !t.passwordEnv) || (t.type === "helm" && /^ghcr\.io\//.test(t.oci?.repository ?? "") && !t.oci?.usernameEnv && !t.oci?.passwordEnv),
   );
   const npm = targets.some((t) => t.type === "npm" && (t.registry === undefined || /^https:\/\/registry\.npmjs\.org\/?$/.test(t.registry)));
-  const permissions = ghcr && p.permissions?.packages === undefined ? { packages: "write" as const } : undefined;
+  // #5486: a `packages: read` in the config, for the cut's pulls, does not lower the push's write.
+  const permissions = ghcr && p.permissions?.packages !== "write" ? { packages: "write" as const } : undefined;
   const env = ghcr ? Object.fromEntries((["OCI_USERNAME", "OCI_PASSWORD"] as const).filter((k) => p.env?.[k] === undefined).map((k) => [k, k === "OCI_USERNAME" ? "${{ github.actor }}" : "${{ github.token }}"])) : {};
   const setup = npm && !(p.setup ?? []).some((s) => !("uses" in s) && s.run === NPM_TRUSTED_PUBLISHING_SETUP) ? [{ run: NPM_TRUSTED_PUBLISHING_SETUP }] : [];
   return { ...(permissions ? { permissions } : {}), ...(Object.keys(env).length > 0 ? { env } : {}), ...(setup.length > 0 ? { setup } : {}) };

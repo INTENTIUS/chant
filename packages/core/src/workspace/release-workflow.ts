@@ -56,7 +56,7 @@ import { releaseJobSteps, releaseSetupSteps, type ReleaseStepItem, type ReleaseS
 import { packLine } from "./release-steps/builds";
 import { RELEASE_BINFMT_IMAGE, qemuArchitectures } from "./release-steps/qemu";
 import { targetExtras } from "./release-steps/targets";
-import { pullLoginEnv } from "./release-steps/pull";
+import { pullLoginEnv, pullsGhcrWithRunToken } from "./release-steps/pull";
 import { goreleaserSetup, setsUpGo } from "./release-steps/goreleaser";
 import { renderTrainWorkflow } from "./release-train-workflow";
 
@@ -320,7 +320,7 @@ export { RELEASE_ARTIFACTS_ARTIFACT, RELEASE_ARTIFACTS_STAGE } from "./release-s
 export { goreleaserSetup } from "./release-steps/goreleaser";
 export { cosignSetup, signingStepEnv } from "./release-steps/signing";
 export { scanSetup } from "./release-steps/scan";
-export { pullLoginEnv, pullLoginLine, pullLoginSetup } from "./release-steps/pull";
+export { pullLoginEnv, pullLoginLine, pullLoginSetup, pullsGhcrWithRunToken } from "./release-steps/pull";
 export { RELEASE_DIGESTS_FILE, RELEASE_DIGESTS_PATHS, RELEASE_IMAGES_ARTIFACT } from "./release-steps/images";
 
 /** The flags `chant release publish` gets under the groups. */
@@ -367,6 +367,11 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     if (Object.keys(reads).length > 0) derived.permissions = { ...derived.permissions, ...reads };
   }
   const shape: ReleaseWorkflowShape = p.trigger === "dispatch" ? "dispatch" : input.tags && !input.tags.template.legacy ? "templated" : "tag";
+  // #5486: a ghcr.io base pulled with the run's token needs packages: read where the images are built: the
+  // cut, and on a tag the publish job, which builds them again (a dispatched publish checks the cut's archives).
+  const ghcrPull = pullsGhcrWithRunToken(input.forge, p, input.pullRegistries ?? []);
+  if (ghcrPull && shape !== "dispatch" && p.permissions?.packages === undefined && derived.permissions?.packages === undefined) derived.permissions = { ...derived.permissions, packages: "read" };
+  const cutPermissions = cutScopes(input.forge, p, green, ghcrPull);
   // #5196: what each feature reads; ./release-steps decides where its steps go.
   const context: ReleaseWorkflowContext = {
     forge: input.forge,
@@ -404,6 +409,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       input.forge,
     ),
     openIdConnect: openIdConnect(context.doctor && shape === "dispatch"),
+    cutPermissions,
   };
   // #4767: Forgejo's job token is not a GitHub token, and GitLab has no such expression.
   const forgeToken =
@@ -446,7 +452,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       after,
       chantSetup,
       fullSetup,
-      extra: { ...jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge), openIdConnect: openIdConnect(p.trigger === "dispatch" && p.doctor !== false) },
+      extra: { ...jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge), openIdConnect: openIdConnect(p.trigger === "dispatch" && p.doctor !== false), cutPermissions },
       forgeToken,
       cutToken: green === "forge-checks" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [],
       green,
@@ -742,16 +748,38 @@ export interface JobExtras {
    * or checks that it can (a dispatched cut's doctor).
    */
   openIdConnect?: ReadonlyArray<"cut" | "publish">;
+  /** The scopes only the cut takes (#5486, #5491), from {@link cutScopes}. */
+  cutPermissions?: ReadonlyArray<readonly [string, string]>;
+}
+
+/**
+ * The scopes the cut job takes beyond its own and the config's (#5486, #5491):
+ *
+ * - `packages: read`, never `write`, when `release.workflow.permissions`
+ *   asks for `packages: read` or, on GitHub, a `release.images` pull logs in
+ *   to `ghcr.io` with the run's token: the cut builds and scans the images,
+ *   so it reads their bases. A `packages: write` there is for the push, which
+ *   is the publish job's.
+ * - `actions: read` on GitHub under `forge-checks` in a dispatched release,
+ *   where the cut lists the release workflow's earlier runs on the commit to
+ *   leave their checks out. A private repository answers that list only
+ *   with this scope. A config that names `actions` itself keeps its own.
+ */
+export function cutScopes(forge: ReleaseWorkflowForge, p: ReleasePipelineConfig, green: import("../lifecycle/release-green").ReleaseGreenSource, ghcrPull: boolean): Array<[string, string]> {
+  return [
+    ...(p.permissions?.packages === "read" || ghcrPull ? [["packages", "read"] as [string, string]] : []),
+    ...(forge === "github" && green === "forge-checks" && p.trigger === "dispatch" && p.permissions?.actions === undefined ? [["actions", "read"] as [string, string]] : []),
+  ];
 }
 
 /**
  * A job's `permissions:` block (#5234): the scopes it needs, then the config's
  * and targets' extras it takes, one per line at the job's indent. The workflow
  * itself grants `contents: read`, so no job holds a scope it does not name.
- * The cut never takes `packages` (the publish pushes the images), and the
- * extras the config set by hand go to both.
+ * The cut takes no `packages` from the extras (the publish pushes the images)
+ * but its own {@link cutScopes} (#5486, #5491); the other extras go to both.
  */
-export function jobPermissions(extra: Pick<JobExtras, "permissions" | "openIdConnect">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
+export function jobPermissions(extra: Pick<JobExtras, "permissions" | "openIdConnect" | "cutPermissions">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
   const scopes: Record<string, string> = { ...base };
   if (job === "cut" || job === "publish") {
     for (const [k, v] of extra.permissions) {
@@ -759,6 +787,7 @@ export function jobPermissions(extra: Pick<JobExtras, "permissions" | "openIdCon
       scopes[k] = v;
     }
   }
+  if (job === "cut") for (const [k, v] of extra.cutPermissions ?? []) scopes[k] ??= v;
   // #5458: Forgejo hands a job an OIDC token only when it asks.
   const oidc = (job === "cut" || job === "publish") && (extra.openIdConnect ?? []).includes(job) ? [`${indent}enable-openid-connect: true`] : [];
   return [`${indent}permissions:`, ...Object.entries(scopes).map(([k, v]) => `${indent}  ${k}: ${v}`), ...oidc];
