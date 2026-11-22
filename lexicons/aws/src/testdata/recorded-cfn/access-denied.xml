@@ -1,0 +1,8 @@
+<ErrorResponse xmlns="http://cloudformation.amazonaws.com/doc/2010-05-15/">
+  <Error>
+    <Type>Sender</Type>
+    <Code>AccessDenied</Code>
+    <Message>User: arn:aws:iam::111122223333:user/reader is not authorized to perform: cloudformation:DescribeStacks</Message>
+  </Error>
+  <RequestId>5d3c2b1a-0000-4000-8000-000000000002</RequestId>
+</ErrorResponse>

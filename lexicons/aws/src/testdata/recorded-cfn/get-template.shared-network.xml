@@ -1,0 +1,35 @@
+<GetTemplateResponse xmlns="http://cloudformation.amazonaws.com/doc/2010-05-15/">
+  <GetTemplateResult>
+    <TemplateBody>{
+  &quot;AWSTemplateFormatVersion&quot;: &quot;2010-09-09&quot;,
+  &quot;Parameters&quot;: { &quot;CidrBlock&quot;: { &quot;Type&quot;: &quot;String&quot; } },
+  &quot;Resources&quot;: {
+    &quot;Vpc&quot;: {
+      &quot;Type&quot;: &quot;AWS::EC2::VPC&quot;,
+      &quot;Properties&quot;: { &quot;CidrBlock&quot;: { &quot;Ref&quot;: &quot;CidrBlock&quot; } }
+    },
+    &quot;PrivateSubnet&quot;: {
+      &quot;Type&quot;: &quot;AWS::EC2::Subnet&quot;,
+      &quot;Properties&quot;: { &quot;VpcId&quot;: { &quot;Ref&quot;: &quot;Vpc&quot; }, &quot;CidrBlock&quot;: &quot;10.0.1.0/24&quot; }
+    },
+    &quot;LogBucket&quot;: {
+      &quot;Type&quot;: &quot;AWS::S3::Bucket&quot;,
+      &quot;Properties&quot;: { &quot;BucketName&quot;: { &quot;Fn::Sub&quot;: &quot;shared-network-logs-${AWS::Region}&quot; } }
+    },
+    &quot;FlowLog&quot;: {
+      &quot;Type&quot;: &quot;AWS::EC2::FlowLog&quot;,
+      &quot;DependsOn&quot;: &quot;LogBucket&quot;,
+      &quot;Properties&quot;: {
+        &quot;ResourceId&quot;: { &quot;Ref&quot;: &quot;Vpc&quot; },
+        &quot;LogDestination&quot;: { &quot;Fn::GetAtt&quot;: [&quot;LogBucket&quot;, &quot;Arn&quot;] }
+      }
+    }
+  },
+  &quot;Outputs&quot;: { &quot;VpcId&quot;: { &quot;Value&quot;: { &quot;Ref&quot;: &quot;Vpc&quot; } } }
+}</TemplateBody>
+    <StagesAvailable>
+      <member>Original</member>
+      <member>Processed</member>
+    </StagesAvailable>
+  </GetTemplateResult>
+</GetTemplateResponse>

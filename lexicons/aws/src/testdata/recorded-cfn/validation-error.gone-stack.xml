@@ -1,0 +1,8 @@
+<ErrorResponse xmlns="http://cloudformation.amazonaws.com/doc/2010-05-15/">
+  <Error>
+    <Type>Sender</Type>
+    <Code>ValidationError</Code>
+    <Message>Stack with id gone-stack does not exist</Message>
+  </Error>
+  <RequestId>5d3c2b1a-0000-4000-8000-000000000001</RequestId>
+</ErrorResponse>

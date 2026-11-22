@@ -76,10 +76,18 @@ export const awsPlugin: LexiconPlugin = {
     setLastMemberReport(undefined);
     const member = (ctx.config as { aws?: { member?: { kind?: "cloudformation" | "cdk"; dir: string; label?: string } } }).aws?.member;
     if (!member) return { entities: new Map() };
-    const { readCloudFormationMember } = await import("./workspace-member");
-    const read = readCloudFormationMember({ member });
+    const { readCloudFormationMember, readDeployedStacks } = await import("./workspace-member");
+    // A member that names deployed stacks (#5455) reads them first; the
+    // templates in its directory and the deployed ones draw into one graph.
+    let named: Awaited<ReturnType<typeof readDeployedStacks>>;
+    try {
+      named = await readDeployedStacks(member);
+    } catch (e) {
+      return { entities: new Map(), warnings: [`cloudformation member "${member.label ?? member.dir}" was not read: ${(e as Error).message}`] };
+    }
+    const read = readCloudFormationMember({ member, ...(named ? { deployed: named.deployed, stackReports: named.reports } : {}) });
     setLastMemberReport(read.report);
-    return { entities: read.entities, warnings: read.warnings };
+    return { entities: read.entities, warnings: [...(named?.warnings ?? []), ...read.warnings] };
   },
   graphMeta() {
     const report = lastMemberReport();
