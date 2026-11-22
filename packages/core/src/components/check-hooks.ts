@@ -31,11 +31,14 @@ import { parseJsonText } from "../workspace/jsonc";
 import { memberAtCwd } from "../workspace/security";
 import { locateWorkspace } from "../workspace/which-chant";
 import type { CheckStepOutcome } from "./check-steps";
+import { CHECK_FINDINGS_DIR, CHECK_FINDINGS_ENV, findingsSummaryLines, readFindings, type FindingsSummary } from "./sarif";
 import { CHECK_EVIDENCE_KEY_ENV, LOCAL_EVIDENCE_KEY_ENV, SIGNING_ID_TOKEN_VAR } from "../workspace/trust/check-evidence-report";
 import { acceptedLocalEvidence, acceptsLocalEvidence, fetchLocalEvidence } from "../workspace/trust/local-evidence";
 
 export { CI_CHECK_HOOK_FLOOR } from "../op/op-waves";
 export { CHECK_SUMMARY_FLOOR } from "../release-floors";
+export { CHECK_FINDINGS_FLOOR } from "./sarif";
+export { CHECK_HOOK_PRESETS, CHECK_HOOK_PRESET_NAMES, checkHookPreset, type CheckHookPreset, type CheckHookPresetName, type CheckHookPresetOptions } from "./check-hook-presets";
 
 /** The check hooks a job runs, and where they were read. */
 export interface CheckHooksRead {
@@ -143,6 +146,10 @@ export interface CheckHooksReport {
   hooks: CheckHookOutcome[];
   /** The lexicons' check steps (#4633, `./check-steps.ts`), when any ran. */
   steps?: CheckStepOutcome[];
+  /** What the hooks wrote under `$CHANT_FINDINGS` (#5451, `./sarif.ts`): SARIF summarized, or a tool's own status. */
+  findings?: FindingsSummary[];
+  /** Files under the findings directory that are neither SARIF nor a status file. */
+  unreadableFindings?: string[];
   /** The checks whose evidence was signed (#4870), when the job has a runner identity. */
   evidence?: { signed: string[]; runner: string; commit: string; pushWarning?: string };
   /** The first hook that failed, and why; the hooks after it did not run. Or the check steps that failed. */
@@ -170,7 +177,7 @@ export function passedCheckHooks(outcomes: readonly CheckHookOutcome[]): Array<{
  * --summary <file>`) instead of rendering `check-hooks.json` itself. Empty
  * when no hook is declared and no step ran.
  */
-export function checkReportSummary(report: Pick<CheckHooksReport, "status" | "base" | "hooks" | "steps" | "failed" | "evidence">): string[] {
+export function checkReportSummary(report: Pick<CheckHooksReport, "status" | "base" | "hooks" | "steps" | "failed" | "evidence" | "findings" | "unreadableFindings">): string[] {
   if (report.status === "none") return [];
   const at = report.base === "HEAD" ? "" : ` (read at ${/^[0-9a-f]{40}$/.test(report.base) ? report.base.slice(0, 12) : report.base})`;
   const hooks = report.hooks.map(
@@ -180,7 +187,7 @@ export function checkReportSummary(report: Pick<CheckHooksReport, "status" | "ba
     (s) => `- ${s.outcome}: \`${s.lexicon} ${s.step}\` for \`${s.member}\`${s.stack ? ` (stack \`${s.stack}\`)` : ""}${s.outcome === "failed" ? `, exit ${s.exit}` : ""}${s.reason && s.outcome !== "failed" ? ` (${s.reason})` : ""}`,
   );
   const signed = report.evidence ? [`- signed: ${report.evidence.signed.map((c) => `\`${c}\``).join(", ")} as ${report.evidence.runner}`] : [];
-  return [`### Check hooks${at}`, "", ...hooks, ...steps, ...(report.failed ? [`- ${report.failed}`] : []), ...signed, ""];
+  return [`### Check hooks${at}`, "", ...hooks, ...steps, ...(report.failed ? [`- ${report.failed}`] : []), ...signed, "", ...findingsSummaryLines(report.findings ?? [], report.unreadableFindings ?? [])];
 }
 
 /** Where {@link runCheckHooks} writes its runs file and report unless told: `.chant/check`. */
@@ -280,6 +287,9 @@ export function runCheckHooks(options: RunCheckHooksOptions): CheckHooksReport {
   const runs: OpWaveHookRun[] = targets.map((target) => ({ target, op }));
   const runsFile = join(dir, "runs.json");
   writeFileSync(join(cwd, runsFile), JSON.stringify({ version: 1, op, stage: "check", base: read.base, hook: CHECK_HOOK_MOMENT, runs }, null, 2) + "\n");
+  const findingsDir = join(dir, CHECK_FINDINGS_DIR);
+  mkdirSync(join(cwd, findingsDir), { recursive: true });
+  const started = Date.now() - 1000;
   const skip = localSkips(options, read, cwd, log) ?? new Map();
   const toRun = read.hooks.filter((h) => !skip.has(checkHookName(h)));
   for (const h of read.hooks) {
@@ -293,7 +303,7 @@ export function runCheckHooks(options: RunCheckHooksOptions): CheckHooksReport {
     runs,
     runsFile,
     holdFile: join(dir, "hold.json"),
-    env: { CHANT_CHECK: "1", CHANT_HOOKS_BASE: read.base, ...options.env },
+    env: { CHANT_CHECK: "1", CHANT_HOOKS_BASE: read.base, [CHECK_FINDINGS_ENV]: findingsDir, ...options.env },
     cwd,
     exec: options.exec ?? checkHookExec,
     log,
@@ -313,7 +323,14 @@ export function runCheckHooks(options: RunCheckHooksOptions): CheckHooksReport {
     return outcomes.filter((o) => o.name === name);
   });
   const failed = ran.failed ?? (hooks.some((h) => h.outcome === "failed") ? `a check hook failed: ${hooks.filter((h) => h.outcome === "failed").map((h) => h.name).join(", ")}` : undefined);
-  return report({ status: failed ? "failed" : "passed", hooks, ...(failed ? { failed } : {}) });
+  const found = readFindings(join(cwd, findingsDir), started);
+  return report({
+    status: failed ? "failed" : "passed",
+    hooks,
+    ...(failed ? { failed } : {}),
+    ...(found.summaries.length > 0 ? { findings: found.summaries } : {}),
+    ...(found.unreadable.length > 0 ? { unreadableFindings: found.unreadable } : {}),
+  });
 }
 
 /**

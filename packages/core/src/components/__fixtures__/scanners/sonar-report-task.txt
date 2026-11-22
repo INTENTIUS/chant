@@ -1,0 +1,5 @@
+projectKey=acme_api
+serverUrl=https://sonar.example.test
+dashboardUrl=https://sonar.example.test/dashboard?id=acme_api
+ceTaskId=AYx1
+ceTaskUrl=https://sonar.example.test/api/ce/task?id=AYx1
