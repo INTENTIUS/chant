@@ -35,6 +35,13 @@
  * A label written with a leading `v` gives labels with one. A commit the
  * member already has a labelled release of answers that label, so a run
  * started again cuts what it cut before.
+ *
+ * A member with no previous release, in its ledger or its tags, is refused
+ * with `release-next-no-previous`, unless the request names `first`
+ * (`--first <version>`, terragucci issue 1526): the label is then that
+ * version, or its prerelease with `pre`, and `from.source` is `first`. A
+ * pipeline's release-cut hook passes it, so a repository's first merge cuts
+ * its first release.
  */
 
 import { execFileSync } from "node:child_process";
@@ -43,6 +50,10 @@ import { relative, resolve } from "node:path";
 import { classifyCommit } from "./release-changelog";
 import { consumedIntents, maxBump, pendingIntents, readIntents, type ReleaseBumpLevel } from "./release-intents";
 import type { ReleaseCutIntent } from "./release-store";
+import { NEXT_RELEASE } from "../release-floors";
+
+/** The first chant whose `chant release next` and `chant release cut auto` take `--first <version>`, the label of a member's first release when it has no previous one, and whose pipeline release-cut hook passes `release.first` (default `0.1.0`) (terragucci issue 1526). */
+export const RELEASE_NEXT_FIRST_FLOOR = NEXT_RELEASE;
 
 /** The first chant with `chant release next` and `chant release cut auto`, the label from the conventional commits and the `.chant/release/*.md` intent files since the member's previous release; a cut records the intent files it consumed (`intents` on its cut line), `release changed` computes each member's bump from them (`bumpFrom`, `intents`, `intent-pending`), notes generated from commits lead with their summaries, and a dispatched release workflow takes the label `auto` (#5159); with no release in the ledger the previous one is the newest version tag `release.tag` or `release.legacyTags` matches (#5200), and on 0.x a breaking commit bumps minor unless `release.breakingOnZero` is `major` (#5191). */
 export const RELEASE_NEXT_FLOOR = "0.124.101";
@@ -53,6 +64,7 @@ export type ReleaseNextCode =
   | "release-next-no-previous"
   | "release-next-unchanged"
   | "release-next-pre-invalid"
+  | "release-next-first-invalid"
   | "release-next-history-shallow"
   | "release-intent-invalid";
 
@@ -83,8 +95,13 @@ export interface NextRelease {
   bump: ReleaseBumpLevel | null;
   /** True when `at` already has a labelled release of the member, whose label this is. */
   alreadyCut: boolean;
-  /** The previous release the label follows: a cut in the member's ledger, or a version tag when the ledger has none (#5200), with that tag. */
-  from: { label: string; commit: string; source: "ledger" | "tag"; tag?: string };
+  /**
+   * The previous release the label follows: a cut in the member's ledger, or
+   * a version tag when the ledger has none (#5200), with that tag. With
+   * neither and a `first` version asked for, `source` is `first`, `label` that
+   * version and `commit` the commit read.
+   */
+  from: { label: string; commit: string; source: "ledger" | "tag" | "first"; tag?: string };
   /** The commits after `from` that touch the member, newest first. */
   commits: NextCommit[];
   /** The intent files the release consumes, with their summaries. */
@@ -223,10 +240,21 @@ async function historyShapes(cwd: string, top: string, legacyTags: readonly stri
   return shapes;
 }
 
-/** Read the next label of the member at `cwd`, at `at` (default `HEAD`). */
-export async function nextRelease(req: { cwd: string; at?: string; pre?: string }): Promise<NextRelease> {
+/** True when `version` is a release version without a prerelease part, as `--first` takes. */
+export function isFirstVersion(version: string): boolean {
+  return parse(version)?.pre === null && !version.includes("+");
+}
+
+/**
+ * Read the next label of the member at `cwd`, at `at` (default `HEAD`).
+ * `first` is the label when the member has no previous release.
+ */
+export async function nextRelease(req: { cwd: string; at?: string; pre?: string; first?: string }): Promise<NextRelease> {
   if (req.pre !== undefined && !PRE_ID.test(req.pre)) {
     throw new ReleaseNextError("release-next-pre-invalid", `--pre ${req.pre} is not a prerelease id: a letter, then letters, digits and -`, "Name it as in --pre rc or --pre beta.");
+  }
+  if (req.first !== undefined && !isFirstVersion(req.first)) {
+    throw new ReleaseNextError("release-next-first-invalid", `--first ${req.first} is not a release version: major.minor.patch, with no prerelease or build part`, "Name it as in --first 0.1.0 or --first v1.0.0.");
   }
   const top = git(req.cwd, ["rev-parse", "--show-toplevel"])?.trim();
   if (!top) throw new ReleaseNextError("not-a-git-repository", "the next label is read from commits and the ledger, and this directory is not in a git repository");
@@ -270,6 +298,14 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
   if (here) {
     return { label: here.label!, at, bump: null, alreadyCut: true, from: stable ?? { label: here.label!, commit: at, source: "ledger" }, commits, intents: [] };
   }
+  if (!stable && req.first !== undefined) {
+    // The first release: the version asked for, raised past a higher prerelease or a yanked version the ledger holds.
+    const labels = cuts.map((c) => c.label).filter((l): l is string => l !== null);
+    const since = ancestors.map((a) => a.label).filter((l): l is string => l !== null);
+    const passed = ancestors.filter((a) => a.label !== null && yanked(a)).map((a) => a.label!);
+    const label = nextLabel({ stable: req.first, bump: null, since, labels, yanked: passed, ...(req.pre !== undefined ? { pre: req.pre } : {}) });
+    return { label, at, bump: null, alreadyCut: false, from: { label: req.first, commit: at, source: "first" }, commits: [], intents };
+  }
   if (!stable) {
     const pre = ancestors.find((a) => a.label !== null && parse(a.label) !== null);
     throw new ReleaseNextError(
@@ -277,7 +313,7 @@ export async function nextRelease(req: { cwd: string; at?: string; pre?: string 
       pre
         ? `the member has no release with a version label before ${at.slice(0, 12)}, only the prerelease ${pre.label}, and no version tag its release.tag or release.legacyTags matches, so there is no version to bump`
         : `the member has no release with a version label before ${at.slice(0, 12)}, and no version tag its release.tag or release.legacyTags matches, so there is no version to bump`,
-      "Cut the first release with the label you choose, such as: chant release cut 1.0.0. If earlier releases were tagged by hand, name their tag prefix in release.legacyTags.",
+      "Cut the first release with the label you choose, such as: chant release cut 1.0.0, or name it with --first 1.0.0. If earlier releases were tagged by hand, name their tag prefix in release.legacyTags.",
     );
   }
   // The prerelease labels cut since the stable one: all the ledger holds when the previous release is a tag.

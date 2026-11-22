@@ -229,6 +229,13 @@ export interface PipelineRelease {
   label?: string;
   /** The command the cut runs as, in place of `chant`: a product's bin, such as `["npx", "--no-install", "plywood"]`. */
   bin?: string[];
+  /**
+   * The version an `auto` cut takes when the member has no release yet, in its
+   * ledger or its version tags, so a repository's first merge cuts its first
+   * release (terragucci#1526): `release cut auto --first <version>`. Default
+   * `0.1.0`. A release already cut, or a version tag, is bumped as before.
+   */
+  first?: string;
 }
 
 /** The declaration a member's `.chant/pipeline.ts` writes. */
@@ -262,7 +269,10 @@ export const PIPELINE_KEYS: readonly string[] = ["kind", "name", "stages", "defa
 export const STAGE_KEYS: readonly string[] = ["name", "canary", "waves", "gate", "hooks", "hold", "freeze", "failureTolerance", "forgeEnvironment", "replanDependents", "publish", "reads", "after", "queue", "pauseAfterRollback", "soak", "agentSteps", "onVerifyFail"];
 /** The keys a stage's gate takes. */
 export const GATE_KEYS: readonly string[] = ["policy", "approval", "quorum", "point", "holds", "urgent"];
-const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin"];
+const RELEASE_KEYS: readonly string[] = ["cut", "label", "bin", "first"];
+
+/** A release version with no prerelease or build part, as `release.first` takes. */
+const FIRST_VERSION = /^v?\d+\.\d+\.\d+$/;
 const DEFAULTS_REFUSED: readonly string[] = ["name", "waves", "control"];
 
 const isMap = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -546,11 +556,12 @@ export function pipelineSpecProblems(value: unknown): string[] {
     else for (const k of DEFAULTS_REFUSED) if (k in value.defaults) out.push(`defaults.${k} is set by the pipeline, not its defaults`);
   }
   if (value.release !== undefined) {
-    if (!isMap(value.release)) out.push("the pipeline's release must be { \"cut\"?, \"label\"?, \"bin\"? }");
+    if (!isMap(value.release)) out.push("the pipeline's release must be { \"cut\"?, \"label\"?, \"bin\"?, \"first\"? }");
     else {
       out.push(...unknownKeys(value.release, RELEASE_KEYS, "release"));
       if (value.release.cut !== undefined && typeof value.release.cut !== "boolean") out.push("release.cut must be true or false");
       if (value.release.label !== undefined && (typeof value.release.label !== "string" || value.release.label.trim() === "")) out.push("release.label must name the release, or be auto");
+      if (value.release.first !== undefined && (typeof value.release.first !== "string" || !FIRST_VERSION.test(value.release.first))) out.push("release.first must be a release version, such as 0.1.0 or v1.0.0");
       if (value.release.bin !== undefined && (!Array.isArray(value.release.bin) || value.release.bin.length === 0 || value.release.bin.some((w) => typeof w !== "string" || w === ""))) out.push("release.bin must be a list of words, such as [\"npx\", \"--no-install\", \"plywood\"]");
     }
   }
@@ -596,7 +607,7 @@ export const PIPELINE_SPEC_SCHEMA = {
     release: {
       type: "object",
       additionalProperties: false,
-      properties: { cut: { type: "boolean" }, label: { type: "string", minLength: 1 }, bin: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } } },
+      properties: { cut: { type: "boolean" }, label: { type: "string", minLength: 1 }, first: { type: "string", pattern: FIRST_VERSION.source }, bin: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } } },
     },
     control: { type: "object" },
     recheck: { type: "object", required: ["schedule"], additionalProperties: false, properties: { schedule: { type: "string", pattern: CRON.source } } },

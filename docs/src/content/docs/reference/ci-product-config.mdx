@@ -81,6 +81,7 @@ Keys that set how a stage behaves sit in this section, under `environments.<name
 | `environments.<name>.queue` | how a stage takes releases: one at a time, a newer release waiting replacing an older one | `replace` | a stage's `queue` |
 | `release.cut` | a merge cuts a release once the first stage applied | `true` or `false`; `true` when the product writes a pipeline | `release.cut` |
 | `release.label` | the label the merge's release is cut with | a label, or `auto` for the next version | `release.label`, `chant release cut <label>` |
+| `release.first` | the version the merge's release takes when the member has no release yet | a version such as `0.1.0`; `0.1.0` when unset | `release.first`, `chant release cut auto --first <version>` |
 | `environments.<name>.config.<variable>`, `config_sets.<set>.config.<variable>` | a plain value the stage's jobs get as a variable | a string | `EnvironmentSets.environments.<name>.config` |
 | `environments.<name>.secrets.<variable>`, `config_sets.<set>.secrets.<variable>` | a secret the stage's jobs get as a variable, named by where it is kept | a forge secret's name, or a map with one of `forge_secret`, `aws_secrets_manager`, `gcp_secret_manager`, `azure_key_vault` | `EnvironmentSets.environments.<name>.secrets` |
 | `environments.<name>.secrets.<variable>.forge_secret`, `config_sets.<set>.secrets.<variable>.forge_secret` | the forge secret a set's secret is kept in | a secret or variable name | `forgeSecret` of an `EnvironmentSecretRef` |

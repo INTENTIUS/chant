@@ -1,5 +1,5 @@
 Releases:
-  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>]
+  release cut [<label>|auto] [--pre <id>] [--first <version>] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>]
               [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]
               [--actor <name>] [--sign [<key file>]] [--channel <tag>]
               [--lane <name>] [--override-green]
@@ -49,6 +49,8 @@ Releases:
                         60 minutes or --timeout-minutes <n>.
                         auto cuts the label release next computes, and every
                         labelled cut records the intent files it consumed.
+                        auto --first <version> cuts that version when the
+                        member has no previous release.
   release compose <name> [--base <label|sha>] (--pr <n> | --work <id>)...
                   [--yes] [--json]
                         Cherry-pick the chosen trunk changes, in trunk order,
@@ -164,11 +166,13 @@ Releases:
                         under verified-releases it runs release verify first.
                         A file there that chant did not write is replaced
                         only with --force
-  release next [--at <sha>] [--pre <id>] [--json]
+  release next [--at <sha>] [--pre <id>] [--first <version>] [--json]
                         The label of this member's next release, from the
                         conventional commits since its previous release and
                         the .chant/release/*.md intent files no cut consumed.
                         --pre <id> makes it a prerelease, <version>-<id>.<n>.
+                        --first <version> is the label when the member has
+                        no previous release in its ledger or its tags.
   release changed [--at <sha>] [--bump-member <member>=<level>]... [--json]
                         The members to release at a commit, in publish order,
                         each with why: changed, needed-by <member>,

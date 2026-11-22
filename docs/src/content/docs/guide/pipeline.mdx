@@ -15,7 +15,7 @@ A stage is an environment in promotion order: `dev`, then `staging`, then `prod`
 
 1. A pull request plans as before. When it changes the pipeline, its plan note shows the folded spec's diff.
 2. The merge applies the first stage's waves, each behind the stage's gate, read from the pipeline at the base commit.
-3. Once the first stage's last wave applied, the merge cuts a release from the applied commit with `chant release cut auto --yes --wait-checks`, which follows the member's `release.green` setting. Under `forge-checks` the cut waits for the other push workflows still running on the merge commit.
+3. Once the first stage's last wave applied, the merge cuts a release from the applied commit with `chant release cut auto --first 0.1.0 --yes --wait-checks`, which follows the member's `release.green` setting. Under `forge-checks` the cut waits for the other push workflows still running on the merge commit. The member's first merge cuts its first release at `0.1.0`, or at the version `release.first` names, and each later merge bumps the previous release.
 4. Each later stage takes that release through `chant components promote --to <stage> --release <label>`, behind that stage's gate. A person runs it, or starts the generated promote job.
 
 The control repo's `<product>-applied` dispatch goes out after the first stage, the one a merge applies.

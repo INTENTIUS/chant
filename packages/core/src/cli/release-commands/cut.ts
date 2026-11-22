@@ -5,7 +5,7 @@ export const cutCommand: ReleaseCommandDoc = {
   name: "cut",
   helpOrder: 10,
   help: [
-    "  release cut [<label>|auto] [--pre <id>] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>]",
+    "  release cut [<label>|auto] [--pre <id>] [--first <version>] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>]",
     "              [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>]",
     "              [--actor <name>] [--sign [<key file>]] [--channel <tag>]",
     "              [--lane <name>] [--override-green]",
@@ -55,6 +55,8 @@ export const cutCommand: ReleaseCommandDoc = {
     "                        60 minutes or --timeout-minutes <n>.",
     "                        auto cuts the label release next computes, and every",
     "                        labelled cut records the intent files it consumed.",
+    "                        auto --first <version> cuts that version when the",
+    "                        member has no previous release.",
   ],
-  usage: { order: 10, text: "release cut [<label>|auto [--pre <id>]] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--wait-checks [--timeout-minutes <n>]] [--json]" },
+  usage: { order: 10, text: "release cut [<label>|auto [--pre <id>] [--first <version>]] [--at <sha>] [--yes] [--dry-run] [--build <command>] [--param <k=v>] [--image <component>=<repository>@sha256:<hex>] [--params-file <file>] [--src <dir>] [-o <file>] [--lexicon <name>] [--actor <name>] [--sign [<key file>]] [--channel <tag>] [--lane <name>] [--override-green] [--wait-checks [--timeout-minutes <n>]] [--json]" },
 };

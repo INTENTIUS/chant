@@ -7,7 +7,7 @@ sidebar:
 ---
 
 ```
-chant release next [--at <sha>] [--pre <id>] [--json]
+chant release next [--at <sha>] [--pre <id>] [--first <version>] [--json]
 ```
 
 Prints the label of the member's next release, from the conventional commits and the [intent files](#intent-files) since its previous release. The label alone goes to stdout, so a script can read it, and why goes to stderr. `--at` reads another commit than `HEAD`. It fetches `chant/lifecycle` first, as `release tag` does.
@@ -49,11 +49,19 @@ Prereleases cut since the previous release count too. When one has a higher vers
 
 A yanked release passed over keeps its version, since no registry takes a version twice, so a next label at or below it becomes its next patch. After `1.0.0`, and `1.1.0` yanked, a fix gives `1.1.1`, and the commits counted start at `1.0.0`.
 
+A member with no previous release, in its ledger or its version tags, takes the version `--first <version>` names as its first label, such as `--first 0.1.0`. With `--pre <id>` the label is that version's prerelease, `0.1.0-rc.0`. A member with a release bumps it as above. A [pipeline](/chant/guide/pipeline/)'s release cut passes it, so a repository's first merge cuts its first release.
+
+```bash
+chant release next --first 0.1.0   # 0.1.0
+                                   #   the first release: the member has no previous release, and --first names 0.1.0
+```
+
 A commit the member already has a labelled release of answers that label (`alreadyCut: true`), so a release workflow run again at the same commit cuts nothing new.
 
 | Code | When |
 |---|---|
-| `release-next-no-previous` | The member has no release with a version label before the commit, and no version tag that `release.tag` or `release.legacyTags` matches. Cut the first release with the label you choose, or name the prefix of the earlier tags in `release.legacyTags` |
+| `release-next-no-previous` | The member has no release with a version label before the commit, and no version tag that `release.tag` or `release.legacyTags` matches. Cut the first release with the label you choose, name it with `--first <version>`, or name the prefix of the earlier tags in `release.legacyTags` |
+| `release-next-first-invalid` | `--first` is not a version such as `0.1.0` or `v1.0.0` |
 | `release-next-unchanged` | No commit since the previous release touches the member, and no intent file names it |
 | `release-next-pre-invalid` | `--pre` is not a letter followed by letters, digits and `-` |
 | `release-next-history-shallow` | The clone is shallow, so the commits since the previous release can't be listed |

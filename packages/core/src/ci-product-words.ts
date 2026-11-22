@@ -1037,6 +1037,14 @@ export const PRODUCT_CONFIG_WORDS: readonly ProductConfigWord[] = /* @__PURE__ *
     products: [],
   },
   {
+    key: "release.first",
+    concept: "the version the merge's release takes when the member has no release yet",
+    section: "stage",
+    value: "a version such as `0.1.0`; `0.1.0` when unset",
+    chant: "`release.first` in `.chant/pipeline.ts`, `chant release cut auto --first <version>`",
+    products: [],
+  },
+  {
     key: "environments.<name>.targets.<member>",
     concept: "the target a member applies in one environment: a stack, a root, or the step's inputs there",
     section: "stage",

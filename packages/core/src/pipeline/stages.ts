@@ -41,16 +41,26 @@ export function promotionOrderOf(spec: Pick<PipelineSpec, "stages">): PromotionS
   return spec.stages.map((s) => ({ name: s.name, canary: s.canary === true }));
 }
 
+/** The version a pipeline's `auto` cut takes when the member has no release yet (terragucci#1526). */
+export const PIPELINE_FIRST_VERSION = "0.1.0";
+
 /**
  * The hook a merge's first stage cuts its release with. It passes
  * `--wait-checks` (#5438): under `release.green: forge-checks` the cut waits
  * for the other push workflows still running on the merge commit, and the
- * other gates ignore it.
+ * other gates ignore it. An `auto` cut passes `--first <release.first>`
+ * (default {@link PIPELINE_FIRST_VERSION}), as does another label when
+ * `release.first` is set (a product's word for auto), so the merge of a member with no
+ * release yet cuts its first one instead of failing after the apply
+ * (terragucci#1526, sql-yodeler#406).
  */
 export function releaseCutHook(spec: Pick<PipelineSpec, "release">): OpWaveHook | undefined {
   if (spec.release?.cut === false) return undefined;
   const bin = spec.release?.bin ?? ["chant"];
-  return { name: "release-cut", command: [...bin, "release", "cut", spec.release?.label ?? "auto", "--yes", "--wait-checks"] };
+  const label = spec.release?.label ?? "auto";
+  // A product's own word for auto takes --first when the product sets release.first.
+  const first = spec.release?.first !== undefined ? ["--first", spec.release.first] : label === "auto" ? ["--first", PIPELINE_FIRST_VERSION] : [];
+  return { name: "release-cut", command: [...bin, "release", "cut", label, ...first, "--yes", "--wait-checks"] };
 }
 
 /**

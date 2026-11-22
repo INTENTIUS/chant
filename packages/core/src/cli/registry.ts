@@ -419,6 +419,8 @@ export interface ParsedArgs {
   channel?: string;
   /** `chant release next --pre <id>` and `chant release cut auto --pre <id>` (#5159): the next label is a prerelease of the computed version, `<version>-<id>.<n>`. */
   pre?: string;
+  /** `chant release next --first <version>` and `chant release cut auto --first <version>` (terragucci#1526): the label when the member has no previous release. */
+  first?: string;
   /** `chant release deprecate|yank --replacement <label>` (#5163): the release to move to instead. */
   replacement?: string;
   /** `chant release yank --forge-release prerelease|draft|delete` (#5163): how a yank leaves the forge release. */

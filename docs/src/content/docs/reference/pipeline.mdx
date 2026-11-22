@@ -25,7 +25,7 @@ Anything else is refused with a finding: EVL001 or EVL003 for an expression outs
 | `name` | the pipeline's name: lowercase letters, digits, `-`, `_`. Stage gates and skips are recorded under it |
 | `stages` | the stages in promotion order, first to last; at least one |
 | `defaults` | op-waves settings every stage shares: `op`, `step` or `plan` and `apply`, `runner`, `notify`, `respond`, `evidence`, `approvals` without `quorum`, `hooks`, `holds`, `point` |
-| `release` | `{ cut, label, bin }`: the merge cuts a release once the first stage applied. `cut` defaults to `true`, `label` to `auto`, `bin` to `["chant"]` |
+| `release` | `{ cut, label, bin, first }`: the merge cuts a release once the first stage applied. `cut` defaults to `true`, `label` to `auto`, `bin` to `["chant"]`. `first` is the version an `auto` cut takes when the member has no release in its ledger or its version tags, so a repository's first merge cuts its first release; it defaults to `0.1.0` |
 | `control` | the control repo told once the first stage applied, as an op-waves spec's `control` |
 
 ## Stage
@@ -82,7 +82,7 @@ A group whose rules a gate's targets leave out is dropped, and a gate left with 
 | each wave's `gate`, `approval`, `environment`, `failureTolerance` | the wave's own, else the stage's |
 | `approvals.quorum`, `holds`, `point` | the stage's gate, else `defaults` |
 | `hooks` | `defaults.hooks`, then the stage's |
-| the last wave's `hooks.after.apply` | on the first stage, `<bin> release cut <label> --yes`, unless `release.cut` is `false`; then `<bin> pipeline artifacts publish --stage <name>` when the stage has `publish` |
+| the last wave's `hooks.after.apply` | on the first stage, `<bin> release cut <label> --first <first> --yes --wait-checks` (`--first` with the label `auto`, or with `release.first` set), unless `release.cut` is `false`; then `<bin> pipeline artifacts publish --stage <name>` when the stage has `publish` |
 | `control` | on the first stage, the pipeline's `control` |
 | `release` | `defaults.release`; with a `defaults.step` and run targets that some other stage lacks (targets that name environments), `component` is `defaults.release.component`, else the pipeline's name |
 
