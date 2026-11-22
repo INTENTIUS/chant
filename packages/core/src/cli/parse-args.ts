@@ -673,6 +673,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant release verify --sigstore --assets <dir>` (#5164): where the forge release's assets were downloaded.
       result.assets = args[++i];
       if (!result.assets || result.assets.startsWith("-")) throw new Error("--assets needs a directory: --assets dist/release");
+    } else if (arg === "--referrers") {
+      // `chant release evidence --referrers` (#5465): fetch each image's referrers from its registry, by digest.
+      result.referrers = true;
+    } else if (arg === "--until") {
+      // `chant release evidence --since <date> --until <date>` (#5465): the end of the period, exclusive.
+      result.until = args[++i];
+      if (!result.until || result.until.startsWith("-")) throw new Error("--until needs a date: --until 2026-11-01");
     } else if (arg === "--deployed") {
       // `chant release scan --deployed [<env>]` (#5466): scan the releases the environments run, or one environment's.
       const next = args[i + 1];

@@ -86,6 +86,16 @@ Releases:
                         SLSA provenance the publish recorded, with cosign:
                         an image's in its registry, a forge release's in the
                         directory --assets names.
+  release evidence <label|digest> | --since <date> [--until <date>] -o <dir>
+              [--sign [<key>]] [--referrers] [--sigstore] [--assets <dir>] [--json]
+                        Write the records of a release, or of every release
+                        and change in a period, byte for byte into <dir> with
+                        an index by control id that says what each record
+                        shows and does not show, and SHA256SUMS. Reads only
+                        this clone unless --referrers or --sigstore asks.
+  release evidence --check <dir> [--json]
+                        Check an export from the directory alone: digests,
+                        cut and approval signatures, and the sums' signature.
   release scan <label|digest> | --deployed [<env>] [--json]
                         Scan a published release again against today's
                         vulnerability database: the SBOMs its publish

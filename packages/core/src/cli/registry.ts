@@ -193,6 +193,10 @@ export interface ParsedArgs {
   sigstore?: boolean;
   /** `chant release verify --sigstore --assets <dir>` (#5164): the directory holding the forge release's downloaded assets. */
   assets?: string;
+  /** `chant release evidence --referrers` (#5465): fetch each image's referrers from its registry, by the digests the publish recorded. */
+  referrers?: boolean;
+  /** `chant release evidence --since <date> --until <date>` (#5465): the end of the period, exclusive; now when absent. */
+  until?: string;
   /** `chant release scan --deployed [<env>]` (#5466): scan every release the latest deploy record of each environment (or of `<env>`) names. */
   deployed?: string | true;
   /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
@@ -1066,7 +1070,7 @@ export interface ParsedArgs {
   plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
   op?: string;
-  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
+  /** `chant release evidence --since <date>` (#5465) — the start of the period, inclusive. `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. `chant workspace metrics --since <date>` (#4039) — the start of the window the metrics count. */
   since?: string;
   /** `chant ci verdict --wait` (#4644) — read again until no required phase is pending. */
   ciWait?: boolean;

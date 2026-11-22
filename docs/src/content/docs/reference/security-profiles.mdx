@@ -54,7 +54,7 @@ Whether the forge refuses a force push to or a deletion of `chant/lifecycle` (AU
 
 ## Controls
 
-The table is printed from `SECURITY_CONTROLS` in `packages/core/src/workspace/security-controls.ts`, and a test compares the two. "yes" means the baseline selects the control, "-" that it does not, and "n/a" that the id is not in the catalogue the baseline uses. The Checks column names the `workspace check` codes, publish refusals and doctor checks that bear on the control.
+The table is printed from `SECURITY_CONTROLS` in `packages/core/src/workspace/security-controls.ts`, and a test compares the two. "yes" means the baseline selects the control, "-" that it does not, and "n/a" that the id is not in the catalogue the baseline uses. The Checks column names the `workspace check` codes, publish refusals and doctor checks that bear on the control. [`chant release evidence`](/chant/cli/release/evidence/) writes a release's records, or a period's, into a directory with an index by these ids, each control with the records that bear on it and what they do not show.
 
 | Control | Title | FedRAMP Moderate | CCCS Medium | Evidence | Checks |
 |---|---|---|---|---|---|

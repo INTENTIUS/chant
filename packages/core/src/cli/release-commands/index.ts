@@ -10,6 +10,7 @@ import { changedCommand } from "./changed";
 import { composeCommand } from "./compose";
 import { cutCommand } from "./cut";
 import { doctorCommand } from "./doctor";
+import { evidenceCommand } from "./evidence";
 import { exportCommand } from "./export";
 import { imagesCommand } from "./images";
 import { initCommand } from "./init";
@@ -34,6 +35,7 @@ export const RELEASE_COMMANDS: readonly ReleaseCommandDoc[] = [
   composeCommand,
   cutCommand,
   doctorCommand,
+  evidenceCommand,
   exportCommand,
   imagesCommand,
   initCommand,
