@@ -89,6 +89,8 @@ export interface StatusStageRisk {
   /** True when the gate takes more approvals for this release. False when `reads` is false. */
   over: boolean;
   overBy: string[];
+  /** The reasons the score is made of, from the waves that scored the release (#5443). */
+  reasons: { id: string; contribution: number; detail: string }[];
 }
 
 /**
@@ -235,6 +237,8 @@ export interface StageViewInput {
   gates: readonly StatusGate[];
   /** The member's release cuts, or null when they can't be read. */
   cuts: readonly ReleaseCut[] | null;
+  /** The commit each release was cut from, by release digest (#5443). Joins a stage record that names no release to the cut of its commit. */
+  releaseCommits?: ReadonlyMap<string, string>;
   /** Reads one stage's release ledger, by its path on the branch. */
   readReleases: (path: string) => Promise<ReleaseRecord[] | null>;
   readStageLedger?: StageLedgerReader;
@@ -313,6 +317,12 @@ export async function readStageViews(input: StageViewInput): Promise<StatusStage
   const labels = new Map<string, string>();
   for (const c of cuts) if (c.label !== null && !labels.has(c.releaseDigest)) labels.set(c.releaseDigest, c.label);
   const riskOf = new Map(cuts.filter((c) => c.risk).map((c) => [c.releaseDigest, c.risk!]));
+  const cutOfCommit = (commit: string): string | null => {
+    const found = cuts
+      .filter((c) => c.risk && input.releaseCommits?.get(c.releaseDigest) === commit)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+    return found?.releaseDigest ?? null;
+  };
   const ref = (r: { digest: string; label?: string | null } | undefined): StatusStageReleaseRef | null => (r ? { digest: r.digest, label: r.label ?? labels.get(r.digest) ?? null } : null);
   const gateOf = (name: string, env: string) => input.gates.find((g) => g.component === spec.name && g.name === name && g.env === env);
   const readLedger = input.readStageLedger ?? defaultStageLedgerReader;
@@ -337,7 +347,9 @@ export async function readStageViews(input: StageViewInput): Promise<StatusStage
     };
 
     // The release the gate decides on while it waits, else the one the stage runs.
-    const riskRelease = gate.releaseDigest !== null && gate.state === "pending" ? gate.releaseDigest : release?.releaseDigest ?? null;
+    // #5443: a record written by an apply that came before the cut names no release; the cut of its commit is the release it ran.
+    const joined = release && release.releaseDigest === null && release.gitSha ? cutOfCommit(release.gitSha) : null;
+    const riskRelease = gate.releaseDigest !== null && gate.state === "pending" ? gate.releaseDigest : release?.releaseDigest ?? joined;
     const record = riskRelease ? riskOf.get(riskRelease) : undefined;
     let risk: StatusStageRisk | null = null;
     if (riskRelease && record) {
@@ -352,6 +364,7 @@ export async function readStageViews(input: StageViewInput): Promise<StatusStage
         approveAbove: read?.approveAbove ?? null,
         over: read?.over ?? false,
         overBy: read?.overBy ? [...read.overBy] : [],
+        reasons: record.waves.flatMap((w) => w.risk.reasons ?? []).map((r) => ({ id: r.id, contribution: r.contribution, detail: r.detail })),
       };
     }
 

@@ -503,6 +503,16 @@ async function memberCuts(memberDir: string): Promise<ReleaseCut[] | null> {
   }
 }
 
+/** The commit each of a member's releases was cut from, by release digest. Empty when the releases can't be read. */
+async function memberReleaseCommits(memberDir: string): Promise<Map<string, string>> {
+  try {
+    const { readAllReleases } = await import("../lifecycle/release-store");
+    return new Map((await readAllReleases({ cwd: memberDir })).releases.map((r) => [r.releaseDigest, r.commit]));
+  } catch {
+    return new Map();
+  }
+}
+
 /** A factory view with the declaration's x- keys on it and on its check, publish and tiers (#3595). */
 function factoryWithX(view: FactoryView | null, pointer: string, x: (pointer: string) => Record<string, unknown>): FactoryView | null {
   if (view === null) return null;
@@ -822,6 +832,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
               now,
               gates: everyGate.gates,
               cuts: await memberCuts(resolve(found.dir, m.dir)),
+              releaseCommits: await memberReleaseCommits(resolve(found.dir, m.dir)),
               readReleases: async (path) => (await read(path, found.dir)).records,
               ...(query.readStageLedger ? { readStageLedger: query.readStageLedger } : {}),
             }),

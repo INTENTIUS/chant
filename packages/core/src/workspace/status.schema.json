@@ -1076,7 +1076,7 @@
             { "type": "null" },
             {
               "type": "object",
-              "required": ["releaseDigest", "label", "score", "level", "reads", "approveAbove", "over", "overBy"],
+              "required": ["releaseDigest", "label", "score", "level", "reads", "approveAbove", "over", "overBy", "reasons"],
               "properties": {
                 "releaseDigest": { "type": "string" },
                 "label": { "type": ["string", "null"] },
@@ -1085,7 +1085,12 @@
                 "reads": { "type": "boolean", "description": "True when the stage sets holds.risk, so its gate reads the score." },
                 "approveAbove": { "type": ["number", "null"] },
                 "over": { "type": "boolean", "description": "True when the gate takes more approvals for this release. Risk only ever adds approvals." },
-                "overBy": { "type": "array", "items": { "type": "string" }, "description": "Why it is over, one line each." }
+                "overBy": { "type": "array", "items": { "type": "string" }, "description": "Why it is over, one line each." },
+                "reasons": {
+                  "type": "array",
+                  "description": "The reasons the score is made of (#5443), from the waves that scored the release.",
+                  "items": { "type": "object", "required": ["id", "contribution", "detail"], "properties": { "id": { "type": "string" }, "contribution": { "type": "number" }, "detail": { "type": "string" } } }
+                }
               }
             }
           ]

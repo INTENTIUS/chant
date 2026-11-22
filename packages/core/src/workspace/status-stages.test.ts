@@ -18,7 +18,7 @@ import { appendCut, makeRelease, persistRelease, type Release } from "../lifecyc
 import { appendReleaseRecord } from "../lifecycle/release-ledger";
 import { appendGateResolution, appendPendingGate } from "../lifecycle/gate-ledger";
 import { gitStageLedgerPort, type StagePauseLine } from "../pipeline/stage-ledger";
-import type { ReleaseRisk } from "../lifecycle/release-risk";
+import { appendWaveRisk, readReleaseRisk, type ReleaseRisk } from "../lifecycle/release-risk";
 import { contentDigest } from "../content-digest";
 import { STAGE_STATUS_FLOOR } from "../pipeline";
 import { NEXT_RELEASE } from "../release-floors";
@@ -324,5 +324,53 @@ describe("the release view per stage in workspace status (#5342)", () => {
   test("a member with no pipeline has no pipeline field and no stage table", () => {
     expect(none.members[0]).not.toHaveProperty("pipeline");
     expect(formatStatus(none)).not.toContain("CANARY");
+  });
+});
+
+describe("the first stage's risk when the apply comes before the cut (#5443)", () => {
+  let doc: Doc;
+  let v3: Release;
+
+  beforeAll(async () => {
+    const built = await scenario(async (dir) => {
+      await setup(dir);
+      git(dir, "commit", "-q", "--allow-empty", "-m", "merge");
+      const commit = git(dir, "rev-parse", "HEAD");
+      // The merge applies at dev first: the record names no release, as no release is cut yet.
+      await appendReleaseRecord(
+        { env: "dev", component: "api", digest: contentDigest(`api ${commit}`), gitSha: commit, runId: "run-dev", actor: "ci", timestamp: at(-0.5) },
+        { cwd: dir },
+      );
+      const reasons = [{ id: "blast-radius", weight: 0.5, value: 0.6, contribution: 0.3, detail: "3 resources change" }];
+      await appendWaveRisk(
+        [{ version: 1, commit, timestamp: at(-0.5), op: "shop-dev", wave: 1, name: "dev", digest: contentDigest(`plan ${commit}`), risk: { version: 1, score: 0.3, level: "medium", reasons, approveAbove: null, over: false, overBy: [] } }],
+        { cwd: dir },
+      );
+      // Then the release is cut from that commit, carrying the score the apply recorded.
+      const release = makeRelease({ member: null, commit, artifactDigests: [{ component: "api", kind: "image" as const, path: "api.tar", digest: contentDigest(`api ${commit}`) }], targets: [] });
+      await persistRelease(release, [], { cwd: dir });
+      const risk = await readReleaseRisk(commit, { cwd: dir });
+      expect(risk?.score).toBe(0.3);
+      await appendCut({ releaseDigest: release.releaseDigest, label: "v1.2.0", actor: "alice", timestamp: at(-0.25), runOrigin: null, ...(risk ? { risk } : {}) }, { cwd: dir });
+      return { doc: await read(dir), release };
+    });
+    doc = built.doc;
+    v3 = built.release;
+  }, 300_000);
+
+  test("dev shows the score and its reasons", () => {
+    const dev = doc.members[0]!.pipeline!.stages[0]!;
+    expect(dev.release).toMatchObject({ releaseDigest: null, gitSha: v3.commit });
+    expect(dev.risk).toMatchObject({
+      releaseDigest: v3.releaseDigest,
+      label: "v1.2.0",
+      score: 0.3,
+      level: "medium",
+      reads: true,
+      approveAbove: 0.9,
+      over: false,
+      reasons: [{ id: "blast-radius", contribution: 0.3, detail: "3 resources change" }],
+    });
+    expect(formatStatus(doc)).toMatch(/root\s+dev\s+\S+\s+\S+.*0\.30 medium within 0\.9/);
   });
 });
