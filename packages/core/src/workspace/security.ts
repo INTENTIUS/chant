@@ -108,9 +108,11 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "SBOM on every target", byDefault: "off: a target with no SBOM source publishes without one", setting: "`sbom` on the target", group: "supply-chain", codes: ["security-sbom-disabled", "security-sbom-unsourced"] },
   { feature: "OIDC provenance", byDefault: "off: a plan field", setting: "`--require-provenance`", group: "supply-chain", codes: ["security-publish-no-provenance"] },
   { feature: "Cut needs a green gate", byDefault: "off: `release.green: \"none\"` cuts with a warning", setting: "`release.green` other than `none`", group: "supply-chain", codes: [] },
-  { feature: "Sigstore signatures and SLSA provenance on images and forge assets", byDefault: "off: nothing is signed", setting: "`release.signing`", group: "supply-chain", codes: [] },
+  { feature: "Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key", byDefault: "off: nothing is signed", setting: "`release.signing` (`kms` for a KMS key, `key` for a cosign key, `fulcio`, `rekor` and `trustRoot` for a private Sigstore instance)", group: "supply-chain", codes: [] },
   // #5446: images and attached SBOMs scanned before the stage, with the vulnPolicy gate.
   { feature: "Vulnerability scan before anything is pushed", byDefault: "off: a publish pushes without scanning", setting: "`release.scan`", group: "supply-chain", codes: [] },
+  // #5467: promote checks what the publish recorded.
+  { feature: "Promote checks the image signatures and the scan record", byDefault: "off: promote deploys a release whatever its publish recorded", setting: "none: the group turns it on", group: "supply-chain", codes: [] },
   // #5457: release.images Dockerfiles start from bases pinned by digest.
   { feature: "Release image bases pinned by digest", byDefault: "off: a `FROM` by tag builds from whatever the tag names that day", setting: "pin each `FROM` as `name:tag@sha256:<digest>`", group: "supply-chain", codes: ["security-image-base-unpinned"] },
   { feature: "SBOM and verify steps on components", byDefault: "off", setting: "a `generate-sbom` or `verify` step", group: "supply-chain", codes: ["security-component-no-sbom", "security-component-no-verify"] },

@@ -99,3 +99,13 @@ What the scan found stays with the release:
 To scan images with Wiz, set `release.scan: { "imageScanner": "wiz" }` in `chant.config.ts`. Each image goes through `wizcli docker scan` in place of grype, and its findings go through the same `vulnPolicy`, VEX files, record and referrer. syft still makes the image's layer SBOM, and the SBOMs forge assets and packages carry still go to grype or trivy, since Wiz scans images. The job sets `WIZ_CLIENT_ID` and `WIZ_CLIENT_SECRET` and puts `wizcli` on `PATH` (or names it in `CHANT_WIZCLI`); without them the publish stops with `publish-scan-tool-missing` and does not fall back to another scanner. chant reads the results `wizcli` writes as SARIF: a finding's advisory is the rule id, its severity the `security-severity` property (else the SARIF level), and its package, version and fix the result's `packageName`, `packageVersion` and `fixedVersion` properties.
 
 `release.scan: true` turns the scan on without the group.
+
+## Promote checks what the publish recorded
+
+Under `supply-chain`, `chant components promote --release` deploys a release only after two checks, which it makes beside the revocation check and, under `verified-releases`, `chant release verify`. A train's promote runs the same command in each member, so each member's release is checked.
+
+- When the publish signs (`release.signing`, or the group) and `release.publish` declares an `oci` or `forge` target, the publish record must hold a Sigstore signature, and every bundle of an `oci` target must verify, as [`chant release verify --sigstore`](/chant/cli/release/verify/#checking-the-sigstore-signatures) checks it. A record with none refuses with `release-sigstore-unsigned`, and a bundle that does not verify, or that cosign can't check, with `release-sigstore-unverified`. A forge release's bundles sit beside files promote does not read, so check them with `release verify --sigstore --assets`.
+- When the publish scans (`release.scan`, or the group) and an `oci`, `forge` or `npm` target is declared, the publish record must hold a `scanned` line for the release. A release with none, or with only a `scan-failed` line, refuses with `release-scan-missing`.
+
+Each refusal names the check to run by hand. There is no flag to skip it; a workspace that wants it off leaves `supply-chain` off, or sets `release.signing: false` or `release.scan: false` and takes the warning those print at publish. `chant components rollback` does not make these checks, since it returns to a release an environment already ran.
+

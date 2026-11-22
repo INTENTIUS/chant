@@ -21,6 +21,7 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Cut needs a green gate | off: `release.green: "none"` cuts with a warning | `release.green` other than `none` | `supply-chain` | none |
 | Sigstore signatures and SLSA provenance on images and forge assets, keylessly or with a key | off: nothing is signed | `release.signing` (`kms` for a KMS key, `key` for a cosign key, `fulcio`, `rekor` and `trustRoot` for a private Sigstore instance) | `supply-chain` | none |
 | Vulnerability scan before anything is pushed | off: a publish pushes without scanning | `release.scan` | `supply-chain` | none |
+| Promote checks the image signatures and the scan record | off: promote deploys a release whatever its publish recorded | none: the group turns it on | `supply-chain` | none |
 | Release image bases pinned by digest | off: a `FROM` by tag builds from whatever the tag names that day | pin each `FROM` as `name:tag@sha256:<digest>` | `supply-chain` | `security-image-base-unpinned` |
 | SBOM and verify steps on components | off | a `generate-sbom` or `verify` step | `supply-chain` | `security-component-no-sbom`, `security-component-no-verify` |
 | Signed green tags and runs | off: every tag counts | `ci.green.signedSince` | `who-ran-it` | `security-signed-since-unset` |

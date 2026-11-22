@@ -204,13 +204,15 @@ export async function verifySigstore(req: {
   assetsDir?: string;
   verifier?: import("./publish-signing").SigstoreVerifier;
   env?: NodeJS.ProcessEnv;
+  /** Check only the bundles of targets of these kinds, such as `["oci"]` (#5467). Default: every one. */
+  kinds?: readonly string[];
 }): Promise<SigstoreVerification> {
   const { existsSync, readFileSync } = await import("node:fs");
   const { join, resolve } = await import("node:path");
   const { cosignVerifier, cosignPath, isKeyIdentity, resolveSigning } = await import("./publish-signing");
   const { bytesDigest } = await import("./publish-targets");
   const { loadChantConfig } = await import("../config");
-  const recorded = await recordedSignatures(req.cwd, req.releaseDigest);
+  const recorded = (await recordedSignatures(req.cwd, req.releaseDigest)).filter((r) => !req.kinds || req.kinds.includes(r.kind));
   if (recorded.length === 0) return { status: "none", checks: [], reason: "the publish record holds no Sigstore signature for this release" };
   const config = (await loadChantConfig(req.cwd).catch(() => null))?.config.release?.signing;
   const setting = resolveSigning(config ?? true, new Set());

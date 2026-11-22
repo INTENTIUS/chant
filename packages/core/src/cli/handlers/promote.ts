@@ -1014,6 +1014,15 @@ async function resolveUnderRelease(ref: string, env: string, verb: "promote" | "
       return 1;
     }
   }
+  // #5467: under supply-chain a release deploys only once its image signatures verify and its publish record holds a passing scan.
+  if (verb === "promote" && securityGroupsAt(process.cwd()).has("supply-chain")) {
+    const { supplyChainGate } = await import("../../lifecycle/release-supply-gate");
+    const refused = await supplyChainGate({ cwd: process.cwd(), releaseDigest: found.release.releaseDigest, label: found.label, groups: securityGroupsAt(process.cwd()) });
+    if (refused) {
+      console.error(formatError({ message: `${refused.message} [${refused.code}]`, hint: refused.hint }));
+      return 1;
+    }
+  }
   return { release: found.release, label: found.label, target: target.target };
 }
 
