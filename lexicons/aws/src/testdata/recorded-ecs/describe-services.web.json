@@ -1,0 +1,36 @@
+{
+  "services": [
+    {
+      "serviceArn": "arn:aws:ecs:eu-west-1:111122223333:service/prod-cluster/web",
+      "serviceName": "web",
+      "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/prod-cluster",
+      "status": "ACTIVE",
+      "desiredCount": 3,
+      "runningCount": 3,
+      "pendingCount": 0,
+      "launchType": "FARGATE",
+      "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:8",
+      "deployments": [
+        {
+          "id": "ecs-svc/6401170890273423419",
+          "status": "PRIMARY",
+          "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:8",
+          "desiredCount": 3,
+          "pendingCount": 1,
+          "runningCount": 2,
+          "rolloutState": "IN_PROGRESS"
+        },
+        {
+          "id": "ecs-svc/2288104937110031255",
+          "status": "ACTIVE",
+          "taskDefinition": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:7",
+          "desiredCount": 1,
+          "pendingCount": 0,
+          "runningCount": 1,
+          "rolloutState": "COMPLETED"
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

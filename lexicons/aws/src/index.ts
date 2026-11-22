@@ -221,4 +221,4 @@ export type {
   PermissionSetConfig,
   AssignmentConfig,
 } from "./governance";
-export { AWS_STACK_MEMBER_FLOOR, AWS_STATE_LOCATIONS_FLOOR } from "./chant-floors";
+export { AWS_STACK_MEMBER_FLOOR, AWS_STATE_LOCATIONS_FLOOR, AWS_ECS_TASKS_FLOOR } from "./chant-floors";

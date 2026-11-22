@@ -823,6 +823,15 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     if (ccNotes.length > 0) notes = [...(notes ?? []), ...ccNotes];
     const withProperties = stampProviderDefaults(stampRegion(cc.resources, options.region));
 
+    // The tasks of each declared ECS service, as runtime nodes it owns (#5448).
+    // A read that fails leaves a note and no node, never a hole in what the stack answered.
+    const { observeEcsTasks } = await import("./ecs-tasks");
+    const serviceRefs = Object.entries(withProperties)
+      .filter(([, m]) => m.type === "AWS::ECS::Service" && m.physicalId?.startsWith("arn:"))
+      .map(([entity, m]) => ({ entity, arn: m.physicalId! }));
+    const ecsTasks = serviceRefs.length > 0 ? await observeEcsTasks(serviceRefs, { client }) : { resources: {}, notes: [] };
+    if (ecsTasks.notes.length > 0) notes = [...(notes ?? []), ...ecsTasks.notes];
+
     // The own-property read is still a CLI shell-out while the stack reads are
     // not (#1206), so the two halves can now fail independently. When the
     // enrichment could not run at all, the resources it would have described are
@@ -850,7 +859,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
         };
       }
       return observation(
-        { ...described, ...identity.resources, ...receiptObs.resources },
+        { ...described, ...ecsTasks.resources, ...identity.resources, ...receiptObs.resources },
         { ...holes, ...receiptObs.unobserved },
         identity.queried,
         notes,
@@ -862,7 +871,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     // template doesn't carry is genuinely not in this stack, which is an
     // absence, not a hole — unless the identity fallback saw it live (#1647).
     return observation(
-      { ...withProperties, ...identity.resources, ...receiptObs.resources },
+      { ...withProperties, ...ecsTasks.resources, ...identity.resources, ...receiptObs.resources },
       receiptHoles,
       identity.queried,
       notes,

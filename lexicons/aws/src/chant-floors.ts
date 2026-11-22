@@ -25,3 +25,8 @@ export const AWS_STACK_MEMBER_FLOOR = NEXT_RELEASE;
  * The first aws lexicon release whose cloudformation and cdk members publish `stateLocations` on their graph meta, so `chant workspace state` says where a member's state lives: the stack and its region, `reachable` when the stack was read and `unreachable` with the reason when it was not (#5456).
  */
 export const AWS_STATE_LOCATIONS_FLOOR = NEXT_RELEASE;
+
+/**
+ * The first aws lexicon release whose live read lists each declared ECS service's tasks (`ListTasks`, `DescribeTasks`) as undeclared nodes owned by the service (`ownerChain: { root: "declared", entity }`), so `chant graph --live --overlay` paints them `runtime`: each with its task definition revision, the service's current one, `staleRevision` while a rolling deploy has a task behind, and a note when a service has more than 100 tasks (#5448).
+ */
+export const AWS_ECS_TASKS_FLOOR = NEXT_RELEASE;

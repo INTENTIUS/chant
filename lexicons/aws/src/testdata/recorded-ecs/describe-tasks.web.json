@@ -1,0 +1,44 @@
+{
+  "tasks": [
+    {
+      "taskArn": "arn:aws:ecs:eu-west-1:111122223333:task/prod-cluster/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/prod-cluster",
+      "taskDefinitionArn": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:8",
+      "lastStatus": "RUNNING",
+      "desiredStatus": "RUNNING",
+      "healthStatus": "HEALTHY",
+      "launchType": "FARGATE",
+      "availabilityZone": "eu-west-1a",
+      "startedBy": "ecs-svc/6401170890273423419",
+      "group": "service:web",
+      "createdAt": 1767225600.123,
+      "startedAt": 1767225630.456
+    },
+    {
+      "taskArn": "arn:aws:ecs:eu-west-1:111122223333:task/prod-cluster/1b2c3d4e5f60718293a4b5c6d7e8f900",
+      "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/prod-cluster",
+      "taskDefinitionArn": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:7",
+      "lastStatus": "RUNNING",
+      "desiredStatus": "RUNNING",
+      "healthStatus": "HEALTHY",
+      "launchType": "FARGATE",
+      "availabilityZone": "eu-west-1b",
+      "startedBy": "ecs-svc/2288104937110031255",
+      "group": "service:web",
+      "createdAt": 1767139200,
+      "startedAt": 1767139220
+    },
+    {
+      "taskArn": "arn:aws:ecs:eu-west-1:111122223333:task/prod-cluster/2c3d4e5f60718293a4b5c6d7e8f90011",
+      "clusterArn": "arn:aws:ecs:eu-west-1:111122223333:cluster/prod-cluster",
+      "taskDefinitionArn": "arn:aws:ecs:eu-west-1:111122223333:task-definition/web:8",
+      "lastStatus": "PENDING",
+      "desiredStatus": "RUNNING",
+      "launchType": "FARGATE",
+      "startedBy": "ecs-svc/6401170890273423419",
+      "group": "service:web",
+      "createdAt": 1767225700
+    }
+  ],
+  "failures": []
+}

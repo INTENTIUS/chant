@@ -304,6 +304,14 @@ CloudFormation also refuses to change or remove an export another stack imports.
 
 Stack-level locks are CloudFormation's. It refuses a second update to a stack while one is in progress, and chant adds no lock of its own. A failure part way leaves the stacks that applied, applied: chant does not roll back an upstream stack because a later one failed, and the report lists each stack as applied, failed or blocked.
 
+## ECS tasks in a live read
+
+A live read of a stack with an `AWS::ECS::Service` lists the service's tasks, as a Kubernetes read lists the pods of a Deployment. For each declared service, `chant graph --live --overlay` and `chant lifecycle diff --live` call `DescribeServices`, `ListTasks` and `DescribeTasks`, and report each task as a node `Task/<cluster>/<task id>` of type `AWS::ECS::Task` with an owner chain that reaches the service. The graph draws it as a `runtime` node under the service, and a diff never proposes to delete it, since the service starts it again.
+
+A task carries `taskDefinition`, `taskDefinitionRevision`, `lastStatus`, `desiredStatus`, `healthStatus`, `launchType`, `availabilityZone` and `startedBy`, and the service's current definition as `serviceTaskDefinition` and `serviceTaskDefinitionRevision`. `staleRevision` is true for a task on another revision than the service's current one, which is what a rolling deploy looks like while it runs.
+
+A service reports at most 100 tasks. A service with more says so in a note and reports the first 100. A service whose tasks could not be read, for want of `ecs:ListTasks` or `ecs:DescribeTasks`, is named in a note, and the rest of the stack is still read.
+
 ## Tagging
 
 Use `defaultTags()` to declare project-wide tags. The serializer adds them to every taggable resource at build time:
