@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,8 +18,15 @@ import { PublishDeclarationSchema } from "./publish-declaration";
 import { referrersTagOf } from "./publish-oci";
 import {
   BUNDLE_PREDICATE_ANNOTATION,
+  CI_SERVE_BUILDER,
   COSIGN_SIGN_PREDICATE,
+  FORGEJO_BUILD_TYPE,
   GITHUB_BUILD_TYPE,
+  HOST_BUILD_TYPE,
+  RUNNER_FINGERPRINT_ENV,
+  WORKSTATION_BUILDER,
+  githubOidcIssuer,
+  releaseBuildKind,
   SIGSTORE_BUNDLE_MEDIA_TYPE,
   SLSA_BUNDLE_FILE,
   SLSA_PROVENANCE_PREDICATE,
@@ -30,7 +38,7 @@ import {
   type SigstoreVerifier,
 } from "./publish-signing";
 import { createPublishTargets } from "./publish-targets";
-import { preparePublish, publishContext, runPublish, type PublishContext } from "./release-publish";
+import { detectProvenance, preparePublish, publishContext, runPublish, type PublishContext } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
 import { verifySigstore } from "./release-verify";
 import { cutRelease } from "./release-cut";
@@ -161,6 +169,75 @@ describe("when a publish signs", () => {
         runDetails: { builder: { id: "https://github.com/acme/api/.github/workflows/chant-release.yml@refs/tags/release/v1.4.0" }, metadata: { invocationId: "https://github.com/acme/api/actions/runs/99/attempts/1" } },
       },
     });
+  });
+});
+
+describe("the environment a release is built in (#5458)", () => {
+  const FORGEJO_ENV = {
+    GITHUB_ACTIONS: "true",
+    FORGEJO_ACTIONS: "true",
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://code.example/api/actions/_apis/pipelines/idtoken",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "t",
+    FORGEJO_SERVER_URL: "https://code.example",
+    GITHUB_SERVER_URL: "https://code.example",
+    FORGEJO_REPOSITORY: "acme/api",
+    GITHUB_REPOSITORY: "acme/api",
+    FORGEJO_WORKFLOW_REF: "acme/api/.forgejo/workflows/chant-release.yml@refs/tags/release/v1.4.0",
+    FORGEJO_REF: "refs/tags/release/v1.4.0",
+    FORGEJO_RUN_NUMBER: "7",
+    FORGEJO_RUN_ID: "1234",
+    FORGEJO_EVENT_NAME: "push",
+  };
+
+  test("a Forgejo runner is not taken for GitHub, by FORGEJO_ACTIONS, GITEA_ACTIONS, or an older runner's API URL", () => {
+    expect(releaseBuildKind(FORGEJO_ENV)).toBe("forgejo");
+    expect(releaseBuildKind({ GITHUB_ACTIONS: "true", GITEA_ACTIONS: "true" })).toBe("forgejo");
+    expect(releaseBuildKind({ GITHUB_ACTIONS: "true", GITHUB_API_URL: "https://code.example/api/v1" })).toBe("forgejo");
+    expect(releaseBuildKind({ GITHUB_ACTIONS: "true", GITHUB_API_URL: "https://ghes.example/api/v3" })).toBe("github");
+    expect(releaseBuildKind(GITHUB_ENV)).toBe("github");
+    expect(releaseBuildKind({ GITLAB_CI: "true" })).toBe("gitlab");
+    expect(releaseBuildKind({ [RUNNER_FINGERPRINT_ENV]: "SHA256:abc" })).toBe("host");
+    expect(releaseBuildKind({})).toBe("workstation");
+    expect(signingIdentity(FORGEJO_ENV)).toMatchObject({ reason: expect.stringContaining("Forgejo") });
+    expect(detectProvenance(FORGEJO_ENV)).toMatchObject({ oidc: false, ci: "forgejo" });
+    expect(detectProvenance(GITHUB_ENV)).toMatchObject({ oidc: true, ci: "github" });
+  });
+
+  test("the GitHub issuer follows the server: github.com, a GHE.com host, GitHub Enterprise Server", () => {
+    expect(githubOidcIssuer("https://github.com")).toBe("https://token.actions.githubusercontent.com");
+    expect(githubOidcIssuer("https://acme.ghe.com/")).toBe("https://token.actions.acme.ghe.com");
+    expect(githubOidcIssuer("https://ghes.example")).toBe("https://ghes.example/_services/token");
+    expect(signingIdentity({ ...GITHUB_ENV, GITHUB_SERVER_URL: "https://ghes.example" })).toEqual({ identity: { issuer: "https://ghes.example/_services/token", identity: "^https://ghes\\.example/acme/api/" } });
+  });
+
+  test("a Forgejo job's statement names Forgejo's server and workflow, not GitHub", () => {
+    const ctx = context(temp(), { env: FORGEJO_ENV });
+    const s = slsaProvenanceStatement(ctx, [{ name: "api.tar.gz", digest: `sha256:${"a".repeat(64)}` }]);
+    expect(s.predicate).toMatchObject({
+      buildDefinition: {
+        buildType: FORGEJO_BUILD_TYPE,
+        externalParameters: { workflow: { ref: "refs/tags/release/v1.4.0", repository: "https://code.example/acme/api", path: ".forgejo/workflows/chant-release.yml" } },
+        internalParameters: { forgejo: { event_name: "push", run_id: "1234" }, chant: { label: "v1.4.0" } },
+        resolvedDependencies: [{ uri: "git+https://code.example/acme/api@refs/tags/release/v1.4.0", digest: { gitCommit: ctx.release.commit } }],
+      },
+      runDetails: { builder: { id: "https://code.example/acme/api/.forgejo/workflows/chant-release.yml@refs/tags/release/v1.4.0" }, metadata: { invocationId: "https://code.example/acme/api/actions/runs/7" } },
+    });
+    expect(JSON.stringify(s)).not.toContain("github");
+  });
+
+  test("a ci serve host is named by its runner key's fingerprint, and a workstation by neither, each with the origin it built from and no credentials", () => {
+    const dir = temp();
+    execFileSync("git", ["init", "-q", dir]);
+    execFileSync("git", ["-C", dir, "remote", "add", "origin", "https://user:secret@git.example/acme/api.git"]);
+    const host = slsaProvenanceStatement(context(dir, { env: { [RUNNER_FINGERPRINT_ENV]: "SHA256:abc/def" } }), [{ name: "a", digest: `sha256:${"b".repeat(64)}` }]);
+    expect(host.predicate).toMatchObject({
+      buildDefinition: { buildType: HOST_BUILD_TYPE, externalParameters: { source: "https://git.example/acme/api.git" }, internalParameters: { host: { runner: "ci-serve", runnerKey: "SHA256:abc/def" } } },
+      runDetails: { builder: { id: `${CI_SERVE_BUILDER}SHA256%3Aabc%2Fdef` } },
+    });
+    expect(JSON.stringify(host)).not.toContain("secret");
+    const desk = slsaProvenanceStatement(context(dir, { env: {} }), [{ name: "a", digest: `sha256:${"b".repeat(64)}` }]);
+    expect(desk.predicate).toMatchObject({ buildDefinition: { buildType: HOST_BUILD_TYPE, internalParameters: { host: { runner: "workstation", runnerKey: null } } }, runDetails: { builder: { id: WORKSTATION_BUILDER } } });
+    expect(JSON.stringify(desk)).not.toContain("github");
   });
 });
 

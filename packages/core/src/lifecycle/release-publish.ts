@@ -56,12 +56,24 @@ import { createRedactor, type Redactor } from "./publish-credentials";
 import { floatingTagOfLine, renderReleaseTag, stableVersionOf, type MemberTags } from "./release-tag";
 import { prereleaseOf } from "./release-prerelease";
 
+/**
+ * Whether this is a Forgejo (or Gitea) Actions job (#5458). A Forgejo runner
+ * sets the `GITHUB_*` variables too, `GITHUB_ACTIONS` among them, so it is
+ * told apart by `FORGEJO_ACTIONS` or `GITEA_ACTIONS`, and on a runner older
+ * than v7, which sets neither, by its API URL: Forgejo's is `<server>/api/v1`,
+ * and GitHub's is `https://api.github.com` or `<server>/api/v3`.
+ */
+export function isForgejoJob(env: NodeJS.ProcessEnv): boolean {
+  if (env.FORGEJO_ACTIONS === "true" || env.GITEA_ACTIONS === "true") return true;
+  return env.GITHUB_ACTIONS === "true" && /\/api\/v1\/?$/.test(env.GITHUB_API_URL ?? "");
+}
+
 /** Whether this run can sign provenance with an OIDC token, and why not when it can't. */
 export interface ProvenanceCheck {
   /** True when the run has an OIDC token a registry accepts for provenance. */
   oidc: boolean;
-  /** The CI the run is in, or null on a workstation. */
-  ci: "github" | "gitlab" | null;
+  /** The CI the run is in, or null on a workstation or a `chant ci serve` host. */
+  ci: "github" | "gitlab" | "forgejo" | null;
   /** One sentence on what was found. */
   reason: string;
 }
@@ -71,9 +83,13 @@ export interface ProvenanceCheck {
  * provenance: in GitHub Actions, `ACTIONS_ID_TOKEN_REQUEST_URL` and
  * `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, which a job with `id-token: write` gets;
  * in GitLab CI, an ID token named `SIGSTORE_ID_TOKEN` or `NPM_ID_TOKEN`
- * declared under the job's `id_tokens`. Anywhere else there is none.
+ * declared under the job's `id_tokens`. A Forgejo job, which sets the
+ * `GITHUB_*` variables too, has none a registry takes (#5458). Anywhere else
+ * there is none.
  */
 export function detectProvenance(env: NodeJS.ProcessEnv = process.env): ProvenanceCheck {
+  // #5458: a Forgejo runner sets GITHUB_ACTIONS too, and its token is not one npm or PyPI records provenance from.
+  if (isForgejoJob(env)) return { oidc: false, ci: "forgejo", reason: "this is a Forgejo Actions job, and npm and PyPI record provenance only from a GitHub or GitLab OIDC token" };
   if (env.GITHUB_ACTIONS === "true") {
     return env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
       ? { oidc: true, ci: "github", reason: "GitHub Actions hands this job an OIDC token" }

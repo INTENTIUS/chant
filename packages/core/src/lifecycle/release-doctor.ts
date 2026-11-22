@@ -69,7 +69,7 @@ import type {
   PypiPublishDeclaration,
   TauriUpdaterPublishDeclaration,
 } from "./publish-declaration";
-import type { PublishFetch } from "./release-publish";
+import { isForgejoJob, type PublishFetch } from "./release-publish";
 
 /** The first chant with `chant release doctor`, which checks each `release.publish` target before a cut, and whose `chant release workflow` runs it in a dispatched release's cut job (`release.workflow.doctor`) (#5161). */
 export const RELEASE_DOCTOR_FLOOR = "0.124.101";
@@ -153,7 +153,8 @@ function defaultRun(bin: string, args: string[], opts: { cwd: string; env: NodeJ
 
 /** The CI this process runs in, and whether it can get an OIDC token, from its environment. */
 export function doctorEnvironment(env: NodeJS.ProcessEnv, req: { cwd: string; releaseWorkflow: string | null; from?: "cut" }): DoctorEnvironment {
-  const ci = env.GITHUB_ACTIONS === "true" ? "github" : env.GITLAB_CI === "true" ? "gitlab" : env.CI ? "other" : null;
+  // #5458: a Forgejo runner sets GITHUB_ACTIONS too, and is not GitHub.
+  const ci = isForgejoJob(env) ? "other" : env.GITHUB_ACTIONS === "true" ? "github" : env.GITLAB_CI === "true" ? "gitlab" : env.CI ? "other" : null;
   const oidc = ci === "github" ? Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) : ci === "gitlab" ? Boolean(env.NPM_ID_TOKEN || env.SIGSTORE_ID_TOKEN || env.OVSX_ID_TOKEN) : Boolean(env.OVSX_ID_TOKEN);
   // GITHUB_WORKFLOW_REF is `owner/name/.github/workflows/release.yml@refs/heads/main`.
   const ref = env.GITHUB_WORKFLOW_REF ?? "";

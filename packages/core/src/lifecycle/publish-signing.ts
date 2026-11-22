@@ -40,7 +40,9 @@ import { promisify } from "node:util";
 import { IN_TOTO_STATEMENT_TYPE } from "./publish-attachments";
 import type { Redactor } from "./publish-credentials";
 import type { SecurityGroup } from "../workspace/security";
-import { PublishTargetError, type PublishContext } from "./release-publish";
+import { PublishTargetError, isForgejoJob, type PublishContext } from "./release-publish";
+
+export { isForgejoJob };
 
 /** The media type of a Sigstore bundle, and the artifact type of a referrer that holds one. */
 export const SIGSTORE_BUNDLE_MEDIA_TYPE = "application/vnd.dev.sigstore.bundle.v0.3+json";
@@ -58,6 +60,20 @@ export const BUNDLE_PREDICATE_ANNOTATION = "dev.sigstore.bundle.predicateType";
 export const GITHUB_BUILD_TYPE = "https://actions.github.io/buildtypes/workflow/v1";
 /** The buildType of SLSA provenance written in GitLab CI. */
 export const GITLAB_BUILD_TYPE = "https://intentius.io/chant/release/build/gitlab-ci/v1";
+/** The buildType of SLSA provenance written in Forgejo Actions (#5458). */
+export const FORGEJO_BUILD_TYPE = "https://intentius.io/chant/release/build/forgejo-actions/v1";
+/** The buildType of SLSA provenance written outside a forge's CI: a `chant ci serve` host or a workstation (#5458). */
+export const HOST_BUILD_TYPE = "https://intentius.io/chant/release/build/host/v1";
+/** The builder id of a `chant ci serve` host, followed by its runner key's fingerprint (#5458). */
+export const CI_SERVE_BUILDER = "https://intentius.io/chant/release/builder/ci-serve/";
+/** The builder id of a publish run by hand, outside any CI (#5458). */
+export const WORKSTATION_BUILDER = "https://intentius.io/chant/release/builder/workstation";
+/**
+ * The variable a `chant ci serve` host sets for the publish it runs: its
+ * runner key's ssh fingerprint (`SHA256:...`), which the SLSA statement
+ * names as the builder (#5458).
+ */
+export const RUNNER_FINGERPRINT_ENV = "CHANT_RELEASE_RUNNER_KEY_FINGERPRINT";
 /** The cosign major version chant runs: 3 writes Sigstore bundles by default. */
 export const COSIGN_MAJOR = 3;
 
@@ -97,21 +113,64 @@ export interface SigstoreIdentity {
 }
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const trimSlash = (s: string): string => s.replace(/\/+$/, "");
+
+/** Where a release is built: a forge's CI, a `chant ci serve` host, or a workstation (#5458). */
+export type ReleaseBuildKind = "github" | "gitlab" | "forgejo" | "host" | "workstation";
+
+/** Where this run builds the release, from its environment (#5458). */
+export function releaseBuildKind(env: NodeJS.ProcessEnv): ReleaseBuildKind {
+  if (isForgejoJob(env)) return "forgejo";
+  if (env.GITHUB_ACTIONS === "true") return "github";
+  if (env.GITLAB_CI === "true") return "gitlab";
+  if (env[RUNNER_FINGERPRINT_ENV]) return "host";
+  return "workstation";
+}
+
+/**
+ * The OIDC issuer of a GitHub Actions token on `server`: GitHub's own on
+ * github.com, `token.actions.<host>` on a GHE.com host, and the server's
+ * `/_services/token` on GitHub Enterprise Server.
+ */
+export function githubOidcIssuer(server: string): string {
+  const url = trimSlash(server);
+  const host = url.replace(/^https?:\/\//, "");
+  if (host === "github.com") return "https://token.actions.githubusercontent.com";
+  if (host.endsWith(".ghe.com")) return `https://token.actions.${host}`;
+  return `${url}/_services/token`;
+}
+
+/** The server and repository of a Forgejo job, from its `FORGEJO_*` variables, else the `GITHUB_*` ones an older runner sets. */
+function forgejoJob(env: NodeJS.ProcessEnv) {
+  return {
+    server: trimSlash(env.FORGEJO_SERVER_URL ?? env.GITHUB_SERVER_URL ?? ""),
+    repo: env.FORGEJO_REPOSITORY ?? env.GITHUB_REPOSITORY ?? "",
+    workflowRef: env.FORGEJO_WORKFLOW_REF ?? env.GITHUB_WORKFLOW_REF ?? "",
+    ref: env.FORGEJO_REF ?? env.GITHUB_REF ?? "",
+    runNumber: env.FORGEJO_RUN_NUMBER ?? env.GITHUB_RUN_NUMBER ?? "",
+    runId: env.FORGEJO_RUN_ID ?? env.GITHUB_RUN_ID ?? "",
+    event: env.FORGEJO_EVENT_NAME ?? env.GITHUB_EVENT_NAME ?? null,
+  };
+}
 
 /**
  * Whether this run can sign keylessly, and the identity its certificate will
  * name: in GitHub Actions, a job with `id-token: write`, whose certificate
- * names a workflow of the repository; in GitLab CI, an ID token named
- * `SIGSTORE_ID_TOKEN` with the audience `sigstore`, whose certificate names
- * the project's pipeline. Anywhere else there is none.
+ * names a workflow of the repository and is issued by the server's token
+ * service; in GitLab CI, an ID token named `SIGSTORE_ID_TOKEN` with the
+ * audience `sigstore`, whose certificate names the project's pipeline.
+ * A Forgejo job is never taken for GitHub (#5458). Anywhere else there is none.
  */
 export function signingIdentity(env: NodeJS.ProcessEnv): { identity: SigstoreIdentity } | { reason: string } {
+  if (isForgejoJob(env)) {
+    return { reason: "this is a Forgejo Actions job, and public Sigstore issues no certificate for a Forgejo token; sign with release.signing.kms or key" };
+  }
   if (env.GITHUB_ACTIONS === "true") {
     if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return { reason: "this GitHub Actions job has no OIDC token; give the job permissions: id-token: write" };
-    const server = (env.GITHUB_SERVER_URL ?? "https://github.com").replace(/\/+$/, "");
+    const server = trimSlash(env.GITHUB_SERVER_URL ?? "https://github.com");
     const repo = env.GITHUB_REPOSITORY;
     if (!repo) return { reason: "this GitHub Actions job has no GITHUB_REPOSITORY" };
-    return { identity: { issuer: "https://token.actions.githubusercontent.com", identity: `^${escape(server)}/${escape(repo)}/` } };
+    return { identity: { issuer: githubOidcIssuer(server), identity: `^${escape(server)}/${escape(repo)}/` } };
   }
   if (env.GITLAB_CI === "true") {
     if (!env.SIGSTORE_ID_TOKEN) return { reason: "this GitLab CI job has no SIGSTORE_ID_TOKEN; declare it under the job's id_tokens with aud: sigstore" };
@@ -141,19 +200,68 @@ export function cosignSignStatement(subject: { name: string; digest: string }): 
   return { _type: IN_TOTO_STATEMENT_TYPE, subject: [subjectOf(subject)], predicateType: COSIGN_SIGN_PREDICATE, predicate: {} };
 }
 
+/** The `origin` remote of `cwd` without any credentials in it, or null. */
+function originUrl(cwd: string | undefined): string | null {
+  if (!cwd) return null;
+  try {
+    const url = execFileSync("git", ["remote", "get-url", "origin"], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return url ? url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1") : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * SLSA provenance v1 over `subjects`, from the CI job's environment. In
- * GitHub Actions it is the predicate `actions/attest-build-provenance`
- * writes: the workflow, the event, the repository's ids, the commit and the
- * run. In GitLab CI it names the project, its CI config, the pipeline source
- * and the job. Either adds `internalParameters.chant`, the release's digest,
- * label and member, and the source it resolves is the release's commit.
+ * SLSA provenance v1 over `subjects`, naming the environment that built the
+ * release (#5458), each with its own build type and builder id:
+ *
+ * - GitHub Actions: the predicate `actions/attest-build-provenance` writes,
+ *   the workflow, the event, the repository's ids, the commit and the run.
+ * - GitLab CI: the project, its CI config, the pipeline source and the job.
+ * - Forgejo Actions: the server, the repository, the workflow and the run.
+ * - a `chant ci serve` host: its runner key's fingerprint
+ *   ({@link RUNNER_FINGERPRINT_ENV}) as the builder.
+ * - a workstation: {@link WORKSTATION_BUILDER}, with no builder identity.
+ *
+ * Each adds `internalParameters.chant`, the release's digest, label and
+ * member, and the source it resolves is the release's commit.
  */
-export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "release" | "label">, subjects: ReadonlyArray<{ name: string; digest: string }>): InTotoStatement {
+export function slsaProvenanceStatement(ctx: Pick<PublishContext, "env" | "release" | "label"> & { cwd?: string }, subjects: ReadonlyArray<{ name: string; digest: string }>): InTotoStatement {
   const env = ctx.env;
   const chant = { releaseDigest: ctx.release.releaseDigest, label: ctx.label, member: ctx.release.member };
+  const kind = releaseBuildKind(env);
   let predicate: Record<string, unknown>;
-  if (env.GITLAB_CI === "true") {
+  if (kind === "forgejo") {
+    const f = forgejoJob(env);
+    const path = f.workflowRef.startsWith(`${f.repo}/`) ? f.workflowRef.slice(f.repo.length + 1).split("@")[0]! : f.workflowRef.split("@")[0]!;
+    predicate = {
+      buildDefinition: {
+        buildType: FORGEJO_BUILD_TYPE,
+        externalParameters: { workflow: { ref: f.ref, repository: `${f.server}/${f.repo}`, path } },
+        internalParameters: { forgejo: { event_name: f.event, run_id: f.runId || null }, chant },
+        resolvedDependencies: [{ uri: `git+${f.server}/${f.repo}@${f.ref}`, digest: { gitCommit: ctx.release.commit } }],
+      },
+      runDetails: {
+        builder: { id: `${f.server}/${f.workflowRef}` },
+        metadata: { invocationId: `${f.server}/${f.repo}/actions/runs/${f.runNumber}` },
+      },
+    };
+  } else if (kind === "host" || kind === "workstation") {
+    const origin = originUrl(ctx.cwd);
+    const fingerprint = env[RUNNER_FINGERPRINT_ENV] ?? null;
+    predicate = {
+      buildDefinition: {
+        buildType: HOST_BUILD_TYPE,
+        externalParameters: { source: origin, commit: ctx.release.commit },
+        internalParameters: { host: { runner: kind === "host" ? "ci-serve" : "workstation", runnerKey: fingerprint }, chant },
+        resolvedDependencies: [{ ...(origin ? { uri: `git+${origin}` } : {}), digest: { gitCommit: ctx.release.commit } }],
+      },
+      runDetails: {
+        builder: { id: kind === "host" ? `${CI_SERVE_BUILDER}${encodeURIComponent(fingerprint!)}` : WORKSTATION_BUILDER },
+        metadata: {},
+      },
+    };
+  } else if (kind === "gitlab") {
     const server = (env.CI_SERVER_URL ?? "https://gitlab.com").replace(/\/+$/, "");
     const project = `${server}/${env.CI_PROJECT_PATH ?? ""}`;
     const ref = env.CI_COMMIT_TAG ? `refs/tags/${env.CI_COMMIT_TAG}` : `refs/heads/${env.CI_COMMIT_REF_NAME ?? ""}`;
