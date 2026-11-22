@@ -91,10 +91,18 @@ async function reportedPush(consequence: string, cwd?: string): Promise<{ pushed
 }
 
 export async function runApprove(ctx: CommandContext): Promise<number> {
-  const opName = ctx.args.path;
-  const gate = ctx.args.extraPositional;
+  let opName = ctx.args.path;
+  let gate = ctx.args.extraPositional;
+  // #5480: `chant approve --env <env> [--plan <digest>]` finds the one gate waiting in the environment.
+  if ((!opName || opName === ".") && !gate && ctx.args.env !== undefined && !ctx.args.expire) {
+    const { resolveEnvApproval } = await import("./approve-env");
+    const found = await resolveEnvApproval(ctx);
+    if (typeof found === "number") return found;
+    opName = found.op;
+    gate = found.gate;
+  }
   if (!opName || opName === "." || !gate) {
-    console.error(formatError({ message: "Usage: chant approve <op> <gate>" }));
+    console.error(formatError({ message: "Usage: chant approve <op> <gate>, or chant approve --env <env> [--plan <digest>]" }));
     return 1;
   }
 

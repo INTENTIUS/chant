@@ -11,6 +11,7 @@ chant operator [flags]
 chant operator status [flags]
 chant operator log [flags]
 chant approve <op> <gate> [flags]
+chant approve --env <env> [--plan <digest>] [--op <op>] [flags]
 ```
 
 ## Description
@@ -138,6 +139,7 @@ chant approve fountain-apply rollout-gate --actor github:alice --relayed-by gith
 chant approve fountain-apply rollout-gate --actor github:alice --statement
 chant approve fountain-apply rollout-gate --actor github:alice --at 2026-11-01T10:00:00.000Z --signature assertion.json
 chant approve fountain-apply rollout-gate --actor github:alice --binding "deploy dep_42 until 2026-11-01T12:00:00Z" --statement
+chant approve --env prod --plan jcs1-sha256:1196a5d2...
 ```
 
 | Flag | Default | Meaning |
@@ -151,13 +153,23 @@ chant approve fountain-apply rollout-gate --actor github:alice --binding "deploy
 | `--relayed-by <principal>` | — | Who carried the approval to chant for `--actor`, such as a follower program relaying a person's approval through hud. Recorded as `relayedBy` on the resolution line, covered by `--sign` (the seal signs it as a seventh line, `relayed-by <principal>`), and listed with the approval in `chant workspace status --json`. The approver is still `--actor`, and the seal is still theirs. Under `identity.attribution: "identified"` the relay must be a checkable principal too ([#3402](https://github.com/INTENTIUS/chant/issues/3402)) |
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
-| `--env <env>` | the newest pending fact's environment | For a component gate: which environment's pending fact to approve. The resolution records that environment and its plan digest ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). Ignored for an Op gate |
+| `--env <env>` | the newest pending fact's environment | For a component gate: which environment's pending fact to approve. With no op or gate, the environment whose waiting gate to find (`approve --env <env>` below). The resolution records that environment and its plan digest ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). Ignored for an Op gate |
 | `--rule <id>` | — | On `chant approve policy-override <subject>`: a rule that denied the plan, once per rule. They must be exactly the rules the subject's newest denial recorded ([Overriding a denied plan](/chant/guide/ops/#overriding-a-denied-plan), [#3760](https://github.com/INTENTIUS/chant/issues/3760)) |
 | `--reason <text>` | — | On `chant approve policy-override <subject>`: why the denied plan goes out anyway, recorded as the override's note. Required. `--note` is accepted in its place |
 | `--yes` | — | Record without showing the plan or asking for the target's name at a terminal. `--json` does the same ([#4575](https://github.com/INTENTIUS/chant/issues/4575)) |
 | `--resume` | — | After the approval is pushed, start the CI job that waits at the gate again: a GitHub re-run, a GitLab job retry, or a Forgejo workflow dispatch, with `CHANT_FORGE_TOKEN` ([Resume the waiting job](/chant/guide/op-waves/#resume-the-waiting-job), [#3683](https://github.com/INTENTIUS/chant/issues/3683)). Put it after the op and gate |
 
 Recording a resolution does not resume a run that already stopped. Nothing is parked waiting for it. The run read the ledger, found nothing standing, and exited 3 after writing the pending fact. Run the Op again and it reads the resolution you just wrote and walks through the gate, or let the merged PR the note points at carry the change itself. When the run was a CI job, `--resume` (or a scheduled [`chant run resume`](/chant/cli/run/#run-resume)) starts that job again for you.
+
+### `approve --env <env>`
+
+`chant approve --env <env>` with no op or gate finds the gate itself from the standing pending facts in the environment. Each op wave and pipeline stage that waits there is listed. So is each component gate recorded in it. An Op's gate records no environment, so its facts count once `--op <op>` names the Op.
+
+`--plan <digest>` keeps the facts bound to that digest. A fact matches on any digest it records: the plan digest, the change set, or the release digest under a release.
+
+When one fact is left the approval goes to its op and gate exactly as `chant approve <op> <gate>` records it. Otherwise nothing is recorded. The command then lists the facts waiting in the environment with the `chant approve` line for each and exits 1.
+
+A product reads the same list with `pendingApprovals` from `@intentius/chant/lifecycle/pending-approvals`, also exported from `@intentius/chant/ci-product`.
 
 ## See also
 
