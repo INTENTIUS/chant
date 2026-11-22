@@ -89,6 +89,7 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   let signing: import("../../lifecycle/publish-signing").SigningConfig | undefined;
   let scan: import("../../lifecycle/publish-scan").ReleaseScanConfig | undefined;
   let scanner: "grype" | "trivy" | undefined;
+  let images: import("../../lifecycle/release-images").ReleaseImageDeclaration[] = [];
   try {
     const { loadChantConfig } = await import("../../config");
     const config = (await loadChantConfig(cwd)).config;
@@ -98,6 +99,7 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
     signing = release?.signing;
     scan = release?.scan;
     scanner = config.vulnPolicy?.scanner;
+    images = release?.images ?? [];
   } catch (err) {
     console.error(formatError({ message: `release.publish in chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)} [doctor-config-invalid]`, hint: USAGE }));
     return 1;
@@ -112,7 +114,7 @@ export async function runReleaseDoctor(ctx: CommandContext): Promise<number> {
   } catch {
     groups = new Set();
   }
-  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), ...(from === "cut" ? { from } : {}), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), ...(scan !== undefined ? { scan } : {}), ...(scanner ? { scanner } : {}), groups });
+  const report = await releaseDoctor({ cwd, publish, releaseWorkflow: await releaseWorkflowFile(cwd), ...(from === "cut" ? { from } : {}), green: await greenGate(cwd, declaredGreen), ...(signing !== undefined ? { signing } : {}), ...(scan !== undefined ? { scan } : {}), ...(scanner ? { scanner } : {}), ...(images.length > 0 ? { images } : {}), groups });
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
   } else if (report.targets.length === 0) {

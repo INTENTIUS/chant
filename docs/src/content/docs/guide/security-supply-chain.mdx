@@ -44,6 +44,15 @@ A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
 | `security-publish-no-provenance` | Pass `--require-provenance` in the publish job, which runs in CI with an OIDC token. |
 | `security-component-no-sbom` | Add a `generateSbom` step to the member's components. |
 | `security-component-no-verify` | Add a `verify` step before the deploy steps. |
+| `security-image-base-unpinned` | Pin the `FROM` line it names by digest; see [Pin image bases by digest](#pin-image-bases-by-digest). |
+
+## Pin image bases by digest
+
+A base named by tag (`FROM node:22`) is whatever the registry serves under that tag on the day of the build, so a later build of the same commit can start from a different image. Named by digest (`FROM node:22@sha256:<digest>`) it is the same image every time; the tag beside the digest is for a reader.
+
+Under the group, `chant workspace check` reads each Dockerfile a member's `release.images` names and reports a `FROM` that is not pinned (`security-image-base-unpinned`), and `chant release doctor` warns of the same (`image-base-pinned`), with the entry's `args` applied. A `FROM` passes when it names an earlier stage, `scratch`, or an `ARG` declared before the first `FROM` whose default is pinned and which the entry's `args` do not replace with a tag. The workspace check reads `chant.config.ts` as text, so it finds a `dockerfile:` written as a string, not one built at run time; the doctor loads the config and sees every entry.
+
+Outside a release, the docker lexicon's [DKRD021](/chant/lexicons/docker/lint-rules/#dkrd021--from-names-a-base-by-tag-not-by-digest) runs the same rule on generated Dockerfiles once a project turns it on.
 
 ## The scan before the stage
 

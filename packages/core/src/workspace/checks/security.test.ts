@@ -74,6 +74,16 @@ describe("security groups (WSP161 to WSP165)", () => {
     expect((await found(root)).map((f) => f[1]).sort()).toEqual(["security-component-no-sbom", "security-component-no-verify", "security-publish-no-provenance", "security-sbom-unsourced"]);
   });
 
+  test("supply-chain reports a release image whose FROM is not pinned by digest, and passes it once pinned (#5457)", async () => {
+    const config = 'export default { release: { images: [{ name: "app", dockerfile: "docker/Dockerfile" }] } };';
+    const unpinned = repo({ "chant.workspace.json": declaration({ security: ["supply-chain"] }), "app/chant.config.ts": config, "app/docker/Dockerfile": "FROM node:22\nRUN true\n" });
+    expect(await found(unpinned)).toEqual([["WSP162", "security-image-base-unpinned", "app"]]);
+    const pinned = repo({ "chant.workspace.json": declaration({ security: ["supply-chain"] }), "app/chant.config.ts": config, "app/docker/Dockerfile": `FROM node:22@sha256:${"b".repeat(64)} AS build\nFROM build\n` });
+    expect(await found(pinned)).toEqual([]);
+    // Without the group nothing is checked.
+    expect(await found(repo({ "chant.workspace.json": declaration(), "app/chant.config.ts": config, "app/docker/Dockerfile": "FROM node:22\n" }))).toEqual([]);
+  });
+
   test("a Cargo.lock above the member is an SBOM source", async () => {
     const root = repo({
       "chant.workspace.json": declaration({ security: ["supply-chain"] }),

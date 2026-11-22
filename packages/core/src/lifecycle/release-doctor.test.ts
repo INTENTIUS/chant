@@ -558,3 +558,25 @@ describe("the scan before the stage (#5446)", () => {
     expect(ci?.checks[0]).toMatchObject({ check: "scan-tool", status: "fail" });
   });
 });
+
+describe("release image bases (#5457)", () => {
+  const D = `sha256:${"d".repeat(64)}`;
+  const bases = (dockerfile: string, groups: Set<"supply-chain"> = new Set(["supply-chain"]), args?: Record<string, string>) => {
+    const cwd = mkdtempSync(join(tmpdir(), "chant-doctor-bases-"));
+    writeFileSync(join(cwd, "Dockerfile"), dockerfile);
+    return releaseDoctor({ cwd, publish: [], env: {}, releaseWorkflow: null, groups, images: [{ name: "app", dockerfile: "Dockerfile", ...(args ? { args } : {}) }], deps: { fetch: fakeFetch([]).fetch } }).then((r) => r.targets.find((t) => t.kind === "images"));
+  };
+
+  test("warns of a FROM by tag under supply-chain, and is ok once it is pinned", async () => {
+    const tagged = await bases("FROM node:22\n");
+    expect(tagged?.checks).toEqual([expect.objectContaining({ check: "image-base-pinned", status: "warn", message: expect.stringContaining("Dockerfile:1 FROM node:22") })]);
+    expect((await bases(`FROM node:22@${D}\n`))?.checks[0]!.status).toBe("ok");
+    expect(await bases("FROM node:22\n", new Set())).toBeUndefined();
+  });
+
+  test("reads the entry's build arguments over an ARG's default", async () => {
+    const text = `ARG BASE=node:22@${D}\nFROM \${BASE}\n`;
+    expect((await bases(text))?.checks[0]!.status).toBe("ok");
+    expect((await bases(text, new Set(["supply-chain"]), { BASE: "node:22" }))?.checks[0]!.status).toBe("warn");
+  });
+});

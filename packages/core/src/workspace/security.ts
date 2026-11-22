@@ -15,7 +15,9 @@
  *   with no SBOM source is refused (`publish-sbom-missing`), the OCI and
  *   forge targets sign with Sigstore (`release.signing`, #5164), a publish
  *   scans what it puts out before anything is pushed (`release.scan`,
- *   #5446), and `chant release cut` refuses `release.green: "none"` (#5149).
+ *   #5446), a Dockerfile `release.images` names is checked for a `FROM`
+ *   not pinned by digest (#5457), and `chant release cut` refuses
+ *   `release.green: "none"` (#5149).
  * - `who-ran-it`: `chant ci tick` refuses to tag without a runner key.
  * - `review-rules`: `chant components pr-apply` counts an approval only from
  *   someone who approved the pull request on the forge, as
@@ -109,6 +111,8 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Sigstore signatures and SLSA provenance on images and forge assets", byDefault: "off: nothing is signed", setting: "`release.signing`", group: "supply-chain", codes: [] },
   // #5446: images and attached SBOMs scanned before the stage, with the vulnPolicy gate.
   { feature: "Vulnerability scan before anything is pushed", byDefault: "off: a publish pushes without scanning", setting: "`release.scan`", group: "supply-chain", codes: [] },
+  // #5457: release.images Dockerfiles start from bases pinned by digest.
+  { feature: "Release image bases pinned by digest", byDefault: "off: a `FROM` by tag builds from whatever the tag names that day", setting: "pin each `FROM` as `name:tag@sha256:<digest>`", group: "supply-chain", codes: ["security-image-base-unpinned"] },
   { feature: "SBOM and verify steps on components", byDefault: "off", setting: "a `generate-sbom` or `verify` step", group: "supply-chain", codes: ["security-component-no-sbom", "security-component-no-verify"] },
   { feature: "Signed green tags and runs", byDefault: "off: every tag counts", setting: "`ci.green.signedSince`", group: "who-ran-it", codes: ["security-signed-since-unset"] },
   { feature: "Trusted runner keys", byDefault: "off", setting: "`.chant/trust.json` with a runner role", group: "who-ran-it", codes: ["security-runner-untrusted"] },

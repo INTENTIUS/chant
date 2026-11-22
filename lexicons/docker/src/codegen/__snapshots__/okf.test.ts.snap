@@ -32,6 +32,7 @@ okf_version: '0.2'
 * [DKRD018](/rules/DKRD018.md) - Relative WORKDIR before any absolute WORKDIR in the stage
 * [DKRD019](/rules/DKRD019.md) - ADD fetches a remote URL without --checksum
 * [DKRD020](/rules/DKRD020.md) - apt-get update in a different RUN from apt-get install — the install can use a stale package index
+* [DKRD021](/rules/DKRD021.md) - FROM names a base image by tag, not pinned by digest
 * [DKRS001](/rules/DKRS001.md) - No Latest Tag
 * [DKRS002](/rules/DKRS002.md) - Per-kind Dockerfile fields written in a different order
 ",
@@ -262,6 +263,21 @@ docs: https://intentius.io/chant/lexicons/docker/rules/
 apt-get update in a different RUN from apt-get install — the install can use a stale package index
 ",
     "path": "rules/DKRD020.md",
+  },
+  {
+    "content": "---
+type: post-synth-check
+title: DKRD021
+description: FROM names a base image by tag, not pinned by digest
+id: DKRD021
+severity: error
+category: post-synth
+lexicon: docker
+docs: https://intentius.io/chant/lexicons/docker/rules/
+---
+FROM names a base image by tag, not pinned by digest
+",
+    "path": "rules/DKRD021.md",
   },
   {
     "content": "---

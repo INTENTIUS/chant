@@ -364,6 +364,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `security-publish-no-provenance` | finding, `check` | `WSP162`: under supply-chain, a pipeline file runs release publish without --require-provenance. |
 | `security-component-no-sbom` | finding, `check` | `WSP162`: under supply-chain, a member's components have no generate-sbom step. |
 | `security-component-no-verify` | finding, `check` | `WSP162`: under supply-chain, a member's components have no verify step. |
+| `security-image-base-unpinned` | finding, `check` | `WSP162`: under supply-chain, a Dockerfile a member's release.images names starts FROM a base not pinned by digest. |
 | `security-signed-since-unset` | finding, `check` | `WSP163`: under who-ran-it, ci.green sets no signedSince, or there is no ci.green block. |
 | `security-runner-untrusted` | finding, `check` | `WSP163`: under who-ran-it, .chant/trust.json lists no runner key. |
 | `security-tick-no-key` | finding, `check` | `WSP163`: under who-ran-it, a pipeline file runs ci tick with no runner key. |

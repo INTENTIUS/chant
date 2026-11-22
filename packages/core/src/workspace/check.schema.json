@@ -323,6 +323,8 @@
 
             "security-component-no-verify",
 
+            "security-image-base-unpinned",
+
             "security-signed-since-unset",
 
             "security-runner-untrusted",
@@ -446,6 +448,8 @@
             "security-component-no-sbom",
 
             "security-component-no-verify",
+
+            "security-image-base-unpinned",
 
             "security-signed-since-unset",
 

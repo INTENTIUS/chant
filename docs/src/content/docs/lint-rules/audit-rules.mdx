@@ -1509,6 +1509,12 @@ Run apt-get update and apt-get install in the same RUN.
 |---|---|
 | Prior art | [Checkov `CKV_DOCKER_5`](https://www.checkov.io/5.Policy%20Index/dockerfile.html) (overlaps) |
 
+### DKRD021
+
+**FROM names a base by tag, not by digest** (report-only · guidance)
+
+Pin the base as name:tag@sha256:\<digest>.
+
 ## AWS CloudFormation (WAW / COR / EXT)
 
 Run against CloudFormation templates (JSON or YAML).

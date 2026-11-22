@@ -37,6 +37,10 @@
  * declared (`scan-tool`), and says where the scanner's database comes from
  * (`scan-database`). On a workstation a missing scanner is a warning, so a
  * cut is not started with a publish that would be refused.
+ *
+ * Under the `supply-chain` group the doctor reads each Dockerfile
+ * `release.images` names and warns of a `FROM` not pinned by digest
+ * (`image-base-pinned`, #5457, ./dockerfile-pins.ts).
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -44,6 +48,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parseYAML } from "../yaml";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
+import { unpinnedFroms } from "./dockerfile-pins";
 import type {
   CargoPublishDeclaration,
   ForgePublishDeclaration,
@@ -195,6 +200,8 @@ export async function releaseDoctor(req: {
   /** `release.scan` (#5446) and `vulnPolicy.scanner`, which with the groups decide whether and with what the publish scans. */
   scan?: import("./publish-scan").ReleaseScanConfig;
   scanner?: "grype" | "trivy";
+  /** `release.images` (#5457): under `supply-chain`, each Dockerfile entry's bases are checked for a digest. */
+  images?: readonly import("./release-images").ReleaseImageDeclaration[];
   deps?: DoctorDeps;
 }): Promise<DoctorReport> {
   const env = req.env ?? process.env;
@@ -225,6 +232,8 @@ export async function releaseDoctor(req: {
   if (signing) targets.push(signing);
   const scan = await checkScan(ctx, req.publish, req.scan, req.groups ?? new Set(), req.scanner, deps.scanner);
   if (scan) targets.push(scan);
+  const bases = checkImageBases(ctx, req.images ?? [], req.groups ?? new Set());
+  if (bases) targets.push(bases);
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
@@ -363,6 +372,36 @@ async function checkScan(
       : { check: "scan-database", status: "ok", message: "the scanner downloads its database on first use, which needs the network; release.scan.db names a directory that holds one for a job without it" },
   ];
   return { kind: "scan", name: "vulnerability scan", checks };
+}
+
+/**
+ * Under `supply-chain` (#5457): each Dockerfile `release.images` names, with
+ * the entry's build arguments, starts from bases pinned by digest. Null
+ * without the group or a Dockerfile entry.
+ */
+function checkImageBases(ctx: Ctx, images: readonly import("./release-images").ReleaseImageDeclaration[], groups: ReadonlySet<import("../workspace/security").SecurityGroup>): DoctorTarget | null {
+  const entries = images.filter((i): i is import("./release-images").ReleaseImageDockerfile => "dockerfile" in i);
+  if (!groups.has("supply-chain") || entries.length === 0) return null;
+  const checks: DoctorCheck[] = [];
+  for (const entry of entries) {
+    const abs = resolve(ctx.cwd, entry.dockerfile);
+    if (!existsSync(abs)) {
+      checks.push({ check: "image-base-pinned", status: "unknown", message: `${entry.name}: ${entry.dockerfile} is not there, so its bases can't be read` });
+      continue;
+    }
+    const found = unpinnedFroms(readFileSync(abs, "utf-8"), entry.args ?? {});
+    checks.push(
+      found.length === 0
+        ? { check: "image-base-pinned", status: "ok", message: `${entry.name}: every FROM in ${entry.dockerfile} is pinned by digest` }
+        : {
+            check: "image-base-pinned",
+            status: "warn",
+            message: `${entry.name}: ${found.map((u) => `${entry.dockerfile}:${u.line} FROM ${u.image}: ${u.why}`).join("; ")}`,
+            fix: "Pin each FROM as name:tag@sha256:<digest>, the digest docker buildx imagetools inspect prints for the tag.",
+          },
+    );
+  }
+  return { kind: "images", name: "release image bases", checks };
 }
 
 /** A credential the publish needs and this environment lacks: a failure in CI, a warning on a workstation. */

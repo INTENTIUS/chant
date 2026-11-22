@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 303 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 304 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -382,6 +382,7 @@ Each row follows, in the order of the table above.
 | reason code | `security-publish-no-provenance` | chant | check.schema.json | Under supply-chain, a pipeline file runs release publish without --require-provenance. |
 | reason code | `security-component-no-sbom` | chant | check.schema.json | Under supply-chain, a member's components have no generate-sbom step. |
 | reason code | `security-component-no-verify` | chant | check.schema.json | Under supply-chain, a member's components have no verify step. |
+| reason code | `security-image-base-unpinned` | chant | check.schema.json | Under supply-chain, a Dockerfile a member's release.images names starts FROM a base not pinned by digest. |
 | reason code | `security-signed-since-unset` | chant | check.schema.json | Under who-ran-it, ci.green sets no signedSince, or there is no ci.green block. |
 | reason code | `security-runner-untrusted` | chant | check.schema.json | Under who-ran-it, .chant/trust.json lists no runner key. |
 | reason code | `security-tick-no-key` | chant | check.schema.json | Under who-ran-it, a pipeline file runs ci tick with no runner key. |

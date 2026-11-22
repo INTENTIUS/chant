@@ -264,6 +264,7 @@ export const REASONS = {
   "security-publish-no-provenance": "Under supply-chain, a pipeline file runs release publish without --require-provenance.",
   "security-component-no-sbom": "Under supply-chain, a member's components have no generate-sbom step.",
   "security-component-no-verify": "Under supply-chain, a member's components have no verify step.",
+  "security-image-base-unpinned": "Under supply-chain, a Dockerfile a member's release.images names starts FROM a base not pinned by digest.",
   "security-signed-since-unset": "Under who-ran-it, ci.green sets no signedSince, or there is no ci.green block.",
   "security-runner-untrusted": "Under who-ran-it, .chant/trust.json lists no runner key.",
   "security-tick-no-key": "Under who-ran-it, a pipeline file runs ci tick with no runner key.",

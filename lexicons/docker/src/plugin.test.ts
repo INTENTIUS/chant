@@ -31,7 +31,7 @@ describe("dockerPlugin", () => {
     expect(checkIds).toContain("DKRD010");
     expect(checkIds).toContain("DKRD011");
     expect(checkIds).toContain("DKRD012");
-    for (const id of ["DKRD013", "DKRD014", "DKRD015", "DKRD016", "DKRD017", "DKRD018", "DKRD019", "DKRD020"]) {
+    for (const id of ["DKRD013", "DKRD014", "DKRD015", "DKRD016", "DKRD017", "DKRD018", "DKRD019", "DKRD020", "DKRD021"]) {
       expect(checkIds).toContain(id);
     }
   });
