@@ -18,7 +18,7 @@ import type { UpgradeCheckResult } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult } from "../../codegen/rolling-upgrade";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, mkdtempSync } from "node:fs";
 
 // ── Classification ────────────────────────────────────────────────────
 
@@ -541,6 +541,44 @@ describe("lexiconUpgrade pull-request idempotency", () => {
     expect(calls.some((c) => c.includes("gh pr create"))).toBe(false);
     expect(calls.some((c) => c.includes("gh pr edit"))).toBe(false);
     expect(calls.every((c) => c.startsWith("gh pr view"))).toBe(true);
+  });
+});
+
+describe("lexiconUpgrade pull-request mode leaves untracked files alone (#5499)", () => {
+  async function runWithStash(stashStdout: string): Promise<string[]> {
+    const lexiconDir = mkdtempSync(join(tmpdir(), "chant-test-lexicon-stash-"));
+    writeFileSync(join(lexiconDir, "package.json"), JSON.stringify({ version: "0.13.1" }) + "\n", "utf-8");
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.startsWith("git stash push")) return { stdout: stashStdout, stderr: "" };
+      if (cmd.startsWith("git rev-parse")) return { stdout: "main\n", stderr: "" };
+      if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/4", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    await lexiconUpgrade({
+      lexicon: "k8s",
+      mode: "pull-request",
+      lexiconDir,
+      _checkPinned: vi.fn(async () => pinnedResult()),
+      _applyBump: vi.fn(() => ({ filePath: join(lexiconDir, "versions.ts") })),
+      _bumpPackageVersion: vi.fn(),
+      _forge: null,
+      _gh: gh,
+    });
+    return calls;
+  }
+
+  test("stashes tracked changes only, so a --json output file the shell opened is not deleted", async () => {
+    const calls = await runWithStash("Saved working directory and index state On main: chant lexicon-upgrade k8s\n");
+    const stashes = calls.filter((c) => c.startsWith("git stash"));
+    expect(stashes.some((c) => c.includes("--include-untracked") || / -u\b/.test(c))).toBe(false);
+    expect(stashes.at(-1)).toBe("git stash pop");
+  });
+
+  test("pops nothing when there was nothing to stash, so an older stash is not taken", async () => {
+    const calls = await runWithStash("No local changes to save\n");
+    expect(calls).not.toContain("git stash pop");
   });
 });
 
