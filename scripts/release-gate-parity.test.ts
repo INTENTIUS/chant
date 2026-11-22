@@ -89,7 +89,11 @@ describe("release gate parity (#1481)", () => {
     };
     for (const name of Object.keys(chant.jobs)) for (const s of stepsIn(name)) covered.add(s);
     const aws = JSON.parse(readFileSync(join(root, "lexicons", "aws", "package.json"), "utf8")) as { scripts: Record<string, string> };
-    const prepack = aws.scripts.prepack.split("&&").map((x) => x.trim().replace(/^npm run /, ""));
+    // A lexicon with floors runs its build under release-floors.ts --pack;
+    // scripts/ci-lexicon-artifacts.sh runs that as its `build` step.
+    const prepack = aws.scripts.prepack
+      .split("&&")
+      .map((x) => x.trim().replace(/^tsx \.\.\/\.\.\/scripts\/release-floors\.ts --lexicon \S+ --pack /, "").replace(/^npm run /, ""));
     expect(prepack).toEqual(expect.arrayContaining(["generate", "validate"]));
     expect([...covered].sort()).toEqual(expect.arrayContaining(prepack));
     expect([...stepsIn("validate")]).toEqual(expect.arrayContaining(["validate"]));
