@@ -25,6 +25,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { withoutChantWorkingFiles } from "./release-working-paths";
 import type { Signer } from "../workspace/trust/trust-files";
 
 export type WorkstationCheckCode = "release-commit-not-on-trunk" | "release-commit-not-pushed" | "release-worktree-dirty" | "release-tag-taken" | "release-tag-invalid";
@@ -128,8 +129,12 @@ export function checkOnTrunk(cwd: string, commit: string, trunk: Trunk): void {
 
 /** Refuse a tree with a tracked change or an untracked file git does not ignore. */
 export function checkCleanTree(cwd: string, commit: string): void {
-  const status = tryGit(cwd, ["status", "--porcelain", "--untracked-files=normal"]);
-  if (status === null || status === "") return;
+  // `all`, so a `.chant/` that is wholly untracked lists its files and not itself.
+  const raw = tryGit(cwd, ["status", "--porcelain", "--untracked-files=all"]);
+  if (raw === null) return;
+  // #5444: chant's own working files do not count.
+  const status = withoutChantWorkingFiles(raw);
+  if (status === "") return;
   const lines = status.split("\n");
   const untracked = lines.filter((l) => l.startsWith("??")).map((l) => l.slice(3));
   const tracked = lines.length - untracked.length;
