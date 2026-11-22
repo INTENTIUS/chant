@@ -1285,8 +1285,8 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     file: "packages/core/src/lifecycle/image-repin.ts",
     primitives: ["fetch"],
     phase: "apply",
-    destination: "the registry each pinned image names (Docker Hub, GHCR, `cgr.dev` or any registry API v2)",
-    why: "`chant release images --repin` asks each registry, with a pull-only token, which digest a pinned image's tag names now, and moves the pin in the file (#5457). It pushes nothing.",
+    destination: "the registry each pinned image names (Docker Hub, GHCR, `cgr.dev` or any registry API v2), and Wolfi's package index (`packages.wolfi.dev/os/<arch>/APKINDEX.tar.gz`)",
+    why: "`chant release images --repin` asks each registry, with a pull-only token, which digest a pinned image's tag names now, and moves the pin in the file (#5457). When a file holds a Wolfi package pin it reads Wolfi's x86_64 and aarch64 indexes once each and moves the version (#5445). It pushes nothing.",
   },
   {
     file: "packages/core/src/lifecycle/release-evidence.ts",

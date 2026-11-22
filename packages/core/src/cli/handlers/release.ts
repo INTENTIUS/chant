@@ -247,14 +247,17 @@ export async function refuseUnpinnedBases(images: readonly import("../../lifecyc
 /**
  * `release images --repin [<file>...] [--check] [--json]` (#5457): move each
  * image reference pinned by digest, `name:tag@sha256:<digest>` or an
- * `IMAGE_PINS` row, to the digest its tag names today, keeping the tag. The
+ * `IMAGE_PINS` row, to the digest its tag names today, keeping the tag, and
+ * each Wolfi package pin, a `WOLFI_PACKAGE_PINS` row or an
+ * `apk:<name>=<version>` entry, to the newest version Wolfi's index lists
+ * for both architectures (#5445). The
  * files are the Dockerfiles `release.images` names, else those given. It
  * prints each reference that moved and rewrites the files, or with
  * `--check` writes nothing and exits 1 when one would move, so a scheduled
  * job can open a pull request with the change. A tag that can't be resolved
  * leaves its digest and exits 1.
  */
-export async function runReleaseImagesRepin(ctx: CommandContext, resolver?: import("../../lifecycle/image-repin").ImageResolver): Promise<number> {
+export async function runReleaseImagesRepin(ctx: CommandContext, resolver?: import("../../lifecycle/image-repin").ImageResolver, apk?: import("../../lifecycle/image-repin").ApkResolver): Promise<number> {
   const { args } = ctx;
   const cwd = resolve(".");
   const fail = (code: string, message: string, fix?: string): number => {
@@ -279,16 +282,20 @@ export async function runReleaseImagesRepin(ctx: CommandContext, resolver?: impo
     if (!existsSync(abs)) return fail("repin-file-missing", `${p} is not there`);
     files.push({ path: p, text: readFileSync(abs, "utf-8") });
   }
-  const { repinFiles, registryResolver } = await import("../../lifecycle/image-repin");
-  const result = await repinFiles(files, resolver ?? registryResolver(process.env));
+  const { repinFiles, registryResolver, wolfiResolver } = await import("../../lifecycle/image-repin");
+  // #5445: Wolfi's index is read only when a file holds an apk pin.
+  const result = await repinFiles(files, resolver ?? registryResolver(process.env), { apk: apk ?? wolfiResolver() });
   const write = !args.check;
   if (write) for (const f of result.files) if (f.changed) writeFileSync(resolve(cwd, f.path), f.text);
   if (args.json) {
     console.log(JSON.stringify({ moved: result.moved, unchanged: result.unchanged, failed: result.failed, written: write ? result.files.filter((f) => f.changed).map((f) => f.path) : [] }, null, 2));
   } else {
     for (const m of result.moved) console.log(`${write ? "moved" : "would move"} ${m.file}:${m.line} ${m.reference} ${m.from} -> ${m.to}`);
-    for (const f of result.failed) console.error(formatWarning({ message: `${f.file}:${f.line} ${f.reference}: its tag could not be resolved, so its digest is left: ${f.reason}` }));
-    console.log(result.moved.length === 0 ? `Nothing moved: ${result.unchanged} pinned reference(s) still name the digest their tag names.` : `${result.moved.length} reference(s) ${write ? "moved" : "would move"}; ${result.unchanged} unchanged.`);
+    for (const f of result.failed) {
+      const what = f.reference.startsWith("apk:") ? "its version could not be read, so it is left" : "its tag could not be resolved, so its digest is left";
+      console.error(formatWarning({ message: `${f.file}:${f.line} ${f.reference}: ${what}: ${f.reason}` }));
+    }
+    console.log(result.moved.length === 0 ? `Nothing moved: ${result.unchanged} pinned reference(s) are where their tag or the package index puts them today.` : `${result.moved.length} reference(s) ${write ? "moved" : "would move"}; ${result.unchanged} unchanged.`);
   }
   if (result.failed.length > 0) return 1;
   return args.check && result.moved.length > 0 ? 1 : 0;

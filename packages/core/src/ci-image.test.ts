@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 import { describe, expect, test } from "vitest";
-import { IMAGE_PINS, imageRef } from "./image-pins";
+import { IMAGE_PINS, imageRef, WOLFI_PACKAGE_PINS } from "./image-pins";
 import { NEXT_RELEASE } from "./release-floors";
 import {
   CI_BASE_IMAGES,
@@ -724,6 +724,9 @@ describe("productImageStages with base (#5445)", () => {
     bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
   };
   const stagesOf = (base?: Parameters<typeof ciImageBase>[0]) => productImageStages({ ...spec, ...(base ? { base } : {}) }).map((st) => dockerfileText([st]).split("\n"));
+  const pinned = (name: string): string => WOLFI_PACKAGE_PINS[name]!.version;
+  const APK_FAILED_TEXT =
+    'echo "apk add failed. If Wolfi no longer serves a pinned version, move the pin: a newer chant moves its own (WOLFI_PACKAGE_PINS), and chant release images --repin <file> moves an apk:<name>=<version> entry in your source; then render this Dockerfile again." >&2; exit 1';
 
   test("both families from one spec: Debian with apt and root, Chainguard with apk and a final user that is not root", () => {
     const [debFetch, deb] = stagesOf("debian");
@@ -737,12 +740,12 @@ describe("productImageStages with base (#5445)", () => {
 
     const [cgFetch, cg] = stagesOf("chainguard");
     expect(cgFetch![0]).toBe(`FROM ${imageRef(IMAGE_PINS.chainguardWolfiBase)} AS fetch`);
-    expect(cgFetch).toContain("RUN apk add --no-cache ca-certificates curl unzip");
+    expect(cgFetch).toContain(`RUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=${pinned("curl")} unzip=${pinned("unzip")} || { ${APK_FAILED_TEXT}; }`);
     expect(cgFetch!.join("\n")).not.toContain("apt-get");
     expect(cg![0]).toBe(`FROM ${imageRef(IMAGE_PINS.chainguardNode)}`);
     expect(cg![0]).toMatch(/^FROM cgr\.dev\/chainguard\/node:latest-dev@sha256:[0-9a-f]{64}$/);
     // Packages come from apk, under their Wolfi names; apt is never run.
-    expect(cg).toContain("RUN apk add --no-cache git ca-certificates openssh-client xz && mkdir -p /usr/local/bin");
+    expect(cg).toContain(`RUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} openssh-client=${pinned("openssh-client")} xz=${pinned("xz")} || { ${APK_FAILED_TEXT}; } && mkdir -p /usr/local/bin`);
     expect(cg!.join("\n")).not.toContain("apt-get");
     // Every install step runs as root, and the final user is not root.
     expect(cg![1]).toBe("USER root");
@@ -813,12 +816,68 @@ describe("productImageStages with base (#5445)", () => {
 
   test("packages: Debian names through the map, apk: and apt: entries for one family, an unmapped name refused under Chainguard", () => {
     expect(ciImagePackages("debian", ["openssh-client", "apt:python3", "apk:python-3.13"])).toEqual(["openssh-client", "python3"]);
-    expect(ciImagePackages("chainguard", ["openssh-client", "dnsutils", "tar", "apt:python3", "apk:python-3.13"])).toEqual(["openssh-client", "bind-tools", "gnutar", "python-3.13"]);
+    expect(ciImagePackages("chainguard", ["openssh-client", "dnsutils", "tar", "apt:python3", "apk:python-3.13=3.13.9-r0"])).toEqual([
+      `openssh-client=${pinned("openssh-client")}`,
+      `bind-tools=${pinned("bind-tools")}`,
+      `gnutar=${pinned("gnutar")}`,
+      "python-3.13=3.13.9-r0",
+    ]);
     expect(() => ciImagePackages("chainguard", ["python3"])).toThrow(/no Wolfi name in CI_IMAGE_PACKAGE_NAMES/);
     expect(() => ciImagePackages("debian", ["Bad"])).toThrow(/not a package name/);
     expect(() => productImageStages({ ...spec, base: "chainguard", packages: ["libpq-dev"] })).toThrow(/libpq-dev/);
     expect(CI_IMAGE_PACKAGE_NAMES.git).toBe("git");
     expect(CI_IMAGE_PACKAGE_NAMES["ca-certificates"]).toBe("ca-certificates");
+  });
+
+  test("every package chant installs on Chainguard by default has a pinned version, read from Wolfi's index with its date", () => {
+    const defaults = new Set(["git", "ca-certificates", "curl", "unzip", ...Object.values(CI_IMAGE_PACKAGE_NAMES)]);
+    for (const name of defaults) {
+      expect(WOLFI_PACKAGE_PINS[name], name).toBeDefined();
+      expect(WOLFI_PACKAGE_PINS[name]!.version).toMatch(/^[0-9][0-9A-Za-z._+~]*-r[0-9]+$/);
+      expect(WOLFI_PACKAGE_PINS[name]!.read).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    expect(Object.keys(WOLFI_PACKAGE_PINS).sort()).toEqual([...defaults].sort());
+  });
+
+  test("the default Chainguard set writes every apk package at its pinned version, in both stages", () => {
+    const [fetch, final] = productImageStages({ ...spec, packages: [], base: "chainguard" }).map((st) => dockerfileText([st]));
+    expect(fetch).toContain(`\nRUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=${pinned("curl")} unzip=${pinned("unzip")} || { ${APK_FAILED_TEXT}; }\n`);
+    expect(final).toContain(`\nRUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} || { ${APK_FAILED_TEXT}; } && mkdir -p /usr/local/bin\n`);
+    // No apk name goes in without a version.
+    for (const line of `${fetch}${final}`.split("\n").filter((l) => l.startsWith("RUN apk add"))) {
+      const words = line.slice("RUN apk add --no-cache ".length, line.indexOf(" ||")).split(" ");
+      for (const w of words) expect(w).toMatch(/^[a-z0-9][a-z0-9.+-]*=[0-9][0-9A-Za-z._+~]*-r[0-9]+$/);
+    }
+  });
+
+  test("a product's apk: entry: with a version it goes in at that version and replaces chant's pin; without one it is refused unless chant pins the name", () => {
+    const final = (packages: string[]) => productImageStages({ ...spec, base: "chainguard", packages }).map((st) => dockerfileText([st]));
+    const [fetch, withOwn] = final(["apk:python-3.13=3.13.9-r0", "apk:curl=8.23.0-r2", "apt:python3"]);
+    expect(withOwn).toContain(`RUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} python-3.13=3.13.9-r0 curl=8.23.0-r2 || {`);
+    // The product's curl replaces chant's in the fetch stage too.
+    expect(fetch).toContain(`RUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=8.23.0-r2 unzip=${pinned("unzip")} || {`);
+    // A bare apk: entry for a name chant pins takes chant's version.
+    expect(final(["apk:jq"])[1]).toContain(` jq=${pinned("jq")} || {`);
+    // A bare apk: entry for a name chant does not pin is refused, with how to get the version.
+    expect(() => final(["apk:python-3.13"])).toThrow(/apk package python-3\.13 has no version: .*"apk:python-3\.13=<version>".*apk policy python-3\.13.*chant release images --repin/);
+    expect(() => ciImagePackages("chainguard", ["apk:python-3.13"])).toThrow(/has no version/);
+    // A version that is not an apk version, a version on an apt: entry, and two versions of one package are refused.
+    expect(() => final(["apk:python-3.13=3.13"])).toThrow(/not an apk version with its revision/);
+    expect(() => final(["apt:python3=3.11.2-1"])).toThrow(/version on an apk: entry only/);
+    expect(() => final(["apk:jq=1.8.2-r4", "apk:jq=1.8.2-r5"])).toThrow(/two versions, 1\.8\.2-r4 and 1\.8\.2-r5/);
+    // Debian ignores apk: entries, versioned or not, and stays unpinned.
+    expect(ciImagePackages("debian", ["openssh-client", "apk:python-3.13=3.13.9-r0", "apk:python-3.13"])).toEqual(["openssh-client"]);
+    const deb = productImageDockerfile({ ...spec, packages: ["apk:python-3.13=3.13.9-r0"] });
+    expect(deb).not.toContain("python");
+    expect(deb).toContain("apt-get install -y --no-install-recommends git ca-certificates &&");
+  });
+
+  test("a Chainguard org's registry installs the same pinned versions, and an apk: entry overrides one its repositories lack", () => {
+    const [fetch, final] = stagesOf({ registry: "cgr.dev/example.com", node: "22-dev" }).map((l) => l.join("\n"));
+    expect(fetch).toContain(`RUN apk add --no-cache ca-certificates=${pinned("ca-certificates")} curl=${pinned("curl")} unzip=${pinned("unzip")} || {`);
+    expect(final).toContain(`RUN apk add --no-cache git=${pinned("git")} ca-certificates=${pinned("ca-certificates")} openssh-client=${pinned("openssh-client")} xz=${pinned("xz")} || {`);
+    const own = productImageDockerfile({ ...spec, base: { registry: "cgr.dev/example.com" }, packages: ["apk:openssl=3.6.5-r4"] });
+    expect(own).toContain(` openssl=3.6.5-r4 || {`);
   });
 
   test("a SQL Yodeler image on Chainguard: no fetch stage, the npm prefix and its link made as root", () => {

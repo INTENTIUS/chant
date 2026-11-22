@@ -35,7 +35,11 @@
  * `cgr.dev/chainguard/wolfi-base` (`IMAGE_PINS` in `./image-pins.ts`), or
  * the same images from a Chainguard org's own registry, with packages from
  * apk ({@link CI_IMAGE_PACKAGE_NAMES}) and {@link CI_IMAGE_CHAINGUARD_USER}
- * as the final user.
+ * as the final user. Chainguard packages go in at exact versions,
+ * `WOLFI_PACKAGE_PINS` in `./image-pins.ts` or a product's own
+ * `apk:<name>=<version>`; their dependencies are not pinned. Debian
+ * packages go in by name, at whatever version the base's apt sources serve
+ * on the day of the build.
  *
  * Every check follows one rule, in the shell and in Node. A release whose
  * project publishes a checksums file is checked against that file's line
@@ -56,7 +60,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, inflateRawSync } from "node:zlib";
-import { IMAGE_PINS, imageRef } from "./image-pins";
+import { IMAGE_PINS, imageRef, WOLFI_PACKAGE_PINS } from "./image-pins";
 import { tarEntry } from "./policy-engine";
 import { CI_IMAGE_BASE_FLOOR, CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR } from "./release-floors";
 
@@ -720,7 +724,10 @@ export const CI_BASE_IMAGES = {
  * `chant release images --repin` finds in a product's source (#5471). A bare
  * tag names the default image, `node` or `wolfi-base`; a different image,
  * such as one of the org's FIPS images, is named with the image. chant
- * records no digests here; the product records its own. Which images a
+ * records no digests here; the product records its own. Packages go in at
+ * the same `WOLFI_PACKAGE_PINS` versions, read from Wolfi's public index; an
+ * org image whose apk repositories do not serve one fails at `apk add`, and
+ * the product gives that package's version with `apk:<name>=<version>`. Which images a
  * registry holds, and whether it holds FIPS ones, depends on the org's plan
  * with Chainguard; chant does not list or check them. The release's
  * `release.images` entry logs in with `pull` (#5457).
@@ -829,7 +836,8 @@ export function ciImageBase(base: CiImageBase = "debian"): CiImageBaseImages {
  * `packages` are Debian's names; under a Chainguard base each goes through
  * this map, and a name the map lacks is refused. A package whose Wolfi name
  * carries a version, such as python3 (`python-3.13`) or postgresql-client
- * (`postgresql-17-client`), is not here: name it as `apk:<name>`.
+ * (`postgresql-17-client`), is not here: name it as `apk:<name>=<version>`.
+ * Every Wolfi name here has a version in `WOLFI_PACKAGE_PINS`.
  */
 export const CI_IMAGE_PACKAGE_NAMES: Readonly<Record<string, string>> = {
   bash: "bash",
@@ -868,31 +876,80 @@ export const CI_IMAGE_PACKAGE_NAMES: Readonly<Record<string, string>> = {
 };
 
 const PACKAGE_NAME = /^[a-z0-9][a-z0-9.+-]*$/;
+/** An apk version with its package revision, as Wolfi writes every one: `2.56.1-r1`, `10.6_p2-r0`, `2026f-r1`. */
+const APK_VERSION = /^[0-9][0-9A-Za-z._+~]*-r[0-9]+$/;
 
-/**
- * A spec's `packages` for a family (#5445): Debian names as they are for
- * Debian, through {@link CI_IMAGE_PACKAGE_NAMES} for Chainguard. An entry
- * written `apk:<name>` is for Chainguard alone and `apt:<name>` for Debian
- * alone. Throws on a name that is not a package name, and under Chainguard
- * on a Debian name the map lacks.
- */
-export function ciImagePackages(family: CiImageBaseFamily, packages: readonly string[]): string[] {
-  const out: string[] = [];
+/** The packages the fetch stage of a Chainguard image installs. */
+const APK_FETCH_PACKAGES = ["ca-certificates", "curl", "unzip"];
+
+/** A spec's packages for Chainguard: the Wolfi names in order, and the version of each, chant's pins under the product's own. */
+function apkPackages(packages: readonly string[]): { names: string[]; versions: Map<string, string> } {
+  const names: string[] = [];
+  const given = new Map<string, string>();
   for (const entry of packages) {
-    const m = /^(apt|apk):(.*)$/.exec(entry);
+    const m = /^(apt|apk):([^=]*)(?:=(.*))?$/.exec(entry);
     const name = m ? m[2]! : entry;
     if (!PACKAGE_NAME.test(name)) throw new Error(`package ${JSON.stringify(entry)} is not a package name`);
-    if (m) {
-      if ((m[1] === "apk") === (family === "chainguard")) out.push(name);
-      continue;
+    if (m?.[3] !== undefined) {
+      if (m[1] !== "apk") throw new Error(`package ${JSON.stringify(entry)}: chant takes a version on an apk: entry only`);
+      if (!APK_VERSION.test(m[3])) throw new Error(`package ${JSON.stringify(entry)}: ${JSON.stringify(m[3])} is not an apk version with its revision, such as 1.2.3-r0`);
+      const before = given.get(name);
+      if (before !== undefined && before !== m[3]) throw new Error(`apk package ${name} is given at two versions, ${before} and ${m[3]}`);
+      given.set(name, m[3]);
     }
-    if (family === "debian") {
-      out.push(name);
+    if (m?.[1] === "apt") continue;
+    if (m) {
+      names.push(name);
       continue;
     }
     const wolfi = CI_IMAGE_PACKAGE_NAMES[name];
-    if (!wolfi) throw new Error(`apt package ${JSON.stringify(name)} has no Wolfi name in CI_IMAGE_PACKAGE_NAMES; name the apk package as "apk:<name>" and the apt one as "apt:${name}"`);
-    out.push(wolfi);
+    if (!wolfi) throw new Error(`apt package ${JSON.stringify(name)} has no Wolfi name in CI_IMAGE_PACKAGE_NAMES; name the apk package as "apk:<name>=<version>" and the apt one as "apt:${name}"`);
+    names.push(wolfi);
+  }
+  const versions = new Map(Object.entries(WOLFI_PACKAGE_PINS).map(([n, p]) => [n, p.version]));
+  for (const [n, v] of given) versions.set(n, v);
+  return { names: [...new Set(names)], versions };
+}
+
+/** `<name>=<version>` for each package, refusing one with no version. */
+function pinApk(names: readonly string[], versions: ReadonlyMap<string, string>): string[] {
+  return names.map((name) => {
+    const version = versions.get(name);
+    if (version === undefined) {
+      throw new Error(
+        `apk package ${name} has no version: chant pins only the packages in WOLFI_PACKAGE_PINS, so write "apk:${name}=<version>" with the version Wolfi's index lists today ` +
+          `(apk policy ${name} prints it in a wolfi-base container after apk update), and move it later with chant release images --repin <the file that holds it>`,
+      );
+    }
+    return `${name}=${version}`;
+  });
+}
+
+/**
+ * A spec's `packages` for a family (#5445): Debian names as they are for
+ * Debian, and for Chainguard each as `<name>=<version>`, its Wolfi name from
+ * {@link CI_IMAGE_PACKAGE_NAMES} at its version in `WOLFI_PACKAGE_PINS`. An
+ * entry written `apk:<name>` or `apk:<name>=<version>` is for Chainguard
+ * alone and `apt:<name>` for Debian alone. A version given on an `apk:` entry
+ * replaces chant's pin for that package. Throws on a name that is not a
+ * package name, and under Chainguard on a Debian name the map lacks or a
+ * package with no version, given or pinned.
+ */
+export function ciImagePackages(family: CiImageBaseFamily, packages: readonly string[]): string[] {
+  if (family === "chainguard") {
+    const { names, versions } = apkPackages(packages);
+    return pinApk(names, versions);
+  }
+  const out: string[] = [];
+  for (const entry of packages) {
+    const m = /^(apt|apk):(.*)$/.exec(entry);
+    if (m?.[1] === "apk") {
+      apkPackages([entry]);
+      continue;
+    }
+    const name = m ? m[2]! : entry;
+    if (!PACKAGE_NAME.test(name)) throw new Error(`package ${JSON.stringify(entry)} is not a package name`);
+    out.push(name);
   }
   return [...new Set(out)];
 }
@@ -978,8 +1035,11 @@ export interface ProductImageSpec {
    * Packages beside git and ca-certificates, such as openssh-client, by
    * their Debian names. Debian installs them with apt; Chainguard installs
    * each under its Wolfi name from {@link CI_IMAGE_PACKAGE_NAMES} with apk,
-   * and refuses a name the map lacks. `apk:<name>` is installed only on
-   * Chainguard and `apt:<name>` only on Debian.
+   * at its version in `WOLFI_PACKAGE_PINS`, and refuses a name the map
+   * lacks. `apk:<name>=<version>` is installed only on Chainguard, at that
+   * version, which replaces chant's pin for the name in both stages; a bare
+   * `apk:<name>` is accepted only for a name chant pins. `apt:<name>` is
+   * installed only on Debian.
    */
   packages?: string[];
   /** Environment beside chant's (`USER`, `HOME=/tmp`, no Node compile cache, no npm debug logs). */
@@ -1013,13 +1073,26 @@ function aptLine(packages: string[]): string {
   return `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/ldconfig/aux-cache`;
 }
 
-/** apk's index is not kept (`--no-cache`), and /usr/local/bin is made, which the Chainguard node image lacks (#5445). */
-function apkLine(packages: string[]): string {
-  return `apk add --no-cache ${packages.join(" ")} && mkdir -p /usr/local/bin`;
+/**
+ * What an `apk add` of pinned versions prints when it fails (#5445). Wolfi
+ * removes versions at times, and a pin to one it removed fails here. Written
+ * with no single quote or `$`, for a shell-form RUN.
+ */
+const APK_FAILED =
+  'echo "apk add failed. If Wolfi no longer serves a pinned version, move the pin: a newer chant moves its own (WOLFI_PACKAGE_PINS), and chant release images --repin <file> moves an apk:<name>=<version> entry in your source; then render this Dockerfile again." >&2; exit 1';
+
+/**
+ * apk at pinned versions (`<name>=<version>`), with the index not kept
+ * (`--no-cache`) and a message on failure. `then` runs after a successful
+ * add, such as making /usr/local/bin, which the Chainguard node image lacks
+ * (#5445).
+ */
+function apkLine(packages: string[], then?: string): string {
+  return `apk add --no-cache ${packages.join(" ")} || { ${APK_FAILED}; }${then ? ` && ${then}` : ""}`;
 }
 
-/** The fetch stage's steps for `tools`, each into its directory under `root`. */
-function fetchStage(tools: CiImageTool[], root: string, base: CiImageBaseImages): CiImageStage {
+/** The fetch stage's steps for `tools`, each into its directory under `root`; `apk` is the fetch stage's packages for Chainguard. */
+function fetchStage(tools: CiImageTool[], root: string, base: CiImageBaseImages, apk: string[]): CiImageStage {
   const steps: CiImageStep[] = [{ arg: "TARGETARCH" }];
   for (const t of tools) {
     if (t.checksumsArg === undefined) continue;
@@ -1031,8 +1104,8 @@ function fetchStage(tools: CiImageTool[], root: string, base: CiImageBaseImages)
   steps.push({
     run:
       base.family === "chainguard"
-        ? "apk add --no-cache ca-certificates curl unzip"
-        : "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*",
+        ? apkLine(apk)
+        :"apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*",
   });
   for (const t of tools) {
     const script = ciToolFetchScript(t.tool, t.version, {
@@ -1092,7 +1165,9 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
   for (const a of [versionArg, ...(spec.args ?? [])]) if (!ARG.test(a)) throw new Error(`build argument ${JSON.stringify(a)} is not a name`);
   const base = ciImageBase(spec.base);
   const chainguard = base.family === "chainguard";
-  const packages = ciImagePackages(base.family, spec.packages ?? []);
+  // Under Chainguard every package goes in at an exact version: chant's pins, under the product's own (#5445).
+  const apk = chainguard ? apkPackages(spec.packages ?? []) : undefined;
+  const packages = apk ? apk.names : ciImagePackages(base.family, spec.packages ?? []);
   for (const p of spec.npm ?? []) if (!PKG.test(p)) throw new Error(`npm package ${JSON.stringify(p)} is not a name at an exact version`);
   if (spec.chant !== undefined && !VERSION.test(spec.chant)) throw new Error(`chant ${JSON.stringify(spec.chant)} is not a release version`);
   const root = spec.toolRoot ?? `/opt/${spec.product}`;
@@ -1115,7 +1190,7 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
   if ("npm" in spec.bundle) env.push(`PATH=${spec.bundle.prefix}/node_modules/.bin:$PATH`);
   for (const e of env) steps.push({ env: e });
   const wanted = [...new Set(["git", "ca-certificates", ...packages])];
-  steps.push({ run: chainguard ? apkLine(wanted) : aptLine(wanted) });
+  steps.push({ run: apk ? apkLine(pinApk(wanted, apk.versions), "mkdir -p /usr/local/bin") : aptLine(wanted) });
   // A job often runs as another user than the one who owns its checkout, and git then refuses it ("dubious
   // ownership"). Debian's git 2.39 matches no path prefix, so it is every directory (#4768); Wolfi's git reads it the same.
   steps.push({ run: "git config --system --add safe.directory '*'" });
@@ -1162,7 +1237,8 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
     { cmd: spec.cmd ?? '["bash"]' },
     ...(base.user ? [{ user: base.user }] : []),
   );
-  return [...(tools.length ? [fetchStage(tools, root, base)] : []), { from: base.node, steps }];
+  const fetchApk = apk ? pinApk(APK_FETCH_PACKAGES, apk.versions) : [];
+  return [...(tools.length ? [fetchStage(tools, root, base, fetchApk)] : []), { from: base.node, steps }];
 }
 
 /** Stages as Dockerfile text, as the docker lexicon writes them, with `header` as comment lines on top. */
