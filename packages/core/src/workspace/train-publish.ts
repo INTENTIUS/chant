@@ -121,6 +121,8 @@ export type TrainPublishOutcome =
       verify: TrainVerifyPlan[];
       /** How the verify commands went: `passed`, or `skipped` when a reveal was already recorded; absent with none. */
       verified?: "passed" | "skipped";
+      /** What the scan before the stage found in each member it scanned (#5446). */
+      scans?: Array<{ member: string; report: import("../lifecycle/publish-scan").ScanReport }>;
       /** Why a member's floating tag (#5150) was not moved, one line each. */
       floatingWarnings?: string[];
     };
@@ -132,7 +134,7 @@ export class TrainPublishRunError extends PublishTargetError {
     message: string,
     fix: string | undefined,
     readonly member: string,
-    readonly step: "stage" | "verify" | "reveal" | "wait",
+    readonly step: "scan" | "stage" | "verify" | "reveal" | "wait",
     readonly staged: string[],
     readonly revealed: string[],
   ) {
@@ -324,7 +326,7 @@ export async function publishTrain(query: TrainPublishQuery): Promise<TrainPubli
     const plan = await preparePublish({ cwd: dir, ref: m.releaseDigest, env, ...(query.deps ? { deps: query.deps } : {}), allowUnsigned: query.allowUnsigned === true, requireProvenance: query.requireProvenance === true, alsoStamped: stampedHere });
     if ("refusal" in plan) return refuse(plan.refusal.code, `${m.member}: ${plan.refusal.message}. Nothing was published.`, plan.refusal.fix);
     credentialEnv.push(...plan.targets.flatMap((t) => t.credentialEnv));
-    for (const w of [plan.signatureWarning, plan.warning]) if (w && !warnings.includes(`${m.member}: ${w}`)) warnings.push(`${m.member}: ${w}`);
+    for (const w of [plan.signatureWarning, plan.warning, plan.scanWarning ?? null]) if (w && !warnings.includes(`${m.member}: ${w}`)) warnings.push(`${m.member}: ${w}`);
     const ctx = publishContext(plan, { cwd: dir, env: await memberDigestsEnv(dir, plan.release, env), tag: plan.channel, log: memberLog(m.member, plan.redactor) });
     prepared.push({ m, dir, plan, ctx });
   }
@@ -449,7 +451,7 @@ async function runTrain(req: {
   say: (line: string) => void;
   record: boolean;
   now: () => Date;
-}): Promise<{ published: Array<{ member: string; targets: PublishedTarget[] }>; resumed: Array<{ member: string; target: string; step: "staged" | "revealed" }>; recordWarning: string | null; verified?: "passed" | "skipped" }> {
+}): Promise<{ published: Array<{ member: string; targets: PublishedTarget[] }>; resumed: Array<{ member: string; target: string; step: "staged" | "revealed" }>; recordWarning: string | null; verified?: "passed" | "skipped"; scans?: Array<{ member: string; report: import("../lifecycle/publish-scan").ScanReport }> }> {
   const { appendPublishRecord } = await import("../lifecycle/publish-record");
   const { pushLifecycleReport } = await import("../lifecycle/git");
   const { resolveRunId } = await import("../lifecycle/release-ledger");
@@ -504,6 +506,23 @@ async function runTrain(req: {
     stagedNames.push(shown(p, t));
     await write(p, t, "staged", s.items, s.state);
   };
+
+  // #5446: scan what every member's targets would put out, before any of them stages or signs.
+  const scans: Array<{ member: string; report: import("../lifecycle/publish-scan").ScanReport }> = [];
+  for (const p of ordered) {
+    if (!p.ctx.scan) continue;
+    const progress = req.progressOfMember.get(p.m.member)!;
+    const toScan = p.plan.targets.filter((t) => !progress.revealed.has(t.key) && !progress.staged.has(t.key));
+    if (toScan.length === 0) continue;
+    const { scanBeforeStage } = await import("../lifecycle/publish-scan");
+    say(`  ${p.m.member}: scanning with ${p.ctx.scan.scanner.name} before anything is pushed`);
+    try {
+      scans.push({ member: p.m.member, report: await scanBeforeStage({ targets: toScan, ctx: p.ctx, scan: p.ctx.scan, say: (l) => say(`  ${p.m.member}:${l}`) }) });
+    } catch (err) {
+      const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
+      throw new TrainPublishRunError(e.code, p.plan.redactor.redact(`${p.m.member}: ${e.message}`), e.fix, p.m.member, "scan", [], []);
+    }
+  }
 
   // Pass 1: stage every target that holds back what it stages, before any reveal.
   for (const p of ordered) {
@@ -612,7 +631,7 @@ async function runTrain(req: {
       }
     }
   }
-  return { published, resumed, recordWarning, ...(verified ? { verified } : {}) };
+  return { published, resumed, recordWarning, ...(verified ? { verified } : {}), ...(scans.length > 0 ? { scans } : {}) };
 }
 
 const USAGE = "chant workspace train publish <env> [<train id|digest>] [--yes] [--allow-unsigned] [--require-provenance] [--json]";

@@ -14,6 +14,7 @@ import { nfpmFeature } from "./nfpm";
 import { nugetFeature } from "./nuget";
 import { pypiFeature } from "./pypi";
 import { qemuFeature } from "./qemu";
+import { scanFeature } from "./scan";
 import { signingFeature } from "./signing";
 import { stampFeature } from "./stamp";
 import { targetsFeature } from "./targets";
@@ -35,6 +36,7 @@ export const RELEASE_WORKFLOW_FEATURES: readonly ReleaseWorkflowFeature[] = [
   nugetFeature,
   pypiFeature,
   qemuFeature,
+  scanFeature,
   signingFeature,
   stampFeature,
   targetsFeature,

@@ -50,6 +50,7 @@ import { join } from "node:path";
 import { memberSbom, releaseProvenance, type Attachment } from "./publish-attachments";
 import { BUNDLE_PREDICATE_ANNOTATION, COSIGN_SIGN_PREDICATE, SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE, cosignSignStatement, slsaProvenanceStatement } from "./publish-signing";
 import { readCredential, type Credential } from "./publish-credentials";
+import { sbomDocumentOf } from "./publish-scan";
 import type { OciPublishDeclaration } from "./publish-declaration";
 import { bytesDigest, checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
 import { trainName, waitUntilServed } from "./publish-train-names";
@@ -709,6 +710,20 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
       const layout = inspect(ctx);
       try {
         return [item(ctx, layout.top.digest, platformTags(ctx, layout)), ...referrers(ctx, layout).map(referrerItem), ...(ctx.signing ? signatures.map((s) => signatureItem(ctx, s, layout.top.digest)) : [])];
+      } finally {
+        layout.cleanup();
+      }
+    },
+    /** #5446: the archive, scanned through an SBOM of its layers, and the SBOM the stage attaches. */
+    async scanSubjects(ctx) {
+      const layout = inspect(ctx);
+      try {
+        const image = `${decl.repository}@${layout.top.digest}`;
+        const sbom = memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`);
+        return [
+          { target: this.name, name: image, image: memberFile(ctx.cwd, decl.image), digest: layout.top.digest },
+          ...(sbom ? [{ target: this.name, name: `${sbom.name} of ${image}`, sbom: sbomDocumentOf(sbom.bytes, "attached"), digest: layout.top.digest }] : []),
+        ];
       } finally {
         layout.cleanup();
       }

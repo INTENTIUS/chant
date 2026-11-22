@@ -35,6 +35,8 @@ function cases(forge: Forge, mode: Mode): Array<[string, Partial<ReleaseWorkflow
     ["artifacts with goreleaser", { artifacts: true, goreleaser: true }],
     ["signing", { signing: true }],
     ["signing with doctor off", { signing: true, pipeline: { doctor: false } }],
+    // #5446: grype and syft for the scan before the stage.
+    ["scan", { scan: true }],
     ["lane", { lane: "fast" }],
     ["gate head", { pipeline: { gate: "head" } }],
     ["green forge-checks", { green: "forge-checks" }],
@@ -117,6 +119,7 @@ function trainCases(forge: Forge, trigger: "tag" | "dispatch"): Array<[string, P
     ["member root", { workspaceRoot: "release" }],
     ["supply-chain", { groups: new Set<SecurityGroup>(["supply-chain"]) }],
     ["signing", { signing: true }],
+    ["scan", { scan: true }],
     ["lane", { lane: "fast" }],
     ["gate head", { pipeline: { gate: "head" } }],
     ["green forge-checks", { green: "forge-checks" }],

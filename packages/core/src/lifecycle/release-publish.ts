@@ -28,6 +28,11 @@
  * OCI, forge or pypi target is declared (#5164, ./publish-signing.ts), a run that
  * can't sign keylessly is refused (`publish-signing-no-oidc`,
  * `publish-signing-tool-missing`).
+ * When `release.scan` or `supply-chain` asks for the scan before the stage
+ * (#5446, ./publish-scan.ts), a run without the scanner is refused
+ * (`publish-scan-tool-missing`), and {@link runPublish} scans what the
+ * targets would put out before any stages; a blocking finding stops it with
+ * `publish-scan-failed` and nothing pushed.
  * The targets come from {@link releasePublishTargets}: the member declares them under `release.publish` in its `chant.config.ts` (#4047).
  * With a target, the checkout must be the release's commit with a clean
  * tree ({@link checkCheckoutIsRelease}), every target is planned before any
@@ -44,6 +49,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
 import type { Release } from "./release-store";
 import { stampedChanges, type ReleaseVersionConfig } from "./release-version";
 import { createRedactor, type Redactor } from "./publish-credentials";
@@ -181,6 +187,8 @@ export interface PublishDeps {
   now?: () => number;
   /** What signs with Sigstore (#5164). Default: cosign, run keylessly (./publish-signing.ts). */
   signer?: import("./publish-signing").Signer;
+  /** What scans before the stage (#5446). Default: syft and grype or trivy (./publish-scan.ts). */
+  releaseScanner?: import("./publish-scan").ReleaseScanner;
 }
 
 /** The subset of the WHATWG `fetch` the targets use. */
@@ -244,6 +252,8 @@ export interface PublishContext extends PublishContextBase {
    * targets sign what they stage with it. Null or absent: nothing is signed.
    */
   signing?: import("./publish-signing").SigningContext | null;
+  /** Set when the publish scans before the stage (#5446): the scanner, the policy and the VEX documents. Null or absent: nothing is scanned. */
+  scan?: import("./publish-scan").ScanContext | null;
 }
 
 /** A target refused or failed. The message never holds a credential. */
@@ -302,6 +312,13 @@ export interface PublishTarget<C extends PublishContextBase = PublishContext, K 
    * publish plans every target before any of them publishes.
    */
   plan(ctx: C): Promise<PublishItem[]>;
+  /**
+   * What the scan before the stage reads of this target (#5446,
+   * ./publish-scan.ts): its image archive and the SBOMs it would attach or
+   * its packages carry. Reads the checkout, checks digests as `plan` does,
+   * and sends nothing. Absent: the target has nothing to scan.
+   */
+  scanSubjects?(ctx: C): Promise<import("./publish-scan").ScanSubject[]>;
   /**
    * Put every item where the target publishes, where no consumer resolves it
    * yet (#4048): npm under the `next` dist-tag, OCI by digest with no tag
@@ -464,6 +481,8 @@ export interface PublishRefusal {
     | "publish-provenance-missing"
     | "publish-signing-no-oidc"
     | "publish-signing-tool-missing"
+    | "publish-scan-tool-missing"
+    | "publish-scan-vex-missing"
     | "publish-config-invalid"
     | "release-head-mismatch"
     | "release-worktree-dirty"
@@ -513,6 +532,10 @@ export interface PublishPlan {
   signing: import("./publish-signing").SigningContext | null;
   /** The warning printed when the `supply-chain` group asks for signing and `release.signing: false` turns it off. */
   signingWarning: string | null;
+  /** What the publish scans with before the stage (#5446), or null when it does not scan. */
+  scan?: import("./publish-scan").ScanContext | null;
+  /** The warning printed when the `supply-chain` group asks for the scan and `release.scan: false` turns it off. */
+  scanWarning?: string | null;
 }
 
 /**
@@ -691,6 +714,36 @@ export async function preparePublish(req: {
     }
     signing = { signer, identity: id.identity };
   }
+  // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
+  const { resolveScan, toolReleaseScanner, readVexSources } = await import("./publish-scan");
+  const fullConfig = (await loadConfig(cwd).catch(() => null))?.config;
+  const scanSetting = resolveScan(fullConfig?.release?.scan, groups);
+  let scan: PublishPlan["scan"] = null;
+  const scanned = targets.filter((t) => t.scanSubjects);
+  if (scanSetting.on && scanned.length > 0) {
+    const why = scanSetting.from === "config" ? "release.scan in chant.config.ts" : "the supply-chain group";
+    const db = scanSetting.db ? resolvePath(cwd, scanSetting.db) : null;
+    const scanner = req.deps?.releaseScanner ?? toolReleaseScanner(env, { tool: fullConfig?.vulnPolicy?.scanner ?? "grype", db, redactor: createRedactor(env) });
+    const missing = scanner.unavailable({ images: scanned.some((t) => t.kind === "oci") });
+    if (missing) {
+      return {
+        refusal: {
+          code: "publish-scan-tool-missing",
+          message: `${name} would be scanned for known vulnerabilities before anything is pushed, as ${why} asks, and ${missing}`,
+          fix: "Install grype (or trivy) and syft in the job, as chant release workflow does, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; or set release.scan: false.",
+        },
+      };
+    }
+    let vex: string[];
+    try {
+      vex = readVexSources(cwd, fullConfig?.vulnPolicy?.vexSources);
+    } catch (err) {
+      const e = err as PublishTargetError;
+      return { refusal: { code: "publish-scan-vex-missing", message: e.message, ...(e.fix ? { fix: e.fix } : {}) } };
+    }
+    const { resolveVulnPolicy } = await import("../config");
+    scan = { scanner, policy: fullConfig ? resolveVulnPolicy(fullConfig) : {}, vex };
+  }
   // #5150: the tag release.tag gives the label, as the cut made it, and the floating tag the publish moves.
   const { memberTags, ReleaseTagError } = await import("./release-tag");
   let tags: MemberTags;
@@ -718,7 +771,7 @@ export async function preparePublish(req: {
       return null;
     }
   };
-  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning };
+  return { release, label, signature, provenance, warning, signatureWarning, gateWarning, cut, releaseTag, releaseTagOf, floating, targets, verify, ...(releaseConfig?.dependsOn ? { dependsOn: releaseConfig.dependsOn } : {}), redactor, requireSbom: groups.has("supply-chain"), channel, signing, signingWarning: setting.warning, scan, scanWarning: scanSetting.warning };
 }
 
 /**
@@ -853,6 +906,7 @@ export function publishContext(plan: PublishPlan, req: { cwd: string; env?: Node
     log: (line) => req.log(plan.redactor.redact(line)),
     requireSbom: plan.requireSbom,
     signing: plan.signing,
+    scan: plan.scan ?? null,
   };
 }
 
@@ -866,6 +920,8 @@ export interface PublishRun {
   recordWarning: string | null;
   /** How `release.verify` went (#5157): `passed`, or `skipped` when a reveal was already recorded; absent with no commands. */
   verify?: "passed" | "skipped";
+  /** What the scan before the stage found (#5446); absent when nothing was scanned. */
+  scan?: import("./publish-scan").ScanReport;
 }
 
 /** A publish that stopped, with what it left staged and revealed so a run of the same command resumes. */
@@ -874,7 +930,7 @@ export class PublishRunError extends PublishTargetError {
     code: string,
     message: string,
     fix: string | undefined,
-    readonly step: "stage" | "verify" | "reveal",
+    readonly step: "scan" | "stage" | "verify" | "reveal",
     readonly staged: string[],
     readonly revealed: string[],
   ) {
@@ -993,6 +1049,19 @@ export async function runPublish(req: {
     stagedNames.push(target.name);
     await write(target, "staged", s.items, s.state);
   };
+  // #5446: scan what the targets would put out, before anything stages or is signed. A target an earlier run staged is out already.
+  let scanReport: import("./publish-scan").ScanReport | undefined;
+  const toScan = targets.filter((t) => !progress.revealed.has(t.key) && !progress.staged.has(t.key));
+  if (ctx.scan && toScan.length > 0) {
+    const { scanBeforeStage } = await import("./publish-scan");
+    say(`  scanning with ${ctx.scan.scanner.name} before anything is pushed`);
+    try {
+      scanReport = await scanBeforeStage({ targets: toScan, ctx, scan: ctx.scan, say });
+    } catch (err) {
+      const e = err instanceof PublishTargetError ? err : new PublishTargetError("publish-scan-failed", err instanceof Error ? err.message : String(err));
+      throw new PublishRunError(e.code, ctx.redactor.redact(e.message), e.fix, "scan", stagedNames, revealedNames);
+    }
+  }
   for (const target of targets) {
     if (progress.revealed.has(target.key)) {
       resumed.push({ target: target.name, step: "revealed" });
@@ -1074,5 +1143,5 @@ export async function runPublish(req: {
     revealedNames.push(target.name);
     await write(target, "revealed", p.items, {});
   }
-  return { published, resumed, recordWarning, ...(verified ? { verify: verified } : {}) };
+  return { published, resumed, recordWarning, ...(verified ? { verify: verified } : {}), ...(scanReport ? { scan: scanReport } : {}) };
 }

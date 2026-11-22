@@ -1423,6 +1423,110 @@ jobs:
       - run: npm run build
       - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
 
+# ==== scan ====
+name: chant release
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: The release's label, such as 1.4.0 (the tag carries it as given), or auto for the one chant release next computes
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+env:
+  CHANT_RELEASE_LABEL: ${{ inputs.label }}
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+      label: ${{ steps.green.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          label="$CHANT_RELEASE_LABEL"; if [ "$label" = auto ]; then rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi; next="$(npx chant release next --at "$commit" --json)" || { echo "release next found no label for $commit, so no release is cut: $next" >&2; exit 1; }; label="$(printf '%s' "$next" | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')"; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install grype v0.121.1"
+        run: "mkdir -p \"$RUNNER_TEMP/grype\" && curl -fsSL -o \"$RUNNER_TEMP/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  $RUNNER_TEMP/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/grype/grype.tar.gz\" -C \"$RUNNER_TEMP/grype\" grype && echo \"CHANT_GRYPE=$RUNNER_TEMP/grype/grype\" >> \"$GITHUB_ENV\""
+      - name: "Install syft v1.56.0"
+        run: "mkdir -p \"$RUNNER_TEMP/syft\" && curl -fsSL -o \"$RUNNER_TEMP/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  $RUNNER_TEMP/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/syft/syft.tar.gz\" -C \"$RUNNER_TEMP/syft\" syft && echo \"CHANT_SYFT=$RUNNER_TEMP/syft/syft\" >> \"$GITHUB_ENV\""
+      - run: npx chant release doctor --from cut
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'npm run build' --json > "$RUNNER_TEMP/chant-cut.json"
+          tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
+          if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+  publish:
+    needs: [gate, cut]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CHANT_RELEASE_LABEL: ${{ needs.gate.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install grype v0.121.1"
+        run: "mkdir -p \"$RUNNER_TEMP/grype\" && curl -fsSL -o \"$RUNNER_TEMP/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  $RUNNER_TEMP/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/grype/grype.tar.gz\" -C \"$RUNNER_TEMP/grype\" grype && echo \"CHANT_GRYPE=$RUNNER_TEMP/grype/grype\" >> \"$GITHUB_ENV\""
+      - name: "Install syft v1.56.0"
+        run: "mkdir -p \"$RUNNER_TEMP/syft\" && curl -fsSL -o \"$RUNNER_TEMP/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  $RUNNER_TEMP/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/syft/syft.tar.gz\" -C \"$RUNNER_TEMP/syft\" syft && echo \"CHANT_SYFT=$RUNNER_TEMP/syft/syft\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
 # ==== lane ====
 name: chant release
 on:

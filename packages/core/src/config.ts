@@ -234,6 +234,8 @@ export const ChantConfigSchema = z.object({
         z.object({ identity: z.string().min(1).optional(), issuer: z.string().min(1).optional() }).strict(),
       ])
       .optional(),
+    // #5446: the vulnerability scan before the stage; on under the supply-chain group unless false.
+    scan: z.union([z.boolean(), z.object({ db: z.string().min(1).optional() }).strict()]).optional(),
     // #4840: the label stamped into these packages' package.json at the cut and the publish.
     version: z.object({
       packages: z.array(z.string().min(1)).min(1).optional(),
@@ -664,6 +666,16 @@ export interface ChantConfig {
      * ./lifecycle/publish-signing.ts.
      */
     signing?: import("./lifecycle/publish-signing").SigningConfig;
+    /**
+     * The vulnerability scan before the stage (#5446): `true`, or `{ db }` to
+     * read the scanner's database from that directory without updating it.
+     * Every image a target pushes, scanned through an SBOM of its layers, and
+     * every SBOM the publish attaches goes through the gate `vulnPolicy`
+     * configures, and a blocking finding stops the publish before anything is
+     * pushed. On by default under the `supply-chain` group; `false` turns it
+     * off there. See ./lifecycle/publish-scan.ts.
+     */
+    scan?: import("./lifecycle/publish-scan").ReleaseScanConfig;
     /**
      * The members of this workspace root release as a train (#5154): `chant
      * workspace train cut <env>` picks the members `chant release changed`

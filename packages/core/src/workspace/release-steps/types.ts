@@ -47,6 +47,8 @@ export interface ReleaseWorkflowContext {
   doctor: boolean;
   /** The publish signs with Sigstore (#5164). */
   signing: boolean;
+  /** The publish scans before the stage (#5446). */
+  scan: boolean;
   /** The green gate the cut checks (#5149). */
   green: ReleaseGreenSource;
   /** `release.workflow.builds` (#5152). */

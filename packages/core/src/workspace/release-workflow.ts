@@ -219,6 +219,13 @@ export interface ReleaseWorkflowInput {
    */
   signing?: boolean;
   /**
+   * The publish scans what it would put out before the stage (#5446):
+   * `release.scan` or the `supply-chain` group, with an `oci`, `forge` or
+   * `npm` target. The jobs download grype and syft pinned by SHA-256
+   * ({@link scanSetup}).
+   */
+  scan?: boolean;
+  /**
    * The config declares `release.version` (#4840): the publish job runs
    * `chant release stamp <label>` before the images and the build, so what
    * it builds and publishes carries the label as its version. The cut
@@ -289,6 +296,7 @@ export { RELEASE_BINFMT_IMAGE, qemuArchitectures, qemuSetup } from "./release-st
 export { RELEASE_ARTIFACTS_ARTIFACT, RELEASE_ARTIFACTS_STAGE } from "./release-steps/artifacts";
 export { goreleaserSetup } from "./release-steps/goreleaser";
 export { cosignSetup } from "./release-steps/signing";
+export { scanSetup } from "./release-steps/scan";
 export { RELEASE_DIGESTS_FILE, RELEASE_DIGESTS_PATHS, RELEASE_IMAGES_ARTIFACT } from "./release-steps/images";
 
 /** The flags `chant release publish` gets under the groups. */
@@ -347,6 +355,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     version: input.version === true,
     doctor: shape === "dispatch" ? p.doctor !== false : p.doctor === true,
     signing: input.signing === true,
+    scan: input.scan === true,
     green,
     builds,
     ...(input.tags ? { tags: input.tags } : {}),
@@ -388,7 +397,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       const setup = toolchainLines(resolveToolchains(b.build.toolchains !== undefined ? b.build.toolchains : p.toolchains === false ? false : own ? undefined : p.toolchains, own ? new Set(b.files) : files, own ? (dir === "." ? null : dir) : root, false));
       return { ...b.build, member: b.member, memberDir: b.dir, path: dir, setup };
     });
-    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, green, builds: [] };
+    const trainContext: ReleaseWorkflowContext = { forge: input.forge, shape: "dispatch", input: { ...input, imagePlatforms: t.imagePlatforms ?? [] }, pipeline: p, chant, root, verify: false, images: t.images === true, archives: [], artifacts: false, version: false, doctor: false, signing: input.signing === true, scan: input.scan === true, green, builds: [] };
     return renderTrainWorkflow({
       forge: input.forge,
       env: input.train.env,
@@ -1239,6 +1248,9 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   const allTargets = [...(release?.publish ?? []), ...memberReleases.flatMap((r) => r.publish ?? [])];
   const { resolveSigning } = await import("../lifecycle/publish-signing");
   const signs = [release, ...memberReleases].some((r) => resolveSigning(r?.signing, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "pypi"));
+  // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
+  const { resolveScan } = await import("../lifecycle/publish-scan");
+  const scans = [release, ...memberReleases].some((r) => resolveScan(r?.scan, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "npm"));
   // #5152: the toolchains the project's root files name, and chant from npm for a project with no package.json.
   const { TOOLCHAIN_MARKERS, detectToolchains } = await import("./release-toolchains");
   const projectFiles = TOOLCHAIN_MARKERS.filter((f) => existsSync(join(root, f)));
@@ -1283,6 +1295,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     })(),
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
+    ...(scans ? { scan: true } : {}),
     ...(allTargets.length > 0 ? { publish: allTargets } : {}),
     ...(release?.train
       ? {
@@ -1322,7 +1335,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
-  const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null].filter(Boolean);
+  const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null, scans ? `scans before anything is pushed, with grype ${TOOL_PINS.grype.version} and syft ${TOOL_PINS.syft.version} pinned by SHA-256` : null].filter(Boolean);
   const what = release?.train
     ? release.workflow?.trigger === "dispatch"
       ? `cuts and publishes a release train for ${release.train.env} started by hand, from a green commit, and publishes one a release-train/${release.train.env}/* tag names`

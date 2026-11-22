@@ -483,6 +483,43 @@ jobs:
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
       - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
 
+# ==== scan ====
+name: chant release publish
+on:
+  push:
+    tags: ["v*", "!v[0-9]+"]
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install grype v0.121.1"
+        run: "mkdir -p \"$RUNNER_TEMP/grype\" && curl -fsSL -o \"$RUNNER_TEMP/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  $RUNNER_TEMP/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/grype/grype.tar.gz\" -C \"$RUNNER_TEMP/grype\" grype && echo \"CHANT_GRYPE=$RUNNER_TEMP/grype/grype\" >> \"$GITHUB_ENV\""
+      - name: "Install syft v1.56.0"
+        run: "mkdir -p \"$RUNNER_TEMP/syft\" && curl -fsSL -o \"$RUNNER_TEMP/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  $RUNNER_TEMP/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/syft/syft.tar.gz\" -C \"$RUNNER_TEMP/syft\" syft && echo \"CHANT_SYFT=$RUNNER_TEMP/syft/syft\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - id: label
+        run: |
+          label="$(npx chant release tag "$GITHUB_REF_NAME" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')" || label=""
+          if [ -z "$label" ]; then echo "$GITHUB_REF_NAME names no release of this member, so nothing is published" >&2; exit 1; fi
+          echo "CHANT_RELEASE_LABEL=$label" >> "$GITHUB_ENV"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+      - run: npm run build
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
 # ==== lane ====
 name: chant release publish
 on:
