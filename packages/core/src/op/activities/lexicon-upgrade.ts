@@ -793,7 +793,16 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   const { stdout: currentBranch } = await gh(`git rev-parse --abbrev-ref HEAD`);
   const savedBranch = currentBranch.trim();
 
-  await gh(`git stash --include-untracked`).catch(() => {/* nothing to stash */});
+  // Stash tracked changes only (#5499). Untracked files stay put: among them
+  // can be the file the caller's shell redirected this process's stdout to
+  // (`chant run ... --json > upgrade-<lexicon>.json`), and stashing it deletes
+  // it, so the run's JSON would go to a deleted file and `stash pop` would
+  // bring back an empty one. Pop only a stash this run made: `git stash` with
+  // nothing to save still exits 0, and a pop then takes someone else's.
+  const { stdout: stashOut } = await gh(
+    `git stash push -m ${shellQuote(`chant lexicon-upgrade ${lexicon}`)}`,
+  ).catch(() => ({ stdout: "", stderr: "" }));
+  const stashed = /^Saved working directory/m.test(stashOut);
 
   try {
     await gh(`git checkout ${shellQuote(branch)}`);
@@ -880,6 +889,6 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     };
   } finally {
     await gh(`git checkout ${shellQuote(savedBranch)}`).catch(() => {/* best-effort */});
-    await gh(`git stash pop`).catch(() => {/* nothing to pop */});
+    if (stashed) await gh(`git stash pop`).catch(() => {/* best-effort */});
   }
 }
