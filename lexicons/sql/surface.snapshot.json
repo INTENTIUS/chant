@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-12T20:34:31.908Z",
+  "generatedAt": "2026-11-22T03:37:18.912Z",
   "entries": {
     "Database": {
       "kind": "resource",
@@ -21,6 +21,18 @@
     "MaterializedView": {
       "kind": "resource",
       "resourceType": "ClickHouse::MaterializedView"
+    },
+    "MysqlDatabase": {
+      "kind": "resource",
+      "resourceType": "MySQL::Database"
+    },
+    "MysqlTable": {
+      "kind": "resource",
+      "resourceType": "MySQL::Table"
+    },
+    "MysqlView": {
+      "kind": "resource",
+      "resourceType": "MySQL::View"
     },
     "PostgresAggregate": {
       "kind": "resource",
