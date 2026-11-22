@@ -135,6 +135,8 @@ export interface DoctorDeps {
   cargo?: string;
   /** What would scan before the stage (#5446). Default: grype or trivy and syft, as the publish runs them. */
   scanner?: Pick<import("./publish-scan").ReleaseScanner, "name" | "unavailable">;
+  /** What reads whether the forge protects `chant/lifecycle` (#5469). Default: the forge's REST API, read-only. */
+  lifecycleProtection?: (target: import("./lifecycle-protection").ProtectionTarget, fetch: import("../pr-forge").ForgeFetch) => Promise<import("./lifecycle-protection").LifecycleProtection>;
 }
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -240,10 +242,39 @@ export async function releaseDoctor(req: {
   if (bases) targets.push(bases);
   const pull = checkPullLogin(ctx, req.images ?? []);
   if (pull) targets.push(pull);
+  const lifecycle = await checkLifecycleBranch(ctx, req.groups ?? new Set(), deps.lifecycleProtection);
+  if (lifecycle) targets.push(lifecycle);
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
   return { environment, targets, counts };
+}
+
+/**
+ * #5469: under `verified-releases` or `who-ran-it`, whether the forge refuses
+ * force pushes to and deletions of `chant/lifecycle`. No forge to ask (the
+ * origin remote names none chant reads) is no target; a forge with no token
+ * that reads it is `unknown`.
+ */
+async function checkLifecycleBranch(ctx: Ctx, groups: ReadonlySet<import("../workspace/security").SecurityGroup>, read?: DoctorDeps["lifecycleProtection"]): Promise<DoctorTarget | null> {
+  if (!groups.has("verified-releases") && !groups.has("who-ran-it")) return null;
+  const { forgeOfCheckout } = await import("../forge-remote");
+  const { FORGE_TOKEN_ORDER } = await import("../pr-forge");
+  const { readLifecycleProtection, protectionVerdict, LIFECYCLE_BRANCH } = await import("./lifecycle-protection");
+  const remote = forgeOfCheckout(ctx.cwd);
+  if (!remote) return null;
+  const t: DoctorTarget = { kind: "lifecycle", name: `${LIFECYCLE_BRANCH} on ${remote.kind} ${remote.repo}`, checks: [] };
+  const source = FORGE_TOKEN_ORDER[remote.kind].find((n) => ctx.env[n]?.trim());
+  if (!source) {
+    t.checks.push({ check: "lifecycle-protected", status: "unknown", message: `no token to ask ${remote.kind} whether ${LIFECYCLE_BRANCH} refuses force pushes and deletions is set: ${FORGE_TOKEN_ORDER[remote.kind].join(", ")}`, fix: `Set ${FORGE_TOKEN_ORDER[remote.kind][0]} to a token that reads ${remote.repo}.` });
+    return t;
+  }
+  const apiBase = remote.kind === "github" ? (remote.host === "github.com" ? "https://api.github.com" : `${remote.url}/api/v3`) : remote.kind === "gitlab" ? `${remote.url}/api/v4` : `${remote.url}/api/v1`;
+  const target = { kind: remote.kind, apiBase, repo: remote.repo, token: ctx.env[source]!.trim() };
+  const protection = await (read ?? readLifecycleProtection)(target, ctx.fetch as never);
+  const v = protectionVerdict(protection);
+  t.checks.push({ check: "lifecycle-protected", status: v.status, message: v.message, ...(v.fix ? { fix: v.fix } : {}) });
+  return t;
 }
 
 async function checkTarget(decl: PublishDeclaration, ctx: Ctx): Promise<DoctorTarget[]> {

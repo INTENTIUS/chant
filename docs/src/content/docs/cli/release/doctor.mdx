@@ -49,6 +49,8 @@ When the publish scans before the stage (`release.scan`, or the `supply-chain` g
 
 For each registry a `release.images` entry's `pull` names, the doctor checks that its username and password variables are set (`image-pull-login`): a failure in CI, a warning on a workstation.
 
+Under `verified-releases` or `who-ran-it`, when the origin remote is on GitHub, GitLab or Forgejo, the doctor asks the forge, read-only, whether `chant/lifecycle` refuses force pushes and deletions (`lifecycle-protected`): the rulesets and branch protection that apply to the branch on GitHub, the protected branches of the project on GitLab, the branch protection rules on Forgejo. An unprotected branch is a warning that says how to protect it. A token that can't read the setting, or no token, is `unknown`. See [the ref gate](/chant/cli/workspace-ref-gate/#the-policy).
+
 Under `supply-chain`, the doctor also reads each Dockerfile `release.images` names, with the entry's `args`, and warns of a `FROM` that is not pinned by digest (`image-base-pinned`). See [Pin image bases by digest](/chant/guide/security-supply-chain/#pin-image-bases-by-digest).
 
 Seven checks hand back a short-lived publishing token, which the doctor masks and drops: npm's OIDC exchange, Open VSX's, PyPI's, crates.io's, nuget.org's and RubyGems.org's trusted-publishing exchanges, and the MCP Registry's token exchange. They are the requests a publish makes first, and crates.io's token is revoked straight away. No other check sends a request that changes anything. Every line and the `--json` document go through the publish's redactor.

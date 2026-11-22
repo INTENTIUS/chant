@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 304 | 0 | 0 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 306 | 0 | 0 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 65 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
@@ -419,6 +419,8 @@ Each row follows, in the order of the table above.
 | reason code | `signers-file-missing` | chant | signers.schema.json | There is no signers file at the base revision, so there is no signer history to read. |
 | reason code | `rotation-threshold-not-met` | chant | signers.schema.json | Fewer distinct signers of the set before signed the rotation, in the chant-signers namespace, than that set's threshold. |
 | reason code | `ref-update-invalid` | chant | ref-gate.schema.json | The hook's standard input is not the lines git hands a pre-receive or pre-push hook. |
+| reason code | `lifecycle-ref-deleted` | chant | ref-gate.schema.json | The update deletes chant/lifecycle, which holds the audit trail and is never deleted; chant lifecycle gc prunes it with a new commit. |
+| reason code | `lifecycle-ref-rewritten` | chant | ref-gate.schema.json | The update moves chant/lifecycle to a commit that does not descend from its old tip, which a force push does; the branch is append-only. |
 | reason code | `ref-evidence-missing` | chant | ref-gate.schema.json | No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit. |
 | reason code | `ref-evidence-stale` | chant | ref-gate.schema.json | Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
 | reason code | `bump-invalid` | chant | release-changed.schema.json | --bump-member is not &lt;member&gt;=major\|minor\|patch, or names a member the declaration does not have. |

@@ -105,6 +105,8 @@ export const SECURITY_FEATURES: readonly SecurityFeature[] = [
   { feature: "Promote verifies the release", byDefault: "off: `chant release verify` on demand", setting: "`chant release verify`", group: "verified-releases", codes: [] },
   // #5149: a cut with no green gate.
   { feature: "Cut refuses `release.green: \"none\"`", byDefault: "off: cuts with a warning and records `green: none`", setting: "`identity.gates.release`", group: "verified-releases", codes: [] },
+  // #5469: the audit branch can't be rewritten or deleted.
+  { feature: "Remote refuses a rewrite or deletion of `chant/lifecycle`", byDefault: "off: chant's own pushes are client-checked and a plain force push is not stopped", setting: "the `pre-receive` hook of `chant workspace ref-gate install`, or branch protection on the forge, which `chant release doctor` reads", group: "verified-releases", codes: [] },
   { feature: "SBOM on every target", byDefault: "off: a target with no SBOM source publishes without one", setting: "`sbom` on the target", group: "supply-chain", codes: ["security-sbom-disabled", "security-sbom-unsourced"] },
   { feature: "OIDC provenance", byDefault: "off: a plan field", setting: "`--require-provenance`", group: "supply-chain", codes: ["security-publish-no-provenance"] },
   { feature: "Cut needs a green gate", byDefault: "off: `release.green: \"none\"` cuts with a warning", setting: "`release.green` other than `none`", group: "supply-chain", codes: [] },

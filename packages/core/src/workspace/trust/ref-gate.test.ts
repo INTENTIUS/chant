@@ -195,6 +195,31 @@ describe("the pre-receive decision", () => {
     expect(decideRefUpdate({ repo: r.work, update: { ref: "refs/heads/main", old: null, new: head }, base: null }).decision).toBe("admit");
   });
 
+  test("chant/lifecycle is never deleted or rewritten, whatever refs lists, and a fast-forward is admitted", () => {
+    const { r, base, head } = setup("lifecycle-ref");
+    r.push(`${base}:refs/heads/chant/lifecycle`);
+    const ref = "refs/heads/chant/lifecycle";
+    // A line appended on top of the tip is the only update the branch takes.
+    expect(runPreReceive(r.origin, line(base, head, ref), { now: NOW }).ok).toBe(true);
+    r.push(`${head}:${ref}`);
+    // Another history from the same base: a force push to it.
+    r.git(["checkout", "-q", "-b", "elsewhere", base]);
+    r.write("other.txt", "another history\n");
+    const other = r.commit("another history");
+    r.push(`${other}:refs/heads/elsewhere`);
+    const forced = runPreReceive(r.origin, line(head, other, ref), { now: NOW });
+    expect(forced.ok).toBe(false);
+    expect(forced.decisions[0]).toMatchObject({ decision: "refuse", error: { code: "lifecycle-ref-rewritten" } });
+    expect(describeDecision(forced.decisions[0]!, { site: "pre-receive" }).join("\n")).toContain("append-only");
+    const deleted = runPreReceive(r.origin, line(head, "0".repeat(40), ref), { now: NOW });
+    expect(deleted.decisions[0]).toMatchObject({ decision: "refuse", error: { code: "lifecycle-ref-deleted" } });
+    // With no policy at all it is still refused, and creating the branch is admitted.
+    expect(decideRefUpdate({ repo: r.work, update: { ref, old: head, new: null }, base: null }).decision).toBe("refuse");
+    expect(decideRefUpdate({ repo: r.work, update: { ref, old: null, new: head }, base: null }).decision).toBe("admit");
+    // Other branches keep the behaviour the gate always had: a deletion is the forge's to refuse.
+    expect(runPreReceive(r.origin, line(head, "0".repeat(40), "refs/heads/side"), { now: NOW }).ok).toBe(true);
+  });
+
   test("a policy at base that can't be read refuses every update", () => {
     const r = new GateRepos("unreadable");
     r.write(".chant/trust.json", "{ not json");

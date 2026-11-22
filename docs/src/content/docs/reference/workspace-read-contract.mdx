@@ -412,6 +412,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `runner-key-is-signer` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is a person's key in the signers file, or `trust runner add` names a signer. Evidence and run statements are signed by a service or CI identity. |
 | `runner-key-unlisted` | error, `evidence sign` and `runs sign` | The policy at base lists no runner with the key. |
 | `ref-update-invalid` | error, `ref-gate pre-receive` and `pre-push` | The hook's standard input is not the lines git hands a pre-receive or pre-push hook. |
+| `lifecycle-ref-deleted` | error, `ref-gate pre-receive` and `pre-push` | The update deletes `chant/lifecycle`, which holds the audit trail and is never deleted; `chant lifecycle gc` prunes it with a new commit. |
+| `lifecycle-ref-rewritten` | error, `ref-gate pre-receive` and `pre-push` | The update moves `chant/lifecycle` to a commit that does not descend from its old tip, which a force push does; the branch is append-only. |
 | `ref-evidence-missing` | check verdict, `ref-gate` | No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit ([#4867](https://github.com/INTENTIUS/chant/issues/4867)). |
 | `ref-evidence-stale` | check verdict, `ref-gate` | Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree. |
 | `bump-invalid` | error, `release-changed` | `--bump-member` is not `<member>=major\|minor\|patch`, or names a member the declaration does not have. |

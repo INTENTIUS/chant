@@ -384,6 +384,8 @@ export const REASONS = {
   "runner-key-is-signer": "The key given to evidence sign, runs sign or trust runner add is a person's key in the signers file, or trust runner add names a signer. Evidence and run statements are signed by a service or CI identity.",
   "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign or runs sign.",
   // The ref gate (workspace ref-gate, #4867): why an update can't be decided, and why a required check has no current evidence.
+  "lifecycle-ref-deleted": "The update deletes chant/lifecycle, which holds the audit trail and is never deleted; chant lifecycle gc prunes it with a new commit.",
+  "lifecycle-ref-rewritten": "The update moves chant/lifecycle to a commit that does not descend from its old tip, which a force push does; the branch is append-only.",
   "ref-update-invalid": "The hook's standard input is not the lines git hands a pre-receive or pre-push hook.",
   "ref-evidence-missing": "No runner evidence for a check the policy at base requires for the ref is attached to the pushed commit.",
   "ref-evidence-stale": "Evidence for a required check verifies, but a record it names changed after it was signed, or it names no records and was signed over another tree.",
