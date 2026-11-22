@@ -1221,6 +1221,55 @@ export function releaseRunPrepare(
   };
 }
 
+/**
+ * The gate of the pipeline stage a component run into `env` goes through
+ * (#5475): undefined when no stage at base gates `env`. Under a release it
+ * is read here, bound to the release's digest, and gives an exit code when
+ * it stops the run, else undefined. Without one it gives the reader the run
+ * calls with the digest of the components it resolved, which gives the exit
+ * code when the gate stops the run. A stop is printed with its approve line.
+ */
+async function runStageGate(projectPath: string, env: string, releaseDigest: string | undefined): Promise<number | undefined | ((digest: string) => Promise<number | undefined>)> {
+  const { runStageAtBase, componentRunStageGate, pipelineGateProofAt } = await import("../../pipeline/run-gate");
+  const stage = runStageAtBase(projectPath, env);
+  if (stage.status === "none") return undefined;
+  if (stage.status === "refused") {
+    console.error(formatError({ message: stage.stop.message }));
+    return stage.stop.exitCode;
+  }
+  const { gitGateLedgerPort } = await import("../../op/gate");
+  const { getHeadCommit } = await import("../../lifecycle/git");
+  const head = await getHeadCommit({ cwd: projectPath }).catch(() => undefined);
+  const proof = await pipelineGateProofAt(projectPath, stage.base);
+  // #5387: the change risk a cut of the release bound, which a stage gate with holds.risk reads, as a promote reads it.
+  let risk: import("../../lifecycle/release-risk").ReleaseRisk | undefined;
+  if (releaseDigest !== undefined) {
+    const { readCuts } = await import("../../lifecycle/release-store");
+    const cuts = await readCuts().then((r) => r.cuts, () => []);
+    risk = cuts.find((c) => c.releaseDigest === releaseDigest && c.risk)?.risk;
+  }
+  const check = async (digest: string): Promise<number | undefined> => {
+    const got = await componentRunStageGate({
+      spec: stage.spec,
+      env,
+      digest,
+      ...(releaseDigest !== undefined ? { releaseDigest } : {}),
+      ...(risk ? { risk } : {}),
+      port: gitGateLedgerPort(),
+      ...(proof ? { proof } : {}),
+      ...(head ? { gitSha: head } : {}),
+      now: new Date(),
+    });
+    for (const line of got.lines) console.error(formatInfo(line));
+    if (got.passed) return undefined;
+    const { stop } = got;
+    const hint = stop.hint ? (stop.code === "pipeline-gate-waiting" ? `Approve it with: ${stop.hint}` : stop.hint) : undefined;
+    console.error(formatError({ message: `${stop.message}${stop.code ? ` [${stop.code}]` : ""}`, ...(hint ? { hint } : {}) }));
+    return stop.exitCode;
+  };
+  return releaseDigest !== undefined ? check(releaseDigest) : check;
+}
+
 async function runComponentSelection(ctx: CommandContext): Promise<number> {
   const selector = ctx.args.path;
   if (!selector || selector === ".") {
@@ -1347,6 +1396,26 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
   }
   // #4695: the components a run under a release left alone, recorded after a successful run.
   const skipped: Skipped = new Map();
+  const releasePrepare = underRelease ? releaseRunPrepare(underRelease, projectPath, env, { deployUnchanged: ctx.args.deployUnchanged === true, skipped }) : undefined;
+  // #5475: a run into an environment a pipeline stage gates waits at that stage's gate, read at base as a promote reads it.
+  const stageGate = await runStageGate(projectPath, env, underRelease?.releaseDigest);
+  if (typeof stageGate === "number") {
+    if (stageGate === 3) events?.settle("gated");
+    else events?.settle("failed", `stage "${env}"'s gate stopped the run`);
+    return stageGate === 3 ? gatedExit : stageGate;
+  }
+  let stageStop: number | undefined;
+  const prepare: import("../../components/cli-support").RunComponentsOptions["prepare"] =
+    stageGate && !underRelease
+      ? async (components) => {
+          // Without a release, the gate binds the components this run applies, once they are resolved.
+          const { runStageDigest } = await import("../../pipeline/run-gate");
+          const code = await stageGate(runStageDigest(components, env, projectPath, targets));
+          if (code === undefined) return { components };
+          stageStop = code;
+          return { error: `stage "${env}"'s gate stopped the run` };
+        }
+      : releasePrepare;
   let result: RunComponentsResult;
   try {
     // #4594: ci.lockGrain, and on the resource grain each step's row lease in the pull-request loop's rows file.
@@ -1363,11 +1432,16 @@ async function runComponentSelection(ctx: CommandContext): Promise<number> {
       sandbox: ctx.args.sandbox,
       buildParams: paramsResolution.provenance,
       ...(onPlan ? { onPlan } : {}),
-      ...(underRelease ? { prepare: releaseRunPrepare(underRelease, projectPath, env, { deployUnchanged: ctx.args.deployUnchanged === true, skipped }) } : {}),
+      ...(prepare ? { prepare } : {}),
     });
   } catch (err) {
     events?.settle("failed", err instanceof Error ? err.message : String(err));
     throw err;
+  }
+  if (stageStop !== undefined) {
+    if (stageStop === 3) events?.settle("gated");
+    else events?.settle("failed", `stage "${env}"'s gate stopped the run`);
+    return stageStop === 3 ? gatedExit : stageStop;
   }
   // A run that never reached its components (a bad selector, a cycle) still ends its stream.
   if (result.success) events?.settle("ok");

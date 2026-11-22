@@ -1630,13 +1630,8 @@ async function requestRollbackAfterFailure(input: {
  * gate. A trust config that can't be read proves nobody.
  */
 async function promoteProof(projectPath: string): Promise<import("../../pipeline/promote").PipelineGateProof | undefined> {
-  try {
-    const { scopeSource } = await import("../../workspace/write-scope");
-    const { policy } = scopeSource(projectPath, promoteBase(projectPath));
-    return { signers: policy, roles: policy.roles };
-  } catch {
-    return undefined;
-  }
+  const { pipelineGateProofAt } = await import("../../pipeline/run-gate");
+  return pipelineGateProofAt(projectPath, promoteBase(projectPath));
 }
 
 /**
