@@ -41,9 +41,9 @@ import { IN_TOTO_STATEMENT_TYPE } from "./publish-attachments";
 import type { Redactor } from "./publish-credentials";
 import type { SecurityGroup } from "../workspace/security";
 import { PublishTargetError, isForgejoJob, type PublishContext } from "./release-publish";
-import { keyEnvOf, signingConfigProblems, type SigningConfig } from "./signing-config";
+import { keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningConfig } from "./signing-config";
 
-export { isForgejoJob, keyEnvOf, signingConfigProblems, type SigningConfig };
+export { isForgejoJob, keyEnvOf, kmsEnvOf, signingConfigProblems, type SigningConfig };
 
 /** The media type of a Sigstore bundle, and the artifact type of a referrer that holds one. */
 export const SIGSTORE_BUNDLE_MEDIA_TYPE = "application/vnd.dev.sigstore.bundle.v0.3+json";
@@ -78,8 +78,8 @@ export const RUNNER_FINGERPRINT_ENV = "CHANT_RELEASE_RUNNER_KEY_FINGERPRINT";
 /** The cosign major version chant runs: 3 writes Sigstore bundles by default. */
 export const COSIGN_MAJOR = 3;
 
-/** How a publish signs: keylessly with an OIDC token, or with a key (#5458). */
-export type SigningMode = "keyless" | "key";
+/** How a publish signs: keylessly with an OIDC token, with a key held in a KMS, or with a key (#5458). */
+export type SigningMode = "keyless" | "kms" | "key";
 
 /** The variable cosign reads a key's password from. */
 export const COSIGN_PASSWORD_ENV = "COSIGN_PASSWORD";
@@ -99,7 +99,10 @@ export interface SigningSetting {
   /** `key` mode: the key, a file from the member or `env://NAME`, and the variable holding its password. */
   key?: string;
   passwordEnv?: string;
-  /** `key` mode: the PEM public key a verify checks against, from the member. */
+  /** `kms` mode: the KMS reference, and the variables that hold its credentials. */
+  kms?: string;
+  env?: string[];
+  /** `key` and `kms` modes: the PEM public key a verify checks against, from the member. */
   publicKey?: string;
   /** False when the signature goes to no transparency log (`rekor: false`). */
   tlog: boolean;
@@ -118,7 +121,7 @@ export function resolveSigning(config: SigningConfig | undefined, groups: Readon
   }
   if (config !== undefined) {
     const c = typeof config === "object" ? config : {};
-    const mode: SigningMode = c.key ? "key" : "keyless";
+    const mode: SigningMode = c.kms ? "kms" : c.key ? "key" : "keyless";
     return {
       on: true,
       from: "config",
@@ -127,7 +130,8 @@ export function resolveSigning(config: SigningConfig | undefined, groups: Readon
       tlog: c.rekor !== false,
       ...(c.identity ? { identity: c.identity } : {}),
       ...(c.issuer ? { issuer: c.issuer } : {}),
-      ...(c.key ? { key: c.key, passwordEnv: c.passwordEnv ?? COSIGN_PASSWORD_ENV } : {}),
+      ...(c.kms ? { kms: c.kms, env: kmsEnvOf(c.kms, c.env) } : {}),
+      ...(c.key && !c.kms ? { key: c.key, passwordEnv: c.passwordEnv ?? COSIGN_PASSWORD_ENV } : {}),
       ...(c.publicKey ? { publicKey: c.publicKey } : {}),
     };
   }
@@ -414,9 +418,10 @@ function withTemp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 /**
- * How cosign signs (#5458): keylessly with the job's token, or with `key`, a
- * key file's absolute path or `env://NAME`, whose password cosign reads from
- * `passwordEnv`. `tlog: false` writes no transparency log entry.
+ * How cosign signs (#5458): keylessly with the job's token, or with `key`: a
+ * KMS reference, whose credentials cosign reads from the run's variables, or
+ * a key file's absolute path or `env://NAME`, whose password cosign reads
+ * from `passwordEnv`. `tlog: false` writes no transparency log entry.
  */
 export interface CosignSignOptions {
   mode: SigningMode;
@@ -528,25 +533,35 @@ export interface SigningRefusal {
 
 /**
  * The variables the signing step needs from the CI's secrets in the mode
- * `setting` names (#5458): a key held in a variable and its password. The
+ * `setting` names (#5458): a KMS's credentials, or a key held in a variable
+ * and its password. The
  * release workflow passes them to the publish step alone.
  */
 export function signingStepVariables(setting: SigningSetting): string[] {
-  if (!setting.on || setting.mode !== "key") return [];
+  if (!setting.on) return [];
+  if (setting.mode === "kms") return [...(setting.env ?? [])];
+  if (setting.mode !== "key") return [];
   const variable = keyEnvOf(setting.key!);
   return [...(variable ? [variable] : []), setting.passwordEnv ?? COSIGN_PASSWORD_ENV];
 }
 
 /** The fix for a keyless run with no OIDC token. */
-export const KEYLESS_FIX = "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), sign with a key (release.signing.key), or set release.signing: false.";
+export const KEYLESS_FIX = "Publish from a CI job with an OIDC token (GitHub Actions: permissions: id-token: write; GitLab CI: SIGSTORE_ID_TOKEN under id_tokens with aud: sigstore), sign with a KMS key (release.signing.kms) or a key (release.signing.key), or set release.signing: false.";
 
 /**
  * Whether the mode `setting` names can sign in this run, without running
- * cosign (#5458): a keyless run needs an OIDC token cosign takes; `key`
- * needs its file or variable, its password variable, and its public key.
+ * cosign (#5458): a keyless run needs an OIDC token cosign takes; `kms`
+ * needs each variable its credentials are in; `key` needs its file or
+ * variable and its password variable; either needs the public key it names.
  * Null when it can, else the refusal.
  */
 export function signingReadiness(setting: SigningSetting, env: NodeJS.ProcessEnv, cwd: string): SigningRefusal | null {
+  if (setting.mode === "kms") {
+    const unset = (setting.env ?? []).filter((v) => !env[v]);
+    if (unset.length > 0) return { code: "publish-signing-key-missing", reason: `the credentials of ${setting.kms} are read from ${unset.join(", ")}, which ${unset.length === 1 ? "is" : "are"} not set here`, fix: `Give the publish step ${unset.join(", ")}, as chant release workflow does from the repository's secrets, or name the variables in release.signing.env.` };
+    if (setting.publicKey && !existsSync(resolve(cwd, setting.publicKey))) return { code: "publish-signing-key-missing", reason: `release.signing.publicKey names ${setting.publicKey}, which is not there, so nothing could verify what the KMS key signs`, fix: `Commit the key's public half where release.signing.publicKey names it (cosign public-key --key ${setting.kms}).` };
+    return null;
+  }
   if (setting.mode === "key") {
     const key = setting.key!;
     const variable = keyEnvOf(key);
@@ -572,11 +587,14 @@ export function prepareSigning(setting: SigningSetting, req: { env: NodeJS.Proce
   const options: CosignSignOptions =
     setting.mode === "key"
       ? { mode: "key", key: keyEnvOf(setting.key!) !== null ? setting.key! : resolve(req.cwd, setting.key!), passwordEnv: setting.passwordEnv ?? COSIGN_PASSWORD_ENV, tlog: setting.tlog }
-      : { mode: "keyless" };
+      : setting.mode === "kms"
+        ? { mode: "kms", key: setting.kms!, tlog: setting.tlog }
+        : { mode: "keyless" };
   const signer = req.signer ?? cosignSigner(req.env, req.redactor, cosignPath(req.env), options);
   const missing = signer.unavailable();
   if (missing) return { refusal: { code: "publish-signing-tool-missing", reason: missing, fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it." } };
   if (setting.mode === "key") return { context: { signer, identity: { key: setting.publicKey! }, mode: "key" } };
+  if (setting.mode === "kms") return { context: { signer, identity: { key: setting.publicKey ?? setting.kms! }, mode: "kms" } };
   const id = signingIdentity(req.env) as { identity: SigstoreIdentity };
   return { context: { signer, identity: id.identity, mode: "keyless" } };
 }

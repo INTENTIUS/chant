@@ -192,9 +192,10 @@ export async function recordedSignatures(cwd: string, releaseDigest: string): Pr
  * A keyless bundle is checked against `release.signing.identity` and
  * `issuer` when the config names them, else the ones the publish recorded:
  * a workflow of the repository the publish ran in. A key's bundle (#5458)
- * is checked with `release.signing.publicKey`, else the public key the
- * publish recorded, from the member, and without the transparency log when
- * the config says `rekor: false`.
+ * is checked with `release.signing.publicKey`, else the KMS reference
+ * (which cosign asks for the public key), else the key the publish
+ * recorded, from the member, and without the transparency log when the
+ * config says `rekor: false`.
  */
 export async function verifySigstore(req: {
   cwd: string;
@@ -223,7 +224,7 @@ export async function verifySigstore(req: {
     let id: import("./publish-signing").SigningIdentity | null;
     if (setting.mode !== "keyless" || (was && isKeyIdentity(was))) {
       // A key's signature: the public key the config names, else the one recorded, from the member.
-      const key = setting.publicKey ?? (was && isKeyIdentity(was) ? was.key : undefined);
+      const key = setting.publicKey ?? setting.kms ?? (was && isKeyIdentity(was) ? was.key : undefined);
       id = key ? { key: /^[a-z][a-z0-9+.-]*:\/\//i.test(key) ? key : resolve(req.cwd, key) } : null;
     } else {
       const recordedId = was && !isKeyIdentity(was) ? was : undefined;

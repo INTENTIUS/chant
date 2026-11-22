@@ -305,3 +305,59 @@ describe("the release workflow in key mode", () => {
     expect(job(text, "cut")).not.toContain("RELEASE_KEY");
   });
 });
+
+describe("kms mode", () => {
+  test("a KMS reference picks kms mode, with each scheme's credential variables unless env names them", () => {
+    expect(resolveSigning({ kms: "awskms:///alias/release" }, none)).toMatchObject({ mode: "kms", kms: "awskms:///alias/release", env: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"], tlog: true });
+    expect(resolveSigning({ kms: "hashivault://release" }, none)).toMatchObject({ env: ["VAULT_ADDR", "VAULT_TOKEN"] });
+    expect(resolveSigning({ kms: "azurekms://vault.vault.azure.net/release" }, none)).toMatchObject({ env: ["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"] });
+    expect(resolveSigning({ kms: "gcpkms://projects/p/locations/l/keyRings/r/cryptoKeys/k", env: ["GOOGLE_APPLICATION_CREDENTIALS"] }, none)).toMatchObject({ env: ["GOOGLE_APPLICATION_CREDENTIALS"] });
+    expect(signingStepVariables(resolveSigning({ kms: "hashivault://release" }, none))).toEqual(["VAULT_ADDR", "VAULT_TOKEN"]);
+    expect(signingConfigProblems({ kms: "hashivault://release", key: "k", publicKey: "p" })).toContainEqual(expect.stringContaining("name one"));
+    expect(signingConfigProblems({ kms: "file:///k" })).toEqual([expect.stringContaining("not a reference cosign takes")]);
+    expect(signingConfigProblems({ env: ["X"] })).toEqual([expect.stringContaining("no kms")]);
+    expect(signingConfigProblems({ kms: "awskms:///alias/r", passwordEnv: "P" })).toEqual([expect.stringContaining("no key")]);
+    expect(signingConfigProblems({ kms: "awskms:///alias/r", rekor: false })).toEqual([]);
+  });
+
+  test("the KMS stand-in: cosign signs with --key hashivault://, the credentials come from the run's variables, and readiness names the one missing", async () => {
+    const cosign = fakeCosign();
+    const setting = resolveSigning({ kms: "hashivault://release" }, none);
+    const dir = temp();
+    expect(signingReadiness(setting, { VAULT_ADDR: "http://vault.test" }, dir)).toMatchObject({ code: "publish-signing-key-missing", reason: expect.stringContaining("VAULT_TOKEN, which is not set here") });
+    expect(signingReadiness(setting, { VAULT_ADDR: "http://vault.test", VAULT_TOKEN: "t" }, dir)).toBeNull();
+    const env = { PATH: process.env.PATH, VAULT_ADDR: "http://vault.test", VAULT_TOKEN: "stand-in", CHANT_COSIGN: cosign.path };
+    const prepared = (await import("./publish-signing")).prepareSigning(setting, { env, cwd: dir, redactor: createRedactor(env) });
+    if ("refusal" in prepared) throw new Error(prepared.refusal.reason);
+    expect(prepared.context).toMatchObject({ identity: { key: "hashivault://release" }, mode: "kms" });
+    await prepared.context.signer.signBlob(new Uint8Array(Buffer.from("x")), "x");
+    const [call] = cosign.calls();
+    expect(call!.args.slice(0, 5)).toEqual(["sign-blob", "--yes", "--new-bundle-format=true", "--key", "hashivault://release"]);
+    // No password is made up for a KMS key.
+    expect(call!.password).toBeNull();
+  });
+
+  test("the doctor names the missing credential, and the cut job reports it unknown", async () => {
+    const forgeDecl = { type: "forge", forge: "github", repo: "acme/app", assets: [] } as unknown as PublishDeclaration;
+    const fetch = (async () => new Response("{}", { status: 404 })) as unknown as PublishFetch;
+    const run = (from?: "cut") =>
+      releaseDoctor({ cwd: temp(), publish: [forgeDecl], env: { GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/app", VAULT_ADDR: "http://vault.test" }, releaseWorkflow: null, signing: { kms: "hashivault://release" }, ...(from ? { from } : {}), deps: { fetch, signer: { name: "cosign", unavailable: () => null } } }).then((r) => r.targets.find((t) => t.kind === "signing")!.checks[0]!);
+    expect(await run()).toMatchObject({ check: "signing-key", status: "fail", message: expect.stringContaining("VAULT_TOKEN") });
+    expect((await run("cut")).status).toBe("unknown");
+  });
+
+  test("the KMS credentials reach the publish step alone, in a single release and a train", () => {
+    const job = (text: string, name: string) => text.split(/\n(?=  [a-z][\w-]*:\n)/).find((j) => j.startsWith(`  ${name}:`)) ?? "";
+    const signingEnv = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"];
+    for (const input of [{ pipeline: { trigger: "dispatch" as const } }, { pipeline: { trigger: "dispatch" as const }, train: { env: "prod" } }]) {
+      const text = renderReleaseWorkflow({ forge: "github", groups: sc, signing: true, signingEnv, publish: [{ type: "oci" }], ...input });
+      const publish = job(text, "publish");
+      for (const v of signingEnv) {
+        expect(publish).toContain(`          ${v}: \${{ secrets.${v} }}`);
+        expect(text.match(new RegExp(`secrets\\.${v}\\b`, "g"))).toHaveLength(1);
+      }
+      expect(job(text, "cut")).not.toContain("AWS_");
+      expect(job(text, "gate")).not.toContain("AWS_");
+    }
+  });
+});

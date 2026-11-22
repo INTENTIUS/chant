@@ -739,11 +739,11 @@ export default {
 };
 ```
 
-The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, `publish-signing-key-missing` when a [key](#signing-with-a-key) can't sign, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater, cargo, maven, nuget and rubygems targets are not signed.
+The `supply-chain` group turns it on too, and there `signing: false` turns it off with a warning. A publish that signs and can't is refused before anything is sent: `publish-signing-no-oidc` with no OIDC token cosign can use, `publish-signing-key-missing` when a [key](#signing-with-a-key) or [KMS key](#signing-with-a-kms-key) can't sign, and `publish-signing-tool-missing` with no cosign 3. A stage run again keeps the bundles an earlier run pushed or uploaded, since signing again gives other bytes: an image that already has a referrer with the predicate type is not signed again, and a draft that already holds a bundle keeps it. A release already published without its bundles is refused with `publish-forge-release-published`. A prerelease is signed as a stable release is. [`chant release doctor`](/chant/cli/release/doctor/) reports whether signing can work from where it runs: the OIDC token and cosign 3. The npm target is not signed here, since `--provenance` already signs it with Sigstore. The homebrew, marketplace, tauri-updater, cargo, maven, nuget and rubygems targets are not signed.
 
 ### Signing with a key
 
-A team that can't sign with a CI job's OIDC token, such as one releasing from Forgejo, a `chant ci serve` host or an air-gapped runner, signs with a cosign key instead. `release.signing.key` names the key, a file from the member or `env://NAME` for a variable that holds the PEM, and `publicKey` names its public half, committed in the member, which `chant release verify --sigstore` checks the bundles against:
+A team that can't sign with a CI job's OIDC token, such as one releasing from Forgejo, a `chant ci serve` host or an air-gapped runner, signs with a cosign key or a [KMS key](#signing-with-a-kms-key) instead. `release.signing.key` names the key, a file from the member or `env://NAME` for a variable that holds the PEM, and `publicKey` names its public half, committed in the member, which `chant release verify --sigstore` checks the bundles against:
 
 ```ts
 export default {
@@ -757,6 +757,28 @@ export default {
 cosign reads the key's password from `COSIGN_PASSWORD`, or from the variable `passwordEnv` names. The variable must be set, and empty for a key made with no password. The bundles are the same as in the keyless mode, signed with `--key`, and each records the public key in place of a certificate's identity. The signature goes to the public Rekor log, as cosign writes it by default; `rekor: false` writes no log entry, and verify then checks without one. A key can't be mixed with `identity` or `issuer`, and `key` without `publicKey` is refused when the config is read.
 
 A publish in key mode is refused with `publish-signing-key-missing` when the key's variable, the key file, the password variable or the public key is missing, naming which. With no CI OIDC token, `--require-provenance` is met by the SLSA statement the key signs, and its refusal names what the key is missing. The npm target, whose registry records provenance only from a GitHub or GitLab OIDC token, publishes without npm provenance there, and the release's own statement is its provenance, as on a workstation.
+
+### Signing with a KMS key
+
+`release.signing.kms` signs with a key held in a KMS, by a reference cosign takes: `awskms://`, `gcpkms://`, `azurekms://` or `hashivault://`. The key never leaves the KMS. cosign reads its credentials from the run's variables, which `env` names:
+
+```ts
+export default {
+  release: {
+    signing: { kms: "awskms:///alias/release-signing", publicKey: "keys/release.pub" },
+    publish: [{ type: "oci", image: "dist/api.oci.tar", repository: "registry.example/acme/api" }],
+  },
+};
+```
+
+| Scheme | Variables when `env` names none |
+|---|---|
+| `awskms://` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
+| `azurekms://` | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` |
+| `hashivault://` | `VAULT_ADDR`, `VAULT_TOKEN` |
+| `gcpkms://` | none: name them in `env`, or leave it empty for a runner whose own identity reaches the KMS |
+
+The bundles record `publicKey`, the PEM of the KMS key's public half from the member (`cosign public-key --key <reference>` writes it), and verify checks with it. Without `publicKey` they record the reference, and verify asks the KMS for the public key, so it needs credentials that may read it. `rekor: false` works as it does for a key. A publish whose credential variables are missing is refused with `publish-signing-key-missing`, naming them, and `--require-provenance` with no CI OIDC token is met as it is for a key. The release workflow passes the variables to the publish step alone (see [`chant release workflow`](/chant/cli/release/workflow/)).
 
 ### A CI job that checks provenance
 

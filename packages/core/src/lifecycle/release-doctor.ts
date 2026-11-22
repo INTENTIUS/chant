@@ -319,9 +319,10 @@ async function checkForgeChecks(ctx: Ctx, commit: string | undefined): Promise<D
  * Sigstore signing (#5164), when `release.signing` or the `supply-chain`
  * group turns it on and an `oci`, `forge` or `pypi` target signs: whether
  * this job can sign in the mode the config names, and cosign 3. Keyless
- * needs the OIDC token the certificate is issued for (`signing-oidc`); a key
- * (#5458) needs its file or variable, its password variable and its public
- * key (`signing-key`). The release workflow gives the key's variables to the
+ * needs the OIDC token the certificate is issued for (`signing-oidc`); a KMS
+ * key (#5458) needs its credentials' variables, and a key its file or
+ * variable and its password variable, each its public key when it names one
+ * (`signing-key`). The release workflow gives the key's variables to the
  * publish step alone, so in the cut job (`--from cut`) a missing one is
  * unknown rather than a failure. Null when the publish does not sign.
  */
@@ -343,10 +344,11 @@ async function checkSigning(
     else checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
   } else {
     const refused = signingReadiness(setting, ctx.env, ctx.cwd);
-    const held = refused !== null && /is not set here$/.test(refused.reason);
-    if (refused === null) checks.push({ check: "signing-key", status: "ok", message: `${why} signs with the ${setting.mode} ${setting.key}, verified with ${setting.publicKey}` });
+    const held = refused !== null && /not set here$/.test(refused.reason);
+    const what = setting.mode === "kms" ? `the KMS key ${setting.kms}` : `the key ${setting.key}`;
+    if (refused === null) checks.push({ check: "signing-key", status: "ok", message: `${why} signs with ${what}, verified with ${setting.publicKey ?? setting.kms}` });
     else if (held && ctx.environment.from === "cut") checks.push({ check: "signing-key", status: "unknown", message: `${refused.reason}; this is the cut job, and the release workflow gives the key's variables to the publish step alone, so only a run of the publish can test this` });
-    else checks.push(missing(ctx, "signing-key", `${why} signs with a ${setting.mode}, and ${refused.reason}`, refused.fix));
+    else checks.push(missing(ctx, "signing-key", `${why} signs with ${what}, and ${refused.reason}`, refused.fix));
   }
   const signer = injected ?? cosignSigner(ctx.env, ctx.redactor);
   const gone = signer.unavailable();

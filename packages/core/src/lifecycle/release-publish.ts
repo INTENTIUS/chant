@@ -23,7 +23,8 @@
  * ({@link detectProvenance}). Under `supply-chain` it warns when there is
  * none, before any target runs; `--require-provenance` refuses instead
  * (`publish-provenance-missing`), unless the run signs the release's SLSA
- * statement another way (#5458): with a key (`release.signing.key`). Without
+ * statement another way (#5458): with a KMS key (`release.signing.kms`) or a
+ * key (`release.signing.key`). Without
  * either, provenance is only the plan's `provenance` field.
  * When `release.signing` or `supply-chain` asks for Sigstore signing and an
  * OCI, forge or pypi target is declared (#5164, ./publish-signing.ts), a run that
@@ -707,13 +708,13 @@ export async function preparePublish(req: {
       : prepared && "refusal" in prepared
         ? setting.mode === "keyless"
           ? prepared.refusal.reason
-          : `${provenance.reason}, and the ${setting.mode} that would sign the SLSA statement can't: ${prepared.refusal.reason}`
+          : `${provenance.reason}, and the ${setting.mode === "kms" ? "KMS key" : "key"} that would sign the SLSA statement can't: ${prepared.refusal.reason}`
         : provenance.reason;
     return {
       refusal: {
         code: "publish-provenance-missing",
         message: `${name} would be published without OIDC provenance or a signed SLSA statement, and --require-provenance asks for one: ${missing}`,
-        fix: prepared && "refusal" in prepared && setting.mode !== "keyless" ? prepared.refusal.fix : "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), sign with a key (release.signing.key), or drop --require-provenance.",
+        fix: prepared && "refusal" in prepared && setting.mode !== "keyless" ? prepared.refusal.fix : "Publish from a CI job that has an OIDC token (GitHub Actions: permissions: id-token: write), sign with a KMS key (release.signing.kms) or a key (release.signing.key), or drop --require-provenance.",
       },
     };
   }
