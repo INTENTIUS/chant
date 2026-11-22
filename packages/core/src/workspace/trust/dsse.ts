@@ -20,12 +20,8 @@
  */
 
 import { createHash, createPrivateKey, createPublicKey, sign, verify, type KeyObject } from "node:crypto";
-import { NEXT_RELEASE } from "../../release-floors";
 
 export const IN_TOTO_PAYLOAD_TYPE = "application/vnd.in-toto+json";
-
-/** The first chant whose runner keys may be ECDSA P-256 as well as Ed25519 (#5470): `ecdsa-sha2-nistp256` lines under `runners` and `local.keys` in `.chant/trust.json`, envelopes signed with ECDSA and SHA-256, `chant ci serve|run --setup-key --key-type ecdsa-p256`, and the crypto module in doctor output and publish records. An older chant reads a trust config with such a line as invalid. */
-export const ECDSA_RUNNER_KEY_FLOOR = NEXT_RELEASE;
 
 export interface DsseSignature {
   keyid: string;
@@ -61,8 +57,6 @@ export type RunnerKeyKind = (typeof RUNNER_KEY_KINDS)[number];
 
 /** The ssh key type of each kind. */
 export const RUNNER_KEY_SSH_TYPES: Record<RunnerKeyKind, string> = { ed25519: "ssh-ed25519", "ecdsa-p256": "ecdsa-sha2-nistp256" };
-
-export { RUNNER_KEY_LINE } from "./trust-files";
 
 /** What a runner key may be, for messages. */
 export const RUNNER_KEY_WORDS = "an Ed25519 or ECDSA P-256 private key in PEM";
