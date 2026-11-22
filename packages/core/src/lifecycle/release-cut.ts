@@ -25,6 +25,13 @@
  * carried. A deploy under the release runs that image
  * (../components/release-run.ts).
  *
+ * When the publish would scan (#5446: `release.scan`, or the `supply-chain`
+ * group), the cut runs the same scan on what the publish would put out once
+ * the release is made, and before it is signed, recorded or tagged
+ * (./release-cut-scan.ts). A finding the policy blocks refuses the cut with
+ * the publish's code, `publish-scan-failed`, and spends no label. A scanner
+ * that can't run refuses it before anything is built, in a dry run too.
+ *
  * A project with no components (#4046) needs no special case here: its
  * targets hold the files `chant build --env <env>` writes, each with
  * `component: null`, and `artifactDigests` is empty.
@@ -163,13 +170,24 @@ export type ReleaseCutCode =
   /** #5230: an npm target names a package the registry has never published, or the registry can't say. */
   | "publish-forge-notes-missing"
   | "publish-npm-never-published"
-  | "publish-npm-registry-unreadable";
+  | "publish-npm-registry-unreadable"
+  /** #5446: the publish's scan, run by the cut before anything is recorded or tagged (./release-cut-scan.ts), under the publish's codes. */
+  | "publish-scan-failed"
+  | "publish-scan-db-stale"
+  | "publish-scan-tool-missing"
+  | "publish-scan-tool-failed"
+  | "publish-scan-vex-missing"
+  /** #5446: the scan reads the publish targets, and release.publish can't be read. */
+  | "publish-config-invalid";
 
 /** The first chant whose `chant release cut` runs `release.check`, shell lines that refuse the cut with `release-check-failed` before anything is recorded or tagged, in a dry run too (#5261). */
 export const RELEASE_CHECK_FLOOR = NEXT_RELEASE;
 
 /** The first chant whose `chant release cut` takes `--wait-checks`, which waits for a commit's pending forge checks under `forge-checks`, and whose pipeline release-cut hook passes it (#5438). */
 export const RELEASE_CUT_WAIT_CHECKS_FLOOR = NEXT_RELEASE;
+
+/** The first chant whose `chant release cut` runs the publish's vulnerability scan before anything is recorded or tagged, refusing with `publish-scan-failed` so a release the scan blocks spends no label, and whose dry run refuses a scanner that can't run (#5446). */
+export const RELEASE_CUT_SCAN_FLOOR = NEXT_RELEASE;
 
 /** `--wait-checks` ran out of time with checks still running (#5438). */
 class ChecksWaitTimeout extends Error {}
@@ -293,6 +311,14 @@ export interface CutRequest {
   check?: (commit: string) => void | Promise<void>;
   /** The intent files the cut consumes (#5159), recorded on its cut line. */
   intents?: readonly ReleaseCutIntent[];
+  /**
+   * What the cut's scan (#5446, ./release-cut-scan.ts) makes the publish
+   * targets with and scans with: tests pass a fake scanner, npm and fetch.
+   * Default: the publish's own (grype or trivy, and syft).
+   */
+  publishDeps?: import("./release-publish").PublishDeps;
+  /** A line of the scan's progress (#5446). Default: nothing printed. */
+  log?: (line: string) => void;
 }
 
 export interface CutResult {
@@ -440,6 +466,8 @@ interface Prepared {
   green: ReleaseCutGreen | null;
   /** An artifact release's targets (#5149), or undefined for a release cut from environments. */
   publishes: ReleasePublish[] | undefined;
+  /** What the cut scans with before it records or tags anything (#5446), or null when it does not scan. */
+  scan: import("./release-cut-scan").CutScan | null;
 }
 
 /**
@@ -719,6 +747,10 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     }
   }
 
+  // #5446: whether the cut scans, and with what. A scanner that can't run stops the cut here, before anything is built.
+  const { prepareCutScan } = await import("./release-cut-scan");
+  const scan = await prepareCutScan({ cwd, label: req.label, env: req.env ?? process.env, ...(req.publishDeps ? { deps: req.publishDeps } : {}) });
+
   // #4657: the images first, so the build command that packs a package can pin their digests.
   const builtImages = req.buildImages ? await req.buildImages(commit) : [];
   // #5151: the files, after the images and before the build command.
@@ -819,6 +851,7 @@ async function prepare(req: CutRequest, record = false): Promise<Prepared> {
     override,
     green: passed,
     publishes: artifactRelease ? [...(req.publishes ?? [])] : undefined,
+    scan,
   };
 }
 
@@ -989,6 +1022,12 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
       if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
       throw err;
     }
+  }
+  // #5446: the publish's scan, on what the publish would put out, before the cut signs, records or tags anything, so a
+  // release it refuses spends no label. The publish scans again.
+  if (p.scan) {
+    const { scanAtCut } = await import("./release-cut-scan");
+    await scanAtCut(p.scan, { release, label: req.label, cwd, env: req.env ?? process.env, log: req.log ?? (() => undefined), now: req.now ?? (() => new Date()) });
   }
   const timestamp = (req.now ?? (() => new Date()))().toISOString();
   // #5177: the signature covers the gate the cut line records, beside the digest, which stays the release file's.
