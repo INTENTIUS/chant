@@ -24,7 +24,7 @@ chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --
                   [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--require-runner-start] [--verbose]
 chant ci runner-start sign --key <runner key.pem> --principal <name> --job <json|@file> [-o <file>]
 chant ci runner-start verify [--base <rev>] [--commit <sha>] [--json]
-chant ci run --at <sha>
+chant ci run --at <sha> [--release [--label <label>] [--levels <levels>]]
 chant ci runs [--report-url <url>] [--json]
 chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [--apply-on-merge]
@@ -528,6 +528,8 @@ The statement proves that a provisioner holding a listed key said it started thi
 
 `chant ci run --at <sha>` asks for every required phase to be built at a first-parent commit of the green branch, so you can make that commit releasable ([#4169](https://github.com/INTENTIUS/chant/issues/4169)). It fetches the branch and the build requests, pushes `ci/build/<sha>`, and prints the tag. On GitHub, with `GITHUB_REPOSITORY` and a token in the environment, it starts each workflow holding a required phase at the tag at once and names them. Otherwise the next tick starts them, or `ci serve --build-command` serves the tag for chant runs. A commit that already has a request is left as it is. A workflow holding a phase without a `workflow_dispatch` trigger can't be started at a tag, and is named in a warning. Once the phases pass there, the tick tags the commit green.
 
+With `--release`, it asks for a release instead: see [Release requests](#release-requests).
+
 ## ci runs
 
 `chant ci runs --report-url <url>` lists the index, one line per run, newest first. Without `--report-url` it reads the workspace's `ci.reportUrl`. With `--json` it prints the index document unchanged. The command exits 1 when the URL has no index or the index can't be read.
@@ -596,10 +598,20 @@ The tools the workflow installs are installed on the host instead: cosign when t
 
 The host has no CI OIDC token, so it signs with a key. `ci serve --release` refuses to start when a release signs keylessly, and under `supply-chain` when a release that publishes does not sign with `release.signing.kms` or `release.signing.key`. It also refuses to start without a trusted runner key. Every step gets the key's fingerprint in `CHANT_RELEASE_RUNNER_KEY_FINGERPRINT`, so the SLSA statement the publish signs names this host as its builder, and that statement meets `--require-provenance`. Each line the publish adds to `_releases/publishes.jsonl` names the runner key in `runnerKey` and the run `ci serve` gave it in `runId`.
 
-A release counts against `--max-jobs`. The state file keeps each tag under `release:<tag>` with how it ended, and the publish job's output, redacted, goes to `reports/releases/` in the state directory and to stderr. A failed release is run again with `--rerun-failed`, and the publish resumes from its record, so nothing that went out is sent again.
+A release counts against `--max-jobs`, and a host runs one release at a time. The state file keeps each tag under `release:<tag>` with how it ended, and the publish job's output, redacted, goes to `reports/releases/` in the state directory and to stderr. A failed release is run again with `--rerun-failed`, and the publish resumes from its record, so nothing that went out is sent again.
+
+Before it publishes a tag, `ci serve` takes the git-ref lease `refs/chant/lease/release` at the workspace root and pushes it, renews it while the publish runs, and releases it after. A host that finds it held waits for a later poll. With the lease held it looks for `refs/chant/released/<tag>` on the remote, which a host pushes after it publishes a tag. A tag that has it was published by another host, and is recorded as `elsewhere` and not run. So two hosts serving one repository publish each release once.
+
+#### Release requests
+
+`chant ci run --at <sha> --release` asks a host to cut a release of a commit and publish it. It pushes an annotated tag, `ci/release/<sha>`, whose message holds the label (`--label`, default `auto`, the label `chant release next` computes) and, for a train, the levels (`--levels`, default `auto`). A commit that already has a request keeps it.
+
+For each request, `ci serve --release` takes the same lease, checks the request is still on the remote, and runs the `gate` and `cut` jobs of the release workflow's dispatched shape in a worktree of the commit, the way it runs a publish job. It renders them with `gate: "head"`, so the requested commit is the one cut and must itself be green. The gate refuses a commit that is not green, and the request is recorded as refused with the gate's line, such as `<sha> is not green (the newest green commit below it is <sha>), so no release is cut`. Otherwise the cut job runs the doctor, the stamp, the images and `chant release cut` (or `chant workspace train cut`), and pushes the release's tag. The next poll publishes that tag as it publishes any. Served or refused, the request tag is deleted on the remote, and the state file keeps the request under `dispatch:<sha>`.
 
 ```bash
 chant ci serve --forge git --env prod --release --secrets /etc/chant/release.env
+# from any clone, once the commit is green:
+chant ci run --at "$(git rev-parse HEAD)" --release --label 1.4.0
 ```
 
 ### Re-runs and polling

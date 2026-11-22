@@ -328,10 +328,11 @@ describe("ci serve --release", () => {
     await Promise.all(first.started);
     const state = () => JSON.parse(readFileSync(join(root, ".serve", "chant-apply-prod.json"), "utf-8")) as { releases: Record<string, { status: string; failure?: string; attempts: number }> };
     expect(state().releases["release:release/v1"]).toMatchObject({ status: "fail", failure: "release publish exited 1" });
-    await Promise.all((await ciServeReleases(options(root, served, log), rt)).started);
-    expect(served.map((s) => s.tag)).toEqual(["release/v1", "release/v2"]);
-    await Promise.all((await ciServeReleases(options(root, served, log, () => "ok", { rerunFailed: true }), rt)).started);
-    expect(served.map((s) => s.tag)).toEqual(["release/v1", "release/v2", "release/v1"]);
+    // With --rerun-failed the failed one runs again first, and the other still waits its turn.
+    const again = await ciServeReleases(options(root, served, log, () => "ok", { rerunFailed: true }), rt);
+    expect(again.events.map((e) => e.type === "release" && [e.tag, e.status])).toEqual([["release/v1", "started"], ["release/v2", "held"]]);
+    await Promise.all(again.started);
+    expect(served.map((s) => s.tag)).toEqual(["release/v1", "release/v1"]);
     expect(state().releases["release:release/v1"]).toMatchObject({ status: "ok", attempts: 2 });
   });
 

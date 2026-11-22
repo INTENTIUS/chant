@@ -35,6 +35,12 @@
  *   it. The step that publishes also gets the file's secrets for `release`
  *   (`jobs.release`, else every one): the registry credentials, which no
  *   other step gets.
+ * - Dispatch requests (PR 2). A `ci/release/<sha>` tag asks for a release
+ *   of a commit, as `ci/build/<sha>` asks for a build. The host renders the
+ *   dispatch shape of the release workflow with `gate: "head"` and runs its
+ *   `gate` and `cut` jobs: the gate refuses a commit that is not green,
+ *   and the cut runs the doctor, the stamp, the images and the cut, and
+ *   pushes the release's tag, which the host then publishes as any tag.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -139,6 +145,8 @@ export interface HostJob {
   env: Record<string, string>;
   /** `defaults.run.working-directory`, from the repository root. */
   workingDirectory?: string;
+  /** The job's `outputs:`, as expressions over its steps' outputs. */
+  outputs?: Record<string, string>;
   steps: HostStep[];
 }
 
@@ -162,7 +170,7 @@ export function workflowJob(text: string, job: string): HostJob {
       env: strings(s.env),
     }),
   );
-  return { job, env: { ...strings(doc.env), ...strings(j.env) }, ...(typeof dir === "string" ? { workingDirectory: dir } : {}), steps };
+  return { job, env: { ...strings(doc.env), ...strings(j.env) }, ...(typeof dir === "string" ? { workingDirectory: dir } : {}), ...(j.outputs !== undefined ? { outputs: strings(j.outputs) } : {}), steps };
 }
 
 /** The checkout and the toolchain set-up actions: the host's worktree and its own toolchains stand for them. */
@@ -257,6 +265,13 @@ export function resolveExpressions(text: string, scope: HostScope, where: string
 }
 
 /**
+ * The variables a forge job that hands files on gives its git in place of
+ * the checkout's stored token (`GIT_TOKEN_ENV` in ./release-workflow.ts).
+ * A host's git has its own credentials, so they are left out.
+ */
+export const FORGE_GIT_CREDENTIAL_ENV: readonly string[] = ["CHANT_RELEASE_GIT_TOKEN", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"];
+
+/**
  * A job's or a step's variables with their expressions resolved. A variable
  * whose expression a host can't read takes the secret of its own name, as
  * `ci run` fills a job's variables, and refuses when there is none.
@@ -264,6 +279,7 @@ export function resolveExpressions(text: string, scope: HostScope, where: string
 export function resolveEnv(env: Record<string, string>, scope: HostScope, where: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
+    if (FORGE_GIT_CREDENTIAL_ENV.includes(name)) continue;
     try {
       out[name] = resolveExpressions(value, scope, `${where} variable ${name}`);
     } catch (err) {
@@ -445,6 +461,10 @@ export interface HostJobResult {
   status: "ok" | "fail";
   failure?: string;
   steps: Record<string, Record<string, string>>;
+  /** The job's `outputs:`, resolved, when it ended ok. */
+  outputs?: Record<string, string>;
+  /** The last line the failing step printed, which says why. */
+  reason?: string;
   /** Each step, in order, run or skipped. */
   ran: Array<{ step: string; status: "ok" | "fail" | "skipped"; why?: string }>;
 }
@@ -520,17 +540,19 @@ export async function runHostJob(job: HostJob, ctx: HostJobContext): Promise<Hos
     for (const f of Object.values(files)) writeFileSync(f, "");
     const env = hostStepEnv({ ctx, job: jobEnv, carried, step: resolveEnv(step.env, scope(), `the step ${JSON.stringify(label)}'s`), files, paths, publish: isPublishStep(step) });
     output(`$ ${label}`);
-    const code = await runStep({ script, cwd, env, output });
+    let last: string | undefined;
+    const code = await runStep({ script, cwd, env, output: (line) => (line.trim() !== "" ? (last = redact ? redact(line) : line) : undefined, output(line)) });
     Object.assign(carried, readCommandFile(readFileSync(files.env, "utf-8")));
     if (step.id) steps[step.id] = { ...steps[step.id], ...readCommandFile(readFileSync(files.output, "utf-8")) };
     paths.unshift(...readFileSync(files.path, "utf-8").split("\n").filter(Boolean).reverse());
     if (code !== 0) {
       ran.push({ step: label, status: "fail" });
-      return { status: "fail", failure: `${label} exited ${code}`, steps, ran };
+      return { status: "fail", failure: `${label} exited ${code}${last ? `: ${last}` : ""}`, ...(last ? { reason: last } : {}), steps, ran };
     }
     ran.push({ step: label, status: "ok" });
   }
-  return { status: "ok", steps, ran };
+  const outputs = job.outputs ? Object.fromEntries(Object.entries(job.outputs).map(([k, v]) => [k, resolveExpressions(v, scope(), `the ${job.job} job's output ${k}`)])) : undefined;
+  return { status: "ok", steps, ...(outputs ? { outputs } : {}), ran };
 }
 
 // ── One release ──────────────────────────────────────────────────────────────
@@ -578,13 +600,19 @@ async function readAt(worktreeCwd: string, cloneCwd: string, chant: string | und
   }
 }
 
+/** What a job of a served release runs with, past what the request gives: the worktree, the temp directory and the tools. */
+interface ServedRelease {
+  read: ReleaseWorkflowRead;
+  tools: Record<string, string>;
+  context: (job: Pick<HostJobContext, "tag">) => HostJobContext;
+}
+
 /**
- * Serve one release on this host (#5462): a fresh detached worktree of the
- * tag's commit, the release tools, and the rendered publish job run in it.
- * The worktree and the job's temp directory are removed after. Throws
- * {@link HostReleaseError} for a release this host can't serve.
+ * A fresh detached worktree of the request's commit and a temp directory,
+ * the release input read at the commit, the signing checked and the tools
+ * installed; then `fn`, and both directories removed after.
  */
-export async function runHostRelease(req: HostReleaseRequest): Promise<HostJobResult & { warning?: string }> {
+async function withServedRelease<T>(req: HostReleaseRequest, fn: (s: ServedRelease) => Promise<T>): Promise<T & { warning?: string }> {
   const dir = mkdtempSync(join(tmpdir(), "chant-ci-release-"));
   const runnerTemp = mkdtempSync(join(tmpdir(), "chant-ci-release-temp-"));
   try {
@@ -593,11 +621,10 @@ export async function runHostRelease(req: HostReleaseRequest): Promise<HostJobRe
     const refused = hostSigningRefusal(read);
     if (refused) throw refused;
     const tools = await hostReleaseTools({ signing: read.signs, scan: read.scans, cacheDir: req.toolCache, hostEnv: req.hostEnv, ...(req.platform ? { platform: req.platform } : {}), ...(req.download ? { download: req.download } : {}) });
-    const job = hostReleaseJob(read, tools);
-    const result = await runHostJob(job, {
+    const context = (job: Pick<HostJobContext, "tag">): HostJobContext => ({
       top: dir,
       commit: req.commit,
-      tag: req.tag,
+      tag: job.tag,
       runId: req.runId,
       fingerprint: req.fingerprint,
       hostEnv: req.hostEnv,
@@ -607,6 +634,7 @@ export async function runHostRelease(req: HostReleaseRequest): Promise<HostJobRe
       ...(req.output ? { output: req.output } : {}),
       ...(req.runStep ? { runStep: req.runStep } : {}),
     });
+    const result = await fn({ read, tools, context });
     return { ...result, ...(warning ? { warning } : {}) };
   } finally {
     try {
@@ -617,4 +645,162 @@ export async function runHostRelease(req: HostReleaseRequest): Promise<HostJobRe
     rmSync(dir, { recursive: true, force: true });
     rmSync(runnerTemp, { recursive: true, force: true });
   }
+}
+
+/**
+ * Serve one release on this host (#5462): a fresh detached worktree of the
+ * tag's commit, the release tools, and the rendered publish job run in it.
+ * The worktree and the job's temp directory are removed after. Throws
+ * {@link HostReleaseError} for a release this host can't serve.
+ */
+export async function runHostRelease(req: HostReleaseRequest): Promise<HostJobResult & { warning?: string }> {
+  return withServedRelease(req, async ({ read, tools, context }) => runHostJob(hostReleaseJob(read, tools), context({ tag: req.tag })));
+}
+
+// ── Dispatch requests ────────────────────────────────────────────────────────
+
+/** Where release requests live: `ci/release/<sha>`, beside `ci/build/<sha>`. */
+export const CI_RELEASE_TAG_PREFIX = "ci/release/";
+
+/** A `ci/release/<sha>` tag's record: the commit to release, with what the release workflow's dispatch takes. */
+export interface ReleaseRequest {
+  schema: 1;
+  tag: string;
+  commit: string;
+  /** The release's label, or `auto` for the one `chant release next` computes. */
+  label: string;
+  /** A train's levels, `auto` by default. */
+  levels: string;
+  /** When it was asked for, ISO 8601. */
+  at: string;
+}
+
+/** The annotation of a request tag: a subject line, then the record. */
+export function releaseRequestAnnotation(r: ReleaseRequest): string {
+  return `ci: release this commit (label ${r.label}, levels ${r.levels})\n\n${JSON.stringify(r, null, 2)}\n`;
+}
+
+/** The release requests among the repository's tags, by commit. A tag whose record does not parse asks for nothing. */
+export function readReleaseRequests(top: string): Map<string, ReleaseRequest> {
+  const out = new Map<string, ReleaseRequest>();
+  let raw = "";
+  try {
+    raw = execFileSync("git", ["for-each-ref", "--sort=creatordate", "--format=%(refname:lstrip=2)%00%(objecttype)%00%(contents)%01", `refs/tags/${CI_RELEASE_TAG_PREFIX}`], { cwd: top, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    return out;
+  }
+  for (const entry of raw.split("\u0001")) {
+    const [tag, type, contents] = entry.replace(/^\n/, "").split("\u0000");
+    if (!tag || type !== "tag" || !contents?.includes("{")) continue;
+    try {
+      const r = JSON.parse(contents.slice(contents.indexOf("{"))) as ReleaseRequest;
+      const sha = tag.slice(CI_RELEASE_TAG_PREFIX.length);
+      if (r.schema === 1 && r.commit === sha && typeof r.label === "string" && typeof r.at === "string") out.set(sha, { ...r, levels: typeof r.levels === "string" ? r.levels : "auto", tag });
+    } catch {
+      // Not a record.
+    }
+  }
+  return out;
+}
+
+const LABEL_OR_AUTO = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
+
+/**
+ * Ask a `ci serve --release` host to release `at` (#5462): an annotated
+ * `ci/release/<sha>` tag holding the label and levels, pushed to `remote`.
+ * A commit that already has a request keeps it. Throws for a revision this
+ * repository does not have, or a label that is not one.
+ */
+export function requestRelease(req: { cwd: string; at: string; label?: string; levels?: string; remote?: string; now?: Date }): { request: ReleaseRequest; existed: boolean } {
+  const remote = req.remote ?? "origin";
+  const git = (args: string[]): string => execFileSync("git", args, { cwd: req.cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const label = req.label ?? "auto";
+  if (!LABEL_OR_AUTO.test(label)) throw new HostReleaseError(`--label ${JSON.stringify(label)} is not a release label of letters, digits and . _ + -`);
+  try {
+    git(["fetch", "--quiet", remote, `+refs/tags/${CI_RELEASE_TAG_PREFIX}*:refs/tags/${CI_RELEASE_TAG_PREFIX}*`]);
+  } catch {
+    // A remote with no requests, or none reachable: the push below says which.
+  }
+  let sha: string;
+  try {
+    if (req.at.startsWith("-")) throw new Error("not a revision");
+    sha = git(["rev-parse", "--verify", "--quiet", `${req.at}^{commit}`]);
+  } catch {
+    throw new HostReleaseError(`--at ${req.at} names no commit in this repository`);
+  }
+  const existing = readReleaseRequests(req.cwd).get(sha);
+  if (existing) return { request: existing, existed: true };
+  const request: ReleaseRequest = { schema: 1, tag: `${CI_RELEASE_TAG_PREFIX}${sha}`, commit: sha, label, levels: req.levels ?? "auto", at: (req.now ?? new Date()).toISOString() };
+  const ident = [...(tryConfig(req.cwd, "user.name") ? [] : ["-c", "user.name=chant"]), ...(tryConfig(req.cwd, "user.email") ? [] : ["-c", "user.email=chant@localhost"])];
+  git([...ident, "tag", "-a", "-m", releaseRequestAnnotation(request), request.tag, sha]);
+  try {
+    git(["push", "--quiet", remote, `refs/tags/${request.tag}`]);
+  } catch (err) {
+    try {
+      git(["tag", "-d", request.tag]);
+    } catch {
+      // Left for the next request to find.
+    }
+    throw new HostReleaseError(`could not push ${request.tag} to ${remote}: ${(err as { stderr?: string }).stderr?.toString().trim() || String(err)}`);
+  }
+  return { request, existed: false };
+}
+
+function tryConfig(cwd: string, key: string): boolean {
+  try {
+    return execFileSync("git", ["config", key], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The jobs a host runs for a release request: the `gate` and `cut` jobs of
+ * the release workflow's dispatch shape, rendered for
+ * {@link HOST_RELEASE_RENDER_FORGE} with `gate: "head"`, so the requested
+ * commit is the one cut and must itself be green, and with the release
+ * tools in their env. The cut pushes the release's tag, and the host
+ * publishes it as any tag, with {@link hostReleaseJob}.
+ */
+export function hostDispatchJobs(read: Pick<ReleaseWorkflowRead, "input">, tools: Record<string, string> = {}): { gate: HostJob; cut: HostJob } {
+  const p = read.input.pipeline ?? {};
+  if ((p.builds?.length ?? 0) > 0 || (read.input.train?.builds?.length ?? 0) > 0) {
+    throw new HostReleaseError("release.workflow.builds runs each build on a runner of its own, and a ci serve host is one runner", "Release from the forge's release workflow, or build the files in the cut.");
+  }
+  const pipeline = { ...p, trigger: "dispatch" as const, gate: "head" as const, ...(Object.keys(tools).length > 0 ? { env: { ...p.env, ...tools } } : {}) };
+  let text: string;
+  try {
+    text = renderReleaseWorkflow({ ...read.input, forge: HOST_RELEASE_RENDER_FORGE, pipeline });
+  } catch (err) {
+    throw new HostReleaseError(`the release workflow could not be rendered: ${err instanceof Error ? err.message : String(err)}`, "Fix release.workflow in chant.config.ts.");
+  }
+  return { gate: workflowJob(text, "gate"), cut: workflowJob(text, "cut") };
+}
+
+/** How a request ended: cut (its tag pushed), refused by the gate with why, or failed. */
+export interface HostDispatchResult {
+  status: "ok" | "refused" | "fail";
+  /** Why the gate refused it, or why the cut failed, in a line. */
+  reason?: string;
+  failure?: string;
+  warning?: string;
+}
+
+/**
+ * Serve one release request on this host (#5462): in a fresh worktree of
+ * its commit, the dispatch shape's gate job, then its cut job with the
+ * gate's outputs. A gate that fails refuses the request with the line it
+ * printed, such as the commit not being green. Throws
+ * {@link HostReleaseError} for a release this host can't serve.
+ */
+export async function runHostDispatch(req: HostReleaseRequest & { request: ReleaseRequest }): Promise<HostDispatchResult> {
+  return withServedRelease(req, async ({ read, tools, context }) => {
+    const { gate, cut } = hostDispatchJobs(read, tools);
+    const inputs = { label: req.request.label, levels: req.request.levels, train: "" };
+    const gated = await runHostJob(gate, { ...context({ tag: req.request.tag }), inputs });
+    if (gated.status !== "ok") return { status: "refused" as const, reason: gated.reason ?? gated.failure ?? "the gate failed" };
+    const cutRun = await runHostJob(cut, { ...context({ tag: req.request.tag }), inputs, needs: { gate: gated.outputs ?? {} } });
+    if (cutRun.status !== "ok") return { status: "fail" as const, failure: cutRun.failure ?? "the cut failed", ...(cutRun.reason ? { reason: cutRun.reason } : {}) };
+    return { status: "ok" as const };
+  });
 }
