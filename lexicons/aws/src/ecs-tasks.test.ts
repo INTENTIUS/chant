@@ -32,6 +32,12 @@ function recordedHttp(overrides: Record<string, { status: number; text: string }
     const target = (init.headers["x-amz-target"] ?? "").split(".").pop() ?? "";
     calls.push({ target, payload: JSON.parse(init.body ?? "{}") as Record<string, unknown>, url });
     if (overrides[target]) return overrides[target]!;
+    if (target === "DescribeTasks") {
+      // ECS describes only the tasks asked for.
+      const asked = new Set((calls.at(-1)!.payload.tasks as string[] | undefined) ?? []);
+      const all = JSON.parse(recorded("describe-tasks.web.json")) as { tasks: Array<{ taskArn: string }> };
+      return { status: 200, text: JSON.stringify({ ...all, tasks: all.tasks.filter((t) => asked.has(t.taskArn)) }) };
+    }
     const file = { DescribeServices: "describe-services.web.json", ListTasks: "list-tasks.web.json", DescribeTasks: "describe-tasks.web.json" }[target];
     return file ? { status: 200, text: recorded(file) } : { status: 400, text: JSON.stringify({ __type: "UnknownOperationException" }) };
   };
