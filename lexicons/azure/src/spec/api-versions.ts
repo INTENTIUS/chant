@@ -110,6 +110,14 @@ export function parseSchemaPath(
  * pins' files. A resource upstream removed outright (Kusto
  * `clusters_dataConnections`, ProviderHub, Sovereign landing zones) is not
  * pinnable and stays gone.
+ *
+ * Microsoft.Security also carries the Defender for Cloud DevOps connector
+ * that the Azure DevOps and compliance work leans on (#5454 item 4). No file
+ * the newest-first pick reads defines it: `securityConnectors` last appears in
+ * 2026-08-01-preview (no GA date has it), and `securityConnectors_devops`
+ * with its azureDevOpsOrgs, projects and repos children last appears in a GA
+ * file at 2025-03-01. Both dates join the pin in newest-first order; neither
+ * defines a resource the other Security dates already define.
  */
 export const PROVIDER_VERSION_OVERRIDES: Record<string, readonly string[]> = {
   "Microsoft.Advisor": ["2026-10-01", "2026-08-01-preview"],
@@ -136,7 +144,7 @@ export const PROVIDER_VERSION_OVERRIDES: Record<string, readonly string[]> = {
   "Microsoft.RedHatOpenShift": ["2026-10-01", "2025-07-25"],
   "Microsoft.Resources": ["2025-07-01", "2025-04-01"],
   "Microsoft.ResourceGraph": ["2026-05-01-preview", "2024-04-01"],
-  "Microsoft.Security": ["2026-09-16-preview", "2026-04-01-preview"],
+  "Microsoft.Security": ["2026-09-16-preview", "2026-08-01-preview", "2026-04-01-preview", "2025-03-01"],
   "Microsoft.ServiceFabric": ["2026-05-01-preview", "2023-11-01-preview"],
   "Microsoft.Sql": ["2026-08-01-preview", "2014-04-01"],
   "Microsoft.Subscription": ["2021-10-01"],

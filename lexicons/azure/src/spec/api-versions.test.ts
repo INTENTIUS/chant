@@ -129,6 +129,13 @@ describe("providers whose newest file is a delta (#5454)", () => {
     ]);
   });
 
+  it("reads the Defender DevOps connector dates for Microsoft.Security (#5454 item 4)", () => {
+    const paths = ["2026-09-16-preview", "2026-08-01-preview", "2026-04-01-preview", "2025-11-01-preview", "2025-03-01"]
+      .map((v) => `repo/schemas/${v}/Microsoft.Security.json`);
+    const files = latestVersionPerProvider(paths).get("Microsoft.Security")!;
+    expect(files.map((f) => f.apiVersion)).toEqual(["2026-09-16-preview", "2026-08-01-preview", "2026-04-01-preview", "2025-03-01"]);
+  });
+
   it("lists every pin newest first, so a resource takes its newest definition", () => {
     for (const [provider, versions] of Object.entries(PROVIDER_VERSION_OVERRIDES)) {
       if (provider === "Microsoft.Authorization" || provider === "Microsoft.Compute" || provider === "Microsoft.Resources") continue;

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-22T04:15:25.696Z",
+  "generatedAt": "2026-11-22T04:20:50.836Z",
   "entries": {
     "ADCCatalogProperties": {
       "kind": "property",
@@ -1636,17 +1636,13 @@
       "kind": "property",
       "resourceType": "Microsoft.SecurityDevOps/azureDevOpsConnectors.AzureDevOpsConnectorProperties"
     },
-    "AzureDevOpsOrgProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.SecurityDevOps/azureDevOpsConnectors_orgs.AzureDevOpsOrgProperties"
-    },
-    "AzureDevOpsProjectProperties": {
-      "kind": "property",
-      "resourceType": "Microsoft.SecurityDevOps/azureDevOpsConnectors_orgs_projects.AzureDevOpsProjectProperties"
-    },
     "AzureDevOpsRepoProperties": {
       "kind": "property",
       "resourceType": "Microsoft.SecurityDevOps/azureDevOpsConnectors_orgs_projects_repos.AzureDevOpsRepoProperties"
+    },
+    "AzureDevOpsRepositoryProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs_projects_repos.AzureDevOpsRepositoryProperties"
     },
     "AzureFirewallPropertiesFormat": {
       "kind": "property",
@@ -5170,6 +5166,10 @@
     "DevOpsAzureSku": {
       "kind": "property",
       "resourceType": "Microsoft.DevOpsInfrastructure/pools.DevOpsAzureSku"
+    },
+    "DevOpsConfigurationProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors_devops.DevOpsConfigurationProperties"
     },
     "DevOpsInfrastructurepools": {
       "kind": "resource",
@@ -14374,6 +14374,10 @@
     "SecurityAndComplianceprivateLinkServicesForSCCPowershell_privateEndpointConnections_ServicesResourceIdentity": {
       "kind": "property",
       "resourceType": "Microsoft.SecurityAndCompliance/privateLinkServicesForSCCPowershell_privateEndpointConnections.ServicesResourceIdentity"
+    },
+    "SecurityConnectorProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors.SecurityConnectorProperties"
     },
     "SecurityPartnerProviderPropertiesFormat": {
       "kind": "property",
@@ -71770,6 +71774,89 @@
     "secrets_values_SecretValueResourceProperties": {
       "kind": "property",
       "resourceType": "Microsoft.ServiceFabricMesh/secrets_values.SecretValueResourceProperties"
+    },
+    "securityConnectors": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Security/securityConnectors",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "etag:false",
+        "kind:false",
+        "location:false",
+        "name:true",
+        "properties:true",
+        "tags:false"
+      ],
+      "taggable": true
+    },
+    "securityConnectors_SecurityConnectorProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors.SecurityConnectorProperties"
+    },
+    "securityConnectors_devops": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Security/securityConnectors_devops",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true",
+        "resources:false"
+      ]
+    },
+    "securityConnectors_devops_DevOpsConfigurationProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors_devops.DevOpsConfigurationProperties"
+    },
+    "securityConnectors_devops_azureDevOpsOrgs": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true",
+        "resources:false"
+      ]
+    },
+    "securityConnectors_devops_azureDevOpsOrgs_AzureDevOpsOrgProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs.AzureDevOpsOrgProperties"
+    },
+    "securityConnectors_devops_azureDevOpsOrgs_projects": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs_projects",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true",
+        "resources:false"
+      ]
+    },
+    "securityConnectors_devops_azureDevOpsOrgs_projects_AzureDevOpsProjectProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs_projects.AzureDevOpsProjectProperties"
+    },
+    "securityConnectors_devops_azureDevOpsOrgs_projects_repos": {
+      "kind": "resource",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs_projects_repos",
+      "attrs": [
+        "id"
+      ],
+      "props": [
+        "name:true",
+        "properties:true"
+      ]
+    },
+    "securityConnectors_devops_azureDevOpsOrgs_projects_repos_AzureDevOpsRepositoryProperties": {
+      "kind": "property",
+      "resourceType": "Microsoft.Security/securityConnectors_devops_azureDevOpsOrgs_projects_repos.AzureDevOpsRepositoryProperties"
     },
     "securityPartnerProviders": {
       "kind": "resource",
