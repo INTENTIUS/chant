@@ -673,6 +673,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant release verify --sigstore --assets <dir>` (#5164): where the forge release's assets were downloaded.
       result.assets = args[++i];
       if (!result.assets || result.assets.startsWith("-")) throw new Error("--assets needs a directory: --assets dist/release");
+    } else if (arg === "--deployed") {
+      // `chant release scan --deployed [<env>]` (#5466): scan the releases the environments run, or one environment's.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        result.deployed = next;
+        i++;
+      } else {
+        result.deployed = true;
+      }
     } else if (arg === "--pr-loop") {
       result.prLoop = true;
     } else if (arg === "--green") {

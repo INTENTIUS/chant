@@ -100,6 +100,8 @@ To scan images with Wiz, set `release.scan: { "imageScanner": "wiz" }` in `chant
 
 `release.scan: true` turns the scan on without the group.
 
+A scan made at publish is a scan of that day. [`chant release scan`](/chant/cli/release/scan/) scans a release again against today's database with the same scanner and `vulnPolicy`, and appends a `rescanned` line to the publish record beside the `scanned` line, so a reader sees what was known when the release shipped and what is known now. `chant release scan --deployed` scans every release the environments run, and `release.scan.schedule` has `chant release workflow` write a scheduled job that does it.
+
 ## Promote checks what the publish recorded
 
 Under `supply-chain`, `chant components promote --release` deploys a release only after two checks, which it makes beside the revocation check and, under `verified-releases`, `chant release verify`. A train's promote runs the same command in each member, so each member's release is checked.

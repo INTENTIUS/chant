@@ -1454,6 +1454,29 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + text);
   const shown = relative(process.cwd(), target).split(sep).join("/") || target;
+  // #5466: release.scan.schedule asks for a second workflow that rescans what the environments run.
+  const schedule = typeof release?.scan === "object" ? release.scan.schedule : undefined;
+  if (schedule) {
+    const { renderRescanWorkflow, registryEnvOf, RELEASE_RESCAN_WORKFLOW_FILES } = await import("./release-rescan-workflow");
+    const { basename } = await import("node:path");
+    const rescanDefault = join(repoRoot, RELEASE_RESCAN_WORKFLOW_FILES[forge]);
+    const rescanTarget = args.output ? join(dirname(target), basename(RELEASE_RESCAN_WORKFLOW_FILES[forge])) : renderPathOf(rescanDefault);
+    if (args.force !== true && existsSync(rescanTarget) && !readFileSync(rescanTarget, "utf-8").includes(GENERATED_MARKER)) {
+      console.error(formatError({ message: `${relative(process.cwd(), rescanTarget).split(sep).join("/")} exists and chant did not write it [release-workflow-exists]`, hint: "Run again with --force to replace it." }));
+      return 1;
+    }
+    let rescan: string;
+    try {
+      rescan = renderRescanWorkflow({ forge, schedule, chant: read.input.chant ?? release?.workflow?.chant ?? "npx chant", install: read.input.install !== undefined ? read.input.install : release?.workflow?.install === false ? null : (release?.workflow?.install ?? "npm ci"), root: read.input.workspaceRoot && read.input.workspaceRoot !== "." ? read.input.workspaceRoot : null, pipeline: release?.workflow ?? {}, registryEnv: registryEnvOf(release?.publish ?? []) });
+    } catch (err) {
+      console.error(formatError({ message: err instanceof Error ? err.message : String(err), hint: "Fix release.scan or release.publish in chant.config.ts." }));
+      return 1;
+    }
+    mkdirSync(dirname(rescanTarget), { recursive: true });
+    writeFileSync(rescanTarget, releaseWorkflowHeader(parts.map(shellArg).join(" ")) + rescan);
+    console.log(formatSuccess(`Wrote ${relative(process.cwd(), rescanTarget).split(sep).join("/") || rescanTarget}: runs chant release scan --deployed on ${JSON.stringify(schedule)}.`));
+    if (forge === "gitlab") console.log(`Include it from .gitlab-ci.yml, and create a pipeline schedule with that cron expression: include: [{ local: ${RELEASE_RESCAN_WORKFLOW_FILES.gitlab} }]`);
+  }
   const extras = [groups.has("supply-chain") ? "requires OIDC provenance (supply-chain)" : null, groups.has("verified-releases") ? "verifies the release first (verified-releases)" : null, signs ? `signs with Sigstore, with cosign ${TOOL_PINS.cosign.version} pinned by SHA-256` : null, scans ? `scans before anything is pushed, with grype ${TOOL_PINS.grype.version} and syft ${TOOL_PINS.syft.version} pinned by SHA-256` : null].filter(Boolean);
   const what = release?.train
     ? release.workflow?.trigger === "dispatch"

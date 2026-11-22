@@ -16,6 +16,7 @@ import { initCommand } from "./init";
 import { listCommand } from "./list";
 import { nextCommand } from "./next";
 import { publishCommand } from "./publish";
+import { scanCommand } from "./scan";
 import { stampCommand } from "./stamp";
 import { statusCommand } from "./status";
 import { tagCommand } from "./tag";
@@ -39,6 +40,7 @@ export const RELEASE_COMMANDS: readonly ReleaseCommandDoc[] = [
   listCommand,
   nextCommand,
   publishCommand,
+  scanCommand,
   stampCommand,
   statusCommand,
   tagCommand,

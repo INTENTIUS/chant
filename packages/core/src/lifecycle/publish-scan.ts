@@ -70,8 +70,10 @@ export const RELEASE_SCAN_FLOOR = NEXT_RELEASE;
  * with a database already on disk. `imageScanner: "wiz"` scans each image
  * with the Wiz CLI in place of grype (#5451, ./publish-scan-wiz.ts); the SBOMs
  * the publish attaches or a package carries still go to grype or trivy.
+ * `schedule` is a cron expression: `chant release workflow` then writes a
+ * second workflow that runs `chant release scan --deployed` on it (#5466).
  */
-export type ReleaseScanConfig = boolean | { db?: string; imageScanner?: "wiz" };
+export type ReleaseScanConfig = boolean | { db?: string; imageScanner?: "wiz"; schedule?: string };
 
 /** Whether a publish scans, and why. */
 export interface ScanSetting {
@@ -381,19 +383,8 @@ export async function scanBeforeStage(req: { targets: readonly PublishTarget[]; 
   for (const target of targets) {
     if (!target.scanSubjects) continue;
     for (const s of await target.scanSubjects(ctx)) {
-      const sbom = s.sbom ?? (s.image ? await scan.scanner.imageSbom(s.image) : null);
-      if (!sbom) continue;
-      const findings = await scan.scanner.scan(sbom);
-      const base = { target: s.target, name: s.name, ...(s.digest ? { digest: s.digest } : {}), ...(sbom.packageCount !== undefined ? { packages: sbom.packageCount } : {}), findings };
-      try {
-        const out = await gate.run({ env: "release", component: s.target } as unknown as Parameters<typeof gate.run>[0], { sbom, findings, vex: scan.vex, policy: scan.policy, ...(s.digest ? { digest: s.digest } : {}) });
-        subjects.push({ ...base, blocking: [], warnings: out.warnings, suppressed: out.suppressed });
-        say(`  scanned ${s.name}: ${findings.length} finding(s), none blocks${out.warnings.length > 0 ? `; ${out.warnings.length} warning(s)` : ""}`);
-      } catch (err) {
-        if (!(err instanceof VulnGateFailedError)) throw err;
-        subjects.push({ ...base, blocking: err.blocking, warnings: [], suppressed: [] });
-        say(`  scanned ${s.name}: ${err.blocking.length} finding(s) block the publish`);
-      }
+      const done = await scanOne(gate, scan, s, say, "block the publish");
+      if (done) subjects.push(done);
     }
   }
   const database = scan.scanner.database ? await scan.scanner.database().catch(() => null) : null;
@@ -409,6 +400,46 @@ export async function scanBeforeStage(req: { targets: readonly PublishTarget[]; 
   }
   return report;
 }
+
+/** One subject scanned and judged by the gate; null when it has no SBOM to scan. */
+async function scanOne(gate: ReturnType<typeof createVulnGateCapability>, scan: ScanContext, s: ScanSubject, say: (line: string) => void, blocksWhat: string): Promise<SubjectScan | null> {
+  const sbom = s.sbom ?? (s.image ? await scan.scanner.imageSbom(s.image) : null);
+  if (!sbom) return null;
+  const findings = await scan.scanner.scan(sbom);
+  const base = { target: s.target, name: s.name, ...(s.digest ? { digest: s.digest } : {}), ...(sbom.packageCount !== undefined ? { packages: sbom.packageCount } : {}), findings };
+  try {
+    const out = await gate.run({ env: "release", component: s.target } as unknown as Parameters<typeof gate.run>[0], { sbom, findings, vex: scan.vex, policy: scan.policy, ...(s.digest ? { digest: s.digest } : {}) });
+    say(`  scanned ${s.name}: ${findings.length} finding(s), none blocks${out.warnings.length > 0 ? `; ${out.warnings.length} warning(s)` : ""}`);
+    return { ...base, blocking: [], warnings: out.warnings, suppressed: out.suppressed };
+  } catch (err) {
+    if (!(err instanceof VulnGateFailedError)) throw err;
+    say(`  scanned ${s.name}: ${err.blocking.length} finding(s) ${blocksWhat}`);
+    return { ...base, blocking: err.blocking, warnings: [], suppressed: [] };
+  }
+}
+
+/**
+ * Scan `subjects` and judge each by the vulnerability gate without refusing
+ * anything: the report says which findings block (#5466). Every subject is
+ * scanned before the report is made, so a caller sees every blocking
+ * finding at once.
+ */
+export async function scanSubjects(subjects: readonly ScanSubject[], scan: ScanContext, say: (line: string) => void = () => undefined): Promise<ScanReport> {
+  const gate = createVulnGateCapability({ scan: async () => [] });
+  const out: SubjectScan[] = [];
+  for (const s of subjects) {
+    const done = await scanOne(gate, scan, s, say, "block the policy");
+    if (done) out.push(done);
+  }
+  const database = scan.scanner.database ? await scan.scanner.database().catch(() => null) : null;
+  return { scanner: scan.scanner.name, database, subjects: out };
+}
+
+/** Whether a recorded finding is one the policy blocks: anything but a warning, a suppression, or a finding it reported without judging. */
+export const recordedBlocks = (f: Pick<RecordedFinding, "outcome">): boolean => f.outcome !== "warning" && f.outcome !== "suppressed" && f.outcome !== "reported";
+
+/** Whether a recorded scan holds a finding the policy blocks. */
+export const scanRecordBlocks = (r: Pick<ScanRecord, "subjects">): boolean => r.subjects.some((s) => s.findings.some(recordedBlocks));
 
 /** The media type of an image's findings referrer. */
 export const SCAN_FINDINGS_MEDIA_TYPE = "application/vnd.intentius.chant.scan.v1+json";
@@ -442,6 +473,8 @@ export interface ScanRecord {
   scanner: string;
   database: ScanDatabase | null;
   subjects: RecordedSubject[];
+  /** On a `rescanned` line (#5466): what the rescan did not scan, and why. */
+  skipped?: Array<{ name: string; reason: string }>;
 }
 
 /** The findings of one subject, each with what the policy made of it, sorted. */

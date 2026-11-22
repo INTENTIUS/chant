@@ -209,6 +209,19 @@
             }
           }
         },
+        "scan": {
+          "description": "Added within contract version 1 by #5466. The newest scan line of the release's publish record: the scan the publish made before the stage (scanned, or scan-failed when the policy stopped it) or the latest chant release scan (rescanned). Absent when the record holds none.",
+          "type": "object",
+          "required": ["step", "at", "scanner", "database", "findings", "blocked"],
+          "properties": {
+            "step": { "enum": ["scanned", "scan-failed", "rescanned"] },
+            "at": { "type": "string" },
+            "scanner": { "type": ["string", "null"] },
+            "database": { "type": ["object", "null"], "properties": { "version": { "type": "string" }, "built": { "type": "string" } } },
+            "findings": { "type": "integer" },
+            "blocked": { "type": "boolean" }
+          }
+        },
         "revoked": {
           "description": "Added within contract version 1 by #4033, written by chant 0.124.29 and newer. The ci/revoked/<sha> tag on the release's commit, or null when the commit is not revoked. A revoked release is never promoted (chant components promote --release refuses it) and its pending release gates refuse approval. Null too when the ci tags can't be judged, as when ci.green.signedSince names no commit here, which chant workspace check reports.",
           "oneOf": [

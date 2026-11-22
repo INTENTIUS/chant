@@ -1,0 +1,52 @@
+---
+title: "chant release scan"
+description: "Scans a published or deployed release again against today's vulnerability database and records the result beside the scan made at publish."
+diataxis: reference
+sidebar:
+  label: "scan"
+---
+
+Scans a release again. A publish [scans before the stage](/chant/guide/security-supply-chain/#the-scan-before-the-stage) and records what it found, but a release keeps running after that and the vulnerability database moves, so a scan made once shows neither that a finding was fixed in time nor that a new one went unseen. `chant release scan` reads the SBOMs the publish recorded for the release, scans them with the same scanner and `vulnPolicy` the publish uses, and appends a `rescanned` line to the publish record, `_releases/publishes.jsonl` on `chant/lifecycle`.
+
+```bash
+git fetch origin chant/lifecycle:chant/lifecycle
+chant release scan v1.4.0
+chant release scan --deployed
+chant release scan --deployed prod
+```
+
+`<label|digest>` names one release. `--deployed` scans every release the latest deploy record of each environment names: for each environment's `releases.jsonl`, the `releaseDigest` of each component's newest record, once per release. `--deployed <env>` reads one environment. A release no environment runs is not scanned by it.
+
+## What it scans
+
+An image's SBOM is an OCI referrer of the image, and the publish record names its digest. The rescan reads that manifest and its layer from the image's registry with the credentials the publish uses (`OCI_USERNAME` and `OCI_PASSWORD`, or the docker config), checks both against their digests, and checks that the referrer's subject is the image. Nothing is pushed to the registry. The SBOM of a forge release's assets and of an npm package is not fetched; each is listed under `skipped` in the record and on stderr, so the gap shows and is not taken for a pass. With `imageScanner: "wiz"`, the SBOM goes to grype or trivy, as a package's does at the publish, since Wiz scans an image archive and a rescan has none.
+
+The scanner is grype, or trivy with `vulnPolicy.scanner`, found in `CHANT_GRYPE` or `CHANT_TRIVY`, else on `PATH`, with the database `release.scan.db` names when it names one. The VEX files of `vulnPolicy.vexSources` apply. A scanner that is not there refuses with `publish-scan-tool-missing`.
+
+## The record
+
+Each rescan is a line of the publish record under the target `scan`, in order after the `scanned` line of the publish: the scanner, the database's version and build time, and every finding with what the policy made of it (`severity-threshold`, `kev` and the other blocking reasons, `warning`, `suppressed`, or `reported`), plus `skipped`. The line's `state.deployed` names the environments that run the release when `--deployed` made it. A reader lists a release's scans in order from the record. Under `supply-chain`, [promote](/chant/guide/security-supply-chain/#promote-checks-what-the-publish-recorded) accepts a rescan that scanned something and found nothing the policy blocks in place of the publish's own passing scan.
+
+## Exit codes
+
+It exits 0 when the policy blocks nothing in any release scanned, and 1 otherwise:
+
+| Code | When |
+|---|---|
+| `release-scan-blocked` | The policy blocks a finding. The message names the release, and stderr lists each finding with its package, version and fix. |
+| `release-scan-nothing` | Nothing of a release could be scanned, as when its publish recorded no SBOM a rescan fetches. A scan of nothing is not a pass. Also when `--deployed` finds no deploy record that names a release. |
+| `release-not-found` | No release carries the label or digest in this member. |
+
+`--json` prints the scanner and, for each release, its digest, label, the environments that run it, `blocked`, `nothingScanned` and the recorded `scan`.
+
+## On a schedule
+
+`release.scan.schedule` takes a cron expression:
+
+```ts
+release: {
+  scan: { schedule: "0 5 * * 1" },
+}
+```
+
+[`chant release workflow`](/chant/cli/release/workflow/) then writes a second file beside the publish workflow, `chant-release-scan.yml` under `.github/workflows` or `.forgejo/workflows`, and `.gitlab/chant-release-scan.yml` for GitLab. It has one job that installs grype at its pinned version, fetches `chant/lifecycle` and runs `chant release scan --deployed`, with the registry credentials the `oci` targets name taken from the repository's secrets. On GitHub and Forgejo it runs on the `schedule` trigger and can be started by hand. A GitLab file cannot create a pipeline schedule: create one under CI/CD, Schedules, with the same cron expression, and give the job `CHANT_RELEASE_TOKEN`, a project access token with `write_repository`, to push the record.

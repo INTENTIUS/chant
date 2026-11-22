@@ -193,6 +193,8 @@ export interface ParsedArgs {
   sigstore?: boolean;
   /** `chant release verify --sigstore --assets <dir>` (#5164): the directory holding the forge release's downloaded assets. */
   assets?: string;
+  /** `chant release scan --deployed [<env>]` (#5466): scan every release the latest deploy record of each environment (or of `<env>`) names. */
+  deployed?: string | true;
   /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
   source?: string;
   /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */

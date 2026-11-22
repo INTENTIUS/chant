@@ -89,6 +89,12 @@ export async function startFakeRegistry(creds: { username: string; password: str
     }
     m = url.pathname.match(/^\/v2\/(.+)\/blobs\/(sha256:[0-9a-f]+)$/);
     if (m && req.method === "HEAD") return send(blobs.has(m[2]!) ? 200 : 404);
+    if (m && req.method === "GET") {
+      const blob = blobs.get(m[2]!);
+      if (!blob) return send(404);
+      res.writeHead(200, { "content-type": "application/octet-stream", "docker-content-digest": m[2]! });
+      return res.end(blob);
+    }
     m = url.pathname.match(/^\/v2\/(.+)\/manifests\/(.+)$/);
     if (m && (req.method === "HEAD" || req.method === "GET")) {
       const found = manifests.get(m[2]!);

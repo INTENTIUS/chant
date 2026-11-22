@@ -1,0 +1,28 @@
+name: chant release scan
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
+      OCI_PASSWORD: ${{ secrets.OCI_PASSWORD }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: "Install grype v0.121.1"
+        run: "mkdir -p \"$RUNNER_TEMP/grype\" && curl -fsSL -o \"$RUNNER_TEMP/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  $RUNNER_TEMP/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"$RUNNER_TEMP/grype/grype.tar.gz\" -C \"$RUNNER_TEMP/grype\" grype && echo \"CHANT_GRYPE=$RUNNER_TEMP/grype/grype\" >> \"$GITHUB_ENV\""
+      - run: npm ci
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npx chant release scan --deployed

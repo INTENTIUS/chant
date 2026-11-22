@@ -2068,6 +2068,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "release publish", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleasePublish(ctx) },
   // #4049: check a release's signature offline.
   { name: "release verify", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseVerify(ctx) },
+  // #5466: scan a published or deployed release again and record it.
+  { name: "release scan", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseScan(ctx) },
   // #4657: build a release's images again in its publish job, checked against the digests it records.
   { name: "release images", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseImages(ctx) },
   { name: "release artifacts", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/release")).runReleaseArtifacts(ctx) },

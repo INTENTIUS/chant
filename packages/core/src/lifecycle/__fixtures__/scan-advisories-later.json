@@ -1,0 +1,8 @@
+{
+  "advisories": [
+    { "id": "CVE-2026-50001", "ecosystem": "npm", "package": "left-pad", "severity": "critical", "introduced": "1.0.0", "fixed": "1.3.1", "summary": "a critical flaw in left-pad before 1.3.1" },
+    { "id": "CVE-2026-50002", "ecosystem": "deb", "package": "debian/openssl", "severity": "critical", "introduced": "3.0.0", "fixed": "3.0.15-1", "summary": "a critical flaw in openssl before 3.0.15-1" },
+    { "id": "CVE-2026-50003", "ecosystem": "deb", "package": "debian/zlib", "severity": "low", "fixed": "1.3.1", "summary": "a low flaw in zlib" },
+    { "id": "CVE-2026-50004", "ecosystem": "deb", "package": "debian/openssl", "severity": "critical", "introduced": "3.0.0", "fixed": "3.0.16-1", "summary": "a critical flaw found after the release shipped, in openssl before 3.0.16-1" }
+  ]
+}

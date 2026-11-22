@@ -1717,6 +1717,81 @@ export async function runReleaseCompile(ctx: CommandContext): Promise<number> {
   }
 }
 
+/**
+ * `release scan <label|digest> | --deployed [<env>] [--json]` (#5466): scan
+ * the SBOMs a release's publish recorded again, with the scanner and
+ * `vulnPolicy` the publish uses, and append a `rescanned` line to its publish
+ * record. Exits 1 when the policy blocks a finding, and when nothing could be
+ * scanned, since a scan of nothing is not a pass.
+ */
+export async function runReleaseScan(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const cwd = resolve(".");
+  const ref = args.extraPositional;
+  if ((ref === undefined) === (args.deployed === undefined)) {
+    console.error(formatError({ message: "release scan needs a release, or --deployed", hint: USAGE }));
+    return 1;
+  }
+  const { prepareRescan, rescanRelease, deployedReleases } = await import("../../lifecycle/release-rescan");
+  const { resolveRelease } = await import("../../lifecycle/release-store");
+  const prepared = await prepareRescan({ cwd, env: process.env });
+  if ("refusal" in prepared) {
+    if (args.json) console.log(JSON.stringify({ error: prepared.refusal }, null, 2));
+    else console.error(formatError({ message: `${prepared.refusal.message} [${prepared.refusal.code}]`, ...(prepared.refusal.fix ? { hint: prepared.refusal.fix } : {}) }));
+    return 1;
+  }
+  const wanted: Array<{ digest: string; label: string | null; deployed: string[] }> = [];
+  if (ref !== undefined) {
+    const found = await resolveRelease(ref, { cwd });
+    if (!found) {
+      console.error(formatError({ message: `no release is labelled or digested "${ref}" in this member [release-not-found]`, hint: "Fetch chant/lifecycle (git fetch origin chant/lifecycle:chant/lifecycle), then list them with: chant release list" }));
+      return 1;
+    }
+    wanted.push({ digest: found.release.releaseDigest, label: found.label, deployed: [] });
+  } else {
+    const named = typeof args.deployed === "string" ? args.deployed : undefined;
+    const running = await deployedReleases({ cwd, ...(named ? { env: named } : {}) });
+    if (running.size === 0) {
+      console.error(formatError({ message: `no environment${named ? ` "${named}"` : ""} has a deploy record that names a release [release-scan-nothing]`, hint: "A deploy made with chant components promote --release records the release it came from." }));
+      return 1;
+    }
+    for (const [digest, envs] of running) {
+      const found = await resolveRelease(digest, { cwd });
+      wanted.push({ digest, label: found?.label ?? null, deployed: envs });
+    }
+  }
+  const say = (line: string) => {
+    if (!args.json) console.error(line);
+  };
+  const results: Array<Awaited<ReturnType<typeof rescanRelease>> & { deployed: string[] }> = [];
+  for (const w of wanted) {
+    say(`${w.label ?? w.digest}${w.deployed.length > 0 ? `, run by ${w.deployed.join(", ")}` : ""}`);
+    results.push({ ...(await rescanRelease({ cwd, releaseDigest: w.digest, label: w.label, env: process.env, scan: prepared.scan, deployed: w.deployed, say })), deployed: w.deployed });
+  }
+  const failed = results.filter((r) => r.blocked || r.nothingScanned);
+  if (args.json) {
+    console.log(JSON.stringify({ scanner: prepared.scan.scanner.name, releases: results.map((r) => ({ releaseDigest: r.releaseDigest, label: r.label, deployed: r.deployed, blocked: r.blocked, nothingScanned: r.nothingScanned, ...(r.recordWarning ? { recordWarning: r.recordWarning } : {}), scan: r.record })) }, null, 2));
+    return failed.length > 0 ? 1 : 0;
+  }
+  for (const r of results) {
+    const name = r.label ?? r.releaseDigest;
+    for (const s of r.record.subjects) {
+      for (const f of s.findings.filter((x) => x.outcome !== "reported" && x.outcome !== "suppressed")) {
+        console.error(`  ${name}: ${s.name}: ${f.id} (${f.severity}) in ${f.package} ${f.version}${f.fixedVersion ? `, fixed in ${f.fixedVersion}` : ""} [${f.outcome}]`);
+      }
+    }
+    for (const k of r.record.skipped ?? []) console.error(`  ${name}: not scanned: ${k.name}: ${k.reason}`);
+    if (r.recordWarning) console.error(formatWarning({ message: r.recordWarning }));
+  }
+  for (const r of failed) {
+    const name = r.label ?? r.releaseDigest;
+    if (r.blocked) console.error(formatError({ message: `${r.record.scanner} found a finding the vulnerability policy blocks in ${name} [release-scan-blocked]`, hint: "Cut and publish a release that fixes it, or record a VEX statement in a file vulnPolicy.vexSources names when it is not exploitable." }));
+    else console.error(formatError({ message: `nothing of ${name} was scanned: the publish recorded no SBOM a rescan can fetch [release-scan-nothing]`, hint: "A rescan reads an image's SBOM referrer from its registry. Publish the release with release.scan on, from CI with the registry's credentials set here." }));
+  }
+  if (failed.length === 0) console.error(formatSuccess(`Scanned ${results.length} release${results.length === 1 ? "" : "s"} with ${prepared.scan.scanner.name}; the policy blocks nothing`));
+  return failed.length > 0 ? 1 : 0;
+}
+
 export async function runReleaseUnknown(ctx: CommandContext): Promise<number> {
   console.error(formatError({ message: `Unknown release subcommand: ${ctx.args.path}`, hint: USAGE }));
   return 1;

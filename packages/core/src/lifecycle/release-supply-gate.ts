@@ -13,8 +13,9 @@
  *   `release-sigstore-unverified`.
  * - the scan record: when the publish scans (`release.scan`, or the group)
  *   and an `oci`, `forge` or `npm` target is declared, the publish record
- *   must hold a `scanned` line for the release. A `scan-failed` line alone,
- *   or none, refuses with `release-scan-missing`.
+ *   must hold a `scanned` line for the release, or a `rescanned` line that
+ *   scanned something and found nothing the policy blocks. A `scan-failed`
+ *   line alone, or none, refuses with `release-scan-missing`.
  *
  * There is no flag to skip it: a team that wants it off leaves `supply-chain`
  * off. A train's promote runs `components promote` in each member, so it
@@ -24,6 +25,7 @@
 import type { SecurityGroup } from "../workspace/security";
 import type { SigstoreVerifier } from "./publish-signing";
 import type { PublishRecord } from "./publish-record";
+import { scanRecordBlocks } from "./publish-scan";
 
 /** Why promote refuses a release under `supply-chain`, in the words of the check that failed. */
 export interface SupplyGateRefusal {
@@ -40,11 +42,15 @@ const SCANNED_KINDS = new Set(["oci", "forge", "npm"]);
  * The scan record of a release: whether its publish record holds a passing
  * scan. A `scanned` line is one the publish wrote after the policy let every
  * finding through; `scan-failed` is the line of a publish the policy stopped.
+ * A `rescanned` line (#5466) that scanned something and holds no finding the
+ * policy blocks counts as well, so a release whose first scan was stopped and
+ * which a rescan then cleared deploys.
  */
-export function scanRecorded(records: readonly Pick<PublishRecord, "kind" | "step">[]): "passed" | "failed-only" | "none" {
+export function scanRecorded(records: readonly Pick<PublishRecord, "kind" | "step" | "scan">[]): "passed" | "failed-only" | "none" {
   const lines = records.filter((r) => r.kind === "scan");
   if (lines.some((r) => r.step === "scanned")) return "passed";
-  return lines.some((r) => r.step === "scan-failed") ? "failed-only" : "none";
+  if (lines.some((r) => r.step === "rescanned" && r.scan !== undefined && r.scan.subjects.length > 0 && !scanRecordBlocks(r.scan))) return "passed";
+  return lines.some((r) => r.step === "scan-failed" || r.step === "rescanned") ? "failed-only" : "none";
 }
 
 /**

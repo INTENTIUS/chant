@@ -349,6 +349,16 @@ export class Registry {
     return { mediaType, bytes, digest: res.headers.get("docker-content-digest") ?? bytesDigest(bytes) };
   }
 
+  /** The blob `digest` holds, checked against its digest, or null when the registry has none (#5466). */
+  async getBlob(digest: string): Promise<Uint8Array | null> {
+    const res = await this.request("GET", `/v2/${this.repo.name}/blobs/${digest}`);
+    if (res.status === 404) return null;
+    if (res.status !== 200 || !res.arrayBuffer) this.fail(`reading blob ${digest}`, res.status, await res.text());
+    const bytes = new Uint8Array(await res.arrayBuffer!());
+    if (bytesDigest(bytes) !== digest) throw new PublishTargetError("publish-oci-blob-corrupt", `blob ${digest} from ${this.repo.base} does not match its digest`);
+    return bytes;
+  }
+
   /** Put a manifest. True when the registry answered with `OCI-Subject`, so its referrers API lists a manifest with a subject. */
   async putManifest(ref: string, mediaType: string, bytes: Uint8Array): Promise<boolean> {
     return this.tries(`putting manifest ${ref}`, async () => {
