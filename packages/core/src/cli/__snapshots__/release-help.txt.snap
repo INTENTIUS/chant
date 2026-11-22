@@ -113,6 +113,10 @@ Releases:
                         Move each image pinned by digest to the digest its
                         tag names today, in the Dockerfiles release.images
                         names or the files given, and print what moved.
+                        Wolfi package pins move too: WOLFI_PACKAGE_PINS
+                        rows and apk:<name>=<version> entries go to the
+                        newest version Wolfi's x86_64 and aarch64 indexes
+                        both list.
                         --check writes nothing and exits 1 when one moved.
   release doctor [--from cut] [--json]
                         Before a cut, ask each release.publish target whether
