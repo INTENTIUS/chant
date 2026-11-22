@@ -176,6 +176,14 @@ const SCOPE_SECTIONS: Array<{ key: keyof ArmProviderSchema; scope: DeployScope }
  * writing into `out` keyed by resource type. Resource types already present
  * in `out` are left untouched (first file wins across a multi-version pin).
  *
+ * ARM and Azure Resource Graph treat type names case-insensitively, and
+ * upstream does not spell them consistently across dates: at d15606ff the
+ * 2026-05-01-preview Microsoft.ServiceFabric file writes
+ * `managedClusters_applications` where 2023-11-01-preview writes
+ * `managedclusters_applications` (#5454). Presence is therefore checked on
+ * the lowercased type, so the first file's spelling wins and the later file
+ * cannot add a second kind for the same ARM type.
+ *
  * For providers in {@link SCOPED_SECTION_PROVIDERS} all deployment-scope
  * sections are read; the definition comes from the highest-priority section
  * that has it, and `deployScopes` unions every section that defines it.
@@ -207,9 +215,11 @@ export function explodeProviderSchema(
     }
   }
 
+  const seen = new Set([...out.keys()].map((k) => k.toLowerCase()));
   for (const [resourceName, { def, scopes }] of byName) {
     const resourceType = `${normalizeProvider(provider)}/${resourceName}`;
-    if (out.has(resourceType)) continue;
+    if (seen.has(resourceType.toLowerCase())) continue;
+    seen.add(resourceType.toLowerCase());
 
     // Build a per-resource schema that includes the resource def + shared definitions + apiVersion
     const perResourceSchema = {
@@ -254,6 +264,10 @@ export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer
   // Explode: one provider file has N resourceDefinitions → emit N entries.
   // With a multi-version pin the first file that defines a resource wins.
   const schemas = new Map<string, Buffer>();
+  // Lowercased type -> the spelling stored in `schemas`, so a later provider
+  // file replaces a type whose name differs only in case instead of adding a
+  // second kind for it (ARM type names are case-insensitive, #5454).
+  const spelling = new Map<string, string>();
 
   for (const [provider, files] of selected) {
     // First-wins applies within one provider's pin list; across providers the
@@ -272,6 +286,10 @@ export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer
       }
     }
     for (const [resourceType, buf] of providerSchemas) {
+      const lower = resourceType.toLowerCase();
+      const previous = spelling.get(lower);
+      if (previous !== undefined) schemas.delete(previous);
+      spelling.set(lower, resourceType);
       schemas.set(resourceType, buf);
     }
   }

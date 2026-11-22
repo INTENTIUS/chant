@@ -89,6 +89,24 @@ describe("explodeProviderSchema (#1545)", () => {
     const policy = parseEntry(out, "Microsoft.Authorization/policyAssignments");
     expect(policy.apiVersion).toBe("2026-06-01");
   });
+
+  it("treats resource names that differ only in case as one ARM type, first file's spelling winning (#5454)", () => {
+    const out = new Map<string, Buffer>();
+    explodeProviderSchema("Microsoft.ServiceFabric", "2026-05-01-preview", {
+      resourceDefinitions: { managedClusters_applications: { description: "newer" } },
+      definitions: {},
+    }, out);
+    explodeProviderSchema("Microsoft.ServiceFabric", "2023-11-01-preview", {
+      resourceDefinitions: { managedclusters_applications: { description: "older" }, managedclusters_nodeTypes: {} },
+      definitions: {},
+    }, out);
+
+    expect([...out.keys()].sort()).toEqual([
+      "Microsoft.ServiceFabric/managedClusters_applications",
+      "Microsoft.ServiceFabric/managedclusters_nodeTypes",
+    ]);
+    expect(parseEntry(out, "Microsoft.ServiceFabric/managedClusters_applications").apiVersion).toBe("2026-05-01-preview");
+  });
 });
 
 describe("the pin", () => {
