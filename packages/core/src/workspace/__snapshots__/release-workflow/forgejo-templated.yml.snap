@@ -520,6 +520,46 @@ jobs:
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
       - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
 
+# ==== pull login ====
+name: chant release publish
+on:
+  push:
+    tags: ["v*", "!v[0-9]+"]
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CGR_USERNAME: "${{ secrets.CGR_USERNAME }}"
+      CGR_PASSWORD: "${{ secrets.CGR_PASSWORD }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Log in to cgr.dev"
+        run: "printf '%s' \"$CGR_PASSWORD\" | docker login cgr.dev --username \"$CGR_USERNAME\" --password-stdin"
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - id: label
+        run: |
+          label="$(npx chant release tag "$GITHUB_REF_NAME" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')" || label=""
+          if [ -z "$label" ]; then echo "$GITHUB_REF_NAME names no release of this member, so nothing is published" >&2; exit 1; fi
+          echo "CHANT_RELEASE_LABEL=$label" >> "$GITHUB_ENV"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: npx chant release images "$CHANT_RELEASE_LABEL" -o "$RUNNER_TEMP/chant-release-digests.json"
+      - run: echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"
+      - run: npm run build
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
+
 # ==== lane ====
 name: chant release publish
 on:

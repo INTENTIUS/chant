@@ -52,6 +52,10 @@ A base named by tag (`FROM node:22`) is whatever the registry serves under that 
 
 Under the group, `chant workspace check` reads each Dockerfile a member's `release.images` names and reports a `FROM` that is not pinned (`security-image-base-unpinned`), and `chant release doctor` warns of the same (`image-base-pinned`), with the entry's `args` applied. A `FROM` passes when it names an earlier stage, `scratch`, or an `ARG` declared before the first `FROM` whose default is pinned and which the entry's `args` do not replace with a tag. The workspace check reads `chant.config.ts` as text, so it finds a `dockerfile:` written as a string, not one built at run time; the doctor loads the config and sees every entry.
 
+### Pull bases from a private registry
+
+A base from a registry that needs a login, such as a hardened image set served to an organization, is named with a `pull` entry on the `release.images` entry; [the release workflow](/chant/cli/release/workflow/) then logs in to it before each build. See there for the variables and secrets it reads.
+
 ### Move the pins
 
 A pinned base stays where it was pinned while its tag moves on to patched images. `chant release images --repin` asks each image's registry what digest the tag names today and, when it moved, rewrites the digest in place, keeping the tag:

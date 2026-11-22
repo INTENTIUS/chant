@@ -56,6 +56,7 @@ import { releaseJobSteps, releaseSetupSteps, type ReleaseStepItem, type ReleaseS
 import { packLine } from "./release-steps/builds";
 import { RELEASE_BINFMT_IMAGE, qemuArchitectures } from "./release-steps/qemu";
 import { targetExtras } from "./release-steps/targets";
+import { pullLoginEnv } from "./release-steps/pull";
 import { goreleaserSetup, setsUpGo } from "./release-steps/goreleaser";
 import { renderTrainWorkflow } from "./release-train-workflow";
 
@@ -173,6 +174,12 @@ export interface ReleaseWorkflowInput {
    * and publish jobs, before `release.workflow.setup`.
    */
   imagePlatforms?: string[];
+  /**
+   * The registries `release.images` pulls its bases from that need a login
+   * (#5457), at the root or in a train's members: the cut and publish jobs
+   * log docker in to each before they build ({@link pullLoginSetup}).
+   */
+  pullRegistries?: import("../lifecycle/release-images").ReleaseImagePull[];
   /** `release.lane` (#4692): the gate's green lane. */
   lane?: string;
   /**
@@ -297,6 +304,7 @@ export { RELEASE_ARTIFACTS_ARTIFACT, RELEASE_ARTIFACTS_STAGE } from "./release-s
 export { goreleaserSetup } from "./release-steps/goreleaser";
 export { cosignSetup } from "./release-steps/signing";
 export { scanSetup } from "./release-steps/scan";
+export { pullLoginEnv, pullLoginLine, pullLoginSetup } from "./release-steps/pull";
 export { RELEASE_DIGESTS_FILE, RELEASE_DIGESTS_PATHS, RELEASE_IMAGES_ARTIFACT } from "./release-steps/images";
 
 /** The flags `chant release publish` gets under the groups. */
@@ -333,6 +341,9 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
   }
   // #4786: the targets' own needs first, then the config's, so a config that set them by hand renders the same file without them.
   const derived = targetExtras(input.forge, input.publish ?? [], p);
+  // #5457: the pull logins' credentials, from the repository's secrets, in the cut and publish jobs.
+  const pullEnv = pullLoginEnv(input.forge, p, input.pullRegistries ?? []);
+  if (Object.keys(pullEnv).length > 0) derived.env = { ...derived.env, ...pullEnv };
   // #5149: the cut asks the forge for the commit's checks with the run's token.
   const green = input.green ?? "chant";
   if (green === "forge-checks" && p.trigger === "dispatch" && input.forge === "github") {
@@ -1244,6 +1255,9 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     }
   }
   const memberImages = memberReleases.flatMap((r) => r.images ?? []);
+  // #5457: the registries the images pull from that need a login, at the root and in the members.
+  const { releaseImagePulls } = await import("../lifecycle/release-images");
+  const pullRegistries = releaseImagePulls([...(release?.images ?? []), ...memberImages]);
   const memberArtifacts = memberReleases.flatMap((r) => r.artifacts ?? []);
   const allTargets = [...(release?.publish ?? []), ...memberReleases.flatMap((r) => r.publish ?? [])];
   const { resolveSigning } = await import("../lifecycle/publish-signing");
@@ -1296,6 +1310,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
     ...(scans ? { scan: true } : {}),
+    ...(pullRegistries.length > 0 ? { pullRegistries } : {}),
     ...(allTargets.length > 0 ? { publish: allTargets } : {}),
     ...(release?.train
       ? {

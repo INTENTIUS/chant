@@ -47,6 +47,8 @@ When the publish signs with [Sigstore](/chant/reference/publish-targets/#sigstor
 
 When the publish scans before the stage (`release.scan`, or the `supply-chain` group) and declares an `oci`, `forge` or `npm` target, the doctor checks that the scanner runs, and syft with an `oci` target (`scan-tool`), and says where the scanner's database comes from (`scan-database`): downloaded on first use, or read from the directory `release.scan.db` names. A missing scanner fails in CI and is a warning on a workstation, so it shows before a cut.
 
+For each registry a `release.images` entry's `pull` names, the doctor checks that its username and password variables are set (`image-pull-login`): a failure in CI, a warning on a workstation.
+
 Under `supply-chain`, the doctor also reads each Dockerfile `release.images` names, with the entry's `args`, and warns of a `FROM` that is not pinned by digest (`image-base-pinned`). See [Pin image bases by digest](/chant/guide/security-supply-chain/#pin-image-bases-by-digest).
 
 Seven checks hand back a short-lived publishing token, which the doctor masks and drops: npm's OIDC exchange, Open VSX's, PyPI's, crates.io's, nuget.org's and RubyGems.org's trusted-publishing exchanges, and the MCP Registry's token exchange. They are the requests a publish makes first, and crates.io's token is revoked straight away. No other check sends a request that changes anything. Every line and the `--json` document go through the publish's redactor.

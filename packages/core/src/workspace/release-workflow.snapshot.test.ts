@@ -37,6 +37,8 @@ function cases(forge: Forge, mode: Mode): Array<[string, Partial<ReleaseWorkflow
     ["signing with doctor off", { signing: true, pipeline: { doctor: false } }],
     // #5446: grype and syft for the scan before the stage.
     ["scan", { scan: true }],
+    // #5457: docker login to a registry the images pull their bases from.
+    ["pull login", { images: true, pullRegistries: [{ registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" }] }],
     ["lane", { lane: "fast" }],
     ["gate head", { pipeline: { gate: "head" } }],
     ["green forge-checks", { green: "forge-checks" }],
@@ -120,6 +122,8 @@ function trainCases(forge: Forge, trigger: "tag" | "dispatch"): Array<[string, P
     ["supply-chain", { groups: new Set<SecurityGroup>(["supply-chain"]) }],
     ["signing", { signing: true }],
     ["scan", { scan: true }],
+    // #5457: docker login to a registry the images pull their bases from.
+    ["pull login", { pullRegistries: [{ registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" }], train: { env: "npm", images: true } }],
     ["lane", { lane: "fast" }],
     ["gate head", { pipeline: { gate: "head" } }],
     ["green forge-checks", { green: "forge-checks" }],

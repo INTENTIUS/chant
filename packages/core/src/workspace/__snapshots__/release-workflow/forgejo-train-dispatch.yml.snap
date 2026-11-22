@@ -627,6 +627,136 @@ jobs:
       - run: git config user.email "chant-release@localhost"
       - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes
 
+# ==== pull login ====
+name: chant release train
+on:
+  workflow_dispatch:
+    inputs:
+      levels:
+        description: auto for the levels the commits and intent files give, a level for every member (major, minor or patch), or <member>=<level>, separated by spaces
+        required: false
+        default: auto
+        type: string
+      train:
+        description: a recorded train's id (train-...) to publish instead of cutting one; the gate and cut are skipped, and the publish resumes from its tag
+        required: false
+        default: ""
+        type: string
+  push:
+    tags: ["release-train/npm/*"]
+permissions:
+  contents: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' && inputs.train == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      train: ${{ steps.cut.outputs.train }}
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+      CHANT_RELEASE_GIT_TOKEN: ${{ github.token }}
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.${{ github.server_url }}.helper
+      GIT_CONFIG_VALUE_0: "!f() { test \"$1\" = get && echo username=x-access-token && echo \"password=$CHANT_RELEASE_GIT_TOKEN\"; }; f"
+      CGR_USERNAME: "${{ secrets.CGR_USERNAME }}"
+      CGR_PASSWORD: "${{ secrets.CGR_PASSWORD }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Log in to cgr.dev"
+        run: "printf '%s' \"$CGR_PASSWORD\" | docker login cgr.dev --username \"$CGR_USERNAME\" --password-stdin"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - id: cut
+        run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant workspace train cut npm --at "$CHANT_RELEASE_COMMIT" --levels "${CHANT_RELEASE_LEVELS:-auto}" --doctor --yes --json > "$RUNNER_TEMP/chant-train.json"
+          train="$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");let d;try{d=JSON.parse(t)}catch(e){const m=/"id": *"(train-[^"]+)"/.exec(t);console.error("the train cut printed more than its JSON document, so the train id can not be read ("+e.message+")."+(m?" The cut recorded "+m[1]+": dispatch this workflow with train="+m[1]+" to publish it.":" If it recorded a train, dispatch this workflow with train=<id> to publish it."));process.exit(1)}const id=d.train?.id??"";if(!id&&d.released==null&&(d.members??[]).length>0){console.error("the train cut "+d.members.length+" member(s), and its JSON names no train id to publish");process.exit(1)}process.stdout.write(id)' "$RUNNER_TEMP/chant-train.json")" || exit 1
+          echo "train=$train" >> "$GITHUB_OUTPUT"
+      - if: steps.cut.outputs.train != ''
+        run: npx chant workspace train artifacts npm "${{ steps.cut.outputs.train }}" -o "$RUNNER_TEMP/chant-release-artifacts"
+      - if: steps.cut.outputs.train != ''
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [gate, cut]
+    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
+      CGR_USERNAME: "${{ secrets.CGR_USERNAME }}"
+      CGR_PASSWORD: "${{ secrets.CGR_PASSWORD }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Log in to cgr.dev"
+        run: "printf '%s' \"$CGR_PASSWORD\" | docker login cgr.dev --username \"$CGR_USERNAME\" --password-stdin"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: echo "CHANT_RELEASE_TRAIN=${CHANT_RELEASE_TRAIN:-${GITHUB_REF_NAME#release-train/npm/}}" >> "$GITHUB_ENV"
+      - run: npx chant workspace train prepare npm "$CHANT_RELEASE_TRAIN"
+      - run: npm run build
+      - if: needs.cut.outputs.train != ''
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
+        with:
+          name: chant-release-artifacts
+          path: ${{ runner.temp }}/chant-release-artifacts
+      - run: npx chant workspace train artifacts npm "$CHANT_RELEASE_TRAIN" --from "$RUNNER_TEMP/chant-release-artifacts"
+      - run: git config user.name "chant release"
+      - run: git config user.email "chant-release@localhost"
+      - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes
+
 # ==== lane ====
 name: chant release train
 on:

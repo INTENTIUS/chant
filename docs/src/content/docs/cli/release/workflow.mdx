@@ -24,6 +24,14 @@ When the publish signs with Sigstore (`release.signing`, or `supply-chain` with 
 
 A `release.images` Dockerfile that starts from bases pinned by digest builds the same image from the same commit. `chant release images --repin` moves those pins to the digest each tag names today; see [Pin image bases by digest](/chant/guide/security-supply-chain/#pin-image-bases-by-digest).
 
+A `release.images` entry whose bases come from a registry that needs a login names it under `pull`, with the variables that hold a username and a password or token:
+
+```ts
+images: [{ name: "app", dockerfile: "Dockerfile", pull: [{ registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" }] }]
+```
+
+The cut and publish jobs then run `docker login` to each registry before they build, on GitHub, GitLab and Forgejo and in a train's jobs. On GitHub and Forgejo the jobs read the two variables from the repository's secrets of the same names, unless `release.workflow.env` sets them; on GitLab they are the project's CI/CD variables, which should be masked. The login takes a static username and password, so it works with a registry's pull token and needs no OIDC federation. A short-lived pull token has to be rotated, and the secret updated, before it expires. `chant release doctor` checks that both variables are set (`image-pull-login`).
+
 When the publish scans before the stage (`release.scan`, or `supply-chain` with an `oci`, `forge` or `npm` target), the cut and publish jobs download grype and syft pinned by SHA-256 and set `CHANT_GRYPE` and `CHANT_SYFT` to them, unless `release.workflow` sets either itself. The cut's doctor checks them, and the publish scans with them. See [The scan before the stage](/chant/guide/security-supply-chain/#the-scan-before-the-stage).
 
 [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) runs inside the publish job, as part of `chant release publish`, so the commands have the toolchains below, the install step's dependencies and the job's `release.workflow.env`.

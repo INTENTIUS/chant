@@ -91,6 +91,11 @@ const LexiconEntrySchema = z.union([
   }).strict(),
 ]);
 
+/** A registry a release image's bases are pulled from that needs a login (#5457). */
+const ReleaseImagePullSchema = z
+  .object({ registry: z.string().min(1), usernameEnv: z.string().min(1), passwordEnv: z.string().min(1) })
+  .strict();
+
 export const ChantConfigSchema = z.object({
   lexicons: z.array(LexiconEntrySchema).optional(),
   capabilities: z.array(z.string().min(1)).optional(),
@@ -131,7 +136,7 @@ export const ChantConfigSchema = z.object({
       .array(
         z.union([
           // #4876: `platforms`, what the command builds, for the release workflow's QEMU setup.
-          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1), platforms: z.array(z.string().min(1)).min(1).optional() }).strict(),
+          z.object({ name: z.string().min(1), build: z.string().min(1), archive: z.string().min(1), platforms: z.array(z.string().min(1)).min(1).optional(), pull: z.array(ReleaseImagePullSchema).min(1).optional() }).strict(),
           // #4819: chant builds the Dockerfile as the reproducible OCI archive itself.
           z
             .object({
@@ -145,6 +150,8 @@ export const ChantConfigSchema = z.object({
               args: z.record(z.string(), z.string()).optional(),
               // #5269: OCI labels on the image.
               labels: z.record(z.string(), z.string()).optional(),
+              // #5457: registries the bases are pulled from that need a login.
+              pull: z.array(ReleaseImagePullSchema).min(1).optional(),
             })
             .strict(),
         ]),

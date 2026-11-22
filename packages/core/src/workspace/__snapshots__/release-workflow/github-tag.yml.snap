@@ -430,6 +430,40 @@ jobs:
       - run: git fetch origin chant/lifecycle:chant/lifecycle
       - run: npx chant release publish "${GITHUB_REF_NAME#release/}" --yes
 
+# ==== pull login ====
+name: chant release publish
+on:
+  push:
+    tags: ["release/**"]
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CGR_USERNAME: "${{ secrets.CGR_USERNAME }}"
+      CGR_PASSWORD: "${{ secrets.CGR_PASSWORD }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Log in to cgr.dev"
+        run: "printf '%s' \"$CGR_PASSWORD\" | docker login cgr.dev --username \"$CGR_USERNAME\" --password-stdin"
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: npx chant release images "${GITHUB_REF_NAME#release/}" -o "$RUNNER_TEMP/chant-release-digests.json"
+      - run: echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"
+      - run: npm run build
+      - run: npx chant release publish "${GITHUB_REF_NAME#release/}" --yes
+
 # ==== lane ====
 name: chant release publish
 on:

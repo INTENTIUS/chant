@@ -40,7 +40,9 @@
  *
  * Under the `supply-chain` group the doctor reads each Dockerfile
  * `release.images` names and warns of a `FROM` not pinned by digest
- * (`image-base-pinned`, #5457, ./dockerfile-pins.ts).
+ * (`image-base-pinned`, #5457, ./dockerfile-pins.ts). For each registry a
+ * `release.images` entry's `pull` names, it checks that the username and
+ * password variables are set (`image-pull-login`).
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -49,6 +51,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parseYAML } from "../yaml";
 import { createRedactor, readCredential, type Redactor } from "./publish-credentials";
 import { unpinnedFroms } from "./dockerfile-pins";
+import { releaseImagePulls } from "./release-images";
 import type {
   CargoPublishDeclaration,
   ForgePublishDeclaration,
@@ -234,6 +237,8 @@ export async function releaseDoctor(req: {
   if (scan) targets.push(scan);
   const bases = checkImageBases(ctx, req.images ?? [], req.groups ?? new Set());
   if (bases) targets.push(bases);
+  const pull = checkPullLogin(ctx, req.images ?? []);
+  if (pull) targets.push(pull);
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
@@ -402,6 +407,22 @@ function checkImageBases(ctx: Ctx, images: readonly import("./release-images").R
     );
   }
   return { kind: "images", name: "release image bases", checks };
+}
+
+/**
+ * Each registry `release.images` pulls from that needs a login (#5457):
+ * both its variables are set here. Null when no entry names one.
+ */
+function checkPullLogin(ctx: Ctx, images: readonly import("./release-images").ReleaseImageDeclaration[]): DoctorTarget | null {
+  const pulls = releaseImagePulls(images);
+  if (pulls.length === 0) return null;
+  const checks: DoctorCheck[] = pulls.map((p) => {
+    const unset = [p.usernameEnv, p.passwordEnv].filter((v) => !ctx.env[v]);
+    return unset.length === 0
+      ? { check: "image-pull-login", status: "ok", message: `${p.registry}: ${p.usernameEnv} and ${p.passwordEnv} are set for docker login` }
+      : missing(ctx, "image-pull-login", `${p.registry}: release.images pulls from it with a login, and ${unset.join(" and ")} ${unset.length === 1 ? "is" : "are"} not set`, `Set ${unset.join(" and ")} in the job, as chant release workflow does from the repository's secrets of the same names; on a workstation, export them, or docker login to ${p.registry} yourself.`);
+  });
+  return { kind: "pull", name: "image pull logins", checks };
 }
 
 /** A credential the publish needs and this environment lacks: a failure in CI, a warning on a workstation. */

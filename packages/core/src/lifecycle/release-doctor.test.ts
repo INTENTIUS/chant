@@ -580,3 +580,15 @@ describe("release image bases (#5457)", () => {
     expect((await bases(text, new Set(["supply-chain"]), { BASE: "node:22" }))?.checks[0]!.status).toBe("warn");
   });
 });
+
+describe("image pull logins (#5457)", () => {
+  const pullCheck = (env: NodeJS.ProcessEnv) =>
+    releaseDoctor({ cwd: mkdtempSync(join(tmpdir(), "chant-doctor-pull-")), publish: [], env, releaseWorkflow: null, images: [{ name: "app", dockerfile: "Dockerfile", pull: [{ registry: "cgr.dev", usernameEnv: "CGR_USERNAME", passwordEnv: "CGR_PASSWORD" }] }], deps: { fetch: fakeFetch([]).fetch } }).then((r) => r.targets.find((t) => t.kind === "pull"));
+
+  test("ok with both variables set; a warning on a workstation and a failure in CI without them", async () => {
+    expect((await pullCheck({ CGR_USERNAME: "u", CGR_PASSWORD: "p" }))?.checks).toEqual([expect.objectContaining({ check: "image-pull-login", status: "ok" })]);
+    const ws = await pullCheck({ CGR_USERNAME: "u" });
+    expect(ws?.checks[0]).toMatchObject({ status: "warn", message: expect.stringContaining("CGR_PASSWORD is not set") });
+    expect((await pullCheck({ GITHUB_ACTIONS: "true", GITHUB_REPOSITORY: "acme/app" }))?.checks[0]!.status).toBe("fail");
+  });
+});

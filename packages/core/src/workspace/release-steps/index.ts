@@ -12,6 +12,7 @@ import { greenFeature } from "./green";
 import { imagesFeature } from "./images";
 import { nfpmFeature } from "./nfpm";
 import { nugetFeature } from "./nuget";
+import { pullFeature } from "./pull";
 import { pypiFeature } from "./pypi";
 import { qemuFeature } from "./qemu";
 import { scanFeature } from "./scan";
@@ -34,6 +35,7 @@ export const RELEASE_WORKFLOW_FEATURES: readonly ReleaseWorkflowFeature[] = [
   imagesFeature,
   nfpmFeature,
   nugetFeature,
+  pullFeature,
   pypiFeature,
   qemuFeature,
   scanFeature,

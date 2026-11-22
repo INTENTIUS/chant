@@ -66,6 +66,27 @@ export const RELEASE_IMAGE_ARGS_FLOOR = "0.124.88";
  */
 export const RELEASE_IMAGE_LABELS_FLOOR = NEXT_RELEASE;
 
+/**
+ * A registry an image's bases are pulled from that needs a login (#5457):
+ * its host and the environment variables that hold a username and a
+ * password or token, a static pair such as a registry's pull token. `chant
+ * release workflow` logs in to it before the jobs build, on GitHub, GitLab
+ * and Forgejo and in a train, and `chant release doctor` checks that both
+ * variables are set (`image-pull-login`). The build itself runs `docker
+ * buildx`, which uses whatever login the machine has.
+ */
+export interface ReleaseImagePull {
+  /** The registry's host, such as `cgr.dev` or `registry.example.com:5000`, as `docker login` takes it. */
+  registry: string;
+  /** The variable holding the username. */
+  usernameEnv: string;
+  /** The variable holding the password or token. */
+  passwordEnv: string;
+}
+
+/** The first chant whose `release.images` entries take `pull` (#5457). */
+export const RELEASE_IMAGE_PULL_FLOOR = NEXT_RELEASE;
+
 /** One image a release builds in its cut with a command of the product's. */
 export interface ReleaseImageBuild {
   /** The image's name: its key in the digests file, and its artifact's `component` in the release. */
@@ -80,6 +101,8 @@ export interface ReleaseImageBuild {
    * reads them to set up QEMU for those the runner can't run. Unset: none.
    */
   platforms?: string[];
+  /** The registries the build pulls from that need a login (#5457). */
+  pull?: ReleaseImagePull[];
 }
 
 /** One image chant builds from a Dockerfile (#4819). */
@@ -110,6 +133,8 @@ export interface ReleaseImageDockerfile {
    * placeholders as `args`.
    */
   labels?: Record<string, string>;
+  /** The registries its bases are pulled from that need a login (#5457). */
+  pull?: ReleaseImagePull[];
 }
 
 /** One image a release builds in its cut. */
@@ -240,6 +265,8 @@ export class ReleaseImageError extends Error {
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const BUILD_ARG = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const LABEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
+/** A registry host, with an optional port: no scheme, no path. */
+const REGISTRY_HOST = /^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]+)?$/;
 /** The build arguments chant passes itself, which an entry's `args` cannot set. */
 const CHANT_BUILD_ARGS = ["SOURCE_DATE_EPOCH", "CHANT_RELEASE_LABEL"];
 
@@ -273,6 +300,10 @@ export function checkReleaseImages(images: readonly ReleaseImageDeclaration[]): 
       if (!BUILD_ARG.test(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args names ${JSON.stringify(k)}, which is not a build argument name`);
       if (CHANT_BUILD_ARGS.includes(k)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args sets ${k}, which chant passes itself`);
       if (typeof v !== "string" || /[\r\n]/.test(v)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": args.${k} is not a one-line string`);
+    }
+    for (const p of i.pull ?? []) {
+      if (!REGISTRY_HOST.test(p.registry)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": pull names ${JSON.stringify(p.registry)}, which is not a registry host such as cgr.dev or registry.example.com:5000`);
+      for (const v of [p.usernameEnv, p.passwordEnv]) if (!BUILD_ARG.test(v)) throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": pull ${p.registry} names ${JSON.stringify(v)}, which is not an environment variable name`);
     }
     if (i.platforms !== undefined && (i.platforms.length === 0 || !i.platforms.every((p) => PLATFORM.test(p)))) {
       throw new ReleaseImageError("release-image-invalid", `release.images "${i.name}": platforms is a list of os/arch such as linux/amd64, not ${JSON.stringify(i.platforms)}`);
@@ -463,4 +494,18 @@ export function packagePinProblem(cwd: string, release: Pick<Release, "artifactD
     }
   }
   return null;
+}
+
+/** Each registry `images` pull from that needs a login, once, with the entries' variables (#5457). */
+export function releaseImagePulls(images: readonly ReleaseImageDeclaration[]): ReleaseImagePull[] {
+  const out = new Map<string, ReleaseImagePull>();
+  for (const i of images) for (const p of i.pull ?? []) if (!out.has(p.registry)) out.set(p.registry, p);
+  return [...out.values()].sort((a, b) => a.registry.localeCompare(b.registry));
+}
+
+/** The registries whose username or password variable is unset in `env`, with the variables missing. */
+export function pullCredentialsMissing(images: readonly ReleaseImageDeclaration[], env: NodeJS.ProcessEnv): Array<{ registry: string; missing: string[] }> {
+  return releaseImagePulls(images)
+    .map((p) => ({ registry: p.registry, missing: [p.usernameEnv, p.passwordEnv].filter((v) => !env[v]) }))
+    .filter((p) => p.missing.length > 0);
 }
