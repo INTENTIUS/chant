@@ -432,6 +432,41 @@ describe("loadUpstreamPin from a lexicon directory (#3258)", () => {
     }
   });
 
+  test("a checkout without its generated barrel still yields the pin, from src/plugin.ts", async () => {
+    // The weekly lexicon-upgrade job runs on a fresh checkout with no generate
+    // step: src/index.ts re-exports ./generated/index, which is absent.
+    const root = mkdtempSync(join(tmpdir(), "chant-nogen-"));
+    try {
+      const dir = join(root, "fake");
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "@intentius/chant-lexicon-fake",
+          type: "module",
+          exports: { ".": { "@intentius/chant-source": "./src/index.ts", default: "./dist/index.js" } },
+        }),
+      );
+      writeFileSync(join(dir, "src/index.ts"), 'export * from "./generated/index";\nexport * from "./plugin";\n');
+      writeFileSync(
+        join(dir, "src/plugin.ts"),
+        [
+          "const fn = () => undefined;",
+          "export const fakePlugin = {",
+          '  name: "fake", serializer: {}, generate: fn, validate: fn, coverage: fn, package: fn,',
+          '  upstreamPin: { file: "src/version.ts", pattern: /V = "(.+)"/, replace: (v: string) => v,',
+          '    upstream: { owner: "o", repo: "r", kind: "releases" } },',
+          "};",
+          "",
+        ].join("\n"),
+      );
+      const pin = await loadUpstreamPin("fake", dir);
+      expect(pin?.file).toBe("src/version.ts");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("lexiconNameOf reads the package name, then the directory name", () => {
     expect(lexiconNameOf(join(repoLexicons, "sql"))).toBe("sql");
     const root = mkdtempSync(join(tmpdir(), "chant-name-"));

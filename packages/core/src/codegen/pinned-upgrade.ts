@@ -249,14 +249,19 @@ export async function loadUpstreamPins(lexicon: LexiconId, lexiconDir?: string):
   };
   // The directory the caller pointed at wins: it is the checkout whose pin
   // file will be edited, and it need not be installed under node_modules.
-  const entry = lexiconDir ? lexiconEntry(lexiconDir) : null;
-  if (entry) {
+  // The package entry re-exports the generated barrel (src/generated/), which
+  // a checkout that has not run its generate step lacks, and then the import
+  // throws. The weekly lexicon-upgrade job is such a checkout. src/plugin.ts
+  // declares the pin and imports nothing generated, so it is tried next.
+  const candidates = lexiconDir ? [lexiconEntry(lexiconDir), lexiconPluginSource(lexiconDir)] : [];
+  for (const entry of new Set(candidates)) {
+    if (!entry) continue;
     try {
       ensureTypeScriptLoaderFor(entry);
       const pins = pinsOf((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
       if (pins.length > 0) return pins;
     } catch {
-      // fall through to the package-name route
+      // try the next candidate, then the package-name route
     }
   }
   try {
@@ -286,6 +291,12 @@ function lexiconEntry(lexiconDir: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** A lexicon directory's `src/plugin.ts`, or null when it has none. */
+function lexiconPluginSource(lexiconDir: string): string | null {
+  const abs = resolve(lexiconDir, "src/plugin.ts");
+  return existsSync(abs) ? abs : null;
 }
 
 /**
