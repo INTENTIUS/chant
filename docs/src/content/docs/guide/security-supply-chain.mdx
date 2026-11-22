@@ -5,6 +5,7 @@ diataxis: how-to
 prompt: |
   Read https://intentius.io/chant/guide/security-supply-chain/.
   Add `supply-chain` to `security` in `chant.workspace.json`, run `npx chant workspace check`, and fix the `WSP162` findings that are file changes: an `sbom` entry, a `generate-sbom` or `verify` step, `--require-provenance` on the publish job.
+  Leave Chainguard bases for a product's CI image to the product's own config key (https://intentius.io/chant/concepts/ci-products/); no `security` group turns them on.
   Open a pull request with the changes, and list the findings left for a person.
   Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -55,6 +56,10 @@ Under the group, `chant workspace check` reads each Dockerfile a member's `relea
 ### Pull bases from a private registry
 
 A base from a registry that needs a login, such as a hardened image set served to an organization, is named with a `pull` entry on the `release.images` entry; [the release workflow](/chant/cli/release/workflow/) then logs in to it before each build. See there for the variables and secrets it reads.
+
+### Hardened bases for a product's CI image
+
+A CI product's image (plywood's, terragucci's, SQL Yodeler's) can be built on Chainguard's images in place of Debian. The product's own config has a key for it, which sets `base` in chant's image helper. No `security` group turns it on, and `supply-chain` does not check for it. See [the image's base](/chant/concepts/ci-products/#the-product-pipeline) for what it changes. A product's Chainguard bases are pinned by digest like any other, and `--repin` moves them.
 
 ### Move the pins
 

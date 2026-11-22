@@ -35,6 +35,8 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Plan steps hold no forge token | on: the plan job's contract, a listed exception | regenerate the pipeline | none | none |
 | Separate plan and apply cloud identities | off: no job requests an OIDC token | `ci.identity.cloud` | none | none |
 
+A CI product's image built on Chainguard's hardened bases (`base: "chainguard"`, or your Chainguard org's registry) is not in the table: it is a key in the product's own config, which no `security` group turns on or checks. [CI products](/chant/concepts/ci-products/#the-product-pipeline) describes it.
+
 ## Forge tokens on each forge
 
 A job that runs the change's code holds no forge write token, and the job that posts runs code from the target branch only. Each forge keeps them apart its own way.

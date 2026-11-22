@@ -28,6 +28,15 @@
  * - {@link derivedImageDockerfile} is an image a user builds FROM the
  *   product's, such as a provider mirror or preinstalled plugins.
  *
+ * An image has one of two base families (`base`, #5445). Debian, the
+ * default, is `node:22-bookworm-slim` and `debian:bookworm-slim`
+ * ({@link CI_BASE_IMAGES}), with packages from apt and root as the final
+ * user. Chainguard is `cgr.dev/chainguard/node:latest-dev` and
+ * `cgr.dev/chainguard/wolfi-base` (`IMAGE_PINS` in `./image-pins.ts`), or
+ * the same images from a Chainguard org's own registry, with packages from
+ * apk ({@link CI_IMAGE_PACKAGE_NAMES}) and {@link CI_IMAGE_CHAINGUARD_USER}
+ * as the final user.
+ *
  * Every check follows one rule, in the shell and in Node. A release whose
  * project publishes a checksums file is checked against that file's line
  * for the archive, and against the recorded sha256 when there is one, so a
@@ -36,9 +45,9 @@
  * image always needs a recorded sha256 for both architectures, and a caller
  * passes `requirePin` to ask the same of a job line or a run-time install.
  *
- * Like `./policy-engine.ts` this module imports only node built-ins and
- * chant's release floors, so a product can bundle it or import it from a
- * plain Node script.
+ * Like `./policy-engine.ts` this module imports only node built-ins,
+ * chant's release floors and its image pins, so a product can bundle it or
+ * import it from a plain Node script.
  */
 
 import { spawnSync } from "node:child_process";
@@ -47,10 +56,11 @@ import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync, inflateRawSync } from "node:zlib";
+import { IMAGE_PINS, imageRef } from "./image-pins";
 import { tarEntry } from "./policy-engine";
-import { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR } from "./release-floors";
+import { CI_IMAGE_BASE_FLOOR, CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR } from "./release-floors";
 
-export { CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR };
+export { CI_IMAGE_BASE_FLOOR, CI_IMAGE_DOCKER_STAGES_FLOOR, CI_IMAGE_FLOOR, CI_IMAGE_NON_ROOT_FLOOR, CI_TOOL_NODE_DOWNLOAD_FLOOR };
 
 // ---------------------------------------------------------------------------
 // Engine releases
@@ -688,8 +698,11 @@ export async function installCiTool(tool: CiTool, version: string, options: Inst
 // The product image
 
 /**
- * Base images by index digest, so a rebuild cannot change underneath a tag:
- * the ones all three products pinned. `node` carries Node 22.23.3.
+ * The Debian family's base images by index digest, so a rebuild cannot
+ * change underneath a tag: the ones all three products pinned. `node` carries
+ * Node 22.23.3 and is the final stage; `debian` is the fetch stage. The
+ * Chainguard family's are `IMAGE_PINS.chainguardNode` and
+ * `IMAGE_PINS.chainguardWolfiBase` (#5445).
  * `chant release images --repin packages/core/src/ci-image.ts` moves each to
  * the digest its tag names today (#5457).
  */
@@ -697,6 +710,168 @@ export const CI_BASE_IMAGES = {
   node: "node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392",
   debian: "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251",
 } as const;
+
+/**
+ * A Chainguard org's own registry (#5445): `cgr.dev/<org>`, on a free
+ * Starter plan or a paid one. `node` and `wolfiBase` each name a tag
+ * (`22-dev`), a tag and its digest (`22-dev@sha256:<hex>`), or the whole
+ * reference (`cgr.dev/<org>/node:22-dev@sha256:<hex>`), which is the form
+ * `chant release images --repin` finds in a product's source. chant records
+ * no digests here; the product records its own. The release's
+ * `release.images` entry logs in with `pull` (#5457).
+ */
+export interface CiImageChainguardRegistry {
+  registry: string;
+  /** The node image's tag. Default `latest-dev`; a CI job needs the `-dev` variant's shell, git and apk. */
+  node?: string;
+  /** The wolfi-base image's tag, for the fetch stage. Default `latest`. */
+  wolfiBase?: string;
+}
+
+/**
+ * The base an image is built on (#5445): `"debian"` (the default),
+ * `"chainguard"` for Chainguard's public images pinned by digest, or a
+ * Chainguard org's registry.
+ */
+export type CiImageBase = "debian" | "chainguard" | CiImageChainguardRegistry;
+
+/** The package manager and final user that go with a base. */
+export type CiImageBaseFamily = "debian" | "chainguard";
+
+/**
+ * The user a Chainguard image runs as: the uid `cgr.dev/chainguard/node`
+ * runs as itself. The install steps run as root and the image sets this
+ * user back at the end (#5445).
+ */
+export const CI_IMAGE_CHAINGUARD_USER = "65532";
+
+/**
+ * The environment variable a product image names its final user in, which
+ * {@link derivedImageDockerfile} sets the user back to after its steps.
+ * Unset (a Debian image) means root.
+ */
+export const CI_IMAGE_USER_ENV = "CHANT_IMAGE_USER";
+
+/** A base resolved to its two images. */
+export interface CiImageBaseImages {
+  family: CiImageBaseFamily;
+  /** The final stage's FROM. */
+  node: string;
+  /** The fetch stage's FROM. */
+  fetch: string;
+  /** The user the image ends as, or undefined for root. */
+  user?: string;
+}
+
+const REGISTRY = /^[a-z0-9][a-z0-9.-]*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$/;
+const TAG = /^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})(@sha256:[0-9a-f]{64})?$/;
+
+function registryImage(registry: string, image: string, field: string, value: string | undefined, fallback: string): string {
+  const given = value ?? fallback;
+  const prefix = `${registry}/${image}:`;
+  const tag = given.startsWith(prefix) ? given.slice(prefix.length) : given;
+  if (tag.includes("/") || !TAG.test(tag)) {
+    throw new Error(`base.${field} ${JSON.stringify(given)} is not a tag, a tag@sha256:<digest>, or ${prefix}<tag>@sha256:<digest>`);
+  }
+  return prefix + tag;
+}
+
+/**
+ * The images a base names (#5445). Throws on a base that is not one of the
+ * three forms, a registry that is not a registry path, or a tag that is not
+ * a tag.
+ */
+export function ciImageBase(base: CiImageBase = "debian"): CiImageBaseImages {
+  if (base === "debian") return { family: "debian", node: CI_BASE_IMAGES.node, fetch: CI_BASE_IMAGES.debian };
+  if (base === "chainguard") {
+    return { family: "chainguard", node: imageRef(IMAGE_PINS.chainguardNode), fetch: imageRef(IMAGE_PINS.chainguardWolfiBase), user: CI_IMAGE_CHAINGUARD_USER };
+  }
+  if (typeof base !== "object" || base === null || typeof base.registry !== "string") {
+    throw new Error(`base is "debian", "chainguard" or { registry: "cgr.dev/<org>" }, not ${JSON.stringify(base)}`);
+  }
+  const registry = base.registry.replace(/\/+$/, "");
+  if (!REGISTRY.test(registry)) throw new Error(`base.registry ${JSON.stringify(base.registry)} is not a registry path such as cgr.dev/<org>`);
+  return {
+    family: "chainguard",
+    node: registryImage(registry, "node", "node", base.node, "latest-dev"),
+    fetch: registryImage(registry, "wolfi-base", "wolfiBase", base.wolfiBase, "latest"),
+    user: CI_IMAGE_CHAINGUARD_USER,
+  };
+}
+
+/**
+ * Debian package names and the Wolfi package each is under apk, checked
+ * against Wolfi's package index on 2026-11-21 (#5445). A product's
+ * `packages` are Debian's names; under a Chainguard base each goes through
+ * this map, and a name the map lacks is refused. A package whose Wolfi name
+ * carries a version, such as python3 (`python-3.13`) or postgresql-client
+ * (`postgresql-17-client`), is not here: name it as `apk:<name>`.
+ */
+export const CI_IMAGE_PACKAGE_NAMES: Readonly<Record<string, string>> = {
+  bash: "bash",
+  bzip2: "bzip2",
+  "ca-certificates": "ca-certificates",
+  coreutils: "coreutils",
+  curl: "curl",
+  diffutils: "diffutils",
+  dnsutils: "bind-tools",
+  file: "file",
+  findutils: "findutils",
+  gawk: "gawk",
+  git: "git",
+  "git-lfs": "git-lfs",
+  gnupg: "gnupg",
+  grep: "grep",
+  gzip: "gzip",
+  iproute2: "iproute2",
+  jq: "jq",
+  less: "less",
+  make: "make",
+  "netcat-openbsd": "netcat-openbsd",
+  "openssh-client": "openssh-client",
+  openssl: "openssl",
+  patch: "patch",
+  procps: "procps",
+  rsync: "rsync",
+  sed: "sed",
+  tar: "gnutar",
+  tzdata: "tzdata",
+  unzip: "unzip",
+  wget: "wget",
+  "xz-utils": "xz",
+  zip: "zip",
+  zstd: "zstd",
+};
+
+const PACKAGE_NAME = /^[a-z0-9][a-z0-9.+-]*$/;
+
+/**
+ * A spec's `packages` for a family (#5445): Debian names as they are for
+ * Debian, through {@link CI_IMAGE_PACKAGE_NAMES} for Chainguard. An entry
+ * written `apk:<name>` is for Chainguard alone and `apt:<name>` for Debian
+ * alone. Throws on a name that is not a package name, and under Chainguard
+ * on a Debian name the map lacks.
+ */
+export function ciImagePackages(family: CiImageBaseFamily, packages: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const entry of packages) {
+    const m = /^(apt|apk):(.*)$/.exec(entry);
+    const name = m ? m[2]! : entry;
+    if (!PACKAGE_NAME.test(name)) throw new Error(`package ${JSON.stringify(entry)} is not a package name`);
+    if (m) {
+      if ((m[1] === "apk") === (family === "chainguard")) out.push(name);
+      continue;
+    }
+    if (family === "debian") {
+      out.push(name);
+      continue;
+    }
+    const wolfi = CI_IMAGE_PACKAGE_NAMES[name];
+    if (!wolfi) throw new Error(`apt package ${JSON.stringify(name)} has no Wolfi name in CI_IMAGE_PACKAGE_NAMES; name the apk package as "apk:<name>" and the apt one as "apt:${name}"`);
+    out.push(wolfi);
+  }
+  return [...new Set(out)];
+}
 
 /** The build argument a release passes its label in (chant's release.version). */
 export const CI_IMAGE_LABEL_ARG = "CHANT_RELEASE_LABEL";
@@ -767,7 +942,21 @@ export interface ProductImageSpec {
   tools?: CiImageTool[];
   /** Where the engines live. Default `/opt/<product>`. */
   toolRoot?: string;
-  /** apt packages beside git and ca-certificates, such as openssh-client. */
+  /**
+   * The base family (#5445). Default `"debian"`: `node:22-bookworm-slim`,
+   * apt, root. `"chainguard"`: `cgr.dev/chainguard/node:latest-dev` and
+   * `wolfi-base` by digest, apk, and {@link CI_IMAGE_CHAINGUARD_USER} as the
+   * final user. `{ registry }`: the same images from a Chainguard org's
+   * registry. See {@link ciImageBase}.
+   */
+  base?: CiImageBase;
+  /**
+   * Packages beside git and ca-certificates, such as openssh-client, by
+   * their Debian names. Debian installs them with apt; Chainguard installs
+   * each under its Wolfi name from {@link CI_IMAGE_PACKAGE_NAMES} with apk,
+   * and refuses a name the map lacks. `apk:<name>` is installed only on
+   * Chainguard and `apt:<name>` only on Debian.
+   */
   packages?: string[];
   /** Environment beside chant's (`USER`, `HOME=/tmp`, no Node compile cache, no npm debug logs). */
   env?: string[];
@@ -800,8 +989,13 @@ function aptLine(packages: string[]): string {
   return `apt-get update && apt-get install -y --no-install-recommends ${packages.join(" ")} && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/ldconfig/aux-cache`;
 }
 
+/** apk's index is not kept (`--no-cache`), and /usr/local/bin is made, which the Chainguard node image lacks (#5445). */
+function apkLine(packages: string[]): string {
+  return `apk add --no-cache ${packages.join(" ")} && mkdir -p /usr/local/bin`;
+}
+
 /** The fetch stage's steps for `tools`, each into its directory under `root`. */
-function fetchStage(tools: CiImageTool[], root: string): CiImageStage {
+function fetchStage(tools: CiImageTool[], root: string, base: CiImageBaseImages): CiImageStage {
   const steps: CiImageStep[] = [{ arg: "TARGETARCH" }];
   for (const t of tools) {
     if (t.checksumsArg === undefined) continue;
@@ -810,7 +1004,12 @@ function fetchStage(tools: CiImageTool[], root: string): CiImageStage {
     if (!any.checksumsUrl) throw new Error(`${t.tool}: its release publishes no checksums file, so checksumsArg has nothing to name`);
     steps.push({ arg: `${t.checksumsArg}=${any.checksumsUrl}` });
   }
-  steps.push({ run: "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*" });
+  steps.push({
+    run:
+      base.family === "chainguard"
+        ? "apk add --no-cache ca-certificates curl unzip"
+        : "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*",
+  });
   for (const t of tools) {
     const script = ciToolFetchScript(t.tool, t.version, {
       dir: ciToolDir(t.tool, t.version, root),
@@ -821,7 +1020,8 @@ function fetchStage(tools: CiImageTool[], root: string): CiImageStage {
     });
     steps.push({ run: `set -e; ${script}` });
   }
-  return { from: CI_BASE_IMAGES.debian, as: "fetch", steps };
+  // wolfi-base runs as root, so the fetch stage needs no USER line.
+  return { from: base.fetch, as: "fetch", steps };
 }
 
 function bundleSteps(b: CiImageBundle): CiImageStep[] {
@@ -855,7 +1055,9 @@ function bundleSteps(b: CiImageBundle): CiImageStep[] {
  * A product's CI image as stages (#4784): a fetch stage that downloads each
  * engine and checks it against a recorded sha256, then the pinned Node base
  * with git and CA certificates, `safe.directory '*'`, the engines, the
- * product's steps, its bundle and the OCI labels. Pass the stages to the
+ * product's steps, its bundle and the OCI labels. `spec.base` picks Debian
+ * (apt, root) or Chainguard (apk, the install steps under `USER root` and
+ * {@link CI_IMAGE_CHAINGUARD_USER} as the final user) (#5445). Pass the stages to the
  * docker lexicon's `new Dockerfile({ stages })`, or write
  * {@link productImageDockerfile}'s text.
  */
@@ -864,7 +1066,9 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
   if (!NAME.test(spec.product)) throw new Error(`product ${JSON.stringify(spec.product)} is not lower-case letters, digits and ._-`);
   const versionArg = spec.versionArg ?? CI_IMAGE_LABEL_ARG;
   for (const a of [versionArg, ...(spec.args ?? [])]) if (!ARG.test(a)) throw new Error(`build argument ${JSON.stringify(a)} is not a name`);
-  for (const p of spec.packages ?? []) if (!/^[a-z0-9][a-z0-9.+-]*$/.test(p)) throw new Error(`apt package ${JSON.stringify(p)} is not a package name`);
+  const base = ciImageBase(spec.base);
+  const chainguard = base.family === "chainguard";
+  const packages = ciImagePackages(base.family, spec.packages ?? []);
   for (const p of spec.npm ?? []) if (!PKG.test(p)) throw new Error(`npm package ${JSON.stringify(p)} is not a name at an exact version`);
   if (spec.chant !== undefined && !VERSION.test(spec.chant)) throw new Error(`chant ${JSON.stringify(spec.chant)} is not a release version`);
   const root = spec.toolRoot ?? `/opt/${spec.product}`;
@@ -878,15 +1082,18 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
   }
 
   const steps: CiImageStep[] = [];
+  // The Chainguard node image runs as 65532; every install step runs as root, and the user is set back last (#5445).
+  if (chainguard) steps.push({ user: "root" });
   for (const a of [versionArg, ...(spec.args ?? [])]) steps.push({ arg: a });
   // A forge may run the job as a uid with no /etc/passwd entry, and Go then reads $USER and $HOME. A release builds each
   // image twice and the two archives must match (#4657), so Node's compile cache and npm's debug logs are not written.
-  const env = [`USER=${spec.product}`, "HOME=/tmp", "NODE_DISABLE_COMPILE_CACHE=1", "npm_config_logs_max=0", ...(spec.env ?? [])];
+  const env = [`USER=${spec.product}`, "HOME=/tmp", "NODE_DISABLE_COMPILE_CACHE=1", "npm_config_logs_max=0", ...(base.user ? [`${CI_IMAGE_USER_ENV}=${base.user}`] : []), ...(spec.env ?? [])];
   if ("npm" in spec.bundle) env.push(`PATH=${spec.bundle.prefix}/node_modules/.bin:$PATH`);
   for (const e of env) steps.push({ env: e });
-  steps.push({ run: aptLine(["git", "ca-certificates", ...(spec.packages ?? [])]) });
+  const wanted = [...new Set(["git", "ca-certificates", ...packages])];
+  steps.push({ run: chainguard ? apkLine(wanted) : aptLine(wanted) });
   // A job often runs as another user than the one who owns its checkout, and git then refuses it ("dubious
-  // ownership"). Debian's git 2.39 matches no path prefix, so it is every directory (#4768).
+  // ownership"). Debian's git 2.39 matches no path prefix, so it is every directory (#4768); Wolfi's git reads it the same.
   steps.push({ run: "git config --system --add safe.directory '*'" });
   if (spec.npm?.length) {
     steps.push({ run: `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund ${spec.npm.join(" ")} && npm cache clean --force && rm -rf /tmp/.npm` });
@@ -908,17 +1115,30 @@ export function productImageStages(spec: ProductImageSpec): CiImageStage[] {
     const links = tools.filter((t) => t.link !== false).map((t) => `ln -sf ${ciToolBin(t.tool, t.version, root)} /usr/local/bin/${TOOLS[t.tool].bin}`);
     if (links.length) steps.push({ run: links.join(" && ") });
   }
+  // The tool root itself (not the engines in it) belongs to the final user, so a job that is not root can add a
+  // versioned directory for a pin the image does not carry (#5445).
+  if (chainguard) steps.push({ run: `mkdir -p ${root} && chown ${base.user}:${base.user} ${root}` });
   steps.push(...(spec.steps ?? []));
   steps.push(...bundleSteps(spec.bundle));
+  const at = base.node.indexOf("@");
+  const baseName = at < 0 ? base.node : base.node.slice(0, at);
+  const baseDigest = at < 0 ? undefined : base.node.slice(at + 1);
   steps.push(
     { label: `org.opencontainers.image.title="${spec.name}"` },
     { label: `org.opencontainers.image.description="${label("description", spec.description)}"` },
     { label: `org.opencontainers.image.version="\${${versionArg}}"` },
     { label: `org.opencontainers.image.source="${label("source", spec.source)}"` },
     { label: `org.opencontainers.image.licenses="${label("licenses", spec.licenses ?? "Apache-2.0")}"` },
+    // The base the image is built on, and its family (#5445).
+    { label: `org.opencontainers.image.base.name="${baseName}"` },
+    ...(baseDigest ? [{ label: `org.opencontainers.image.base.digest="${baseDigest}"` }] : []),
+    { label: `io.intentius.chant.image.base="${base.family}"` },
+    // The Chainguard node image's entrypoint is node itself, which would run the command as a script.
+    ...(chainguard ? [{ entrypoint: "[]" }] : []),
     { cmd: spec.cmd ?? '["bash"]' },
+    ...(base.user ? [{ user: base.user }] : []),
   );
-  return [...(tools.length ? [fetchStage(tools, root)] : []), { from: CI_BASE_IMAGES.node, steps }];
+  return [...(tools.length ? [fetchStage(tools, root, base)] : []), { from: base.node, steps }];
 }
 
 /** Stages as Dockerfile text, as the docker lexicon writes them, with `header` as comment lines on top. */
@@ -949,8 +1169,17 @@ export interface DerivedImageSpec {
   steps: CiImageStep[];
 }
 
-/** A derived image's Dockerfile (#4784): FROM the product's image, the user's steps, nothing pushed. */
+/**
+ * A derived image's Dockerfile (#4784): FROM the product's image, the
+ * user's steps, nothing pushed. The steps run as root, and the image then
+ * sets its user back to the product image's (#5445): `CHANT_IMAGE_USER` from
+ * the base's environment, which a Chainguard image sets to
+ * {@link CI_IMAGE_CHAINGUARD_USER}, else root. Steps that name a `user`
+ * themselves get no USER line from here.
+ */
 export function derivedImageDockerfile(spec: DerivedImageSpec): string {
   if (!spec.from || /\s/.test(spec.from)) throw new Error(`the derived image's from ${JSON.stringify(spec.from)} is not an image reference`);
-  return dockerfileText([{ from: spec.from, steps: spec.steps }], spec.header ?? []);
+  const own = spec.steps.some((s) => s.user !== undefined);
+  const steps: CiImageStep[] = own ? spec.steps : [{ user: "root" }, ...spec.steps, { user: `\${${CI_IMAGE_USER_ENV}:-root}` }];
+  return dockerfileText([{ from: spec.from, steps }], spec.header ?? []);
 }

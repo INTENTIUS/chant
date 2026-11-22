@@ -338,6 +338,20 @@ describe("dockerSerializer.serialize — Dockerfile steps", () => {
     expect(dockerfile({ stages })).toBe(dockerfileText(stages));
   });
 
+  test("a Chainguard product image's stages, with USER and an empty ENTRYPOINT, serialize as ci-image writes them (#5445)", () => {
+    const stages = productImageStages({
+      name: "terragucci-tofu",
+      product: "terragucci",
+      description: "OpenTofu 1.13.1 and the terragucci engine",
+      source: "https://github.com/INTENTIUS/terragucci",
+      base: "chainguard",
+      tools: [{ tool: "tofu", version: "1.13.1" }],
+      bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
+    });
+    expect(dockerfile({ stages })).toBe(dockerfileText(stages));
+    expect(dockerfileText(stages)).toContain("ENTRYPOINT []\nCMD [\"bash\"]\nUSER 65532\n");
+  });
+
   test("steps are written in the order given, interleaving COPY and RUN", () => {
     expect(dockerfile({
       from: "node:20-alpine",
