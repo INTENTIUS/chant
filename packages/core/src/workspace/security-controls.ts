@@ -259,7 +259,7 @@ export const SECURITY_CONTROLS: readonly SecurityControl[] = [
     fedrampParameter: "within 24 hours prior to running scans",
     evidence: ["the database version and build time on each scan record"],
     notShown: "Updates between scans; the record shows the database each scan read.",
-    codes: ["profile-scan-db-unbounded", "publish-scan-db-stale"],
+    codes: ["profile-scan-db-unbounded", "publish-scan-db-stale", "release-scan-db-stale"],
     doctor: [],
   },
   {

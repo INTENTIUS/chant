@@ -32,7 +32,7 @@ Each profile does three things.
 
 - It turns on every security group. Each group's own check (`WSP161` to `WSP165`) reports what the group lacks, and every command that a group changes, such as `chant release publish` and `chant ci run`, behaves as it does under the group.
 - `chant lifecycle gc` keeps change sets and releases for at least the profile's days. A longer `retention` is kept. A shorter one is not used, and gc says so. Run events are not covered, since they live in one clone.
-- `chant release publish` and `chant workspace train publish` refuse a scan whose vulnerability database was built longer ago than the profile's hours, or whose build time the scanner does not report, with `publish-scan-db-stale`. The scan is recorded as `scan-failed` and nothing is staged. `release.scan.dbMaxAgeHours` in `chant.config.ts` sets a shorter bound, and sets one without a profile.
+- `chant release publish` and `chant workspace train publish` refuse a scan whose vulnerability database was built longer ago than the profile's hours, or whose build time the scanner does not report, with `publish-scan-db-stale`. The scan is recorded as `scan-failed` and nothing is staged. [`chant release scan`](/chant/cli/release/scan/) holds a rescan to the same bound: its line is written with `stale` saying why, and the rescan exits 1 with `release-scan-db-stale` and does not count as a passing scan at promote. `release.scan.dbMaxAgeHours` in `chant.config.ts` sets a shorter bound, and sets one without a profile.
 
 ## Checks
 
@@ -80,7 +80,7 @@ The table is printed from `SECURITY_CONTROLS` in `packages/core/src/workspace/se
 | CM-8 | System Component Inventory | yes | yes | the SBOM of each release target, the image SBOM made from its layers, `chant workspace state` | `security-sbom-disabled`, `security-sbom-unsourced` |
 | IA-2 | Identification and Authentication | yes | yes | the identity form on each record (`signer`, `forge`, `role`, `name`), `identity.attribution: "identified"` | `security-attribution-any` |
 | RA-5 | Vulnerability Monitoring and Scanning (CCCS: Vulnerability Scanning) | yes | yes | `scanned` and `scan-failed` lines on `_releases/publishes.jsonl`, the `scan.json` referrer, `vulnPolicy`, `vuln-gate` steps | `profile-scan-off`, `scan-tool` |
-| RA-5(2) | Update Vulnerabilities to Be Scanned | yes | yes | the database version and build time on each scan record | `profile-scan-db-unbounded`, `publish-scan-db-stale` |
+| RA-5(2) | Update Vulnerabilities to Be Scanned | yes | yes | the database version and build time on each scan record | `profile-scan-db-unbounded`, `publish-scan-db-stale`, `release-scan-db-stale` |
 | RA-5(3) | Breadth and Depth of Coverage | yes | yes | layer SBOMs listing OS packages | none |
 | SA-10 | Developer Configuration Management | yes | yes | `_releases/<digest>.json`, `_change-sets/<digest>.json`, `_merges/<commit>.json`, `ci/revoked/<sha>` tags | none |
 | SA-10(1) | Software and Firmware Integrity Verification | - | yes | `chant release verify <label>`, `chant release verify --sigstore`, `chant components promote --release` | `profile-signing-off` |

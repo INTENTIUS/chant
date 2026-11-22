@@ -1768,9 +1768,9 @@ export async function runReleaseScan(ctx: CommandContext): Promise<number> {
     say(`${w.label ?? w.digest}${w.deployed.length > 0 ? `, run by ${w.deployed.join(", ")}` : ""}`);
     results.push({ ...(await rescanRelease({ cwd, releaseDigest: w.digest, label: w.label, env: process.env, scan: prepared.scan, deployed: w.deployed, say })), deployed: w.deployed });
   }
-  const failed = results.filter((r) => r.blocked || r.nothingScanned);
+  const failed = results.filter((r) => r.blocked || r.nothingScanned || r.stale !== null);
   if (args.json) {
-    console.log(JSON.stringify({ scanner: prepared.scan.scanner.name, releases: results.map((r) => ({ releaseDigest: r.releaseDigest, label: r.label, deployed: r.deployed, blocked: r.blocked, nothingScanned: r.nothingScanned, ...(r.recordWarning ? { recordWarning: r.recordWarning } : {}), scan: r.record })) }, null, 2));
+    console.log(JSON.stringify({ scanner: prepared.scan.scanner.name, releases: results.map((r) => ({ releaseDigest: r.releaseDigest, label: r.label, deployed: r.deployed, blocked: r.blocked, nothingScanned: r.nothingScanned, ...(r.stale ? { stale: r.stale } : {}), ...(r.recordWarning ? { recordWarning: r.recordWarning } : {}), scan: r.record })) }, null, 2));
     return failed.length > 0 ? 1 : 0;
   }
   for (const r of results) {
@@ -1785,8 +1785,13 @@ export async function runReleaseScan(ctx: CommandContext): Promise<number> {
   }
   for (const r of failed) {
     const name = r.label ?? r.releaseDigest;
+    // #5464: the database bound a publish holds holds for a rescan too.
+    if (r.stale) {
+      const { RESCAN_DB_STALE_FIX } = await import("../../workspace/security-profiles");
+      console.error(formatError({ message: `${name} was scanned, but ${r.stale}; the rescan is recorded as stale and is not a pass [release-scan-db-stale]`, hint: RESCAN_DB_STALE_FIX }));
+    }
     if (r.blocked) console.error(formatError({ message: `${r.record.scanner} found a finding the vulnerability policy blocks in ${name} [release-scan-blocked]`, hint: "Cut and publish a release that fixes it, or record a VEX statement in a file vulnPolicy.vexSources names when it is not exploitable." }));
-    else console.error(formatError({ message: `nothing of ${name} was scanned: the publish recorded no SBOM a rescan can fetch [release-scan-nothing]`, hint: "A rescan reads an image's SBOM referrer from its registry. Publish the release with release.scan on, from CI with the registry's credentials set here." }));
+    else if (r.nothingScanned) console.error(formatError({ message: `nothing of ${name} was scanned: the publish recorded no SBOM a rescan can fetch [release-scan-nothing]`, hint: "A rescan reads an image's SBOM referrer from its registry. Publish the release with release.scan on, from CI with the registry's credentials set here." }));
   }
   if (failed.length === 0) console.error(formatSuccess(`Scanned ${results.length} release${results.length === 1 ? "" : "s"} with ${prepared.scan.scanner.name}; the policy blocks nothing`));
   return failed.length > 0 ? 1 : 0;

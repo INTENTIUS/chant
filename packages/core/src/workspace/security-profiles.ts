@@ -217,6 +217,10 @@ export function scanDatabaseStale(database: ScanDatabase | null, bound: ScanData
 export const SCAN_DB_STALE_FIX =
   "Update the scanner's database in the job before the publish (grype db update, or trivy with its database download on), or refresh the directory release.scan.db names, then publish again. The scan record keeps the database's version and build time.";
 
+/** The fix `release-scan-db-stale` prints, for `chant release scan` (#5466) under the same bound. */
+export const RESCAN_DB_STALE_FIX =
+  "Update the scanner's database before the rescan (grype db update, or trivy with its database download on), or refresh the directory release.scan.db names, then scan again. The rescan's line keeps the database's version and build time, and why it was stale.";
+
 const MARK: Record<BaselineMark, string> = { selected: "yes", "not-selected": "-", "not-in-catalogue": "n/a" };
 
 /** The profile page's table of the profiles, as markdown. */

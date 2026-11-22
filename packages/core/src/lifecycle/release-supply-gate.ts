@@ -49,7 +49,8 @@ const SCANNED_KINDS = new Set(["oci", "forge", "npm"]);
 export function scanRecorded(records: readonly Pick<PublishRecord, "kind" | "step" | "scan">[]): "passed" | "failed-only" | "none" {
   const lines = records.filter((r) => r.kind === "scan");
   if (lines.some((r) => r.step === "scanned")) return "passed";
-  if (lines.some((r) => r.step === "rescanned" && r.scan !== undefined && r.scan.subjects.length > 0 && !scanRecordBlocks(r.scan))) return "passed";
+  // #5464: a rescan whose database was older than its bound is not a pass.
+  if (lines.some((r) => r.step === "rescanned" && r.scan !== undefined && r.scan.subjects.length > 0 && !scanRecordBlocks(r.scan) && r.scan.stale === undefined)) return "passed";
   return lines.some((r) => r.step === "scan-failed" || r.step === "rescanned") ? "failed-only" : "none";
 }
 

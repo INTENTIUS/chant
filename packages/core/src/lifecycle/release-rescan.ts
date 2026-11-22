@@ -27,6 +27,13 @@
  *
  * Nothing is pushed to a registry. `chant release scan --deployed` rescans
  * every release the latest deploy record of each environment names.
+ *
+ * The database bound a publish holds (#5464) holds here too: with
+ * `release.scan.dbMaxAgeHours` set, or under a security profile, a database
+ * built longer ago than the bound, or one whose build time the scanner can't
+ * say, is recorded on the line as `stale` and the rescan does not pass
+ * (`release-scan-db-stale`). The line is still written, since the findings it
+ * did read, and the database's age, are worth having on the record.
  */
 
 import { resolve as resolvePath } from "node:path";
@@ -42,7 +49,7 @@ export interface ScanLine {
   step: "scanned" | "scan-failed" | "rescanned";
   timestamp: string;
   scan: ScanRecord | undefined;
-  /** True when the line holds a finding the policy blocks, or is a `scan-failed` line. */
+  /** True when the line holds a finding the policy blocks, is a `scan-failed` line, or is a rescan whose database was older than its bound. */
   blocked: boolean;
 }
 
@@ -50,7 +57,7 @@ export interface ScanLine {
 export function scanLines(records: readonly Pick<PublishRecord, "kind" | "step" | "timestamp" | "scan">[]): ScanLine[] {
   return records
     .filter((r) => r.kind === "scan" && (r.step === "scanned" || r.step === "scan-failed" || r.step === "rescanned"))
-    .map((r) => ({ step: r.step as ScanLine["step"], timestamp: r.timestamp, scan: r.scan, blocked: r.step === "scan-failed" || (r.scan !== undefined && scanRecordBlocks(r.scan)) }));
+    .map((r) => ({ step: r.step as ScanLine["step"], timestamp: r.timestamp, scan: r.scan, blocked: r.step === "scan-failed" || (r.scan !== undefined && (scanRecordBlocks(r.scan) || r.scan.stale !== undefined)) }));
 }
 
 /** The newest scan line of a release, as `chant release list --json` shows it (#5466). */
@@ -171,6 +178,8 @@ export interface RescanResult {
   blocked: boolean;
   /** True when nothing was scanned, which is not a pass. */
   nothingScanned: boolean;
+  /** Why the scanner's database was older than the bound the rescan holds it to (#5464), which is not a pass; null when within it or with no bound. */
+  stale: string | null;
   /** Why the record was not written or pushed, when it wasn't. */
   recordWarning: string | null;
 }
@@ -194,7 +203,20 @@ export async function prepareRescan(req: { cwd: string; env: NodeJS.ProcessEnv; 
     const e = err as PublishTargetError;
     return { refusal: { code: "publish-scan-vex-missing", message: e.message, ...(e.fix ? { fix: e.fix } : {}) } };
   }
-  return { scan: { scanner, policy: config ? resolveVulnPolicy(config) : {}, vex } };
+  // #5464: the database bound a publish holds, from release.scan.dbMaxAgeHours or a security profile in the declaration.
+  const { profilesOf, scanDatabaseBound } = await import("../workspace/security-profiles");
+  const dbAge = scanDatabaseBound(typeof setting === "object" ? setting.dbMaxAgeHours : undefined, profilesOf(await declarationAt(req.cwd)));
+  return { scan: { scanner, policy: config ? resolveVulnPolicy(config) : {}, vex, ...(dbAge ? { dbAge } : {}) } };
+}
+
+/** The workspace declaration that holds the member at `cwd`, or null outside a workspace or when it does not read. */
+async function declarationAt(cwd: string): Promise<{ security?: readonly string[] } | null> {
+  try {
+    const { scopeSource } = await import("../workspace/write-scope");
+    return scopeSource(cwd).declaration ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -218,7 +240,13 @@ export async function rescanRelease(req: {
   const redactor = createRedactor(req.env);
   const found = await recordedSboms({ cwd: req.cwd, releaseDigest: req.releaseDigest, env: req.env, redactor, ...(req.fetch ? { fetch: req.fetch } : {}) });
   const report = await scanSubjects(found.subjects, req.scan, req.say);
-  const record: ScanRecord = { ...scanRecord(report), ...(found.skipped.length > 0 ? { skipped: found.skipped } : {}) };
+  // #5464: a database older than the bound the publish holds is recorded as stale, and the rescan does not pass.
+  let stale: string | null = null;
+  if (req.scan.dbAge && report.subjects.length > 0) {
+    const { scanDatabaseStale } = await import("../workspace/security-profiles");
+    stale = scanDatabaseStale(report.database, req.scan.dbAge, (req.now ?? (() => new Date()))());
+  }
+  const record: ScanRecord = { ...scanRecord(report), ...(found.skipped.length > 0 ? { skipped: found.skipped } : {}), ...(stale ? { stale } : {}) };
   let recordWarning: string | null = null;
   if (req.record !== false) {
     try {
@@ -247,7 +275,7 @@ export async function rescanRelease(req: {
       recordWarning = `the rescan was not recorded: ${redact(redactor, err)}`;
     }
   }
-  return { releaseDigest: req.releaseDigest, label: req.label, record, blocked: scanRecordBlocks(record), nothingScanned: report.subjects.length === 0, recordWarning };
+  return { releaseDigest: req.releaseDigest, label: req.label, record, blocked: scanRecordBlocks(record), nothingScanned: report.subjects.length === 0, stale, recordWarning };
 }
 
 /**

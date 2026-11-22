@@ -23,21 +23,24 @@ An image's SBOM is an OCI referrer of the image, and the publish record names it
 
 The scanner is grype, or trivy with `vulnPolicy.scanner`, found in `CHANT_GRYPE` or `CHANT_TRIVY`, else on `PATH`, with the database `release.scan.db` names when it names one. The VEX files of `vulnPolicy.vexSources` apply. A scanner that is not there refuses with `publish-scan-tool-missing`.
 
+The bound a publish holds the scanner's database to holds for a rescan too: `release.scan.dbMaxAgeHours`, or the hours of a [security profile](/chant/reference/security-profiles/) the workspace declaration names, whichever is shorter. A database built longer ago than that, or one whose build time the scanner does not report, still gets its line, with `stale` saying why, and the rescan does not pass.
+
 ## The record
 
-Each rescan is a line of the publish record under the target `scan`, in order after the `scanned` line of the publish: the scanner, the database's version and build time, and every finding with what the policy made of it (`severity-threshold`, `kev` and the other blocking reasons, `warning`, `suppressed`, or `reported`), plus `skipped`. The line's `state.deployed` names the environments that run the release when `--deployed` made it. A reader lists a release's scans in order from the record. Under `supply-chain`, [promote](/chant/guide/security-supply-chain/#promote-checks-what-the-publish-recorded) accepts a rescan that scanned something and found nothing the policy blocks in place of the publish's own passing scan.
+Each rescan is a line of the publish record under the target `scan`, in order after the `scanned` line of the publish: the scanner, the database's version and build time, and every finding with what the policy made of it (`severity-threshold`, `kev` and the other blocking reasons, `warning`, `suppressed`, or `reported`), plus `skipped`. The line's `state.deployed` names the environments that run the release when `--deployed` made it. A reader lists a release's scans in order from the record. Under `supply-chain`, [promote](/chant/guide/security-supply-chain/#promote-checks-what-the-publish-recorded) accepts a rescan that scanned something, within the database bound, and found nothing the policy blocks in place of the publish's own passing scan.
 
 ## Exit codes
 
-It exits 0 when the policy blocks nothing in any release scanned, and 1 otherwise:
+It exits 0 when the policy blocks nothing in any release scanned and every database was within its bound, and 1 otherwise:
 
 | Code | When |
 |---|---|
 | `release-scan-blocked` | The policy blocks a finding. The message names the release, and stderr lists each finding with its package, version and fix. |
+| `release-scan-db-stale` | The scanner's database was older than the bound, or its build time is unknown. The line is recorded with `stale`, and promote under `supply-chain` does not take it as a passing scan. |
 | `release-scan-nothing` | Nothing of a release could be scanned, as when its publish recorded no SBOM a rescan fetches. A scan of nothing is not a pass. Also when `--deployed` finds no deploy record that names a release. |
 | `release-not-found` | No release carries the label or digest in this member. |
 
-`--json` prints the scanner and, for each release, its digest, label, the environments that run it, `blocked`, `nothingScanned` and the recorded `scan`.
+`--json` prints the scanner and, for each release, its digest, label, the environments that run it, `blocked`, `nothingScanned`, `stale` when the database was too old, and the recorded `scan`.
 
 ## On a schedule
 

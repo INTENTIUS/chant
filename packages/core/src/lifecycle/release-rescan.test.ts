@@ -160,3 +160,54 @@ describe("--deployed", () => {
     expect([...(await deployedReleases({ cwd: r.dir, env: "prod" })).keys()]).toEqual([current]);
   }, 60_000);
 });
+
+describe("the database bound on a rescan (#5464)", () => {
+  test("a database older than the profile's hours is recorded as stale, and the rescan does not pass or count for promote", async () => {
+    const p = await published("stale");
+    try {
+      const { scanDatabaseBound } = await import("../workspace/security-profiles");
+      const dbAge = scanDatabaseBound(undefined, ["fedramp-moderate"])!;
+      const scanner = (built: string | undefined) => ({ ...fakeReleaseScanner({ db: SCAN_ADVISORIES }), database: async () => ({ version: "v6.0.2", ...(built ? { built } : {}) }) });
+      const now = () => new Date("2026-11-21T12:00:00.000Z");
+      const run = (built: string | undefined) => rescanRelease({ cwd: p.r.dir, releaseDigest: p.release.releaseDigest, label: "v1", env: p.env, scan: { scanner: scanner(built), policy: {}, vex: [], dbAge }, now });
+
+      const old = await run("2026-11-20T06:00:00Z");
+      expect(old.blocked).toBe(false);
+      expect(old.stale).toContain("30 hours before the scan, and the fedramp-moderate security profile takes one no older than 24 hours");
+      expect(old.record.stale).toBe(old.stale);
+      const unknown = await run(undefined);
+      expect(unknown.stale).toContain("did not say when its database was built");
+      const fresh = await run("2026-11-21T06:00:00Z");
+      expect(fresh.stale).toBeNull();
+      expect(fresh.record.stale).toBeUndefined();
+
+      // Each line is written, the stale ones marked as not passing.
+      const records = await readPublishRecords(p.release.releaseDigest, { cwd: p.r.dir });
+      expect(scanLines(records).map((l) => [l.step, l.blocked])).toEqual([["rescanned", true], ["rescanned", true], ["rescanned", false]]);
+      const staleOnly = records.filter((r) => r.step === "rescanned" && r.scan?.stale !== undefined);
+      expect(scanRecorded(staleOnly)).toBe("failed-only");
+      expect(scanRecorded(records)).toBe("passed");
+    } finally {
+      await p.reg.close();
+    }
+  }, 60_000);
+
+  test("prepareRescan takes the bound from the declaration's profile, and none without one", async () => {
+    const { prepareRescan } = await import("./release-rescan");
+    const scanner = fakeReleaseScanner();
+    const r = new TestRepo("rescan-prepare");
+    repos.push(r);
+    r.write("chant.workspace.json", JSON.stringify({ name: "acme", schema: 1, security: ["cccs-medium"], members: [{ name: "app", dir: "app", kind: "other", because: "the app" }] }));
+    r.write("app/chant.config.ts", "export default { release: { scan: { dbMaxAgeHours: 48 } } };\n");
+    r.commit("init");
+    const under = await prepareRescan({ cwd: join(r.dir, "app"), env: {}, scanner });
+    expect("scan" in under && under.scan.dbAge).toEqual({ maxHours: 24, from: "the cccs-medium security profile" });
+
+    const plain = new TestRepo("rescan-prepare-plain");
+    repos.push(plain);
+    plain.write("chant.config.ts", "export default {};\n");
+    plain.commit("init");
+    const none = await prepareRescan({ cwd: plain.dir, env: {}, scanner });
+    expect("scan" in none && none.scan.dbAge).toBeUndefined();
+  }, 60_000);
+});

@@ -477,6 +477,12 @@ export interface ScanRecord {
   subjects: RecordedSubject[];
   /** On a `rescanned` line (#5466): what the rescan did not scan, and why. */
   skipped?: Array<{ name: string; reason: string }>;
+  /**
+   * On a `rescanned` line (#5465): why the scanner's database was older than
+   * the bound `release.scan.dbMaxAgeHours` or a security profile sets, so the
+   * findings were read against an old database. Such a rescan is not a pass.
+   */
+  stale?: string;
 }
 
 /** The findings of one subject, each with what the policy made of it, sorted. */
