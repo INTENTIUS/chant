@@ -714,17 +714,22 @@ export const CI_BASE_IMAGES = {
 /**
  * A Chainguard org's own registry (#5445): `cgr.dev/<org>`, on a free
  * Starter plan or a paid one. `node` and `wolfiBase` each name a tag
- * (`22-dev`), a tag and its digest (`22-dev@sha256:<hex>`), or the whole
- * reference (`cgr.dev/<org>/node:22-dev@sha256:<hex>`), which is the form
- * `chant release images --repin` finds in a product's source. chant records
- * no digests here; the product records its own. The release's
+ * (`22-dev`), a tag and its digest (`22-dev@sha256:<hex>`), an image name
+ * and a tag (`<image>:22-dev`), or the whole reference under the registry
+ * (`cgr.dev/<org>/<image>:22-dev@sha256:<hex>`), which is the form
+ * `chant release images --repin` finds in a product's source (#5471). A bare
+ * tag names the default image, `node` or `wolfi-base`; a different image,
+ * such as one of the org's FIPS images, is named with the image. chant
+ * records no digests here; the product records its own. Which images a
+ * registry holds, and whether it holds FIPS ones, depends on the org's plan
+ * with Chainguard; chant does not list or check them. The release's
  * `release.images` entry logs in with `pull` (#5457).
  */
 export interface CiImageChainguardRegistry {
   registry: string;
-  /** The node image's tag. Default `latest-dev`; a CI job needs the `-dev` variant's shell, git and apk. */
+  /** The node image: a tag, `<image>:<tag>` or the full reference. Default `node:latest-dev`; a CI job needs the `-dev` variant's shell, git and apk. */
   node?: string;
-  /** The wolfi-base image's tag, for the fetch stage. Default `latest`. */
+  /** The image the fetch stage starts from, which needs a shell, tar and sha256sum: a tag, `<image>:<tag>` or the full reference. Default `wolfi-base:latest`. */
   wolfiBase?: string;
 }
 
@@ -766,14 +771,33 @@ export interface CiImageBaseImages {
 const REGISTRY = /^[a-z0-9][a-z0-9.-]*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$/;
 const TAG = /^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})(@sha256:[0-9a-f]{64})?$/;
 
-function registryImage(registry: string, image: string, field: string, value: string | undefined, fallback: string): string {
-  const given = value ?? fallback;
-  const prefix = `${registry}/${image}:`;
-  const tag = given.startsWith(prefix) ? given.slice(prefix.length) : given;
-  if (tag.includes("/") || !TAG.test(tag)) {
-    throw new Error(`base.${field} ${JSON.stringify(given)} is not a tag, a tag@sha256:<digest>, or ${prefix}<tag>@sha256:<digest>`);
-  }
-  return prefix + tag;
+/** An image's name in a registry: lower-case segments joined by `.`, `_` or `-`. */
+const IMAGE_NAME = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+
+/**
+ * One of a registry route's two images (#5445, #5471). `value` is a tag
+ * (`22-dev`), a tag with its digest (`22-dev@sha256:<hex>`), an image name
+ * with a tag (`<image>:22-dev`), which a Chainguard org's FIPS images need
+ * since their names differ from the defaults, or the whole reference under
+ * the registry (`<registry>/<image>:22-dev@sha256:<hex>`), which is the form
+ * `chant release images --repin` finds in a product's source. A bare tag
+ * names `fallbackImage`. A reference outside the registry is refused.
+ */
+function registryImage(registry: string, fallbackImage: string, field: string, value: string | undefined, fallbackTag: string): string {
+  const given = value ?? fallbackTag;
+  const refuse = (): never => {
+    throw new Error(`base.${field} ${JSON.stringify(given)} is not a tag, an <image>:<tag>, or ${registry}/<image>:<tag>, each with an optional @sha256:<digest>`);
+  };
+  const inside = given.startsWith(`${registry}/`) ? given.slice(registry.length + 1) : given;
+  if (inside.includes("/")) return refuse();
+  const digestAt = inside.indexOf("@");
+  const named = digestAt < 0 ? inside : inside.slice(0, digestAt);
+  const digest = digestAt < 0 ? "" : inside.slice(digestAt);
+  const colon = named.indexOf(":");
+  const image = colon < 0 ? fallbackImage : named.slice(0, colon);
+  const tag = colon < 0 ? named : named.slice(colon + 1);
+  if (!IMAGE_NAME.test(image) || !TAG.test(tag + digest)) return refuse();
+  return `${registry}/${image}:${tag}${digest}`;
 }
 
 /**

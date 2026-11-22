@@ -77,6 +77,14 @@ describe("repinFiles", () => {
     expect(r.failed).toEqual([{ file: "Dockerfile", line: 2, reference: "gone:1", reason: "gone:1 is not there" }]);
   });
 
+  test("moves a reference to any image name under a registry, as a base: { registry } product records it", async () => {
+    const ref = (d: string) => `  node: "cgr.dev/example.com/custom-node:22-dev@${d}",\n  wolfiBase: "cgr.dev/example.com/custom-base:latest@${d}",\n`;
+    const resolver = fixed({ "cgr.dev/example.com/custom-node:22-dev": NEW, "cgr.dev/example.com/custom-base:latest": NEW });
+    const r = await repinFiles([{ path: "image.ts", text: ref(OLD) }], resolver);
+    expect(r.files[0]!.text).toBe(ref(NEW));
+    expect(r.moved.map((m) => m.reference)).toEqual(["cgr.dev/example.com/custom-node:22-dev", "cgr.dev/example.com/custom-base:latest"]);
+  });
+
   test("moves an IMAGE_PINS row", async () => {
     const text = `  binfmt: pin("tonistiigi/binfmt", "qemu-v10.2.3", "${OLD}"),\n`;
     const r = await repinFiles([{ path: "image-pins.ts", text }], fixed({ "tonistiigi/binfmt:qemu-v10.2.3": NEW }));

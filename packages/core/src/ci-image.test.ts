@@ -788,6 +788,29 @@ describe("productImageStages with base (#5445)", () => {
     expect(() => ciImageBase("alpine" as never)).toThrow(/"debian", "chainguard"/);
   });
 
+  test("a registry route takes another image name for each image, as an <image>:<tag> or a full reference, with or without a digest", () => {
+    const d = "b".repeat(64);
+    // The names are fixtures: chant takes whatever image names the org holds and checks none.
+    const own = ciImageBase({ registry: "cgr.dev/example.com", node: "custom-node:22-dev", wolfiBase: "custom-base:latest" });
+    expect(own.node).toBe("cgr.dev/example.com/custom-node:22-dev");
+    expect(own.fetch).toBe("cgr.dev/example.com/custom-base:latest");
+    const pinned = ciImageBase({ registry: "cgr.dev/example.com", node: `cgr.dev/example.com/custom-node:22-dev@sha256:${d}`, wolfiBase: `custom-base:latest@sha256:${d}` });
+    expect(pinned.node).toBe(`cgr.dev/example.com/custom-node:22-dev@sha256:${d}`);
+    expect(pinned.fetch).toBe(`cgr.dev/example.com/custom-base:latest@sha256:${d}`);
+    // The Dockerfile starts both stages from them, and the labels carry the chosen name and digest.
+    const [fetch, final] = stagesOf({ registry: "cgr.dev/example.com", node: `custom-node:22-dev@sha256:${d}`, wolfiBase: "custom-base:latest" });
+    expect(fetch![0]).toBe("FROM cgr.dev/example.com/custom-base:latest AS fetch");
+    expect(final![0]).toBe(`FROM cgr.dev/example.com/custom-node:22-dev@sha256:${d}`);
+    expect(final).toContain('LABEL org.opencontainers.image.base.name="cgr.dev/example.com/custom-node:22-dev"');
+    expect(final).toContain(`LABEL org.opencontainers.image.base.digest="sha256:${d}"`);
+    // The defaults stay where they were, and an image outside the registry is refused.
+    expect(ciImageBase({ registry: "cgr.dev/example.com", node: "22-dev" }).node).toBe("cgr.dev/example.com/node:22-dev");
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "cgr.dev/other/custom-node:22-dev" })).toThrow(/base.node/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", wolfiBase: "cgr.dev/example.com/sub/custom-base:latest" })).toThrow(/base.wolfiBase/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "Custom:22" })).toThrow(/base.node/);
+    expect(() => ciImageBase({ registry: "cgr.dev/example.com", node: "custom-node:" })).toThrow(/base.node/);
+  });
+
   test("packages: Debian names through the map, apk: and apt: entries for one family, an unmapped name refused under Chainguard", () => {
     expect(ciImagePackages("debian", ["openssh-client", "apt:python3", "apk:python-3.13"])).toEqual(["openssh-client", "python3"]);
     expect(ciImagePackages("chainguard", ["openssh-client", "dnsutils", "tar", "apt:python3", "apk:python-3.13"])).toEqual(["openssh-client", "bind-tools", "gnutar", "python-3.13"]);
