@@ -205,6 +205,37 @@ describe("a stack that cannot be read", () => {
     expect(exit).toBe(0);
     expect(err.join("\n")).toMatch(/was not read: .*at least one stack name/);
   });
+
+  test("a member that only names stacks is not also told it has no template", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chant-cfn-onlystacks-"));
+    scratch.push(dir);
+    await writeFile(join(dir, "cloudformation-stacks.json"), JSON.stringify({ stacks: ["prod"] }));
+    const { http, calls } = recordedHttp();
+    setStackReadOptions({ http, env: {} });
+    const { exit, err } = await graphOf(dir);
+    expect(exit).toBe(0);
+    expect(calls).toEqual([]);
+    const text = err.join("\n");
+    expect(text).toMatch(/stack "prod" was not read: no region/);
+    expect(text).not.toMatch(/no CloudFormation template/);
+  });
+
+  test("a member with neither a template nor a stacks file is told it has no template", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "chant-cfn-empty-"));
+    scratch.push(dir);
+    const { exit, err } = await graphOf(dir);
+    expect(exit).toBe(0);
+    expect(err.join("\n")).toMatch(/has no CloudFormation template directly in/);
+  });
+
+  test("a credentials refusal ending in a full stop reads as one sentence before the needs", async () => {
+    const invalid = `<ErrorResponse><Error><Type>Sender</Type><Code>InvalidClientTokenId</Code><Message>The security token included in the request is invalid.</Message></Error></ErrorResponse>`;
+    const { http } = recordedHttp({ "DescribeStacks:shared-network": { status: 403, text: invalid } });
+    const read = await readDeployedStacks({ dir: member, label: "net" }, { http, env: {} });
+    const reason = read!.reports[0]!.reason!;
+    expect(reason).toMatch(/^The security token included in the request is invalid; the read needs AWS credentials/);
+    expect(read!.warnings.join("\n")).not.toContain(".;");
+  });
 });
 
 describe("state locations of a member with a template file (#5456)", () => {
