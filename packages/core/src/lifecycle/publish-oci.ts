@@ -226,6 +226,8 @@ class RegistryAnswer extends Error {
  */
 export class Registry {
   private auth: string | null = null;
+  /** The actions a Bearer token is asked for: `pull,push` for a publish, `pull` for a read such as a re-pin (#5457). */
+  actions = "pull,push";
   constructor(
     private readonly repo: OciRepository,
     private readonly fetch: PublishFetch,
@@ -268,7 +270,7 @@ export class Registry {
     if (!params.realm) this.fail("the registry", 401, "with a Bearer challenge that names no realm");
     const u = new URL(params.realm);
     if (params.service) u.searchParams.set("service", params.service);
-    u.searchParams.set("scope", `repository:${this.repo.name}:pull,push`);
+    u.searchParams.set("scope", `repository:${this.repo.name}:${this.actions}`);
     const res = await this.fetch(u.toString(), { method: "GET", headers: basic ? { authorization: basic } : {} });
     const text = await res.text();
     if (!res.ok) this.fail("the token service", res.status, text);

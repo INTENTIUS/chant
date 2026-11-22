@@ -687,6 +687,8 @@ export interface ParsedArgs {
   runsOn?: Record<string, string>;
   /** `chant release images --no-build` (#4657): check the archives already on disk instead of building them. */
   noBuild?: boolean;
+  /** `chant release images --repin` (#5457): move each pinned image reference to the digest its tag names today. */
+  repin?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]|path#symbol|member/node|sha>` (#2651): the region the intent graph is over. Empty with `--record`. */

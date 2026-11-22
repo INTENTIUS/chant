@@ -48,7 +48,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
@@ -209,6 +209,56 @@ export function copyImageArchives(images: ReadonlyArray<{ archive: string }>, fr
   }
 }
 
+/**
+ * `release images --repin [<file>...] [--check] [--json]` (#5457): move each
+ * image reference pinned by digest, `name:tag@sha256:<digest>` or an
+ * `IMAGE_PINS` row, to the digest its tag names today, keeping the tag. The
+ * files are the Dockerfiles `release.images` names, else those given. It
+ * prints each reference that moved and rewrites the files, or with
+ * `--check` writes nothing and exits 1 when one would move, so a scheduled
+ * job can open a pull request with the change. A tag that can't be resolved
+ * leaves its digest and exits 1.
+ */
+export async function runReleaseImagesRepin(ctx: CommandContext, resolver?: import("../../lifecycle/image-repin").ImageResolver): Promise<number> {
+  const { args } = ctx;
+  const cwd = resolve(".");
+  const fail = (code: string, message: string, fix?: string): number => {
+    if (args.json) console.log(JSON.stringify({ error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));
+    else console.error(formatError({ message: `${message} [${code}]`, ...(fix ? { hint: fix } : {}) }));
+    return 1;
+  };
+  let paths = (args.positionals ?? []).slice(1);
+  if (paths.length === 0) {
+    let declared: import("../../lifecycle/release-images").ReleaseImageDeclaration[];
+    try {
+      declared = await releaseImagesOf(cwd);
+    } catch (err) {
+      return fail("repin-config-invalid", `release.images in chant.config.ts could not be read: ${err instanceof Error ? err.message : String(err)}`, "Name the files to re-pin: chant release images --repin <file>...");
+    }
+    paths = declared.filter((d): d is import("../../lifecycle/release-images").ReleaseImageDockerfile => "dockerfile" in d).map((d) => d.dockerfile);
+    if (paths.length === 0) return fail("repin-nothing-named", "release.images names no Dockerfile, and no file was given", "Name the files to re-pin: chant release images --repin <file>...");
+  }
+  const files: Array<{ path: string; text: string }> = [];
+  for (const p of paths) {
+    const abs = resolve(cwd, p);
+    if (!existsSync(abs)) return fail("repin-file-missing", `${p} is not there`);
+    files.push({ path: p, text: readFileSync(abs, "utf-8") });
+  }
+  const { repinFiles, registryResolver } = await import("../../lifecycle/image-repin");
+  const result = await repinFiles(files, resolver ?? registryResolver(process.env));
+  const write = !args.check;
+  if (write) for (const f of result.files) if (f.changed) writeFileSync(resolve(cwd, f.path), f.text);
+  if (args.json) {
+    console.log(JSON.stringify({ moved: result.moved, unchanged: result.unchanged, failed: result.failed, written: write ? result.files.filter((f) => f.changed).map((f) => f.path) : [] }, null, 2));
+  } else {
+    for (const m of result.moved) console.log(`${write ? "moved" : "would move"} ${m.file}:${m.line} ${m.reference} ${m.from} -> ${m.to}`);
+    for (const f of result.failed) console.error(formatWarning({ message: `${f.file}:${f.line} ${f.reference}: its tag could not be resolved, so its digest is left: ${f.reason}` }));
+    console.log(result.moved.length === 0 ? `Nothing moved: ${result.unchanged} pinned reference(s) still name the digest their tag names.` : `${result.moved.length} reference(s) ${write ? "moved" : "would move"}; ${result.unchanged} unchanged.`);
+  }
+  if (result.failed.length > 0) return 1;
+  return args.check && result.moved.length > 0 ? 1 : 0;
+}
+
 /** A commit's time in seconds, the `SOURCE_DATE_EPOCH` a release's image builds run with (#4657). */
 function commitTime(cwd: string, commit: string): number {
   return Number(execFileSync("git", ["show", "-s", "--format=%ct", commit], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim());
@@ -224,6 +274,7 @@ function commitTime(cwd: string, commit: string): number {
  */
 export async function runReleaseImages(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
+  if (args.repin) return runReleaseImagesRepin(ctx);
   const ref = args.extraPositional;
   const fail = (code: string, message: string, fix?: string): number => {
     if (args.json) console.log(JSON.stringify({ ref: ref ?? null, error: { code, message, ...(fix ? { fix } : {}) } }, null, 2));

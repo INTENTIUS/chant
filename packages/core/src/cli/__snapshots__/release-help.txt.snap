@@ -91,6 +91,11 @@ Releases:
                         the release's commit, refuse one whose digest is not
                         the recorded one, and write the recorded digests to
                         the file CHANT_RELEASE_DIGESTS names for the build.
+  release images --repin [<file>...] [--check] [--json]
+                        Move each image pinned by digest to the digest its
+                        tag names today, in the Dockerfiles release.images
+                        names or the files given, and print what moved.
+                        --check writes nothing and exits 1 when one moved.
   release doctor [--from cut] [--json]
                         Before a cut, ask each release.publish target whether
                         a publish from here can succeed: credentials, OIDC,

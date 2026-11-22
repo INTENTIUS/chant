@@ -690,6 +690,8 @@ export async function installCiTool(tool: CiTool, version: string, options: Inst
 /**
  * Base images by index digest, so a rebuild cannot change underneath a tag:
  * the ones all three products pinned. `node` carries Node 22.23.3.
+ * `chant release images --repin packages/core/src/ci-image.ts` moves each to
+ * the digest its tag names today (#5457).
  */
 export const CI_BASE_IMAGES = {
   node: "node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392",

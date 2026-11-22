@@ -397,7 +397,7 @@ function checkImageBases(ctx: Ctx, images: readonly import("./release-images").R
             check: "image-base-pinned",
             status: "warn",
             message: `${entry.name}: ${found.map((u) => `${entry.dockerfile}:${u.line} FROM ${u.image}: ${u.why}`).join("; ")}`,
-            fix: "Pin each FROM as name:tag@sha256:<digest>, the digest docker buildx imagetools inspect prints for the tag.",
+            fix: "Pin each FROM as name:tag@sha256:<digest>, the digest docker buildx imagetools inspect prints for the tag; chant release images --repin then moves the pins as the tags move.",
           },
     );
   }

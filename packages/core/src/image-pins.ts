@@ -6,7 +6,9 @@
  * row names the tag it followed when it was resolved, which the reference
  * keeps beside the digest so a reader sees the release.
  *
- * Refresh a row by resolving its tag to the index digest:
+ * Refresh every row with `chant release images --repin
+ * packages/core/src/image-pins.ts` (#5457), which resolves each row's tag to
+ * the index digest it names today and rewrites the digest, or one row by hand:
  *
  *   docker buildx imagetools inspect tonistiigi/binfmt:qemu-v10.2.3 --format '{{.Manifest.Digest}}'
  */

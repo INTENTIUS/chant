@@ -74,6 +74,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-cache",
   "--discover",
   "--no-build",
+  "--repin",
   "--sandbox",
   "--yes",
   "--confirm-prod",
@@ -1228,6 +1229,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--repin") {
+      result.repin = true;
     } else if (arg === "--no-build") {
       result.noBuild = true;
     } else if (arg === "--no-cache") {

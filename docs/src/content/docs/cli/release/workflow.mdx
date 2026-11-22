@@ -22,6 +22,8 @@ The job checks out the tag and builds what the targets upload. Then it fetches t
 
 When the publish signs with Sigstore (`release.signing`, or `supply-chain` with an `oci` or `forge` target), the jobs download cosign pinned by SHA-256 for the runner's platform and set `CHANT_COSIGN` to it, unless `release.workflow` sets `CHANT_COSIGN` itself.
 
+A `release.images` Dockerfile that starts from bases pinned by digest builds the same image from the same commit. `chant release images --repin` moves those pins to the digest each tag names today; see [Pin image bases by digest](/chant/guide/security-supply-chain/#pin-image-bases-by-digest).
+
 When the publish scans before the stage (`release.scan`, or `supply-chain` with an `oci`, `forge` or `npm` target), the cut and publish jobs download grype and syft pinned by SHA-256 and set `CHANT_GRYPE` and `CHANT_SYFT` to them, unless `release.workflow` sets either itself. The cut's doctor checks them, and the publish scans with them. See [The scan before the stage](/chant/guide/security-supply-chain/#the-scan-before-the-stage).
 
 [`release.verify`](/chant/cli/release/publish/#verifying-the-staged-release) runs inside the publish job, as part of `chant release publish`, so the commands have the toolchains below, the install step's dependencies and the job's `release.workflow.env`.
