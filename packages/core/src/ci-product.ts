@@ -696,6 +696,13 @@ export type { OpWaveAfterPlanHook, OpWaveAfterPlanResult, OpWaveAfterPlanRun, Op
  */
 export { pendingGatesByPlan, pullRequestOfOp, standingPendingByPlan, type PendingGateByPlan, type PendingGatesByPlanOptions } from "./lifecycle/gate-pending-by-plan";
 export { parseRequiresList, PR_APPLY_REQUIRES, type PrApplyRequire } from "./pr-requires";
+/**
+ * Every standing fact waiting for approval in an environment (#5480): op
+ * waves, pipeline stages, components and the Op ledgers a product names,
+ * each with the digest it binds and its approve line. Feature-detect on
+ * `PENDING_APPROVALS_FLOOR`.
+ */
+export { approveArgv, pendingApprovals, pendingApprovalsIn, PENDING_APPROVALS_FLOOR, type PendingApproval, type PendingApprovalKind, type PendingApprovalsInput, type PendingApprovalsLedger, type PendingApprovalsSelect } from "./lifecycle/pending-approvals";
 
 /**
  * Telemetry and MCP (#4555). A product's bin configures the exporter once

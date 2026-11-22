@@ -80,7 +80,7 @@ import {
   type WaveMemberOutcome,
 } from "../wave-blocked";
 import { approveCommand, evaluateGate, gitGateLedgerPort, type GateCheck, type GateCheckInput, type GateDigestMismatch, type GateLedgerPort } from "./gate";
-import type { GateAnswerRef, PendingGateInput, PendingGateRecord } from "../lifecycle/gate-ledger";
+import type { GateAnswerRef, PendingGateInput, PendingGateRecord, PendingGateWave } from "../lifecycle/gate-ledger";
 import type { GatePointAsker } from "../point-decision";
 import type { WaitingPoint } from "./steward-points";
 import { finishedApply, isApprovalSpent, type AppliedGateChange, type AppliedGateRecord, type FinishedGateRecord } from "../lifecycle/gate-applied";
@@ -2028,6 +2028,17 @@ async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, ap
 }
 
 /** Log each approval of the digest a rule did not count (#3841), so a wait says why. */
+/**
+ * The `wave` a wave's pending facts carry (#5480): its number and name, the
+ * spec, and the environment it applies to, the spec's `labels.Env` else the
+ * wave's name, as a wave's step reads it. `pendingApprovals` finds the facts
+ * of an environment by it. A plans file's `pending` may not set `wave`
+ * (`OP_WAVE_PENDING_RESERVED`).
+ */
+function pendingWaveOf(spec: OpWavesSpec, k: number, wave: OpWave): PendingGateWave {
+  return { number: k, name: wave.name, op: spec.name, environment: spec.labels?.Env ?? wave.name };
+}
+
 function logRefused(log: (line: string) => void, label: string, check: GateCheck): void {
   if (check.satisfied) return;
   for (const { resolution: r, reason } of check.refused ?? []) log(`${label}: the approval by ${r.resolvedBy} at ${r.timestamp} does not count: ${reason}`);
@@ -2127,7 +2138,7 @@ async function settleOtherGate(ctx: WaveContext, hold: OtherGateHold, runs: read
     description: hold.request.description ?? `wave ${k} (${wave.name}) of ${spec.name} is held on it by ${hold.label}`,
     now,
     // #3839: the wave a hold belongs to, as a field, whatever the hook's own description says.
-    fields: { ...hold.request.pending, ...proof, approvalMode: rules.approval, wave: { number: k, name: wave.name, op: spec.name }, heldBy: { hook: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}) } },
+    fields: { ...hold.request.pending, ...proof, approvalMode: rules.approval, wave: pendingWaveOf(spec, k, wave), heldBy: { hook: hold.name, moment: hold.moment, ...(hold.target ? { target: hold.target } : {}) } },
     ...(neverOverMcp ? { neverOverMcp: true } : {}),
   };
   const check = await evaluateGate(deferring ? readOnlyGatePort(port) : port, input);
@@ -4302,7 +4313,7 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
     now,
     ...(spent ? { spent } : {}),
     // #3861: the approval mode the wave asked under, for readers deciding which approvals count.
-    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval },
+    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval, wave: pendingWaveOf(spec, k, wave) },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {
@@ -4550,7 +4561,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
     description: (typeof decision.pending?.description === "string" ? decision.pending.description : undefined) ?? `wave ${k} (${wave.name}): ${members.length} run${members.length === 1 ? "" : "s"}, gate ${policy}, approval ${approval}${held}`,
     now,
     ...(spent ? { spent } : {}),
-    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval },
+    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: approval, wave: pendingWaveOf(spec, k, wave) },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
     approval: { quorum: nodes, mode: "log-only" },
     judge,
@@ -4605,7 +4616,7 @@ async function settlePointGate(options: RunOpWaveOptions, ctx: WaveContext, deci
     planDigest: digest,
     ...(options.now ? { now: options.now } : {}),
     // #3863: the plans file's pending fields and the spec's neverOverMcp, as settleGate passes them.
-    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: decision.approval },
+    fields: { ...decision.pending, ...(decision.changeSet ? { changeSet: decision.changeSet } : {}), approvalMode: decision.approval, wave: pendingWaveOf(spec, k, wave) },
     ...(decision.neverOverMcp ? { neverOverMcp: true } : {}),
   });
   if (check.satisfied) {

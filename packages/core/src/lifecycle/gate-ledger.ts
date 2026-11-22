@@ -347,6 +347,13 @@ export interface PendingGateWave {
   name: string;
   /** The Op waves spec's name. */
   op?: string;
+  /**
+   * The environment the wave applies to (#5480): the spec's `labels.Env`,
+   * else the wave's name, as a wave's step reads it. `pendingApprovals`
+   * (`./pending-approvals.ts`) finds the wave's facts by it. Absent on a fact
+   * written before `PENDING_APPROVALS_FLOOR`.
+   */
+  environment?: string;
 }
 
 /** The hook that holds a wave on a gate (#3886): which hook asked, at which moment, and for which run. */

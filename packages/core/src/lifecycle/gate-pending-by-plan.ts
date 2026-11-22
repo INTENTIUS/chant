@@ -58,6 +58,30 @@ export interface PendingGateByPlan {
 }
 
 /**
+ * The standing facts of one op's ledger lines (#5480): the newest pending
+ * fact of each gate per environment, while it has not expired and no
+ * resolution of that gate in its environment is newer. A resolution that
+ * names no environment answers every environment's fact.
+ */
+export function standingPending(
+  lines: { pending: readonly PendingGateRecord[]; resolutions: readonly GateResolutionRecord[] },
+  now: string,
+): PendingGateRecord[] {
+  const newest = new Map<string, PendingGateRecord>();
+  for (const p of lines.pending) {
+    const key = `${p.gate}\0${p.environment ?? ""}`;
+    const was = newest.get(key);
+    if (!was || new Date(p.timestamp).getTime() >= new Date(was.timestamp).getTime()) newest.set(key, p);
+  }
+  return [...newest.values()].filter((p) => {
+    if (isPendingGateExpired(p, now)) return false;
+    // A resolution for another environment answers that environment's fact, not this one.
+    const sameEnv = lines.resolutions.filter((r) => r.environment === undefined || r.environment === p.environment);
+    return latestResolutionSince(sameEnv, p.gate, p.timestamp) === undefined;
+  });
+}
+
+/**
  * The standing facts of one op's ledger lines whose plan or change set is
  * `digest`, newest first. A gate is read per environment, so a component
  * gate's staging and prod facts stand side by side.
@@ -67,19 +91,8 @@ export function standingPendingByPlan(
   digest: string,
   now: string,
 ): PendingGateByPlan[] {
-  const newest = new Map<string, PendingGateRecord>();
-  for (const p of lines.pending) {
-    const key = `${p.gate}\0${p.environment ?? ""}`;
-    const was = newest.get(key);
-    if (!was || new Date(p.timestamp).getTime() >= new Date(was.timestamp).getTime()) newest.set(key, p);
-  }
   const out: PendingGateByPlan[] = [];
-  for (const p of newest.values()) {
-    if (isPendingGateExpired(p, now)) continue;
-    // A resolution for another environment answers that environment's fact, not this one.
-    const sameEnv = lines.resolutions.filter((r) => r.environment === undefined || r.environment === p.environment);
-    const answered = latestResolutionSince(sameEnv, p.gate, p.timestamp);
-    if (answered) continue;
+  for (const p of standingPending(lines, now)) {
     const matched = samePlanDigest(p.planDigest, digest) ? "planDigest" : samePlanDigest(p.changeSet, digest) ? "changeSet" : undefined;
     if (!matched) continue;
     const pr = pullRequestOfOp(p.op);
