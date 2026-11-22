@@ -134,6 +134,16 @@ describe("release requests (#5462)", () => {
     expect(host.gate.outputs).toEqual({ commit: "${{ steps.green.outputs.commit }}", label: "${{ steps.green.outputs.label }}" });
   });
 
+  test("the cut a host runs has the host's scanner and syft, so it scans before it pushes the tag (#5446)", () => {
+    const input: ReleaseWorkflowInput = { forge: "github", groups: new Set<SecurityGroup>(["supply-chain"]), scan: true, images: true, imageArchives: ["build/api.tar"], imagePlatforms: ["linux/amd64"], publish: [{ type: "oci", repository: "r.example/acme/api" }], pipeline: { trigger: "dispatch", gate: "head" } };
+    const tools = { CHANT_GRYPE: "/host/grype", CHANT_SYFT: "/host/syft" };
+    const { cut } = hostDispatchJobs({ input }, tools);
+    expect(cut.env).toMatchObject(tools);
+    // With the variables set, the job installs nothing of its own, and the cut that runs in it finds them.
+    expect(cut.steps.some((s) => /Install (grype|syft)/.test(s.name ?? ""))).toBe(false);
+    expect(cut.steps.some((s) => s.run?.includes("chant release cut"))).toBe(true);
+  });
+
   /** A serve of `root` with the fake chant, its passes awaited. */
   const serving = (root: string) => {
     const chant = fakeChant();

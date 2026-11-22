@@ -1314,6 +1314,25 @@ describe("the scan before the stage installs its pinned tools (#5446)", () => {
       expect(pinned(text, "grype")).toBe(true);
       expect(pinned(text, "syft")).toBe(true);
     });
+
+    // #5446 (epic #5452): the cut scans before it tags, so the cut job has the scanner, not only the publish job.
+    for (const train of [false, true]) {
+      test(`${forge}${train ? ", a train" : ""}: the cut job installs grype and syft, and so does the publish job`, () => {
+        const text = renderReleaseWorkflow({ forge, groups: new Set(["supply-chain"]), scan: true, pipeline: { trigger: "dispatch" }, ...(train ? { train: { env: "npm" } } : {}) });
+        const doc = parseYAML(text) as Record<string, unknown>;
+        const jobs = (forge === "gitlab" ? doc : doc.jobs) as Record<string, unknown>;
+        const named = (word: "cut" | "publish") => Object.entries(jobs).filter(([name]) => name === word || name === `chant-release-${word}`);
+        for (const word of ["cut", "publish"] as const) {
+          const [[, job] = []] = named(word);
+          expect(job, `${word} job`).toBeDefined();
+          const body = JSON.stringify(job);
+          expect(body).toContain(train ? (word === "cut" ? "train cut" : "train publish") : `release ${word}`);
+          expect(body).toContain("CHANT_GRYPE");
+          expect(body).toContain("CHANT_SYFT");
+          expect(pinned(body, "grype")).toBe(true);
+        }
+      });
+    }
   }
 
   test("a config that brings its own scanner keeps it", () => {
