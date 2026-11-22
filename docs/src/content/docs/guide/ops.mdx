@@ -816,6 +816,8 @@ export const { op: scheduledOp } = WorkflowAuditOp({
 
 `PipelineAuditOp` is the GitLab counterpart. It audits `.gitlab-ci.yml` `include:` / `component:` / `image:` references, and its finding-modes are `report | issue | merge-request`. Both run one-shot with `chant run <name>`; `report` mode needs no external services. See the [github](/chant/lexicons/github/) and [gitlab](/chant/lexicons/gitlab/) lexicon docs for the per-platform reference lists each audit resolves.
 
+`RestoreDrillOp` proves a store's backup restores and records how long that took. See [Drill a Restore](/chant/guide/restore-drill/).
+
 ### Scheduling an Op
 
 `schedule` above is data on the Op: `{ cron, overlap: "skip" }`, and nothing about it names a runtime. Two readers render it.

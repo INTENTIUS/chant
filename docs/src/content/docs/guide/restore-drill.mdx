@@ -1,0 +1,125 @@
+---
+title: Drill a Restore and Record RTO and RPO
+description: A RestoreDrillOp restores the newest backup of a store into a scratch environment, checks it, tears it down, and records how long recovery took and how old the data was. workspace status shows the last drill of each store.
+diataxis: how-to
+prompt: |
+  Read https://intentius.io/chant/guide/restore-drill/.
+  Declare a `RestoreDrillOp` for one store this repository runs, in an `*.op.ts` file. Give it the checks and targets the page describes, and run `npx chant build` and `npx chant lint` until both pass.
+  Show me the file and do not run the Op. It creates a scratch database, table, bucket or namespace and bills for it, so a person runs it.
+  Never deploy to a real cloud account or shared environment (with `chant run`, `chant components` or a platform's own CLI), approve (a pull request review, `chant approve` or `chant run approve`), override a policy denial (`chant approve policy-override`), or merge; never cut or publish a release (`chant release cut --yes` or `chant release publish`), push or delete a `ci/*` tag (`chant ci tick` pushes them), or change the value of an existing flag; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A backup you have never restored is a guess. A restore drill shows that the backup can be restored, how long that took (the recovery time, RTO) and how old the restored data was (the recovery point, RPO). The result is a record you can show an assessor. The contingency-plan controls CP-4 (testing the plan) and CP-9 and CP-10 (backup and recovery) ask for that evidence.
+
+`RestoreDrillOp` is a chant [Op](/chant/guide/ops/) for one store. It restores the newest backup into a scratch environment and runs your checks against the restored copy. Then it removes the scratch environment and writes a record to `chant/lifecycle`. With targets declared, a run that misses one fails and says by how much.
+
+## Declare a drill
+
+```typescript
+// ops/orders-restore-drill.op.ts
+import { RestoreDrillOp } from "@intentius/chant/op";
+
+export const { op } = RestoreDrillOp({
+  name: "orders-restore-drill",
+  env: "prod",
+  store: { kind: "rds", name: "orders", instance: "orders-prod" },
+  checks: [
+    {
+      name: "orders-has-rows",
+      kind: "command",
+      cmd: 'psql "host=${DRILL_ENDPOINT} dbname=orders" -tAc "select count(*) from orders"',
+      expect: { atLeast: 1 },
+    },
+  ],
+  targets: { rto: "4h", rpo: "15m" },
+  schedule: "0 3 * * 0",
+});
+```
+
+`chant build` refuses an Op that cannot run. A target that is not a duration, a repeated check name and an unknown store kind are all refused. So is a scratch name that could belong to a real store. `env` is the environment the store lives in. The Op carries it as its `Env` label and the record is kept under it.
+
+`schedule` puts a cron on the Op, which the pipeline generator renders as a scheduled job as it does for any scheduled Op. Leave it out for a drill you start by hand with `chant run orders-restore-drill`.
+
+## What a drill does
+
+1. Find the newest usable backup of the store. A store with none fails the run before anything is created.
+2. Restore that backup into a scratch environment named `drill-<store>-<minute>` (or the `scratch` you declare) and wait until the restored store is available.
+3. Run every check in order. A failed check does not stop the later ones, so the record shows all of them.
+4. Tear the scratch environment down. This also runs after a failed restore or check, and accepts a scratch environment that is already gone.
+5. Write the record. The step then fails if the restore or a check failed, a target was missed, or the scratch environment could not be removed.
+
+A scratch name must start with `drill-` and cannot be the store's own name, so the Op cannot be aimed at a real store. It removes only the scratch environment it was given.
+
+## What is measured
+
+RPO achieved is the age of the backup when the restore was requested: the moment the restore started minus the moment the backup was taken. It is how much data a loss at that moment would have cost.
+
+RTO achieved is the time from the restore request until the restored store has passed every check. A store that is available but fails its checks has not been recovered, so a run whose restore or checks fail records no RTO. Tearing down is not counted. The record also keeps the restore alone as `restoreMs` and each check's own duration, so you can see where the time went.
+
+The backup's time depends on the store. A snapshot has its creation time and a Velero backup its start time. DynamoDB has the latest restorable time, and the restore asks for exactly that time. S3 has the newest current object version under the prefix.
+
+Targets are durations written like `"4h"`, `"15m"` or `"1h30m"`. A span equal to its target meets it, and a target you leave out is not checked. With no targets, a run that restores and passes its checks passes and `met` stays null.
+
+When a target is missed the step fails with a message like this, using the numbers it measured:
+
+```text
+restore drill orders missed: RTO <measured> against 4h, over by <excess>; RPO <measured> against 15m, met
+```
+
+## Stores
+
+| Kind | Backup it picks | How it restores | What it removes |
+|---|---|---|---|
+| `rds` | The newest available snapshot of `instance` | `restore-db-instance-from-db-snapshot`, then waits for the instance | The restored instance, without a final snapshot |
+| `aurora` | The newest available cluster snapshot of `cluster` | `restore-db-cluster-from-snapshot` and one new instance of `instanceClass`, then waits | The new instance, then the restored cluster |
+| `dynamodb` | The table's latest restorable time (point-in-time recovery must be on) | `restore-table-to-point-in-time` at that time, then waits for the table | The restored table |
+| `s3` | The newest current object version under `prefix` of `bucket` | A new bucket, then `aws s3 sync` from the source | The new bucket and its contents |
+| `velero` | The newest completed backup that includes `namespace`, from `schedule` if one is named | `velero restore create` with a namespace mapping to the scratch name, and `--wait` | The scratch namespace and the Velero restore |
+
+The commands are the `aws`, `velero` and `kubectl` command-line tools, run on the machine that runs the Op with that machine's credentials. They run as argument lists, without a shell. The `aws` tool reaches an emulator through `AWS_ENDPOINT_URL`, so the same Op can run against one.
+
+## Checks
+
+A check is `http` or `command`. A check's `url` can name `${DRILL_ENDPOINT}` and `${DRILL_SCRATCH}`, and a command sees them as environment variables along with `DRILL_STORE`. `DRILL_ENDPOINT` is `host:port` for a database and `s3://<scratch bucket>` for S3. It is empty for DynamoDB and Velero, where `DRILL_SCRATCH` names the restored table or namespace.
+
+```typescript
+{ name: "health", kind: "http", url: "http://${DRILL_ENDPOINT}/health", status: 200, retries: 10, intervalMs: 5000 }
+{ name: "row-count", kind: "command", cmd: "./scripts/count-orders.sh", expect: { atLeast: 1000 }, retries: 3 }
+```
+
+An `http` check takes a `url`, an expected `status` (any 2xx by default) and a `contains` string for the body. A `command` runs with `sh -c` and passes on exit 0. Its `expect` adds a requirement on the output: `equals` for the trimmed text, `contains` for a substring, `atLeast` for a number such as a row count. Both kinds take `retries` and `intervalMs` for a store that is slow to settle, and the waiting counts toward RTO.
+
+## Where the record goes
+
+Each run appends one line to `<env>/drills.jsonl` on `chant/lifecycle`, under the member's prefix in a [workspace](/chant/reference/workspace-declaration/), then pushes the branch as a run's own record is pushed. A push that does not land is reported and the line stays on the local branch. With `--no-record` nothing is written.
+
+| Field | Holds |
+|---|---|
+| `store`, `kind`, `env`, `op`, `scratch` | What was drilled, where, by which Op, and into which scratch name |
+| `started`, `ended` | The drill's start and end times |
+| `backup` | The id and time of the backup restored |
+| `rtoMs`, `restoreMs`, `rpoMs` | The measurements in milliseconds; null when not reached |
+| `targets`, `met`, `shortfall` | The targets, whether all were met, and the excess for each one missed |
+| `checks` | Each check's name, result, duration and detail |
+| `outcome`, `error` | `passed`, `missed` or `failed`, and why a run failed |
+| `tornDown`, `tearDownError` | Whether the scratch environment was removed |
+
+The Op's own run record carries `Outcome`, `RtoMs`, `RpoMs`, `Met` and `DrillId` as outcomes. The run history therefore shows the numbers of a missed or failed run too.
+
+## See the last drill of each store
+
+`chant workspace status --env <env>` prints a table of each store's newest drill, and `--json` has the same data as `members[].drills` in the status schema.
+
+| Column | Meaning |
+|---|---|
+| STORE | The store's name and kind |
+| LAST DRILL | When the drill ended |
+| RESULT | `met targets`, `passed` (no target declared), `missed targets` or `failed`, with `scratch left` when teardown failed |
+| RTO, RPO | The measurement, and `of` the target when one is declared |
+| CHECKS | Checks passed out of checks run |
+
+A store that has never been drilled in that environment has no row. Status reads the ledger and runs nothing.
+
+## Running a drill
+
+`chant run orders-restore-drill` creates real infrastructure and is billed. Run it where you want that, with credentials that can read the backups and create and delete the scratch environment. The step gets six hours and one attempt, because a second attempt would restore a second copy. To rehearse against an emulator, point `AWS_ENDPOINT_URL` at it and name a store that exists there.

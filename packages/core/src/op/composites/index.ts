@@ -24,5 +24,7 @@ export { PipelineAuditOp } from "./pipeline-audit-op";
 export type { PipelineAuditOpConfig, PipelineAuditOpResources } from "./pipeline-audit-op";
 export { LexiconUpgradeOp, IN_SCOPE_LEXICONS } from "./lexicon-upgrade-op";
 export type { LexiconUpgradeOpConfig, LexiconUpgradeOpResources } from "./lexicon-upgrade-op";
+export { RestoreDrillOp } from "./restore-drill-op";
+export type { RestoreDrillOpConfig, RestoreDrillOpResources } from "./restore-drill-op";
 export { BehaviourOp } from "./behaviour-op";
 export type { BehaviourOpConfig, BehaviourOpResources } from "./behaviour-op";

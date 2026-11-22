@@ -25,7 +25,7 @@ export { isValidCronExpression, cronSyntaxMessage, cronMatches, cronDueBetween }
 export {
   WatchOp, ReconcileOp, ApplyOp, ConvergeOp,
   WorkflowAuditOp, PipelineAuditOp, LexiconUpgradeOp, IN_SCOPE_LEXICONS,
-  BehaviourOp,
+  BehaviourOp, RestoreDrillOp,
 } from "./composites";
 export type {
   WatchOpConfig, WatchOpResources,
@@ -36,6 +36,7 @@ export type {
   PipelineAuditOpConfig, PipelineAuditOpResources,
   LexiconUpgradeOpConfig, LexiconUpgradeOpResources,
   BehaviourOpConfig, BehaviourOpResources,
+  RestoreDrillOpConfig, RestoreDrillOpResources,
 } from "./composites";
 export type {
   ConvergeSymptom, ResourceSymptom, ResourceObservation, ObservedResource, ResourceStatus,

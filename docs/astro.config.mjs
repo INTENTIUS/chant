@@ -218,6 +218,7 @@ export default defineConfig({
 								{ label: 'Op Waves', slug: 'guide/op-waves' },
 								{ label: 'Deliver Through Stages', slug: 'guide/pipeline' },
 								{ label: 'Soak Before the Next Stage', slug: 'guide/soak' },
+								{ label: 'Drill a Restore', slug: 'guide/restore-drill' },
 								{ label: 'Notify', slug: 'guide/notify' },
 								{ label: 'Approval Rules', slug: 'guide/approval-rules' },
 							],

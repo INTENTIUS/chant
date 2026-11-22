@@ -314,6 +314,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/stageQueue" }
         },
+        "drills": {
+          "description": "Added in contract 1 by #5450. The newest restore drill of each store the member has drilled in the environment asked for, read from <env>/drills.jsonl under the member's prefix on chant/lifecycle at lifecycle.commit, sorted by store. Nothing is written and no drill is run. Absent when none is recorded.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/drill" }
+        },
         "pipeline": {
           "description": "Added in contract 1 by #5342. The member's pipeline (.chant/pipeline.ts, read from the working tree), one entry per stage in pipeline order, whatever environment was asked for: the release each stage runs, its gate, the change risk the gate reads, its soak and the time left, the canary soaks that hold it, a pause, and a rollback request. Read from chant/lifecycle at lifecycle.commit; nothing is written, and no soak check is run. Absent when the member has no pipeline, or it does not fold.",
           "$ref": "#/$defs/pipeline"
@@ -1199,6 +1204,54 @@
             }
           ]
         }
+      }
+    },
+    "drill": {
+      "type": "object",
+      "required": ["store", "kind", "env", "id", "op", "at", "outcome", "met", "rtoMs", "rpoMs", "targets", "shortfall", "checks", "backup", "error", "tornDown"],
+      "properties": {
+        "store": { "type": "string", "description": "The store's name, as its RestoreDrillOp declares it." },
+        "kind": { "enum": ["rds", "aurora", "dynamodb", "s3", "velero"] },
+        "env": { "type": "string", "description": "The environment the drilled store lives in." },
+        "id": { "type": "string", "description": "The drill's id." },
+        "op": { "type": ["string", "null"], "description": "The Op that ran the drill." },
+        "at": { "type": "string", "description": "When the drill ended." },
+        "outcome": { "enum": ["passed", "missed", "failed"], "description": "passed: the checks passed and every declared target was met. missed: the checks passed and a target was missed. failed: the backup, the restore or a check failed." },
+        "met": { "type": ["boolean", "null"], "description": "Whether every declared target was met; null when none was declared or a measurement is missing." },
+        "rtoMs": { "type": ["integer", "null"], "description": "RTO achieved: from the restore request until the restored store passed every check. Null when the restore or a check failed." },
+        "rpoMs": { "type": ["integer", "null"], "description": "RPO achieved: the backup's age when the restore was requested. Null when no backup was found." },
+        "targets": {
+          "type": "object",
+          "properties": {
+            "rtoMs": { "type": "integer" },
+            "rpoMs": { "type": "integer" }
+          }
+        },
+        "shortfall": {
+          "type": "object",
+          "description": "How far over each missed target the drill ran, in milliseconds.",
+          "properties": {
+            "rtoMs": { "type": "integer" },
+            "rpoMs": { "type": "integer" }
+          }
+        },
+        "checks": {
+          "type": "object",
+          "required": ["passed", "total", "failed"],
+          "properties": {
+            "passed": { "type": "integer" },
+            "total": { "type": "integer" },
+            "failed": { "type": "array", "items": { "type": "string" }, "description": "The names of the checks that failed." }
+          }
+        },
+        "backup": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "required": ["id", "at"], "properties": { "id": { "type": "string" }, "at": { "type": "string" } } }
+          ]
+        },
+        "error": { "type": ["string", "null"], "description": "Why the drill failed, for outcome failed." },
+        "tornDown": { "type": "boolean", "description": "False when the drill left its scratch environment behind." }
       }
     },
     "stageRelease": {
