@@ -29,7 +29,7 @@ const NOW = new Date("2026-11-21T12:00:00Z");
 async function publish(built: string | undefined, dbAge: ScanContext["dbAge"]) {
   const dir = mkdtempSync(join(tmpdir(), "chant-publish-db-age-"));
   dirs.push(dir);
-  writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false);
+  writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
   writeFileSync(join(dir, "package-lock.json"), JSON.stringify({ name: "acme", lockfileVersion: 3, packages: { "": { name: "acme" }, "node_modules/left-pad": { version: "1.3.1" } } }));
   const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], { npm: join(dir, "no-npm-here") });
   const scanner = { ...fakeReleaseScanner(), database: async () => ({ version: "v6.0.2", ...(built ? { built } : {}) }) };

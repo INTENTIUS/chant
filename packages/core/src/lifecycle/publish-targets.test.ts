@@ -577,7 +577,7 @@ describe("SBOMs and provenance (#4049)", () => {
     const missing = await refused(plan({ packages: ["without"] }));
     expect(missing.code).toBe("publish-sbom-missing");
     expect(missing.message).toBe("@acme/without (without) carries no SBOM: npm keeps no file beside a package, so its SBOM goes in it, and none of sbom.spdx.json, sbom.cdx.json, sbom.cyclonedx.json is at its root");
-    expect(missing.fix).toContain("npm sbom --sbom-format spdx > without/sbom.spdx.json");
+    expect(missing.fix).toContain("npm sbom --omit dev --sbom-format spdx > without/sbom.spdx.json");
     expect((await refused(plan({ packages: ["bad"], sbom: "bom.json" }))).code).toBe("publish-sbom-invalid");
     expect((await plan({ packages: ["without"], sbom: false }))[0]!.sbom).toBeUndefined();
     // In a packed .tgz, the file the declaration names under package/.

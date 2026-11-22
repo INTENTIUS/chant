@@ -31,10 +31,10 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { sortedJsonReplacer } from "../utils";
 import { writeBom } from "../components/verbs/bom-writer";
-import { LOCKFILE_NAMES, LOCKFILE_PARSERS } from "../components/verbs/lockfile-sbom-generator";
+import { LOCKFILE_NAMES, LOCKFILE_PARSERS, parseNpmPackageDependencies, type NpmPackageRoot } from "../components/verbs/lockfile-sbom-generator";
 import { SBOM_MEDIA_TYPES } from "../components/verbs/sbom-generator";
 import { bytesDigest, checkReleaseDigest, memberFile } from "./publish-targets";
 import { PublishTargetError, type PublishContext } from "./release-publish";
@@ -184,8 +184,14 @@ function nearestLockfile(cwd: string): { kind: "npm" | "maven" | "cargo"; path: 
  * lockfile for `subject`. Null when `declared` is `false`, and when there is
  * neither and `ctx.requireSbom` is not set (#4168). Throws
  * `publish-sbom-missing` when there is neither under `supply-chain`.
+ *
+ * `npmPackage`, for an npm package's SBOM (#5446), names the package's
+ * package.json and directory: from a `package-lock.json`, the document then
+ * lists only what installing that package brings in
+ * ({@link parseNpmPackageDependencies}), not the development dependencies
+ * or the other workspace members' dependencies the lockfile also holds.
  */
-export function memberSbom(ctx: PublishContext, declared: string | false | undefined, subject: string, target: string): Attachment | null {
+export function memberSbom(ctx: PublishContext, declared: string | false | undefined, subject: string, target: string, npmPackage?: { manifest: NpmPackageRoot["manifest"]; dir?: string }): Attachment | null {
   if (declared === false) return null;
   if (declared !== undefined) {
     const abs = memberFile(ctx.cwd, declared);
@@ -205,7 +211,7 @@ export function memberSbom(ctx: PublishContext, declared: string | false | undef
     );
   }
   const content = readFileSync(lock.path, "utf-8");
-  const packages = LOCKFILE_PARSERS[lock.kind](content);
+  const packages = lock.kind === "npm" && npmPackage ? parseNpmPackageDependencies(content, { manifest: npmPackage.manifest, location: lockLocation(lock.path, npmPackage.dir) }) : LOCKFILE_PARSERS[lock.kind](content);
   const at = new Date(ctx.cut?.timestamp ?? 0);
   const doc = writeBom(
     "spdx",
@@ -213,6 +219,19 @@ export function memberSbom(ctx: PublishContext, declared: string | false | undef
     () => (Number.isNaN(at.getTime()) ? new Date(0) : at),
   );
   return attachment("sbom", GENERATED_SBOM_FILE, doc.mediaType, new Uint8Array(Buffer.from(doc.bytes, "utf-8")));
+}
+
+/** `dir` relative to the lockfile's directory, `/`-separated, or undefined when it is not inside it. */
+function lockLocation(lockPath: string, dir: string | undefined): string | undefined {
+  if (dir === undefined) return undefined;
+  let rel: string;
+  try {
+    rel = relative(realpathSync(dirname(lockPath)), realpathSync(dir));
+  } catch {
+    return undefined;
+  }
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) return undefined;
+  return rel.split(sep).join("/");
 }
 
 /**
@@ -250,6 +269,6 @@ export function packageSbom(abs: string, isDirectory: boolean, path: string, nam
   throw new PublishTargetError(
     "publish-sbom-missing",
     `${name} (${path}) carries no SBOM: npm keeps no file beside a package, so its SBOM goes in it, and ${declared !== undefined ? declared : `none of ${PACKAGE_SBOM_FILES.join(", ")}`} is at its root`,
-    `Write one into the package before it is packed, such as npm sbom --sbom-format spdx > ${path}/sbom.spdx.json, and keep it in the package's files; or set sbom: false to publish without one.`,
+    `Write one into the package before it is packed, such as npm sbom --omit dev --sbom-format spdx > ${path}/sbom.spdx.json, and keep it in the package's files; or set sbom: false to publish without one.`,
   );
 }

@@ -57,6 +57,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { memberSbom, packageSbom } from "./publish-attachments";
+import type { NpmPackageRoot } from "../components/verbs/lockfile-sbom-generator";
 import { sbomDocumentOf } from "./publish-scan";
 import type { NpmPublishDeclaration } from "./publish-declaration";
 import { checkReleaseDigest, fileDigest, isDir, memberFile, publishTargetKey } from "./publish-targets";
@@ -665,7 +666,11 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     credentialEnv: [],
     key: publishTargetKey(decl),
     plan,
-    /** #5446: the SBOM each package carries, else one written from the member's lockfile. */
+    /**
+     * #5446: the SBOM each package carries, else one written from the
+     * member's lockfile with what installing the package brings in, so a
+     * development dependency, which no consumer installs, does not block.
+     */
     async scanSubjects(ctx) {
       const subjects: import("./publish-scan").ScanSubject[] = [];
       for (const pkg of readChecked(ctx)) {
@@ -675,7 +680,8 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
           subjects.push({ target: this.name, name: `${pkg.sbom} of ${id}`, sbom: sbomDocumentOf(bytes, "carried"), ...(pkg.digest ? { digest: pkg.digest } : {}) });
           continue;
         }
-        const written = memberSbom({ ...ctx, requireSbom: false }, undefined, id, this.name);
+        const manifest = (packageManifest(pkg.abs) ?? {}) as NpmPackageRoot["manifest"];
+        const written = memberSbom({ ...ctx, requireSbom: false }, undefined, id, this.name, { manifest: { ...manifest, name: pkg.name }, ...(isDir(pkg.abs) ? { dir: pkg.abs } : {}) });
         if (written) subjects.push({ target: this.name, name: `the lockfile of ${id}`, sbom: sbomDocumentOf(written.bytes, "lockfile"), ...(pkg.digest ? { digest: pkg.digest } : {}) });
       }
       return subjects;

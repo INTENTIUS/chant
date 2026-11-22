@@ -138,7 +138,7 @@ describe("the Wiz image scanner in the release gate", () => {
 
   test("an SBOM a package carries is scanned by the wrapped scanner, since Wiz scans images", async () => {
     const dir = temp();
-    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false);
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
     writeLockfile(dir);
     const env = { CHANT_WIZCLI: fakeWizcli(dir, "wiz-image-clean.sarif"), ...CREDS };
     const base = fakeReleaseScanner();

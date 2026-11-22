@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
 import {
   parseNpmPackageLock,
+  parseNpmPackageDependencies,
   parsePomXml,
   parseCargoLock,
   createLockfileSbomGenerator,
@@ -55,6 +56,51 @@ describe("parseNpmPackageLock (#613)", () => {
     const packages = parseNpmPackageLock(v1Lock);
     expect(packages.map((p) => p.name).sort()).toEqual(["chalk", "left-pad"]);
     expect(packages.find((p) => p.name === "chalk")!.dependsOn).toEqual(["left-pad"]);
+  });
+});
+
+describe("parseNpmPackageDependencies (#5446): what installing one package brings in", () => {
+  // A workspace: the root's devDependencies bring vitest and tinypool; packages/app depends on
+  // lodash and on the linked member @acme/util, which depends on ms@2 nested under it while the
+  // root holds ms@1 for packages/other, which also brings express. app's optional peer is absent.
+  const WORKSPACE = JSON.stringify({
+    name: "acme",
+    lockfileVersion: 3,
+    packages: {
+      "": { name: "acme", workspaces: ["packages/*"], devDependencies: { vitest: "^3.0.0" } },
+      "packages/app": { name: "@acme/app", version: "1.0.0", dependencies: { lodash: "^4.0.0", "@acme/util": "*" }, optionalDependencies: { fsevents: "^2.0.0" }, peerDependencies: { react: "*" }, peerDependenciesMeta: { react: { optional: true } }, devDependencies: { typescript: "^5.0.0" } },
+      "packages/util": { name: "@acme/util", version: "0.2.0", dependencies: { ms: "^2.0.0" } },
+      "packages/util/node_modules/ms": { version: "2.1.3" },
+      "packages/other": { name: "@acme/other", version: "3.0.0", dependencies: { express: "^4.0.0", ms: "^1.0.0" } },
+      "node_modules/@acme/app": { resolved: "packages/app", link: true },
+      "node_modules/@acme/util": { resolved: "packages/util", link: true },
+      "node_modules/@acme/other": { resolved: "packages/other", link: true },
+      "node_modules/lodash": { version: "4.17.21" },
+      "node_modules/ms": { version: "1.0.0" },
+      "node_modules/express": { version: "4.19.2" },
+      "node_modules/typescript": { version: "5.6.0", dev: true },
+      "node_modules/vitest": { version: "3.0.0", dev: true, dependencies: { tinypool: "^1.0.0" } },
+      "node_modules/tinypool": { version: "1.1.1", dev: true },
+    },
+  });
+  const ids = (pkgs: Array<{ name: string; version?: string }>) => pkgs.map((p) => `${p.name}@${p.version}`);
+
+  it("lists a member's dependencies and a linked member's, resolved as Node finds them, and no development dependency", () => {
+    const manifest = { name: "@acme/app", dependencies: { lodash: "^4.0.0", "@acme/util": "*" }, optionalDependencies: { fsevents: "^2.0.0" }, peerDependencies: { react: "*" }, peerDependenciesMeta: { react: { optional: true } }, devDependencies: { typescript: "^5.0.0" } };
+    expect(ids(parseNpmPackageDependencies(WORKSPACE, { manifest, location: "packages/app" }))).toEqual(["@acme/util@0.2.0", "lodash@4.17.21", "ms@2.1.3"]);
+  });
+
+  it("finds the package by name when its directory is not given", () => {
+    expect(ids(parseNpmPackageDependencies(WORKSPACE, { manifest: { name: "@acme/other", dependencies: { express: "^4.0.0", ms: "^1.0.0" } } }))).toEqual(["express@4.19.2", "ms@1.0.0"]);
+  });
+
+  it("follows each dependency's own dependencies", () => {
+    expect(ids(parseNpmPackageDependencies(WORKSPACE, { manifest: { name: "tool", dependencies: { vitest: "^3.0.0" } }, location: "" }))).toEqual(["tinypool@1.1.1", "vitest@3.0.0"]);
+  });
+
+  it("lists every entry not marked dev in a v1 lockfile, which has nothing to resolve through", () => {
+    const v1 = JSON.stringify({ name: "acme", lockfileVersion: 1, dependencies: { lodash: { version: "4.17.21" }, tinypool: { version: "1.1.1", dev: true } } });
+    expect(ids(parseNpmPackageDependencies(v1, { manifest: { name: "acme" } }))).toEqual(["lodash@4.17.21"]);
   });
 });
 

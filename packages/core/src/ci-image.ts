@@ -704,15 +704,16 @@ export async function installCiTool(tool: CiTool, version: string, options: Inst
 /**
  * The Debian family's base images by index digest, so a rebuild cannot
  * change underneath a tag: the ones all three products pinned. `node` carries
- * Node 22.23.3 and is the final stage; `debian` is the fetch stage. The
+ * Node 22.23.5 (re-pinned 2026-11-22; 22.23.4 fixed CVE-2026-111497, the
+ * Brotli decoder write) and is the final stage; `debian` is the fetch stage. The
  * Chainguard family's are `IMAGE_PINS.chainguardNode` and
  * `IMAGE_PINS.chainguardWolfiBase` (#5445).
  * `chant release images --repin packages/core/src/ci-image.ts` moves each to
  * the digest its tag names today (#5457).
  */
 export const CI_BASE_IMAGES = {
-  node: "node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392",
-  debian: "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251",
+  node: "node:22-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee",
+  debian: "debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc",
 } as const;
 
 /**
