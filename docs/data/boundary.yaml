@@ -1912,7 +1912,7 @@ rows:
     concept: "runner-key-invalid"
     owner: "chant"
     carrier: "evidence.schema.json, runs-write.schema.json, trust-write.schema.json"
-    what: "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM."
+    what: "The key given to evidence sign or runs sign is not an Ed25519 or ECDSA P-256 private key in PEM."
   - category: "reason-code"
     concept: "runner-key-is-signer"
     owner: "chant"

@@ -956,7 +956,7 @@ function definedEnv(env: Record<string, string | undefined>): Record<string, str
 
 /**
  * Who signs the run (#4156): the runner key, checked against
- * `.chant/trust.json` at the commit. A key that isn't an Ed25519 PEM is an
+ * `.chant/trust.json` at the commit. A key that isn't an Ed25519 or P-256 PEM is an
  * error, and so is a `--key` the file does not list. A key from the
  * environment that it does not list, and no key at all, leave the run
  * unsigned: a warning when the declaration's `ci.green.signedSince` asks
@@ -970,7 +970,7 @@ function ciRunSigner(req: CiRunRequest, at: { cwd: string; top: string; commit: 
   try {
     loadRunnerKey(req.runnerKey);
   } catch (err) {
-    throw new CiRunError(`the runner key${req.runnerKeyFromEnv ? ` in ${RUNNER_KEY_ENV}` : ""} is not an Ed25519 private key in PEM: ${message(err)}`);
+    throw new CiRunError(`the runner key${req.runnerKeyFromEnv ? ` in ${RUNNER_KEY_ENV}` : ""} is not an Ed25519 or ECDSA P-256 private key in PEM: ${message(err)}`);
   }
   try {
     return { signer: ciTagSigner(at.top, at.commit, req.runnerKey, "the runs it signed"), warnings: [], notes: [] };
@@ -1211,7 +1211,7 @@ const USAGE =
   "chant ci run plan|record|apply|env-up|env-post|env-down|env-sweep --env <env> --base <sha> [--pr <n>] [--commit <sha>] [--head <sha>] [--result <r>] [--forge github|gitlab|forgejo] " +
   "[--gate <name>] [--wave-gate <name>] [--wave <k>] [--branch <name>] [--events-json] [--report-url <url>] [--run-index-limit <n>] [--image <image>] [--before-script <line>]... " +
   "[--pr-build] [--pr-build-command <line>] [--parallelism <n>] [--comment-targets] [--refresh] [--require-review] [--apply-before-merge [--requires <list>] [--merge auto --merge-token-env <VAR> [--merge-method <m>]]] [--no-status] [--status-url <url template>] " +
-  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> [--release [--label <label>] [--levels <levels>]] | chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
+  "[--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [-o <dir>] [--in-place | --local] [--no-push] [--verbose] | chant ci run --at <sha> [--release [--label <label>] [--levels <levels>]] | chant ci run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]";
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

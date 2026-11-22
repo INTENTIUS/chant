@@ -37,7 +37,7 @@ import { gitRoot } from "../record-source";
 import { AGENT_ENV, judgePath, resolveWriter, scopeSource, unknownClassVerdict, WriteScopeError } from "../write-scope";
 import { lastWriteReader, noteWrites, sha256Text, withWriteLockSync, writeFileAtomic, WriteLockError, WRITE_LOCK_CODES, type LastWrite } from "../write-lock";
 import { CI_TAG_SIGNER_ROLE } from "./ci-tag-statement";
-import { ed25519FromSsh, sshFromEd25519 } from "./dsse";
+import { runnerPublicKeyObject, sshFromKeyObject } from "./dsse";
 import { DEFAULT_SIGNERS_PATH, TRUST_CONFIG_PATH, parseAllowedSigners, trustConfigSchema, type RunnerKey, type TrustConfig } from "./policy";
 
 /** The version of the document these writes print. */
@@ -106,7 +106,7 @@ export interface TrustWriteRequest {
   action: TrustWriteAction;
   /** The runner's principal. */
   name: string;
-  /** For `runner add`: the public key, as an `ssh-ed25519` line or a file holding one or an Ed25519 PEM. */
+  /** For `runner add`: the public key, as an `ssh-ed25519` or `ecdsa-sha2-nistp256` line, or a file holding one or an Ed25519 or P-256 PEM. */
   key?: string;
   /** For `runner add`: `runner` (the default) or `service`. */
   runnerClass?: string;
@@ -139,22 +139,23 @@ export function trustDigest(text: string | null): string {
 }
 
 /**
- * The `ssh-ed25519 <base64>` line, with no comment, for what `--key` gives:
- * the line itself (a comment after it is dropped), or a file holding such a
- * line or an Ed25519 key in PEM, public or private, whose public half is
- * used. Throws `runner-key-invalid` for anything else, so only a key the
- * readers can verify is ever listed.
+ * The runner key line, with no comment, for what `--key` gives: an
+ * `ssh-ed25519` or `ecdsa-sha2-nistp256` line itself (a comment after it is
+ * dropped), or a file holding such a line or an Ed25519 or P-256 key in PEM,
+ * public or private, whose public half is used (#5470). Throws
+ * `runner-key-invalid` for anything else, so only a key the readers can
+ * verify is ever listed.
  */
 export function runnerPublicKey(given: string, cwd: string): string {
   const fromLine = (line: string, where: string): string => {
     const [type, blob] = line.trim().split(/\s+/);
-    if (type !== "ssh-ed25519") {
-      throw new TrustWriteError("runner-key-invalid", `${where} is a ${type ?? "blank"} key; runner keys are ssh-ed25519, since runners sign with Ed25519`);
+    if (type !== "ssh-ed25519" && type !== "ecdsa-sha2-nistp256") {
+      throw new TrustWriteError("runner-key-invalid", `${where} is a ${type ?? "blank"} key; runner keys are ssh-ed25519 or ecdsa-sha2-nistp256, the kinds runners sign with`);
     }
     try {
-      ed25519FromSsh(`${type} ${blob ?? ""}`);
+      runnerPublicKeyObject(`${type} ${blob ?? ""}`);
     } catch (err) {
-      throw new TrustWriteError("runner-key-invalid", `${where} is not an ssh-ed25519 public key: ${err instanceof Error ? err.message : String(err)}`);
+      throw new TrustWriteError("runner-key-invalid", `${where} is not an ${type} public key: ${err instanceof Error ? err.message : String(err)}`);
     }
     return `${type} ${blob}`;
   };
@@ -162,7 +163,7 @@ export function runnerPublicKey(given: string, cwd: string): string {
   if (/^ssh-[a-z0-9-]+\s/.test(trimmed) || /^(ecdsa|sk-)/.test(trimmed)) return fromLine(trimmed, "--key");
   const file = resolve(cwd, given);
   if (!existsSync(file)) {
-    throw new TrustWriteError("runner-key-invalid", `--key takes an ssh-ed25519 public key line, or a file holding one or an Ed25519 key in PEM, and ${given} is neither`);
+    throw new TrustWriteError("runner-key-invalid", `--key takes an ssh-ed25519 or ecdsa-sha2-nistp256 public key line, or a file holding one or an Ed25519 or P-256 key in PEM, and ${given} is neither`);
   }
   const text = readFileSync(file, "utf-8");
   if (text.includes("-----BEGIN")) {
@@ -170,12 +171,9 @@ export function runnerPublicKey(given: string, cwd: string): string {
       throw new TrustWriteError("runner-key-invalid", `${given} is an OpenSSH private key; give its public half (the .pub file), or a key in PEM as runners use`);
     }
     try {
-      const key = createPublicKey(text);
-      if (key.asymmetricKeyType !== "ed25519") throw new Error(`it is ${key.asymmetricKeyType}, and runner keys are Ed25519`);
-      const jwk = key.export({ format: "jwk" }) as { x: string };
-      return sshFromEd25519(Buffer.from(jwk.x, "base64url"));
+      return sshFromKeyObject(createPublicKey(text)).line;
     } catch (err) {
-      throw new TrustWriteError("runner-key-invalid", `${given} is not an Ed25519 key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+      throw new TrustWriteError("runner-key-invalid", `${given} is not an Ed25519 or P-256 key in PEM: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const line = text.split(/\r?\n/).find((l) => l.trim() !== "" && !l.trim().startsWith("#"));
@@ -207,7 +205,7 @@ function write(req: TrustWriteRequest, head: Head): TrustWriteDocument {
   }
   const runnerClass = req.runnerClass ?? "runner";
   if (runnerClass !== "runner" && runnerClass !== "service") throw new TrustWriteError("write-usage-invalid", `--class is runner or service, not ${runnerClass}`);
-  if (req.action === "runner add" && req.key === undefined) throw new TrustWriteError("write-usage-invalid", "runner add needs the runner's public key: --key <ssh-ed25519 line or file>");
+  if (req.action === "runner add" && req.key === undefined) throw new TrustWriteError("write-usage-invalid", "runner add needs the runner's public key: --key <ssh-ed25519 or ecdsa-sha2-nistp256 line, or file>");
 
   const top = gitRoot(req.cwd);
   if (!top) throw new TrustWriteError("not-a-git-repository", "the trust policy is read from git, and this directory is not in a git repository");
@@ -338,7 +336,7 @@ function write(req: TrustWriteRequest, head: Head): TrustWriteDocument {
 // ── The command line ─────────────────────────────────────────────────────────
 
 const USAGE: Record<TrustWriteAction, string> = {
-  "runner add": "chant workspace trust runner add <principal> --key <ssh-ed25519 line or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]",
+  "runner add": "chant workspace trust runner add <principal> --key <ssh-ed25519 or ecdsa-sha2-nistp256 line, or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]",
   "runner remove": "chant workspace trust runner remove <principal> [--by <principal>] [--expect <digest>] [--dry-run]",
 };
 

@@ -813,6 +813,8 @@ export interface ParsedArgs {
   oneRelease?: boolean;
   /** `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the principal the runner key is listed for. */
   ciPrincipal?: string;
+  /** `chant ci serve|run --setup-key --key-type ed25519|ecdsa-p256` (#5470): the kind of runner key `--setup-key` makes. */
+  runnerKeyType?: string;
   /** `chant workspace trust runner add <principal> --class runner|service` (#3510): the runner entry's class. */
   runnerClass?: string;
   /**
@@ -839,7 +841,7 @@ export interface ParsedArgs {
   prefix?: string;
   /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
   require?: string;
-  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). Also `chant ci tick --key` (#4031): the runner key the tick signs its tags with. */
+  /** `chant workspace evidence sign --key` (a runner's Ed25519 or P-256 PEM) and `signers sign --key` (an ssh private key) (#2553). Also `chant ci tick --key` (#4031): the runner key the tick signs its tags with. */
   key?: string;
   /** `chant workspace evidence sign --check-id <id>` (#2553): the check the evidence is for. */
   checkId?: string;

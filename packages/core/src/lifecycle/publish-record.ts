@@ -60,6 +60,13 @@ export interface PublishRecord {
    * names as the builder. Absent for a publish no host ran.
    */
   runnerKey?: string;
+  /**
+   * The crypto module the publish ran on (#5470): Node, OpenSSL, whether in
+   * FIPS mode, and the cosign `CHANT_COSIGN` named with its SHA-256 and
+   * whether it is chant's pinned upstream build. What it reports, not a
+   * claim that any of it is validated. Absent on records older than #5470.
+   */
+  crypto?: import("../crypto-module").CryptoRecord;
   timestamp: string;
 }
 

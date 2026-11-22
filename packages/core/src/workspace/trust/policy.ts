@@ -24,7 +24,7 @@
 import { posix } from "node:path";
 import { z } from "zod";
 import type { RecordSource } from "../record-source";
-import { DEFAULT_SIGNERS_PATH, TRUST_CONFIG_PATH, parseAllowedSigners, type ExcludedSigner, type Signer } from "./trust-files";
+import { DEFAULT_SIGNERS_PATH, RUNNER_KEY_LINE, TRUST_CONFIG_PATH, parseAllowedSigners, type ExcludedSigner, type Signer } from "./trust-files";
 import type { PasskeySigner } from "../../lifecycle/gate-webauthn";
 import { execFileSync } from "node:child_process";
 import { DEFAULT_FULCIO_URL, DEFAULT_SIGNING_AUDIENCE, DEFAULT_TIMESTAMP_URL, keylessVerifier, parseTrustedRoot, type KeylessRoots } from "./keyless";
@@ -103,7 +103,7 @@ export const trustConfigSchema = z
           .object({
             principal: z.string().min(1),
             class: z.enum(["runner", "service"]),
-            key: z.string().regex(/^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$/, "an ssh-ed25519 public key, with no comment"),
+            key: z.string().regex(RUNNER_KEY_LINE, "an ssh-ed25519 or ecdsa-sha2-nistp256 public key, with no comment"),
           })
           .strict(),
       )
@@ -234,7 +234,7 @@ export const trustConfigSchema = z
               .object({
                 principal: z.string().min(1),
                 class: z.enum(LOCAL_SIGNER_CLASSES),
-                key: z.string().regex(/^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$/, "an ssh-ed25519 public key, with no comment"),
+                key: z.string().regex(RUNNER_KEY_LINE, "an ssh-ed25519 or ecdsa-sha2-nistp256 public key, with no comment"),
               })
               .strict(),
           )
@@ -275,7 +275,7 @@ export interface RefRule {
 export interface LocalKey {
   principal: string;
   class: LocalSignerClass;
-  /** `ssh-ed25519 <base64>`. */
+  /** `ssh-ed25519 <base64>` or `ecdsa-sha2-nistp256 <base64>`. */
   key: string;
 }
 
@@ -292,7 +292,7 @@ export interface LocalEvidencePolicy {
 export interface RunnerKey {
   principal: string;
   class: "runner" | "service";
-  /** `ssh-ed25519 <base64>`. */
+  /** `ssh-ed25519 <base64>` or `ecdsa-sha2-nistp256 <base64>` (#5470). */
   key: string;
 }
 

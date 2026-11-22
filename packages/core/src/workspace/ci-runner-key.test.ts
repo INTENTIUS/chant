@@ -110,6 +110,40 @@ describe("the host's runner key (#4099)", () => {
     expect(ensureHostRunnerKey(state).created).toBe(false);
   });
 
+  test("--setup-key --key-type ecdsa-p256 makes a P-256 key, which signs once main lists it, and never replaces a key of another kind (#5470)", async () => {
+    const { root } = workspace();
+    const state = join(scratchDir("chant-runner-key-state-"), "ci-serve");
+    const bad = await cli(root, ["ci", "serve", "--setup-key", "--key-type", "rsa", "--state", state]);
+    expect(bad.code).toBe(1);
+    expect(bad.err).toContain("--key-type takes ed25519 or ecdsa-p256, not rsa");
+
+    const made = await cli(root, ["ci", "serve", "--setup-key", "--key-type", "ecdsa-p256", "--state", state]);
+    expect(made.code, made.err).toBe(0);
+    expect(made.out).toMatch(/^ecdsa-sha2-nistp256 [A-Za-z0-9+/]+=*$/);
+    expect(made.err).toContain("ECDSA P-256 (made now, mode 0600)");
+    expect(statSync(join(state, RUNNER_KEY_FILE)).mode & 0o777).toBe(0o600);
+    expect(hostRunnerKey(state)).toMatchObject({ kind: "ecdsa-p256", publicKey: made.out });
+
+    // Asking for the other kind refuses; asking for none, or the same, reads the key there.
+    expect(() => ensureHostRunnerKey(state, "ed25519")).toThrow(/is an ecdsa-p256 runner key, and --key-type asks for ed25519. chant never replaces a runner key/);
+    expect(ensureHostRunnerKey(state).created).toBe(false);
+    expect(ensureHostRunnerKey(state, "ecdsa-p256").created).toBe(false);
+
+    // Listed on main with the runner role, it is the key ci serve signs with and ci tick's signer.
+    const pem = readFileSync(join(state, RUNNER_KEY_FILE), "utf-8");
+    expect(trustWrite({ cwd: root, action: "runner add", name: "fips-host", key: made.out })).toMatchObject({ changed: true });
+    const trust = JSON.parse(readFileSync(join(root, ".chant/trust.json"), "utf-8"));
+    trust.roles = { runner: ["fips-host"] };
+    writeFileSync(join(root, ".chant/trust.json"), `${JSON.stringify(trust, null, 2)}\n`);
+    git(root, "add", ".chant/trust.json");
+    git(root, "commit", "-q", "-m", "list the fips host");
+    git(root, "push", "-q", "origin", "main");
+    const serving = ciServeRunnerKey({ top: root, stateDir: state, branch: "main" });
+    expect(serving.pem).toBe(pem);
+    expect(serving.warning).toBeUndefined();
+    expect(ciTagSigner(root, git(root, "rev-parse", "HEAD"), pem).principal).toBe("fips-host");
+  });
+
   test("--setup-key --trust pushes the runner entry on a branch of its own and leaves main as it was", async () => {
     const { root, origin, main } = workspace();
     const state = scratchDir("chant-runner-key-state-");
@@ -176,7 +210,7 @@ describe("the host's runner key (#4099)", () => {
 
     // A key file that is not a key is an error either way.
     writeFileSync(join(state, "bad.pem"), "not a key", { mode: 0o600 });
-    expect(() => ciServeRunnerKey({ top: root, stateDir: state, branch: "main", keyFile: join(state, "bad.pem") })).toThrow(/not an Ed25519 private key in PEM/);
+    expect(() => ciServeRunnerKey({ top: root, stateDir: state, branch: "main", keyFile: join(state, "bad.pem") })).toThrow(/not an Ed25519 or ECDSA P-256 private key in PEM/);
 
     // --unsigned is accepted and serves unsigned.
     expect(ciServeRunnerKey({ top: root, stateDir: state, branch: "main", unsigned: true })).toMatchObject({ fromFlag: false, source: "none (--unsigned)" });

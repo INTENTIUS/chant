@@ -408,7 +408,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `evidence-payload-type` | error, `evidence verify` | The envelope's payload type is not `application/vnd.in-toto+json`. |
 | `evidence-statement-invalid` | error, `evidence verify` | The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define. |
 | `evidence-runner-mismatch` | error, `evidence verify` | The statement names a runner other than the one whose key signed it. |
-| `runner-key-invalid` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is not an Ed25519 private key in PEM. For `trust runner add`, it is not an `ssh-ed25519` public key or an Ed25519 key in PEM. |
+| `runner-key-invalid` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is not an Ed25519 or ECDSA P-256 private key in PEM. For `trust runner add`, it is not an `ssh-ed25519` or `ecdsa-sha2-nistp256` public key or an Ed25519 or P-256 key in PEM. |
 | `runner-key-is-signer` | error, `evidence sign`, `runs sign` and `trust runner add` | The key is a person's key in the signers file, or `trust runner add` names a signer. Evidence and run statements are signed by a service or CI identity. |
 | `runner-key-unlisted` | error, `evidence sign` and `runs sign` | The policy at base lists no runner with the key. |
 | `ref-update-invalid` | error, `ref-gate pre-receive` and `pre-push` | The hook's standard input is not the lines git hands a pre-receive or pre-push hook. |

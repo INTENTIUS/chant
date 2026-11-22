@@ -76,7 +76,7 @@ export interface LocalEvidenceSigner extends EvidenceSigner {
 
 /**
  * The signer a local key makes, from `local.keys` of `.chant/trust.json` at
- * `base`. Throws when the key is not an Ed25519 PEM key or is not listed
+ * `base`. Throws when the key is not an Ed25519 or P-256 PEM key or is not listed
  * there (a runner's key never is), so nobody keeps evidence CI would ignore.
  */
 export function localKeyEvidenceSigner(repo: string, base: string, pem: string): LocalEvidenceSigner {
@@ -84,7 +84,7 @@ export function localKeyEvidenceSigner(repo: string, base: string, pem: string):
   try {
     loaded = loadRunnerKey(pem);
   } catch (err) {
-    throw new Error(`the local evidence key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`the local evidence key is not an Ed25519 or ECDSA P-256 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
   }
   const policy = readTrustPolicy(gitRevisionSource(repo, base), base);
   if (policy.problems.length > 0) throw new Error(`the policy at ${base.slice(0, 12)} cannot be read: ${policy.problems.join("; ")}`);

@@ -1,0 +1,52 @@
+---
+title: Signatures and Crypto Modules
+description: Each digest and signature chant makes or checks, the crypto module that makes it, and what a team sets when a control asks for validated cryptography.
+diataxis: reference
+---
+
+A control such as NIST SP 800-53 SC-13 can ask that hashing, key generation and signing run in a validated crypto module. chant does not decide whether a module is validated. It uses the key types and modes a team picks, and it reports which module and mode a signature was made under, so an assessor can check that against the module's certificate and security policy.
+
+## What makes each one
+
+| What | Made or checked by | What a team sets |
+|---|---|---|
+| Content digests (SHA-256) of records, releases and artifacts | `node:crypto`, on the OpenSSL Node runs on | Run Node in FIPS mode with a FIPS provider loaded |
+| Runner keys: runner evidence, runner-start statements, signed `ci` tags, run records, the `ci serve` host key | `node:crypto`; Ed25519, or ECDSA P-256 with SHA-256 | A P-256 key where the module approves ECDSA and not EdDSA, and Node in FIPS mode |
+| Checks of sealed approvals, DSSE envelopes and passkey (WebAuthn) approvals | `node:crypto` | Node in FIPS mode |
+| Checks of ssh-signed commits | `ssh-keygen -Y verify` on the machine that checks | An OpenSSH built and configured to verify in the team's module |
+| Cut signatures and sealed approvals (`chant-release` and `chant-gate` namespaces) | `ssh-keygen -Y sign` on the signer's machine | An ECDSA key (`ssh-keygen -t ecdsa -b 256`), and an OpenSSH built and configured to sign in the team's module |
+| Sigstore keyless signatures and SLSA statements | cosign, with a key it makes for the one signature; the certificate from Fulcio, the log entry in Rekor | A cosign build of the team's choosing through `CHANT_COSIGN`, and a private Fulcio and Rekor inside the system boundary (`release.signing.fulcio`, `rekor`, `trustRoot`) |
+| `kms` mode (`release.signing.kms`) | The KMS signs; cosign hashes and assembles | A KMS whose own certificate covers the signing operation |
+| `key` mode (`release.signing.key`) | cosign, in its own process | A cosign build of the team's choosing through `CHANT_COSIGN` |
+
+Approvals verify Ed25519, ECDSA P-256, P-384 and P-521, and RSA keys with SHA-2, so a signer can keep the key type their own module needs.
+
+## Runner keys
+
+A runner key is Ed25519 unless the host asks for ECDSA P-256:
+
+```bash
+chant ci serve --setup-key --key-type ecdsa-p256 --trust
+```
+
+`openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out runner.pem` makes the same kind of key for `--key` or `CHANT_RUNNER_KEY`. `.chant/trust.json` lists it under `runners` as an `ecdsa-sha2-nistp256` line, the line `ssh-keygen` prints for the same key, and its fingerprint is the ssh `SHA256:` fingerprint, as for Ed25519. That fingerprint is the builder identity in the SLSA statement a `ci serve --release` host signs, so it reads the same for either kind. Envelopes signed with a P-256 key carry an ECDSA signature over SHA-256, DER-encoded.
+
+Ed25519 keys already listed keep working beside P-256 ones. Moving a host to P-256 means a new key: `--setup-key` never replaces the key in the state directory, so move the old key aside, make the new one, list it, and take the old line out of `.chant/trust.json` once nothing signs with it.
+
+FIPS 186-5 approves EdDSA, but a module's certificate decides which algorithms it approves. Some OpenSSL FIPS provider security policies list Ed25519 as non-approved. Where yours does, use P-256.
+
+Every chant that reads the trust config has to read P-256 runner keys before one is listed: an older chant treats a trust config with an `ecdsa-sha2-nistp256` runner line as invalid.
+
+## Reporting the module
+
+`chant doctor` reports the module as `crypto-module`, and `chant release doctor` prints it under its first line and carries it as `crypto` in `--json`:
+
+- the Node version and the OpenSSL version it runs on;
+- whether Node runs in FIPS mode, as `crypto.getFips()` says;
+- in FIPS mode, whether SHA-256, ECDSA P-256 and Ed25519 can be fetched there. `getFips()` only says the default property query asks for `fips=yes`, not that a provider answers it, so chant tries each one.
+
+When the publish signs, `chant release doctor` also names the cosign that would sign (`signing-cosign-build`): the file `CHANT_COSIGN` names, or `cosign` on `PATH`, with its SHA-256, and whether it is the upstream build `chant release workflow` downloads. The release workflow skips that download when the release config's `setup` or `env` sets `CHANT_COSIGN`, which is how a job supplies its own build.
+
+Each line chant appends to a release's publish record carries `crypto`: the Node and OpenSSL versions, whether FIPS mode was on, and when `CHANT_COSIGN` was set, that file's path, SHA-256 and whether it is the pinned upstream build. It is what the publish ran under, read when the publish started.
+
+Running Node in FIPS mode needs a FIPS provider installed and loaded through the OpenSSL configuration Node reads, as the Node.js crypto documentation describes, with `--enable-fips` or `--force-fips`. Which provider build that is, and whether it was deployed as its security policy requires, is outside what chant can see.

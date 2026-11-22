@@ -21,7 +21,7 @@ export interface DoctorReport {
   success: boolean;
 }
 
-export async function doctorCommand(path: string): Promise<DoctorReport> {
+export async function doctorCommand(path: string, deps: { crypto?: import("../../crypto-module").CryptoModuleDeps } = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const projectPath = path || ".";
 
@@ -32,6 +32,16 @@ export async function doctorCommand(path: string): Promise<DoctorReport> {
   } catch (e) {
     debug("node version check failed:", e);
     checks.push({ name: "node-installed", status: "fail", message: "Node.js is not installed — see https://nodejs.org" });
+  }
+
+  // #5470: the crypto module chant's digests and runner-key signatures run on.
+  // Informational: FIPS mode off is no failure, and on, a warning only when
+  // SHA-256 or ECDSA P-256 can't be fetched under it.
+  {
+    const { cryptoModule, cryptoModuleBroken, describeCryptoModule } = await import("../../crypto-module");
+    const m = cryptoModule(deps.crypto);
+    const broken = cryptoModuleBroken(m);
+    checks.push({ name: "crypto-module", status: broken ? "warn" : "pass", message: broken ?? describeCryptoModule(m) });
   }
 
   // Check 1: Config exists and parses

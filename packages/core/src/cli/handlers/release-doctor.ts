@@ -9,6 +9,7 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { describeCryptoModule } from "../../crypto-module";
 import { formatBold, formatError, formatSuccess } from "../format";
 import type { CommandContext } from "../registry";
 import type { DoctorReport, DoctorStatus } from "../../lifecycle/release-doctor";
@@ -64,6 +65,8 @@ export function formatDoctorReport(report: DoctorReport): string[] {
   const lines = [
     `Release doctor, from ${where}${e.from === "cut" ? ", the cut job" : ""}: OIDC ${e.oidc ? "yes" : "no"}; the release workflow is ${e.releaseWorkflow ?? "not known"}${e.repository ? ` in ${e.repository}` : ""}`,
   ];
+  // #5470: the crypto module this run's digests and signatures use.
+  if (report.crypto) lines.push(`crypto: ${describeCryptoModule(report.crypto)}`);
   for (const t of report.targets) {
     lines.push(formatBold(t.name));
     for (const c of t.checks) {

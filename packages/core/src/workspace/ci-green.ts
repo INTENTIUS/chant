@@ -579,7 +579,7 @@ export interface TickRequest {
   dryRun?: boolean;
   now?: Date;
   /**
-   * A runner's Ed25519 private key in PEM (#4031). The tick signs each tag
+   * A runner's Ed25519 or ECDSA P-256 private key in PEM (#4031). The tick signs each tag
    * it makes with it, and refuses a key `.chant/trust.json` at the branch tip
    * does not list as a runner whose principal holds the `runner` role. When
    * `ci.green.signedSince` is set the tick needs one.
@@ -641,7 +641,7 @@ export function ciTagSigner(top: string, base: string, pem: string, what = "the 
   try {
     loaded = loadRunnerKey(pem);
   } catch (err) {
-    throw new Error(`the runner key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`the runner key is not an Ed25519 or ECDSA P-256 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
   }
   const policy = readTrustPolicy(gitRevisionSource(top, base), base);
   const at = `.chant/trust.json at ${base.slice(0, 12)}`;

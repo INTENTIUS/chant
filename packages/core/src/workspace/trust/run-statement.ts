@@ -4,7 +4,7 @@
  *
  * The run record (#3033, ws-076) is written by whatever ran the agent, so on
  * its own it is as trustworthy as that writer. A statement is an in-toto
- * Statement v1 in a DSSE envelope (./dsse.ts), signed with an Ed25519 key the
+ * Statement v1 in a DSSE envelope (./dsse.ts), signed with an Ed25519 or ECDSA P-256 key the
  * trust policy at base lists under `runners` in `.chant/trust.json`, the same
  * keys runner evidence uses (#2553, ws-069). A person's key, one the signers
  * file lists, is never a runner key.

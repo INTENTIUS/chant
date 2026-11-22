@@ -1323,6 +1323,10 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--unsigned") {
       // `chant ci serve --unsigned` (#4099): serve without a runner key listed at the target's head.
       result.unsigned = true;
+    } else if (arg === "--key-type") {
+      // `chant ci serve|run --setup-key --key-type ed25519|ecdsa-p256` (#5470): the kind of runner key to make.
+      result.runnerKeyType = args[++i];
+      if (!result.runnerKeyType || result.runnerKeyType.startsWith("-")) throw new Error("--key-type needs the kind of runner key: --key-type ed25519|ecdsa-p256");
     } else if (arg === "--principal") {
       // `chant ci serve|run --setup-key --trust --principal <name>` (#4099): the runner's principal.
       result.ciPrincipal = args[++i];

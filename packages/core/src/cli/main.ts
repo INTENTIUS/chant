@@ -460,9 +460,10 @@ CI:
                         --build-command runs <line> once per ci/build/<sha>
                         tag, in a fresh worktree of the commit, with
                         CHANT_BUILD_COMMIT and CHANT_BUILD_PHASES set
-  ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
-                        Make the host's runner key (Ed25519, mode 0600) in the
-                        state directory when there is none and print its public
+  ci serve|run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+                        Make the host's runner key (Ed25519, or ECDSA P-256
+                        with --key-type ecdsa-p256; mode 0600) in the state
+                        directory when there is none and print its public
                         key. --trust commits its runner entry on a branch of its
                         own and pushes it for review; the target branch is never
                         written
@@ -1044,7 +1045,7 @@ Workspace (level 1, #2524):
                         threshold of the old one. A commit an agent run made
                         is attested by the run's signed statement; with
                         attested-runs, only those commits must be
-  workspace trust runner add <principal> --key <ssh-ed25519 line or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
+  workspace trust runner add <principal> --key <ssh-ed25519 or ecdsa-sha2-nistp256 line, or file> [--class runner|service] [--by <principal>] [--expect <digest>] [--dry-run]
   workspace trust runner remove <principal> [--by <principal>] [--expect <digest>] [--dry-run]
                         List a runner's key under runners in .chant/trust.json,
                         granting a runner the runner role, or take both away,

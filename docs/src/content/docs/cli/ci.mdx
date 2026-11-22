@@ -29,8 +29,8 @@ chant ci runs [--report-url <url>] [--json]
 chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>]
                   [--state <dir>] [--author <login>]... [--once] [--rerun-failed] [--unsigned] [--apply-on-merge]
                   [--build-command <line> [--land]] [--release] [ci run's job flags]
-chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
-chant ci run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+chant ci serve --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
+chant ci run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]
 chant ci init --workflow trunk-curated|trunk-curated+apply-on-merge|apply-before-merge [--forge github|gitlab|forgejo] [--security <group>]... [--yes]
 chant ci check [--base <rev>] [--branch <default>] [<target>...] [--output <dir>] [--json]
 chant ci evidence sign (--check-id <id>[,<id>...] | --from-report <dir> [--member <name>] --result <result>) [--at <rev>] [--base <rev>] [--key <file>] [--no-push] [--json]
@@ -255,7 +255,7 @@ A project whose pipelines run as chant Ops can take its phase results from those
 
 With `runs`, a phase's patterns match Op names, with `*` standing for any run of characters, as they match check-run names otherwise. Each Op run's record on `chant/lifecycle` (`<env>/runs__<op>.jsonl`, see [chant run](/chant/cli/run/)) names the commit it built from as `gitSha`, and counts for that commit. For each Op on a commit, the latest record by end time decides, so a re-run replaces the run before it. Status `ok` passes, `fail` fails, and a stop at a gate or a decision point leaves the phase undecided. Records from every environment count alike.
 
-Signing is optional ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). An unsigned run counts, and `ci list` shows it with `signer: null`. To verify who ran a job, add a runner key: the run signs its record as it settles when `chant run <op>` is given one, with `--key <file>` or the PEM in `CHANT_RUNNER_KEY`, and `ci list` then names the signer. The key and its principal follow the rules for the [tick's own key](#the-runner-key): `.chant/trust.json` at the checkout's `HEAD` must list it under `runners`, and the principal must hold the `runner` role. `chant run --key` refuses any other key before the run starts, and a key that is not an Ed25519 PEM is an error from either source. A key from `CHANT_RUNNER_KEY` that trust.json does not list leaves the run unsigned, with a line under `--verbose`.
+Signing is optional ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). An unsigned run counts, and `ci list` shows it with `signer: null`. To verify who ran a job, add a runner key: the run signs its record as it settles when `chant run <op>` is given one, with `--key <file>` or the PEM in `CHANT_RUNNER_KEY`, and `ci list` then names the signer. The key and its principal follow the rules for the [tick's own key](#the-runner-key): `.chant/trust.json` at the checkout's `HEAD` must list it under `runners`, and the principal must hold the `runner` role. `chant run --key` refuses any other key before the run starts, and a key that is not an Ed25519 or ECDSA P-256 PEM is an error from either source. A key from `CHANT_RUNNER_KEY` that trust.json does not list leaves the run unsigned, with a line under `--verbose`.
 
 Anyone who can write to `chant/lifecycle` can write an unsigned passing run. To require signatures, set [`ci.green.signedSince`](#signed-tags). It covers runs as it covers tags: an unsigned run on a strict first-parent ancestor of that commit counts, and one on any other commit, that one included, is ignored. With it set, `ci run` and `chant run` warn when they leave a run unsigned, and `ci serve` refuses to start without a trusted key.
 
@@ -296,7 +296,7 @@ The tags are plain git tags, so anyone who may push a tag could make `ci/green/<
 }
 ```
 
-The statement is the one [runner evidence](/chant/cli/workspace-evidence/) and [agent-run statements](/chant/cli/workspace-runs/#signed-statements) use: an in-toto statement in a DSSE envelope, signed with an Ed25519 key. Its subject is the tagged commit, and its predicate (`https://intentius.io/chant/ci-tag/v1`) holds the signer and the tag's JSON record. The envelope sits in that record as `statement`, so a reader that doesn't know it reads the record as before.
+The statement is the one [runner evidence](/chant/cli/workspace-evidence/) and [agent-run statements](/chant/cli/workspace-runs/#signed-statements) use: an in-toto statement in a DSSE envelope, signed with the runner key: Ed25519, or ECDSA P-256 with SHA-256. Its subject is the tagged commit, and its predicate (`https://intentius.io/chant/ci-tag/v1`) holds the signer and the tag's JSON record. The envelope sits in that record as `statement`, so a reader that doesn't know it reads the record as before.
 
 A reader counts such a tag when all of these hold, and otherwise ignores it with one of four statuses:
 
@@ -311,7 +311,7 @@ A tag on a strict first-parent ancestor of `signedSince` counts without a statem
 
 ### The runner key
 
-The tick signs with an Ed25519 private key in PEM, from `--key <file>` or from the `CHANT_RUNNER_KEY` environment variable. `.chant/trust.json` lists its public half under `runners`, and the principal it names holds the `runner` role:
+The tick signs with an Ed25519 or ECDSA P-256 private key in PEM, from `--key <file>` or from the `CHANT_RUNNER_KEY` environment variable. `.chant/trust.json` lists its public half under `runners`, as an `ssh-ed25519` or `ecdsa-sha2-nistp256` line, and the principal it names holds the `runner` role:
 
 ```json
 {
@@ -626,9 +626,9 @@ GITHUB_SERVER_URL=http://forgejo.localhost GITHUB_API_URL=http://forgejo.localho
 
 ### The host's runner key
 
-`ci serve` signs each run when it has a trusted runner key ([#4099](https://github.com/INTENTIUS/chant/issues/4099)). Without one it serves unsigned and says nothing about it, apart from one line under `--verbose` ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). It takes the key from `--key`, then `CHANT_RUNNER_KEY`, then the host's own key, `runner-key.pem` in the state directory. Before its first poll it fetches the target branch and reads `.chant/trust.json` at its head. When that file doesn't list the key under `runners` for a principal holding the `runner` role, `ci serve` prints one warning with the command that lists it, and serves unsigned. A key that is not an Ed25519 PEM stops it. With `ci.green.signedSince` set, it refuses to start without a trusted key. `--unsigned` is still accepted. It skips the key, and has no effect under `signedSince`.
+`ci serve` signs each run when it has a trusted runner key ([#4099](https://github.com/INTENTIUS/chant/issues/4099)). Without one it serves unsigned and says nothing about it, apart from one line under `--verbose` ([#4156](https://github.com/INTENTIUS/chant/issues/4156)). It takes the key from `--key`, then `CHANT_RUNNER_KEY`, then the host's own key, `runner-key.pem` in the state directory. Before its first poll it fetches the target branch and reads `.chant/trust.json` at its head. When that file doesn't list the key under `runners` for a principal holding the `runner` role, `ci serve` prints one warning with the command that lists it, and serves unsigned. A key that is not an Ed25519 or ECDSA P-256 PEM stops it. With `ci.green.signedSince` set, it refuses to start without a trusted key. `--unsigned` is still accepted. It skips the key, and has no effect under `signedSince`.
 
-`--setup-key` sets the host's key up, on `ci serve` or `ci run`. When the state directory (`--state`, by default `chant/ci-serve` in the common git directory) holds no key, it makes an Ed25519 key in PEM there, with mode 0600 in a directory of mode 0700. It prints the public key, an `ssh-ed25519` line, on stdout. On stderr it says whether `.chant/trust.json` at the target's head lists the key, and if not, the exact [`chant workspace trust runner add`](/chant/cli/workspace-trust/) command that would. A key file that other users can read is refused.
+`--setup-key` sets the host's key up, on `ci serve` or `ci run`. When the state directory (`--state`, by default `chant/ci-serve` in the common git directory) holds no key, it makes an Ed25519 key in PEM there, with mode 0600 in a directory of mode 0700. `--key-type ecdsa-p256` makes an ECDSA P-256 key instead, for a host whose crypto module approves ECDSA and not EdDSA (see [Signatures and crypto modules](/chant/reference/crypto-modules/)). It prints the public key, an `ssh-ed25519` or `ecdsa-sha2-nistp256` line, on stdout. A key already in the state directory is kept whatever its kind, and `--key-type` naming the other kind is refused rather than replacing it. On stderr it says whether `.chant/trust.json` at the target's head lists the key, and if not, the exact [`chant workspace trust runner add`](/chant/cli/workspace-trust/) command that would. A key file that other users can read is refused.
 
 With `--trust` it makes that change itself, on a branch for review. In a temporary worktree at the target's head it runs `trust runner add` for `--principal`, by default `chant-runner:<host>`, and commits the result on `chant/trust-runner/<principal>`. It then pushes that branch to `origin` and never writes the target branch. Open a pull request from it. Changing the trust config is a protected write, so when the policy has signers, an admin signs the commit before it merges. The commit is made with the host's git identity and signing settings. Once it has merged, `ci serve` starts signed.
 

@@ -3,9 +3,12 @@
  * #4101).
  *
  * The host keeps its runner key in the serve's state directory, by default
- * `<git common dir>/chant/ci-serve/runner-key.pem`: an Ed25519 private key in
- * PEM, mode 0600, made by `--setup-key` when there is none. Its public half
- * is the `ssh-ed25519` line `.chant/trust.json` lists under `runners`, and
+ * `<git common dir>/chant/ci-serve/runner-key.pem`: a private key in PEM,
+ * mode 0600, made by `--setup-key` when there is none. It is Ed25519 unless
+ * `--key-type ecdsa-p256` asks for ECDSA P-256 (#5470), for a host whose
+ * validated crypto module approves ECDSA and not EdDSA. Its public half is
+ * the `ssh-ed25519` or `ecdsa-sha2-nistp256` line `.chant/trust.json` lists
+ * under `runners`, and
  * `--setup-key --trust` proposes that entry through `chant workspace trust
  * runner add` (#3510) on a branch of its own, pushed for review. It never
  * commits to the target branch: changing the trust config is a protected
@@ -18,13 +21,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, type KeyObject } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { ciTagSigner } from "./ci-green";
 import { CiRunError } from "./ci-run";
-import { loadRunnerKey } from "./trust/dsse";
+import { loadRunnerKey, RUNNER_KEY_KINDS, RUNNER_KEY_WORDS, type RunnerKeyKind } from "./trust/dsse";
 import { trustWrite } from "./trust/trust-write";
 
 /** The runner key's file in the state directory. */
@@ -38,8 +41,9 @@ export function defaultRunnerPrincipal(): string {
 export interface HostRunnerKey {
   path: string;
   pem: string;
-  /** `ssh-ed25519 <base64>`. */
+  /** `ssh-ed25519 <base64>` or `ecdsa-sha2-nistp256 <base64>`. */
   publicKey: string;
+  kind: RunnerKeyKind;
   /** Whether this call made it. */
   created: boolean;
 }
@@ -58,15 +62,16 @@ function tryGit(cwd: string, args: string[]): string | undefined {
   }
 }
 
-/** Read the key at `path`, refusing one others can read or one that is not an Ed25519 private key in PEM. */
+/** Read the key at `path`, refusing one others can read or one that is not a runner key in PEM. */
 function readHostKey(path: string): HostRunnerKey {
   const mode = statSync(path).mode & 0o777;
   if (mode & 0o077) throw new CiRunError(`${path} can be read by other users (mode ${mode.toString(8)}); chmod 600 it, since it signs for this runner`);
   const pem = readFileSync(path, "utf-8");
   try {
-    return { path, pem, publicKey: loadRunnerKey(pem).publicKey, created: false };
+    const { publicKey, kind } = loadRunnerKey(pem);
+    return { path, pem, publicKey, kind, created: false };
   } catch (err) {
-    throw new CiRunError(`${path} is not an Ed25519 private key in PEM: ${message(err)}`);
+    throw new CiRunError(`${path} is not ${RUNNER_KEY_WORDS}: ${message(err)}`);
   }
 }
 
@@ -76,18 +81,40 @@ export function hostRunnerKey(stateDir: string): HostRunnerKey | undefined {
   return existsSync(path) ? readHostKey(path) : undefined;
 }
 
-/** The host's runner key in `stateDir`, made when there is none: Ed25519, PEM, mode 0600 in a directory of mode 0700. */
-export function ensureHostRunnerKey(stateDir: string): HostRunnerKey {
+/** `--key-type`: the kind of runner key `--setup-key` makes. Default `ed25519`. */
+export function runnerKeyKind(value: string | undefined): RunnerKeyKind {
+  if (value === undefined) return "ed25519";
+  if ((RUNNER_KEY_KINDS as readonly string[]).includes(value)) return value as RunnerKeyKind;
+  throw new CiRunError(`--key-type takes ${RUNNER_KEY_KINDS.join(" or ")}, not ${value}`);
+}
+
+function generateRunnerKey(kind: RunnerKeyKind): KeyObject {
+  return kind === "ecdsa-p256" ? generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey : generateKeyPairSync("ed25519").privateKey;
+}
+
+/**
+ * The host's runner key in `stateDir`, made when there is none: `kind`
+ * (default Ed25519), PKCS#8 PEM, mode 0600 in a directory of mode 0700. A key
+ * already there is kept whatever its kind; with `kind` named and the key of
+ * another kind, it refuses rather than replace it, since the trust config
+ * lists the key it has.
+ */
+export function ensureHostRunnerKey(stateDir: string, kind?: RunnerKeyKind): HostRunnerKey {
   const found = hostRunnerKey(stateDir);
-  if (found) return found;
+  if (found) {
+    if (kind !== undefined && found.kind !== kind) {
+      throw new CiRunError(`${found.path} is an ${found.kind} runner key, and --key-type asks for ${kind}. chant never replaces a runner key: move it aside, run --setup-key --key-type ${kind} again, list the new key, and take the old one out of .chant/trust.json once nothing signs with it`);
+    }
+    return found;
+  }
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const path = join(stateDir, RUNNER_KEY_FILE);
-  const { privateKey } = generateKeyPairSync("ed25519");
-  const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const made = kind ?? "ed25519";
+  const pem = generateRunnerKey(made).export({ type: "pkcs8", format: "pem" }).toString();
   // wx: never replace a key another process made in the meantime.
   writeFileSync(path, pem, { mode: 0o600, flag: "wx" });
   chmodSync(path, 0o600);
-  return { path, pem, publicKey: loadRunnerKey(pem).publicKey, created: true };
+  return { path, pem, publicKey: loadRunnerKey(pem).publicKey, kind: made, created: true };
 }
 
 /**
@@ -185,9 +212,9 @@ export interface RunnerKeySetup {
   proposal?: RunnerTrustProposal;
 }
 
-/** `--setup-key [--trust]`: make or read the key, see whether the target's head lists it, and with `trust` propose the entry. */
-export function setupRunnerKey(req: { top: string; stateDir: string; branch: string; principal?: string; trust?: boolean; by?: string }): RunnerKeySetup {
-  const key = ensureHostRunnerKey(req.stateDir);
+/** `--setup-key [--key-type <kind>] [--trust]`: make or read the key, see whether the target's head lists it, and with `trust` propose the entry. */
+export function setupRunnerKey(req: { top: string; stateDir: string; branch: string; principal?: string; trust?: boolean; by?: string; kind?: RunnerKeyKind }): RunnerKeySetup {
+  const key = ensureHostRunnerKey(req.stateDir, req.kind);
   const head = targetHead(req.top, req.branch);
   const listed = head ? runnerKeyListed(req.top, head.commit, key.pem) : undefined;
   const principal = req.principal ?? defaultRunnerPrincipal();
@@ -198,7 +225,7 @@ export function setupRunnerKey(req: { top: string; stateDir: string; branch: str
 
 /** What `--setup-key` prints on stderr; the public key alone goes to stdout. */
 export function formatRunnerKeySetup(s: RunnerKeySetup, branch: string): string {
-  const lines = [`runner key ${s.key.path} (${s.key.created ? "made now, mode 0600" : "already here"})`];
+  const lines = [`runner key ${s.key.path}, ${s.key.kind === "ecdsa-p256" ? "ECDSA P-256" : "Ed25519"} (${s.key.created ? "made now, mode 0600" : "already here"})`];
   if (s.listedAs) {
     lines.push(`.chant/trust.json at ${branch} ${s.head!.slice(0, 12)} lists it for ${s.listedAs}, with the runner role`);
   } else if (s.proposal?.branch) {
@@ -226,7 +253,7 @@ export function formatRunnerKeySetup(s: RunnerKeySetup, branch: string): string 
  * - With `required` (the declaration's `ci.green.signedSince`) each of
  *   those refuses to start, as before #4156.
  *
- * A key that is not an Ed25519 private key in PEM, or a `--key` file that
+ * A key that is not an Ed25519 or ECDSA P-256 private key in PEM, or a `--key` file that
  * can't be read, refuses either way. `unsigned` (`--unsigned`) skips the
  * key without `required` and is ignored with it.
  */
@@ -254,7 +281,7 @@ export function ciServeRunnerKey(req: {
   try {
     publicKey = loadRunnerKey(pem).publicKey;
   } catch (err) {
-    throw new CiRunError(`the runner key from ${source} is not an Ed25519 private key in PEM: ${message(err)}`);
+    throw new CiRunError(`the runner key from ${source} is not ${RUNNER_KEY_WORDS}: ${message(err)}`);
   }
   const head = targetHead(req.top, req.branch);
   if (!head) {

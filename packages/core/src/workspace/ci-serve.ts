@@ -124,7 +124,7 @@ import { gitTop } from "./tree";
 import { readDeclaration } from "./declaration";
 import { servedBranches } from "./ci-branches";
 import { locateWorkspace } from "./which-chant";
-import { ciServeRunnerKey, formatRunnerKeySetup, setupRunnerKey } from "./ci-runner-key";
+import { ciServeRunnerKey, formatRunnerKeySetup, runnerKeyKind, setupRunnerKey } from "./ci-runner-key";
 import { hostReleaseTools, hostSigningRefusal, HostReleaseError, readReleaseRequests, releaseTagMatcher, runHostDispatch, runHostRelease, type HostDispatchResult, type HostReleaseRequest } from "./ci-serve-release";
 import { releaseWorkflowInputAt } from "./release-workflow";
 import { loadRunnerKey, sshFingerprint } from "./trust/dsse";
@@ -1302,8 +1302,9 @@ export function formatCiServeEvent(e: CiServeEvent): string {
 // ── The command ──────────────────────────────────────────────────────────────
 
 /**
- * `chant ci serve|run --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>]` (#4099):
- * make the host's runner key when there is none, print its public half on
+ * `chant ci serve|run --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>]` (#4099):
+ * make the host's runner key when there is none, of the kind `--key-type`
+ * names (#5470, default Ed25519), print its public half on
  * stdout, and say whether the target's head lists it. With --trust, commit
  * the runner entry on a branch of its own and push it for review.
  */
@@ -1313,6 +1314,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
   const top = gitTop(cwd);
   if (!top) throw new CiRunError("the runner key is kept in the repository's git directory, and this directory is not in a git repository");
   if (args.ciPrincipal !== undefined && !args.trustKey) throw new CiRunError("--principal names who --trust lists the key for; give --trust with it");
+  const kind = args.runnerKeyType !== undefined ? runnerKeyKind(args.runnerKeyType) : undefined;
   const branch = args.branch ?? "main";
   const setup = setupRunnerKey({
     top,
@@ -1321,6 +1323,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
     ...(args.ciPrincipal ? { principal: args.ciPrincipal } : {}),
     ...(args.trustKey ? { trust: true } : {}),
     ...(args.by ? { by: args.by } : {}),
+    ...(kind ? { kind } : {}),
   });
   console.log(setup.key.publicKey);
   console.error(formatRunnerKeySetup(setup, branch));
@@ -1328,7 +1331,7 @@ export function runnerKeySetupCommand(ctx: CommandContext): number {
 }
 
 const USAGE =
-  "chant ci serve --setup-key [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
+  "chant ci serve --setup-key [--key-type ed25519|ecdsa-p256] [--trust [--principal <name>]] [--state <dir>] [--branch <name>] | " +
   "chant ci serve --forge forgejo|github|git --repo <owner/repo> --env <env> [--interval <s>] [--max-jobs <n>] [--state <dir>] " +
   "[--author <login>]... [--once] [--rerun-failed] [--build-command <line>] [--land] [--release] [--gate <name>] [--wave-gate <name>] [--branch <name>] [--events-json] [--report-url <url>] [--no-status] [--status-url <url template>] " +
   "[--image <image>] [--before-script <line>]... [--pr-build] [--pr-build-command <line>] [--chant <command>] [--pass-env <NAME>]... [--secrets <file>] [--key <runner key.pem>] [--unsigned]";

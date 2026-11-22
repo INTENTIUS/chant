@@ -95,7 +95,7 @@ export async function signRecordsEvidence(
   try {
     runner = loadRunnerKey(req.keyPem);
   } catch (err) {
-    return { error: { code: "runner-key-invalid", message: `the key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}` } };
+    return { error: { code: "runner-key-invalid", message: `the key is not an Ed25519 or ECDSA P-256 private key in PEM: ${err instanceof Error ? err.message : String(err)}` } };
   }
   if (policy.signers.some((s) => s.key === runner.publicKey)) {
     return {

@@ -14,7 +14,7 @@ chant workspace evidence verify --envelope <file> [--at <rev>] [--base <rev>] [-
 
 ## Description
 
-Runner evidence is a statement by a CI job or a service that a check ran over a set of records at a given commit. chant writes it as an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md), with the predicate type `https://intentius.io/chant/runner-evidence/v1`, and wraps it in a [DSSE](https://github.com/secure-systems-lab/dsse) envelope signed with the runner's Ed25519 key.
+Runner evidence is a statement by a CI job or a service that a check ran over a set of records at a given commit. chant writes it as an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md), with the predicate type `https://intentius.io/chant/runner-evidence/v1`, and wraps it in a [DSSE](https://github.com/secure-systems-lab/dsse) envelope signed with the runner's key.
 
 | Part | Holds |
 |---|---|
@@ -43,10 +43,12 @@ Runner keys belong to a service or a CI identity, never to a person. They're lis
 
 These entries, and the keyless identities beside them, are the only trust roots for evidence. chant reads them from `.chant/trust.json` at the base revision, in the same policy as the signers file, and has no built-in key or certificate authority. A CI job can sign keyless from its OIDC identity instead of holding a key ([#4869](https://github.com/INTENTIUS/chant/issues/4869)): `keyless` lists the issuer and subject pattern of each identity and the trusted root they verify against, as [ci evidence](/chant/cli/ci/#keyless-from-the-jobs-oidc-identity) describes. `class` is `runner` for a CI job and `service` for a hosted service. A runner entry that uses a key or a principal listed in the signers file is refused, and so is a key the change adds. Two entries with the same key or the same principal are both refused, since either would leave it unclear who signed. When the signer history at base is broken, no runner key is trusted. `sign` refuses a signer's key and any key the policy at base doesn't list, and it prints the public half of the key so you can add it. Adding or removing a runner key changes `.chant/trust.json`, which is a protected write.
 
-A runner key is an Ed25519 private key in PEM. Keep it in the CI system's secret store:
+A runner key is an Ed25519 private key in PEM, or an ECDSA P-256 one, which signs with SHA-256 and is listed as an `ecdsa-sha2-nistp256` line. Keep it in the CI system's secret store:
 
 ```bash
 openssl genpkey -algorithm ed25519 -out runner.pem
+# or, ECDSA P-256
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out runner.pem
 ```
 
 ## Options
@@ -87,7 +89,7 @@ openssl genpkey -algorithm ed25519 -out runner.pem
 | `evidence-payload-type` | The payload type isn't `application/vnd.in-toto+json`. |
 | `evidence-statement-invalid` | The payload isn't a runner-evidence statement, or has a field it doesn't define. |
 | `evidence-runner-mismatch` | The statement names a runner other than the one whose key signed. |
-| `runner-key-invalid` | `sign` was given something other than an Ed25519 private key in PEM. |
+| `runner-key-invalid` | `sign` was given something other than an Ed25519 or ECDSA P-256 private key in PEM. |
 | `runner-key-is-signer` | `sign` was given a key the signers file lists. |
 | `runner-key-unlisted` | `sign` was given a key the policy at base doesn't list as a runner. |
 

@@ -43,6 +43,13 @@
  * (`image-base-pinned`, #5457, ./dockerfile-pins.ts). For each registry a
  * `release.images` entry's `pull` names, it checks that the username and
  * password variables are set (`image-pull-login`).
+ *
+ * Every report carries `crypto` (#5470, ../crypto-module.ts): the Node and
+ * OpenSSL the doctor runs on and whether in FIPS mode, printed under the
+ * header. In FIPS mode with SHA-256 or ECDSA P-256 not fetchable it adds a
+ * `crypto-module` warning. When the publish signs, `signing-cosign-build`
+ * names the cosign it would run and whether that is chant's pinned upstream
+ * build or one the job supplies through `CHANT_COSIGN`.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -115,6 +122,8 @@ export interface DoctorEnvironment {
 
 export interface DoctorReport {
   environment: DoctorEnvironment;
+  /** The crypto module this process runs on (#5470). */
+  crypto: import("../crypto-module").CryptoModuleReport;
   targets: DoctorTarget[];
   counts: Record<DoctorStatus, number>;
 }
@@ -137,6 +146,10 @@ export interface DoctorDeps {
   scanner?: Pick<import("./publish-scan").ReleaseScanner, "name" | "unavailable">;
   /** What reads whether the forge protects `chant/lifecycle` (#5469). Default: the forge's REST API, read-only. */
   lifecycleProtection?: (target: import("./lifecycle-protection").ProtectionTarget, fetch: import("../pr-forge").ForgeFetch) => Promise<import("./lifecycle-protection").LifecycleProtection>;
+  /** The crypto module's probes (#5470). Default: this process's. */
+  crypto?: import("../crypto-module").CryptoModuleDeps;
+  /** Which cosign signing would run (#5470). Default: `CHANT_COSIGN` or `cosign` on PATH, read and hashed; skipped when `signer` is given and this is not. */
+  cosignBinary?: (env: NodeJS.ProcessEnv) => import("../crypto-module").CosignBinary;
 }
 
 export const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
@@ -234,7 +247,7 @@ export async function releaseDoctor(req: {
     }
   }
   if (req.green === "forge-checks") targets.push(await checkForgeChecks(ctx, req.commit));
-  const signing = await checkSigning(ctx, req.publish, req.signing, req.groups ?? new Set(), deps.signer);
+  const signing = await checkSigning(ctx, req.publish, req.signing, req.groups ?? new Set(), deps.signer, deps.cosignBinary);
   if (signing) targets.push(signing);
   const scan = await checkScan(ctx, req.publish, req.scan, req.groups ?? new Set(), req.scanner, deps.scanner);
   if (scan) targets.push(scan);
@@ -244,10 +257,14 @@ export async function releaseDoctor(req: {
   if (pull) targets.push(pull);
   const lifecycle = await checkLifecycleBranch(ctx, req.groups ?? new Set(), deps.lifecycleProtection);
   if (lifecycle) targets.push(lifecycle);
+  const { cryptoModule, cryptoModuleBroken } = await import("../crypto-module");
+  const crypto = cryptoModule(deps.crypto);
+  const broken = cryptoModuleBroken(crypto);
+  if (broken) targets.push({ kind: "crypto", name: "crypto module", checks: [{ check: "crypto-module", status: "warn", message: broken, fix: "Load a FIPS provider that supplies SHA-256 and ECDSA P-256 in the OpenSSL config Node reads, or run without FIPS mode." }] });
   for (const t of targets) for (const c of t.checks) c.message = redactor.redact(c.message);
   const counts: Record<DoctorStatus, number> = { ok: 0, warn: 0, fail: 0, unknown: 0 };
   for (const t of targets) for (const c of t.checks) counts[c.status]++;
-  return { environment, targets, counts };
+  return { environment, crypto, targets, counts };
 }
 
 /**
@@ -363,6 +380,7 @@ async function checkSigning(
   config: import("./publish-signing").SigningConfig | undefined,
   groups: ReadonlySet<import("../workspace/security").SecurityGroup>,
   injected: DoctorDeps["signer"],
+  binary?: DoctorDeps["cosignBinary"],
 ): Promise<DoctorTarget | null> {
   const { resolveSigning, signingReadiness, signingIdentity, cosignSigner, KEYLESS_FIX } = await import("./publish-signing");
   const setting = resolveSigning(config, groups);
@@ -393,6 +411,13 @@ async function checkSigning(
   const signer = injected ?? cosignSigner(ctx.env, ctx.redactor);
   const gone = signer.unavailable();
   checks.push(gone ? missing(ctx, "signing-cosign", gone, "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it.") : { check: "signing-cosign", status: "ok", message: `${signer.name} signs` });
+  // #5470: which cosign build signs, so its crypto module can be named.
+  const which = binary ?? (injected ? undefined : (await import("../crypto-module")).cosignBinary);
+  if (!gone && which) {
+    const { describeCosignBinary } = await import("../crypto-module");
+    const c = which(ctx.env);
+    checks.push({ check: "signing-cosign-build", status: c.sha256 === null ? "unknown" : "ok", message: describeCosignBinary(c) });
+  }
   return { kind: "signing", name: "Sigstore signing", checks };
 }
 

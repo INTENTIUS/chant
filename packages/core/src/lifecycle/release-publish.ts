@@ -1033,6 +1033,8 @@ export async function runPublish(req: {
   const runId = resolveRunId(undefined, ctx.env).runId;
   // #5462: a publish a ci serve host ran names the host's runner key in each line.
   const runnerKey = ctx.env[(await import("./publish-signing")).RUNNER_FINGERPRINT_ENV] || undefined;
+  // #5470: the crypto module this publish's digests and signatures run on, read once.
+  const crypto = record ? (await import("../crypto-module")).cryptoRecord(ctx.env) : undefined;
   const progress = publishProgress(await readPublishRecords(release.releaseDigest, { cwd }).catch(() => []));
   let recordWarning: string | null = null;
 
@@ -1040,7 +1042,7 @@ export async function runPublish(req: {
     if (!record) return;
     try {
       await appendPublishRecord(
-        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, ...(scanned ? { scan: scanned } : {}), runId, ...(runnerKey ? { runnerKey } : {}), timestamp: now().toISOString() },
+        { version: 1, releaseDigest: release.releaseDigest, label, target: target.key, kind: target.kind, name: target.name, step, items, state, ...(scanned ? { scan: scanned } : {}), runId, ...(runnerKey ? { runnerKey } : {}), ...(crypto ? { crypto } : {}), timestamp: now().toISOString() },
         ctx.redactor,
         { cwd },
       );

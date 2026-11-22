@@ -1800,7 +1800,7 @@ const RUNNER_KEY_ENV = "CHANT_RUNNER_KEY";
  * What signs the run's record (#4044): the runner key `--key` names, or the
  * PEM in `CHANT_RUNNER_KEY`, checked against `.chant/trust.json` at `HEAD`.
  * Undefined when neither is given. Null, after printing why, when `--key`
- * is not a runner key, or either is not an Ed25519 PEM. A `CHANT_RUNNER_KEY`
+ * is not a runner key, or either is not an Ed25519 or P-256 PEM. A `CHANT_RUNNER_KEY`
  * that trust.json does not list leaves the run unsigned (#4156): quietly,
  * with a line under `--verbose`, unless `ci.green.signedSince` asks for
  * signed runs, which warns. The variable may be set for `ci tick` in a job
@@ -1823,7 +1823,7 @@ export async function runSignerFor(ctx: CommandContext): Promise<((record: OpRun
     loadRunnerKey(pem);
   } catch (err) {
     // A key that is there and is not one is an error either way: the caller asked to sign (#4156).
-    console.error(formatError({ message: `${fromFlag ? `--key ${ctx.args.key}` : RUNNER_KEY_ENV} is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}` }));
+    console.error(formatError({ message: `${fromFlag ? `--key ${ctx.args.key}` : RUNNER_KEY_ENV} is not an Ed25519 or ECDSA P-256 private key in PEM: ${err instanceof Error ? err.message : String(err)}` }));
     return null;
   }
   try {
