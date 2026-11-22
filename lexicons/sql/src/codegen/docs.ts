@@ -137,7 +137,13 @@ Postgres:
 - [The Postgres Pin and Supported Majors](./postgres-majors/): one pin per
   major, \`sql.postgresMajor\`, and moving a pin.
 
-Both dialects:
+MySQL:
+
+- [MySQL](./mysql/): declare a MySQL 8.0 or Aurora MySQL 3 schema, plan and
+  apply it, import one from a live server, and what differs from the other
+  dialects, MariaDB included.
+
+Every dialect:
 
 - [References and Lineage](./references-and-lineage/): how references become
   dependency order and column-level lineage.
@@ -164,7 +170,7 @@ const outputFormat = `A build writes two files, beside each other. Which pair de
 dialect the project declares.
 
 - The primary output (the \`-o\` file, \`dist/schema.json\` by convention), one
-  JSON document. \`dialect\` is \`clickhouse\` or \`postgres\`. \`applyOrder\`
+  JSON document. \`dialect\` is \`clickhouse\`, \`postgres\` or \`mysql\`. \`applyOrder\`
   lists the export names in the order the objects have to be created.
   \`objects\` holds one entry per declared object, in that order: its export
   name (\`export\`), its type, its SQL name (\`sqlName\`), its parsed
@@ -183,7 +189,11 @@ dialect the project declares.
     view's its \`query\`, \`reads\` and \`lineage\`; an index's its table,
     method and elements. \`dependsOn\` names the objects and the columns the
     statement references.
-- \`clickhouse.sql\` or \`postgres.sql\`: every statement in \`applyOrder\`, each
+  - MySQL: the types are \`MySQL::Database\`, \`::Table\` and \`::View\`. A
+    table's definition holds its columns, primary key, indexes, foreign keys,
+    checks and table options; a view's its \`select\`, \`reads\` and
+    \`lineage\`.
+- \`clickhouse.sql\`, \`postgres.sql\` or \`mysql.sql\`: every statement in \`applyOrder\`, each
   ending in \`;\`, written byte for byte as declared, with a Postgres
   template's \`COMMENT ON\` statements after its \`CREATE\`.
 

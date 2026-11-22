@@ -218,7 +218,7 @@ export const sqlPlugin: LexiconPlugin = {
       {
         name: "dialect",
         type: "string" as const,
-        description: "the DDL's dialect, clickhouse or postgres; read off its statements when omitted",
+        description: "the DDL's dialect, clickhouse, postgres or mysql; read off its statements when omitted",
       },
       {
         name: "from",
@@ -288,9 +288,14 @@ export const sqlPlugin: LexiconPlugin = {
   /** `chant import --from <env>`: the server's schema as declarations, from `SHOW CREATE` or the Postgres catalog's printers. */
   async exportResources(options) {
     const { resolveBindingDialect } = await import("./live-dialect");
-    if ((await resolveBindingDialect(options)) === "postgres") {
+    const dialect = await resolveBindingDialect(options);
+    if (dialect === "postgres") {
       const { exportResources } = await import("./postgres/import/live-export");
       return exportResources(options);
+    }
+    if (dialect === "mysql") {
+      const { exportMysqlResources } = await import("./mysql/import/live-export");
+      return exportMysqlResources(options);
     }
     const { exportResources } = await import("./clickhouse/import/live-export");
     return exportResources(options);

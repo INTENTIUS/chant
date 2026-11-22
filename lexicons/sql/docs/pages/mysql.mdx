@@ -1,0 +1,196 @@
+---
+title: "MySQL"
+label: "MySQL"
+description: "Declare a MySQL 8.0 or Aurora MySQL 3 schema with the database, table and view tags, plan and apply it with chant sql plan and sql-apply, and import one from a live server"
+diataxis: how-to
+group: "MySQL"
+order: 21
+---
+
+The MySQL dialect declares databases, tables and views for MySQL 8.0 and
+Aurora MySQL 3, at `@intentius/chant-lexicon-sql/mysql`. Its column types,
+storage engines, character sets and reserved words are the MySQL 8.0
+reference manual's, at 8.0.40.
+
+## Declaring
+
+```ts
+import { database, table, view } from "@intentius/chant-lexicon-sql/mysql";
+
+export const shop = database`CREATE DATABASE shop DEFAULT CHARACTER SET utf8mb4`;
+
+export const users = table`
+  CREATE TABLE ${shop}.users (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY users_email (email)
+  ) ENGINE = InnoDB COMMENT = 'people who buy'`;
+
+export const orders = table`
+  CREATE TABLE ${shop}.orders (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    total DECIMAL(10,2) NOT NULL DEFAULT 0,
+    CONSTRAINT orders_user FOREIGN KEY (user_id) REFERENCES ${users} (${users.columns.id}) ON DELETE CASCADE,
+    CHECK (total >= 0)
+  )`;
+
+export const paidOrders = view`
+  CREATE VIEW ${shop}.paid_orders AS
+  SELECT ${orders.columns.id}, ${orders.columns.total} FROM ${orders} WHERE total > 0`;
+```
+
+A table holds its keys, indexes, foreign keys and checks, as `SHOW CREATE
+TABLE` prints them: there is no separate index tag. Interpolations mean what
+they mean in the other dialects: an entity is a reference and renders as its
+name, `entity.columns.<name>` is a column reference, a string is SQL text, and
+`literal(value)` is a quoted string. Names quote with backquotes, and a string
+may be single- or double-quoted, as MySQL reads them without `ANSI_QUOTES`.
+
+A `.sql` file in the source directory is read the same way. A `CREATE INDEX`
+in it, on a table the file creates earlier, becomes a key in that table.
+
+The tags refuse, each with the reason:
+
+- `CREATE TEMPORARY TABLE`, `CREATE TABLE ... LIKE` and `CREATE TABLE ...
+  SELECT`;
+- `PARTITION BY`: chant does not plan partition changes;
+- a column's own `REFERENCES`, which MySQL parses and turns into no foreign
+  key; write `FOREIGN KEY (column) REFERENCES ...` as a table element;
+- `SERIAL`; write `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE`;
+- every `CREATE` that is not a database, table or view: triggers, stored
+  functions and procedures, events, users and roles. See
+  [Object Coverage](../object-coverage/).
+
+## MariaDB
+
+MariaDB is not read as MySQL. Its DDL differs: `JSON` is an alias of
+`LONGTEXT`, and it has sequences, system-versioned tables and its own column
+types. The tags refuse its own syntax by name (`CREATE OR REPLACE TABLE`,
+`CREATE VIEW IF NOT EXISTS`, a `PERSISTENT` generated column, `WITH SYSTEM
+VERSIONING`, `CREATE SEQUENCE`, `UUID`, `INET4` and `INET6` columns), and a
+plan, an apply or an import against a server whose `VERSION()` says MariaDB
+stops before it reads anything.
+
+## Binding a server
+
+```ts
+export default {
+  lexicons: ["sql"],
+  sql: {
+    dialect: "mysql",
+    profiles: {
+      prod: { url: "mysql://db.internal:3306/shop", user: { env: "MYSQL_USER" }, password: { env: "MYSQL_PASSWORD" } },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+A profile whose `url` is `mysql://` is a MySQL server. The database the URL
+names is where an unqualified declaration lives; `defaultDatabase` overrides
+it, and `databases` limits what import and the plan read. The password is
+named by its environment variable, or minted by a `command` token source. An
+environment with no profile falls back to `MYSQL_URL`, `MYSQL_USER` and
+`MYSQL_PASSWORD`.
+
+chant connects with `mysql2`, an optional peer dependency. A project that
+declares MySQL installs it beside the lexicon:
+
+```bash
+npm install mysql2
+```
+
+## Planning
+
+`chant sql plan <env> dist/schema.json` reads each object's `SHOW CREATE`
+from the server, parses it with the same parser as the declarations, and
+classifies every difference by the algorithm InnoDB uses for it:
+
+| Class | What it means |
+|---|---|
+| `instant` | Only the data dictionary changes: adding a column (added last), setting a default, a table comment, an index's visibility, replacing a view |
+| `inplace` | The table is changed or rebuilt in place while reads and writes go on: dropping a column, changing nullability, adding or dropping a secondary index, dropping a foreign key |
+| `copy` | The table is copied and writes wait: changing a column's type, character set or collation, changing the primary key, adding a foreign key or a check, changing the engine |
+| `create`, `drop` | A whole object |
+
+Each rule, `SQLMY200` to `SQLMY224`, cites the "Online DDL Operations" page
+of the reference manual. MySQL can make every one of these changes, so a
+MySQL plan refuses nothing and `chant sql plan` exits 0. `chant sql diff
+<before.json> <after.json>` classifies the same changes between two builds
+offline.
+
+The comparison is between canonical forms, so spellings MySQL treats as the
+same compare equal: `INTEGER` and `int`, `BOOL` and `tinyint(1)`, `NOW()` and
+`CURRENT_TIMESTAMP`, `DEFAULT 0` and `'0.00'` on a `DECIMAL(10,2)`, an
+unnamed key and the name MySQL gives it, the index InnoDB adds for a foreign
+key. What a declaration leaves out is not compared: a table's engine,
+character set, collation and row format, an index's `USING`, a view's
+`ALGORITHM` and `SQL SECURITY`. A view's definer and a table's
+`AUTO_INCREMENT` counter never are.
+
+A view's query is compared after its quotes, qualifiers, grouping parentheses
+and repeated aliases are taken off. When MySQL rewrites a query further than
+that, the plan shows the view as replaced, and applying it runs a `CREATE OR
+REPLACE VIEW` that leaves the view as it was.
+
+## Applying
+
+`sql-apply` plans a MySQL build and applies it the same way as a ClickHouse
+or Postgres build: the plan is decided first, planned again just before the
+apply, and nothing is sent if it moved.
+
+- A missing object is created from its declaration: databases first, then
+  tables, each after the tables its foreign keys reference, then views.
+- A table's changes run as at most three statements: a `RENAME TABLE` for a
+  `-- previously: <old name>` hint, an `ALTER TABLE` dropping the foreign keys
+  and checks that change or go, and one `ALTER TABLE` with every other change.
+  A view's change is `CREATE OR REPLACE VIEW`, a database's `ALTER DATABASE`.
+- MySQL commits each DDL statement on its own. When one fails, the object is
+  reported failed with the statements that ran before it, the rest of the
+  apply goes on, and the apply ends in an error carrying what happened.
+- A change that drops a column waits for `prune`.
+- chant's ownership marker is a trailer on a table's comment, as in the other
+  dialects. With `prune`, a table the build no longer declares is dropped only
+  when its comment carries this project's stack and env. A view and a database
+  have no comment to carry a marker, so neither is ever dropped: drop one by
+  hand when the build stops declaring it.
+
+## Importing
+
+```bash
+chant import --from prod --output src/
+chant import schema.sql --parser-option dialect=mysql
+```
+
+`chant import --from <env>` writes the server's databases, tables and views as
+`database`, `table` and `view` declarations in one `schema.ts`, from each
+object's `SHOW CREATE`. A name of another imported object becomes a reference
+to its export, so dependency order survives. What the server adds and an
+author would not write is left out: the `AUTO_INCREMENT` counter, `DEFAULT
+NULL`, a view's `ALGORITHM = UNDEFINED`, `DEFINER` and `SQL SECURITY DEFINER`.
+`--verbatim` keeps them. chant's marker is never written into a declaration.
+
+A trigger, a stored routine, an event or a partitioned table fails the
+import, naming each one; `--skip-undeclarable` imports the rest and lists
+them. A table a migration tool keeps (`schema_migrations`,
+`_prisma_migrations`, `flyway_schema_history`) is left out with a warning.
+`--owned` imports only the tables that carry chant's marker.
+
+A file of DDL with an InnoDB or MyISAM engine, or mysqldump's `/*!40101 ...
+*/` version comments, is read as MySQL without the option.
+
+## What differs from the other dialects
+
+- Indexes, foreign keys and checks belong to their table's declaration.
+- DDL is not transactional: a table's changes are one `ALTER TABLE`, which
+  MySQL runs as one operation, but two objects are never changed together.
+- Nothing is refused for a migration Op: every change MySQL can make in place
+  or by copying the table is applied, and the class says what it costs.
+- `chant lifecycle diff --live` reads whether each declared object exists;
+  `chant sql plan` compares its definition.
+- `chant sql types` types each column as the value `mysql2` returns when told
+  to keep big numbers and dates exact: `BIGINT` and `DECIMAL` as strings, an
+  `ENUM` as its values.
+- `effect()` receipts are kept on a ClickHouse or Postgres server; a MySQL
+  environment keeps none.

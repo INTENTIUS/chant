@@ -31,6 +31,7 @@ import { resolveSourceDir } from "@intentius/chant/config";
 import { SQL_DIALECTS, type SqlDialect } from "../dialects";
 import { isPostgresObject } from "../postgres/entities";
 import { isClickHouseObject } from "../clickhouse/entities";
+import { isMysqlObject } from "../mysql/entities";
 import { sqlFileEntities } from "../sql-files";
 
 /** `-- chant-discovery-skip` on a line of its own, near the top. */
@@ -56,6 +57,7 @@ export function filesDialect(entities: ReadonlyMap<string, Declarable> | undefin
   for (const e of entities?.values() ?? []) {
     if (isPostgresObject(e)) return "postgres";
     if (isClickHouseObject(e)) return "clickhouse";
+    if (isMysqlObject(e)) return "mysql";
   }
   const dialect = (config.sql as { dialect?: unknown } | undefined)?.dialect;
   if (typeof dialect === "string" && (SQL_DIALECTS as readonly string[]).includes(dialect)) return dialect as SqlDialect;

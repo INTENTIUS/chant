@@ -38,6 +38,9 @@ import { PostgresGenerator, postgresTemplates, type PgTemplateItem, type Templat
 import { ClickHouseGenerator, clickhouseTemplates } from "./clickhouse/import/generator";
 import { isPostgresObject } from "./postgres/entities";
 import { isClickHouseObject } from "./clickhouse/entities";
+import { readMysql } from "./files/mysql";
+import { MysqlGenerator, mysqlExportNames, mysqlObjectsToIR, mysqlTemplates, type ImportedMysqlObject } from "./mysql/import/generator";
+import { isMysqlObject, mysqlTag } from "./mysql/entities";
 
 export { SqlFileError };
 export type { ReadOptions as SqlFileOptions };
@@ -69,7 +72,7 @@ export interface SqlFileSource extends ReadOptions {
   ddl: string;
 }
 
-type Imported = ImportedPgObject | ImportedObject;
+type Imported = ImportedPgObject | ImportedObject | ImportedMysqlObject;
 
 const qualifierOf = (o: Imported): string | undefined => ("schema" in o ? o.schema : "database" in o ? o.database : undefined);
 const qualifiedName = (o: Imported): string => (qualifierOf(o) ? `${qualifierOf(o)}.${o.name}` : o.name);
@@ -78,7 +81,8 @@ function readObjects(dialect: SqlDialect, sources: readonly SqlFileSource[]): Ar
   const out: Array<Imported & FileLine & { origin: string }> = [];
   for (const source of sources) {
     const problems: string[] = [];
-    const objects = dialect === "postgres" ? readPostgres(source.ddl, source, problems) : readClickHouse(source.ddl, source, problems);
+    const objects: Array<Imported & FileLine> =
+      dialect === "postgres" ? readPostgres(source.ddl, source, problems) : dialect === "mysql" ? readMysql(source.ddl, source, problems) : readClickHouse(source.ddl, source, problems);
     if (problems.length > 0) throw new SqlFileError(source.origin, problems);
     out.push(...objects.map((o) => ({ ...o, origin: source.origin })));
   }
@@ -90,6 +94,7 @@ const fileMeta = (o: FileLine): FileLine => ({ ...(o.line !== undefined ? { line
 
 /** Export names for objects read from files, unique across them. */
 function namesFor(dialect: SqlDialect, objects: readonly Imported[]): string[] {
+  if (dialect === "mysql") return mysqlExportNames(objects as ImportedMysqlObject[]);
   return dialect === "postgres" ? pgExportNames(objects as ImportedPgObject[]) : chExportNames(objects as ImportedObject[]);
 }
 
@@ -107,8 +112,14 @@ export function readSqlFile(dialect: SqlDialect, ddl: string, options: ReadOptio
 export function sqlFileDeclarations(dialect: SqlDialect, ddl: string, options: ReadOptions & { header?: string }): { content: string; objects: SqlFileObject[] } {
   const objects = readObjects(dialect, [{ ...options, ddl }]);
   if (objects.length === 0) throw new SqlFileError(options.origin, ["the DDL creates no objects"]);
-  const ir = dialect === "postgres" ? pgObjectsToIR(objects as ImportedPgObject[]) : chObjectsToIR(objects as ImportedObject[]);
-  const files = dialect === "postgres" ? new PostgresGenerator(options.header).generate(ir) : new ClickHouseGenerator(options.header).generate(ir);
+  const ir =
+    dialect === "postgres" ? pgObjectsToIR(objects as ImportedPgObject[]) : dialect === "mysql" ? mysqlObjectsToIR(objects as ImportedMysqlObject[]) : chObjectsToIR(objects as ImportedObject[]);
+  const files =
+    dialect === "postgres"
+      ? new PostgresGenerator(options.header).generate(ir)
+      : dialect === "mysql"
+        ? new MysqlGenerator(options.header).generate(ir)
+        : new ClickHouseGenerator(options.header).generate(ir);
   const [file] = files;
   if (!file) throw new SqlFileError(options.origin, ["the DDL creates no objects"]);
   return {
@@ -145,12 +156,13 @@ function targetOf(dialect: SqlDialect, exportName: string, entity: Declarable): 
 }
 
 function templates(dialect: SqlDialect, items: readonly PgTemplateItem[], targets: readonly PgTemplateItem[]): { order: PgTemplateItem[]; bodies: Map<string, TemplateBody> } {
+  if (dialect === "mysql") return mysqlTemplates(items, targets) as { order: PgTemplateItem[]; bodies: Map<string, TemplateBody> };
   return dialect === "postgres" ? postgresTemplates(items, targets) : (clickhouseTemplates(items, targets) as { order: PgTemplateItem[]; bodies: Map<string, TemplateBody> });
 }
 
 /** The entities of one dialect in a set, by export name. */
 function ofDialect(dialect: SqlDialect, entities: ReadonlyMap<string, Declarable> | undefined): Map<string, Declarable> {
-  const is = dialect === "postgres" ? isPostgresObject : isClickHouseObject;
+  const is = dialect === "postgres" ? isPostgresObject : dialect === "mysql" ? isMysqlObject : isClickHouseObject;
   return new Map([...(entities ?? new Map<string, Declarable>())].filter(([, e]) => is(e)));
 }
 
@@ -191,7 +203,7 @@ export function sqlFileEntities(dialect: SqlDialect, sources: readonly SqlFileSo
   const { order, bodies } = templates(dialect, items, [...items, ...knownItems]);
   const built = new Map<string, Declarable>();
   const failed = new Set<string>();
-  const tagOf = dialect === "postgres" ? postgresTag : clickhouseTag;
+  const tagOf = dialect === "postgres" ? postgresTag : dialect === "mysql" ? mysqlTag : clickhouseTag;
   for (const it of order) {
     const body = bodies.get(it.exportName)!;
     const values = body.refs.map((r) => built.get(r) ?? known.get(r));
