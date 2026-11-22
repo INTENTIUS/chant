@@ -18,6 +18,7 @@ import type { OpWavesSpec } from "@intentius/chant/op/op-waves";
 import {
   createSqlApplyCapability,
   createSqlMigrateCapability,
+  MYSQL_NO_APPLIER,
   sqlCapabilityPlugin,
   sqlMigrateFiles,
   wavePlanDestructive,
@@ -262,7 +263,7 @@ describe("sql-migrate against a fake yodel binary", () => {
 });
 
 describe("sql-apply", () => {
-  const build = (dialect: "clickhouse" | "postgres") => {
+  const build = (dialect: "clickhouse" | "postgres" | "mysql") => {
     const cwd = scratch();
     const path = join(cwd, "schema.json");
     writeJson(path, { dialect });
@@ -279,6 +280,20 @@ describe("sql-apply", () => {
     holes: [],
     problems: [],
     ...over,
+  });
+
+  test("a mysql build has no planner or applier, and sql-apply says so before it plans or applies anything (#5449)", async () => {
+    const path = build("mysql");
+    let called = 0;
+    const cap = createSqlApplyCapability({
+      plan: async () => (called++, plan()),
+      apply: async () => (called++, { applied: [], pruned: [], notAttempted: [] }),
+    });
+    await expect(cap.plan!({ env: "prod", component: "db" }, { environment: "prod", build: path })).rejects.toThrow(/a mysql build has no planner or applier/);
+    await expect(cap.run({ env: "prod", component: "db", plans: { prod: { kind: "sql-apply", environment: "prod", dialect: "mysql", planDigest: "x" } } }, { environment: "prod", build: path })).rejects.toThrow(/mysql build has no planner/);
+    expect(called).toBe(0);
+    // The default planner and applier refuse it the same way.
+    await expect(createSqlApplyCapability().plan!({ env: "prod", component: "db" }, { environment: "prod", build: path })).rejects.toThrow(MYSQL_NO_APPLIER);
   });
 
   test("plans the build against the server as one entry per object, and applies the decided plan", async () => {

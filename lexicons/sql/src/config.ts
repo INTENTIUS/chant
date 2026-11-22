@@ -183,12 +183,12 @@ export const sqlProfileSchema = z.strictObject({
 
 const dialectName = z.enum(SQL_DIALECTS);
 
-/** Why a `dialect` value is refused: a planned dialect is "not implemented yet", anything else unknown. */
+/** Why a `dialect` value is refused: a dialect with types only cannot be declared, anything else is unknown. */
 function dialectError(input: unknown): string {
   const names = Array.isArray(input) ? input : [input];
   const planned = names.find((n): n is string => typeof n === "string" && (PLANNED_SQL_DIALECTS as readonly string[]).includes(n));
   if (planned !== undefined) {
-    return `the ${planned} dialect is not implemented yet; the implemented dialects are ${SQL_DIALECTS.join(", ")}`;
+    return `the ${planned} dialect has generated types and no declarations, so it cannot be set here; the dialects that can be declared are ${SQL_DIALECTS.join(", ")}`;
   }
   return `expected a dialect (${SQL_DIALECTS.join(", ")}) or a non-empty list of them`;
 }

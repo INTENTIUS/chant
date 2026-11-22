@@ -60,8 +60,15 @@ describe("the sql config namespace", () => {
 
   test("refuses any other name as unknown", () => {
     const message = (dialect: unknown) => sqlConfigSchema.safeParse({ dialect }).error?.issues[0]?.message;
-    expect(message("mysql")).toBe("expected a dialect (clickhouse, postgres) or a non-empty list of them");
-    expect(message(["postgres", "mysql"])).toBe("expected a dialect (clickhouse, postgres) or a non-empty list of them");
+    expect(message("oracle")).toBe("expected a dialect (clickhouse, postgres) or a non-empty list of them");
+    expect(message(["postgres", "oracle"])).toBe("expected a dialect (clickhouse, postgres) or a non-empty list of them");
+  });
+
+  test("refuses mysql as a dialect with generated types and no declarations (#5449)", () => {
+    const message = (dialect: unknown) => sqlConfigSchema.safeParse({ dialect }).error?.issues[0]?.message;
+    const want = "the mysql dialect has generated types and no declarations, so it cannot be set here; the dialects that can be declared are clickhouse, postgres";
+    expect(message("mysql")).toBe(want);
+    expect(message(["postgres", "mysql"])).toBe(want);
   });
 
   test("refuses an unknown key rather than ignoring it", () => {

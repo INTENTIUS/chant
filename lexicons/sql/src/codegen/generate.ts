@@ -33,6 +33,8 @@ import { renderClickHouseModule } from "./clickhouse-module";
 import { buildRegistry } from "./registry";
 import { fetchCatalogs, type FetchCatalogsOptions } from "../spec/postgres-fetch";
 import { renderPostgresModule, type RenderedPostgresModule } from "./postgres-module";
+import { readMysqlCatalog } from "../spec/mysql-fetch";
+import { renderMysqlModule, type RenderedMysqlModule } from "./mysql-module";
 
 export type { GenerateResult };
 
@@ -110,8 +112,16 @@ export async function generatePostgres(opts: PostgresGenerateOptions = {}): Prom
   return renderPostgresModule(catalogs);
 }
 
+/**
+ * Generate the MySQL types (#5449) from the committed catalog snapshot
+ * (`src/spec/mysql-catalog-<major>.snapshot.json`). No server is started.
+ */
+export function generateMysql(): RenderedMysqlModule {
+  return renderMysqlModule(readMysqlCatalog());
+}
+
 /** Write the generated files under `src/generated/`. */
-export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string, postgres?: RenderedPostgresModule): void {
+export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string, postgres?: RenderedPostgresModule, mysql?: RenderedMysqlModule): void {
   const baseDir = pkgDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   writeGeneratedArtifacts({
     baseDir,
@@ -121,6 +131,7 @@ export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string, pos
       "clickhouse-types.ts": result.typesDTS,
       "clickhouse.ts": result.indexTS,
       ...(postgres ? { "postgres-types.ts": postgres.declarations, "postgres.ts": postgres.tables } : {}),
+      ...(mysql ? { "mysql-types.ts": mysql.declarations, "mysql.ts": mysql.tables } : {}),
     },
   });
 }
