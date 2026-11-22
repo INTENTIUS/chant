@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { parseArmSchema } from "./parse";
+import { AZURE_SCHEMA_COMMIT } from "./fetch";
 import { getCachePath, explodeProviderSchema, type ArmProviderSchema } from "./fetch";
 
 describe("fetchArmSchemas", () => {
@@ -84,5 +88,33 @@ describe("explodeProviderSchema (#1545)", () => {
     // The later file still contributes resources the first one lacked
     const policy = parseEntry(out, "Microsoft.Authorization/policyAssignments");
     expect(policy.apiVersion).toBe("2026-06-01");
+  });
+});
+
+describe("the pin", () => {
+  it("is a full commit sha", () => {
+    expect(AZURE_SCHEMA_COMMIT).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+// A provider file from the pin after upstream retired its AutoRest generator
+// (Microsoft.Advisor 2026-10-01, copied whole): the definitions use the `oneOf`
+// with a common-types expression ref that the generated files now carry.
+describe("a provider file from the current pin (#5454)", () => {
+  const file = JSON.parse(
+    readFileSync(join(__dirname, "testdata", "Microsoft.Advisor.2026-10-01.json"), "utf-8"),
+  ) as ArmProviderSchema;
+
+  it("explodes into one entry per resource and parses", () => {
+    const out = new Map<string, Buffer>();
+    explodeProviderSchema("Microsoft.Advisor", "2026-10-01", file, out);
+    expect([...out.keys()].sort()).toEqual([
+      "Microsoft.Advisor/configurations",
+      "Microsoft.Advisor/recommendations_suppressions",
+    ]);
+    const parsed = parseArmSchema(out.get("Microsoft.Advisor/configurations")!);
+    expect(parsed.resource.typeName).toBe("Microsoft.Advisor/configurations");
+    expect(parsed.resource.properties.length).toBeGreaterThan(0);
+    expect(parsed.propertyTypes.some((p) => p.name.includes("ConfigDataProperties"))).toBe(true);
   });
 });

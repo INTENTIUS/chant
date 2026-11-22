@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSchemaPath, latestVersionPerProvider, compareApiDates } from "./api-versions";
+import { parseSchemaPath, latestVersionPerProvider, compareApiDates, PROVIDER_VERSION_OVERRIDES } from "./api-versions";
 
 describe("parseSchemaPath", () => {
   it("parses a valid schema path", () => {
@@ -108,5 +108,32 @@ describe("PROVIDER_VERSION_OVERRIDES", () => {
     const result = latestVersionPerProvider(paths);
     expect(result.get("Microsoft.Management")?.map((f) => f.apiVersion)).toEqual(["2023-04-01"]);
     expect(result.get("Microsoft.Subscription")?.map((f) => f.apiVersion)).toEqual(["2021-10-01"]);
+  });
+});
+
+describe("providers whose newest file is a delta (#5454)", () => {
+  it("takes the newest Microsoft.Network file first and fills from the older dates", () => {
+    const paths = [
+      "schemas/2018-08-01/Microsoft.Network.json",
+      "schemas/2026-03-01/Microsoft.Network.json",
+      "schemas/2026-04-01/Microsoft.Network.json",
+      "schemas/2026-10-01-preview/Microsoft.Network.json",
+      "schemas/2026-09-01/Microsoft.Network.json",
+    ];
+    const result = latestVersionPerProvider(paths);
+    expect(result.get("Microsoft.Network")?.map((f) => f.apiVersion)).toEqual([
+      "2026-10-01-preview",
+      "2026-04-01",
+      "2026-03-01",
+      "2018-08-01",
+    ]);
+  });
+
+  it("lists every pin newest first, so a resource takes its newest definition", () => {
+    for (const [provider, versions] of Object.entries(PROVIDER_VERSION_OVERRIDES)) {
+      if (provider === "Microsoft.Authorization" || provider === "Microsoft.Compute" || provider === "Microsoft.Resources") continue;
+      const sorted = [...versions].sort((a, b) => compareApiDates(b, a));
+      expect(versions, provider).toEqual(sorted);
+    }
   });
 });

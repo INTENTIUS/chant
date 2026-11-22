@@ -110,3 +110,43 @@ describe("resolverFor reads every page of tags when tagVersion is set", () => {
     expect(urls[0]).toContain("per_page=50");
   });
 });
+
+describe("resolverFor with kind commits (#5454)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const commitPin = (branch?: string): UpstreamPin => ({
+    file: "src/spec/fetch.ts",
+    pattern: /x/,
+    replace: (v, l) => l + v,
+    upstream: { owner: "Azure", repo: "azure-resource-manager-schemas", kind: "commits", ...(branch ? { branch } : {}) },
+  });
+
+  test("reads the sha at the head of main", async () => {
+    const sha = "d15606ff" + "0".repeat(32);
+    const calls: Array<{ url: string; accept: string | undefined }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+        calls.push({ url, accept: init?.headers?.Accept });
+        return new Response(`${sha}\n`, { status: 200 });
+      }),
+    );
+    expect(await resolverFor(commitPin(), "0085cb6f")()).toBe(sha);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("https://api.github.com/repos/Azure/azure-resource-manager-schemas/commits/main");
+    expect(calls[0]!.accept).toBe("application/vnd.github.sha");
+  });
+
+  test("follows the named branch, and an answer that is not a sha is no head", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        return new Response("not a sha", { status: 200 });
+      }),
+    );
+    expect(await resolverFor(commitPin("dev"), "x")()).toBeNull();
+    expect(urls[0]).toMatch(/\/commits\/dev$/);
+  });
+});

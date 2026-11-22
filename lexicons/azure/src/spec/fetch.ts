@@ -99,17 +99,20 @@ export interface ArmSchemaDefinition {
  * nondeterministically, depending on which runner's cache was warm.
  *
  * Pinning to a commit SHA makes generation reproducible regardless of cache
- * state. Bump policy: #523's scheduled lexicon-upgrade cron (rolling-spec
- * bucket, sub-issue #526) is meant to propose bumps to this constant as a
- * reviewable PR once built. Until then, bump by hand: take the current
- * `main` HEAD sha from
- * https://github.com/Azure/azure-resource-manager-schemas/commits/main,
- * regenerate, fix up any composite left referencing a renamed or vanished
- * export (adding a PROVIDER_VERSION_OVERRIDES entry if a resource dropped
- * out of the naive "latest by date" pick), and update this constant +
- * comment.
+ * state. A commit sha already addresses the whole tree by content, so unlike
+ * aws (`AWS_SPEC_PIN`, whose archive has no version in its path) there is no
+ * separate content digest to keep beside it.
+ *
+ * Bump policy: the weekly `azure-upgrade` Op reads this pin through the
+ * plugin's `upstreamPin` (`kind: "commits"`), compares it with the head of
+ * Azure/azure-resource-manager-schemas `main`, and opens the bump as a pull
+ * request with the surface delta. To bump by hand, set the constant to that
+ * head, regenerate, fix up any composite left referencing a renamed or
+ * vanished export (adding a PROVIDER_VERSION_OVERRIDES entry if a resource
+ * dropped out of the naive "latest by date" pick), and accept the surface
+ * with `chant dev surface-diff lexicons/azure --update-snapshot --bump`.
  */
-export const AZURE_SCHEMA_COMMIT = "0085cb6f3a98e735359807143bcb1667aeec930f";
+export const AZURE_SCHEMA_COMMIT = "d15606ffeb7eb87642decae9daf5aab5b3bbee30";
 
 const TARBALL_URL = `https://github.com/Azure/azure-resource-manager-schemas/archive/${AZURE_SCHEMA_COMMIT}.tar.gz`;
 const CACHE_DIR = join(homedir(), ".chant");

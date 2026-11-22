@@ -415,9 +415,28 @@ async function latestGitHubRelease(
   return pickLatest(items, kind, opts);
 }
 
+/**
+ * The sha at the head of a branch, for an upstream with no releases or tags
+ * (`UpstreamPin.upstream.kind: "commits"`). The `sha` media type answers with
+ * the bare 40-character sha.
+ */
+async function latestGitHubCommit(owner: string, repo: string, branch: string): Promise<string | null> {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github.sha",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const url = `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`;
+  const resp = await fetchWithRetry(url, 4, 1000, { headers });
+  const sha = (await resp.text()).trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
 /** Build the real GitHub-backed upstream resolver from a lexicon's declared `upstream` descriptor. */
 export function resolverFor(pin: UpstreamPin, from: string): UpstreamResolver {
-  const { owner, repo, kind, tagSuffix, tagVersion, trackMajor } = pin.upstream;
+  const { owner, repo, kind, tagSuffix, tagVersion, trackMajor, branch } = pin.upstream;
+  if (kind === "commits") return () => latestGitHubCommit(owner, repo, branch ?? "main");
   return () =>
     latestGitHubRelease(owner, repo, kind, { tagSuffix, tagVersion, sameMajorAs: trackMajor ? from : undefined });
 }
@@ -518,7 +537,9 @@ async function checkOnePin(labeled: LabeledPin, opts: CheckPinnedUpgradeOptions,
 
   // The pin may hold the raw tag (REL_18_6) where the resolver returns the mapped version (18.6).
   const fromVersion = parseVersion(from) ? from : (pin.upstream.tagVersion?.(from) ?? from);
-  if (!latestTag || !isNewer(latestTag, fromVersion)) {
+  // A commit pin has no order: any head other than the pinned sha is the upgrade.
+  const newer = pin.upstream.kind === "commits" ? latestTag !== null && latestTag !== from : latestTag !== null && isNewer(latestTag, fromVersion);
+  if (!latestTag || !newer) {
     return {
       lexicon,
       ...tag,

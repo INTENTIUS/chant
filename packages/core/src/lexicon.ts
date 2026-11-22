@@ -511,8 +511,14 @@ export interface UpstreamPin {
   readonly upstream: {
     readonly owner: string;
     readonly repo: string;
-    /** `releases` = published releases; `tags` = every git tag. */
-    readonly kind: "releases" | "tags";
+    /**
+     * `releases` = published releases; `tags` = every git tag; `commits` =
+     * the head of `branch`, for an upstream that publishes neither (the pin
+     * then holds a commit sha, and any other head is an upgrade).
+     */
+    readonly kind: "releases" | "tags" | "commits";
+    /** With `kind: "commits"`: the branch whose head is the upstream. Default `main`. */
+    readonly branch?: string;
     /** Only consider tags ending with this suffix (e.g. "-ee" for GitLab). */
     readonly tagSuffix?: string;
     /**

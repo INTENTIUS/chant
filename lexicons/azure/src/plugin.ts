@@ -41,6 +41,14 @@ export const azurePlugin: LexiconPlugin = {
   ownershipChannel: { keys: AZURE_TAG_OWNERSHIP_KEYS, reads: ["exportResources"] },
   emulator: FLOCI_AZ_EMULATOR,
   auditCatalog: () => azureAuditCatalog,
+  // Self-upgrade (#5454): the ARM schemas repo has no releases or tags, so the
+  // pin is a commit and the upstream is the head of its main branch.
+  upstreamPin: {
+    file: "src/spec/fetch.ts",
+    pattern: /export const AZURE_SCHEMA_COMMIT\s*=\s*"([0-9a-f]{40})"/,
+    replace: (v, line) => line.replace(/"[0-9a-f]{40}"/, `"${v}"`),
+    upstream: { owner: "Azure", repo: "azure-resource-manager-schemas", kind: "commits", branch: "main" },
+  },
   serializer: azureSerializer,
   // References written as ARM expressions (resourceId, reference, listKeys) as graph edges (#4232).
   graphEdges: (entities) => azureGraphEdges(entities),

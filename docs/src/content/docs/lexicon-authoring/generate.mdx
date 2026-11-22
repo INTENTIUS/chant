@@ -269,13 +269,14 @@ upstreamPin: {
 | `pattern` | Regex whose **first capture group** is the current version |
 | `label` | Optional on a lone `upstreamPin`, required on every `upstreamPins` entry. The short name (`clickhouse`, `postgres-17`) you pass to `pinned-upgrade` to check one pin |
 | `replace(v, line)` | Rebuild a matched line with the new version |
-| `upstream.kind` | `releases` for published releases, `tags` for every git tag |
+| `upstream.kind` | `releases` for published releases, `tags` for every git tag, `commits` for the head of a branch when the upstream publishes neither. A commit pin holds a sha, and any other head is an upgrade |
+| `upstream.branch` | With `commits`: the branch to follow, default `main` |
 | `upstream.tagSuffix` | Only consider tags with this suffix — gitlab uses `-ee`, sql uses `-lts` |
 | `upstream.tagVersion` | Optional `(tag) => string \| null`. Maps a raw tag to the version the pin stores, or returns `null` to skip the tag. For upstreams whose tags are not versions |
 | `upstream.trackMajor` | Optional, default `false`. Only consider versions whose first number equals the pinned version's, for a lexicon that pins one snapshot per major |
 | `alsoMoves` | Optional. Set when other constants move with the version and `replace` cannot compute them. The tooling reports the new version and this text, and edits nothing |
 
-k8s, k3s, gcp, gitlab, docker, cedar and sql declare one. `checkPinnedUpgrade`
+k8s, k3s, gcp, gitlab, docker, cedar, sql and azure declare one (azure's follows the head of Azure/azure-resource-manager-schemas, which has no releases). `checkPinnedUpgrade`
 (`packages/core/src/codegen/pinned-upgrade.ts`) uses it to report an available
 upgrade and apply it. It then regenerates and reverts cleanly if the
 regeneration fails, which is why `replace` exists in place of a blind string

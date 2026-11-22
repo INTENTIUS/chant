@@ -13,9 +13,9 @@
  * lands on the Op itself (#2120).
  *
  * Lexicon classification (which check the activity dispatches to):
- *   ROLLING {aws, azure, github, fly}  → checkRollingUpgrade
+ *   ROLLING {aws, github, fly}         → checkRollingUpgrade
  *   PINNED  any other lexicon whose plugin declares `upstreamPin`
- *           (k8s, k3s, gcp, docker, gitlab, cedar, sql, ...) → checkPinnedUpgrade
+ *           (k8s, k3s, gcp, docker, gitlab, cedar, sql, azure, ...) → checkPinnedUpgrade
  * The pinned set is discovered from the plugin at run time, the way `chant dev
  * pinned-upgrade` does. A pin that moves with other constants (`alsoMoves`, as
  * sql's version plus digest) is report-only. helm / forgejo are excluded: no
