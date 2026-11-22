@@ -48,6 +48,12 @@
             "version": 1,
             "kind": "pending",
             "approvalMode": "ledger",
+            "wave": {
+              "number": 1,
+              "name": "layer",
+              "op": "tf-apply",
+              "environment": "layer"
+            },
             "op": "tf-apply",
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
@@ -67,6 +73,12 @@
             "version": 1,
             "kind": "pending",
             "approvalMode": "ledger",
+            "wave": {
+              "number": 1,
+              "name": "layer",
+              "op": "tf-apply",
+              "environment": "layer"
+            },
             "op": "tf-apply",
             "gate": "wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
@@ -191,6 +203,12 @@
         "version": 1,
         "kind": "pending",
         "approvalMode": "ledger",
+        "wave": {
+          "number": 1,
+          "name": "layer",
+          "op": "tf-apply",
+          "environment": "layer"
+        },
         "op": "tf-apply",
         "gate": "wave-1",
         "timestamp": "2026-10-11T00:00:00.000Z",

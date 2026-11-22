@@ -34,6 +34,12 @@
             "version": 1,
             "kind": "pending",
             "approvalMode": "sealed",
+            "wave": {
+              "number": 2,
+              "name": "staging",
+              "op": "migrations",
+              "environment": "staging"
+            },
             "op": "migrations",
             "gate": "migrations-wave-2",
             "timestamp": "2026-10-11T00:00:00.000Z",
@@ -53,6 +59,12 @@
             "version": 1,
             "kind": "pending",
             "approvalMode": "sealed",
+            "wave": {
+              "number": 2,
+              "name": "staging",
+              "op": "migrations",
+              "environment": "staging"
+            },
             "op": "migrations",
             "gate": "migrations-wave-2",
             "timestamp": "2026-10-11T00:00:00.000Z",
@@ -122,6 +134,12 @@
         "version": 1,
         "kind": "pending",
         "approvalMode": "sealed",
+        "wave": {
+          "number": 2,
+          "name": "staging",
+          "op": "migrations",
+          "environment": "staging"
+        },
         "op": "migrations",
         "gate": "migrations-wave-2",
         "timestamp": "2026-10-11T00:00:00.000Z",

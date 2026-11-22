@@ -786,6 +786,8 @@ describe("a product's wave gate moved onto the waves (#3821)", () => {
     expect(gates.appended[0]).toMatchObject({ commit: "c".repeat(40), members, description: "wave 1 of 3: vpc, dns, nat", neverOverMcp: true, gate: "wave-1", op: "tf-apply" });
     // #3861: the approval mode the wave asked under, and a plans file may not set it.
     expect(gates.appended[0]).toMatchObject({ approvalMode: "ledger" });
+    // #5480: the wave and the environment it applies to, the wave's name when the spec has no labels.Env.
+    expect(gates.appended[0]).toMatchObject({ wave: { number: 1, name: tg.waves[0]!.name, op: "tf-apply", environment: tg.waves[0]!.name } });
     h.done();
 
     const mode = harness(plans, { pending: { approvalMode: "sealed" } });

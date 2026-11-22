@@ -99,7 +99,8 @@
             "wave": {
               "number": 1,
               "name": "net",
-              "op": "tf-apply"
+              "op": "tf-apply",
+              "environment": "net"
             },
             "heldBy": {
               "hook": "migrate",
@@ -240,7 +241,8 @@
             "wave": {
               "number": 1,
               "name": "net",
-              "op": "tf-apply"
+              "op": "tf-apply",
+              "environment": "net"
             },
             "heldBy": {
               "hook": "migrate",

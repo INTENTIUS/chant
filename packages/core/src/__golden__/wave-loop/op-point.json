@@ -50,6 +50,12 @@
             "version": 1,
             "kind": "pending",
             "approvalMode": "ledger",
+            "wave": {
+              "number": 1,
+              "name": "prod",
+              "op": "tf-apply",
+              "environment": "prod"
+            },
             "op": "tf-apply",
             "gate": "tf-apply-wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
@@ -73,6 +79,12 @@
             "version": 1,
             "kind": "pending",
             "approvalMode": "ledger",
+            "wave": {
+              "number": 1,
+              "name": "prod",
+              "op": "tf-apply",
+              "environment": "prod"
+            },
             "op": "tf-apply",
             "gate": "tf-apply-wave-1",
             "timestamp": "2026-10-11T00:00:00.000Z",
