@@ -756,6 +756,12 @@ export default {
 
 cosign then signs with `--use-signing-config=false`, so it does not read public Sigstore's signing config, with `--fulcio-url`, `--rekor-url` and `--trusted-root`, and `chant release verify --sigstore` checks each bundle with `--trusted-root`. The Fulcio must trust the CI's OIDC issuer. A key or a KMS key signs with no Fulcio, and takes `rekor` and `trustRoot` to log to a private Rekor. A missing trusted root refuses the publish with `publish-signing-trust-root-missing`, the doctor reports it as `signing-trust-root`, and verify leaves each bundle unchecked.
 
+### Signing on Forgejo and outside CI
+
+Forgejo Actions hands a job an OIDC token when the job sets `enable-openid-connect: true`, with the issuer `<server>/api/actions`. Public Fulcio issues no certificate for it, so keyless signing on Forgejo goes through a [private Fulcio](#a-private-sigstore-instance) that trusts the instance; `release.signing.issuer` names another issuer if the instance's differs. With one, `chant release workflow --forge forgejo` gives the publish job, and a dispatched cut job that runs the doctor, `enable-openid-connect: true`. Without one, it refuses to render a keyless signing step, and names `release.signing.kms` and `key`, which sign on Forgejo with no token.
+
+A release published from a `chant ci serve` host, from the chant git forge or from a workstation has no CI OIDC token either, so it signs with a KMS key or a key. With `supply-chain` on and the keyless mode, [`chant release doctor`](/chant/cli/release/doctor/) reports there that no mode can sign, and names them.
+
 ### Signing with a key
 
 A team that can't sign with a CI job's OIDC token, such as one releasing from Forgejo, a `chant ci serve` host or an air-gapped runner, signs with a cosign key or a [KMS key](#signing-with-a-kms-key) instead. `release.signing.key` names the key, a file from the member or `env://NAME` for a variable that holds the PEM, and `publicKey` names its public half, committed in the member, which `chant release verify --sigstore` checks the bundles against:

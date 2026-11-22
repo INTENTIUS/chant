@@ -226,6 +226,14 @@ export interface ReleaseWorkflowInput {
    */
   signing?: boolean;
   /**
+   * How a keyless signer signs (#5458): `public` when one signs with public
+   * Sigstore, `private` when every keyless signer names a private Fulcio.
+   * Absent when none signs keylessly. Forgejo refuses `public`, since public
+   * Fulcio issues no certificate for a Forgejo token, and gives the jobs
+   * that sign `enable-openid-connect: true` under `private`.
+   */
+  keyless?: "public" | "private";
+  /**
    * The variables the signing step alone gets (#5458): a `release.signing.key`
    * held in a variable and its password. On GitHub and Forgejo the step that
    * runs `chant release publish` reads each from the repository's secret of
@@ -380,15 +388,23 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     builds,
     ...(input.tags ? { tags: input.tags } : {}),
   };
-  const extra = jobExtras(
-    {
-      ...p,
-      ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
-      ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
-      setup: releaseSetupSteps(context),
-    },
-    input.forge,
-  );
+  // #5458: on Forgejo a keyless signer needs a private Fulcio, and the jobs that sign or check ask for the OIDC token.
+  if (input.forge === "forgejo" && input.signing && input.keyless === "public") {
+    throw new Error("release.signing: a Forgejo job's OIDC token gets no certificate from public Sigstore, so a keyless signature can't be made here; sign with a KMS key (release.signing.kms) or a key (release.signing.key), or name a private Fulcio that trusts this Forgejo (release.signing.fulcio and trustRoot)");
+  }
+  const openIdConnect = (doctor: boolean): Array<"cut" | "publish"> => (input.forge === "forgejo" && input.signing && input.keyless === "private" ? [...(doctor ? (["cut"] as const) : []), "publish"] : []);
+  const extra = {
+    ...jobExtras(
+      {
+        ...p,
+        ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}),
+        ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}),
+        setup: releaseSetupSteps(context),
+      },
+      input.forge,
+    ),
+    openIdConnect: openIdConnect(context.doctor && shape === "dispatch"),
+  };
   // #4767: Forgejo's job token is not a GitHub token, and GitLab has no such expression.
   const forgeToken =
     input.forge === "github" && p.env?.GITHUB_TOKEN === undefined && (input.publish ?? []).some((t) => t.type === "forge" && t.forge === "github" && !t.tokenEnv)
@@ -430,7 +446,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
       after,
       chantSetup,
       fullSetup,
-      extra: jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge),
+      extra: { ...jobExtras({ ...p, ...(derived.permissions ? { permissions: { ...p.permissions, ...derived.permissions } } : {}), ...(derived.env ? { env: { ...p.env, ...derived.env } } : {}), setup: releaseSetupSteps(trainContext) }, input.forge), openIdConnect: openIdConnect(p.trigger === "dispatch" && p.doctor !== false) },
       forgeToken,
       cutToken: green === "forge-checks" && p.env?.GITHUB_TOKEN === undefined ? ["      GITHUB_TOKEN: ${{ github.token }}"] : [],
       green,
@@ -720,6 +736,12 @@ export interface JobExtras {
   gitlabVariables: string[];
   /** GitLab: script lines after the install. */
   gitlabScript: string[];
+  /**
+   * Forgejo (#5458): the jobs that get `enable-openid-connect: true`, which
+   * hands them an OIDC token, because a keyless signer signs (the publish)
+   * or checks that it can (a dispatched cut's doctor).
+   */
+  openIdConnect?: ReadonlyArray<"cut" | "publish">;
 }
 
 /**
@@ -729,7 +751,7 @@ export interface JobExtras {
  * The cut never takes `packages` (the publish pushes the images), and the
  * extras the config set by hand go to both.
  */
-export function jobPermissions(extra: Pick<JobExtras, "permissions">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
+export function jobPermissions(extra: Pick<JobExtras, "permissions" | "openIdConnect">, base: Record<string, string>, job: "gate" | "cut" | "publish" | "after", indent = "    "): string[] {
   const scopes: Record<string, string> = { ...base };
   if (job === "cut" || job === "publish") {
     for (const [k, v] of extra.permissions) {
@@ -737,7 +759,9 @@ export function jobPermissions(extra: Pick<JobExtras, "permissions">, base: Reco
       scopes[k] = v;
     }
   }
-  return [`${indent}permissions:`, ...Object.entries(scopes).map(([k, v]) => `${indent}  ${k}: ${v}`)];
+  // #5458: Forgejo hands a job an OIDC token only when it asks.
+  const oidc = (job === "cut" || job === "publish") && (extra.openIdConnect ?? []).includes(job) ? [`${indent}enable-openid-connect: true`] : [];
+  return [`${indent}permissions:`, ...Object.entries(scopes).map(([k, v]) => `${indent}  ${k}: ${v}`), ...oidc];
 }
 
 /** `release.workflow`'s `permissions`, `env` and `setup` (#4751) as lines of the forge's file. Empty for a config without them, so its file is what it was. */
@@ -1289,6 +1313,9 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
   };
   const signs = [release, ...memberReleases].some(signsFor);
   const signingEnv = [...new Set([release, ...memberReleases].filter(signsFor).flatMap((r) => signingStepVariables(resolveSigning(r?.signing, groups))))];
+  // #5458: whether a keyless signer signs with public Sigstore, or every one through a private Fulcio.
+  const keylessSigners = [release, ...memberReleases].filter(signsFor).map((r) => resolveSigning(r?.signing, groups)).filter((st) => st.mode === "keyless");
+  const keyless = keylessSigners.length === 0 ? undefined : keylessSigners.some((st) => !st.fulcio) ? ("public" as const) : ("private" as const);
   // #5446: the scan before the stage, when release.scan or supply-chain asks for it and a target has something to scan.
   const { resolveScan } = await import("../lifecycle/publish-scan");
   const scans = [release, ...memberReleases].some((r) => resolveScan(r?.scan, groups).on && (r?.publish ?? []).some((t) => t.type === "oci" || t.type === "forge" || t.type === "npm"));
@@ -1337,6 +1364,7 @@ export async function runReleaseWorkflow(ctx: import("../cli/registry").CommandC
     ...(release?.version ? { version: true } : {}),
     ...(signs ? { signing: true } : {}),
     ...(signingEnv.length > 0 ? { signingEnv } : {}),
+    ...(keyless ? { keyless } : {}),
     ...(scans ? { scan: true } : {}),
     ...(pullRegistries.length > 0 ? { pullRegistries } : {}),
     ...(allTargets.length > 0 ? { publish: allTargets } : {}),

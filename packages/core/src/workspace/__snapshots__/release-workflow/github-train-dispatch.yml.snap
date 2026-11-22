@@ -542,6 +542,342 @@ jobs:
       - run: git config user.email "chant-release@localhost"
       - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes
 
+# ==== signing with a KMS key ====
+name: chant release train
+on:
+  workflow_dispatch:
+    inputs:
+      levels:
+        description: auto for the levels the commits and intent files give, a level for every member (major, minor or patch), or <member>=<level>, separated by spaces
+        required: false
+        default: auto
+        type: string
+      train:
+        description: a recorded train's id (train-...) to publish instead of cutting one; the gate and cut are skipped, and the publish resumes from its tag
+        required: false
+        default: ""
+        type: string
+  push:
+    tags: ["release-train/npm/*"]
+permissions:
+  contents: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' && inputs.train == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      train: ${{ steps.cut.outputs.train }}
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - id: cut
+        run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant workspace train cut npm --at "$CHANT_RELEASE_COMMIT" --levels "${CHANT_RELEASE_LEVELS:-auto}" --doctor --yes --json > "$RUNNER_TEMP/chant-train.json"
+          train="$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");let d;try{d=JSON.parse(t)}catch(e){const m=/"id": *"(train-[^"]+)"/.exec(t);console.error("the train cut printed more than its JSON document, so the train id can not be read ("+e.message+")."+(m?" The cut recorded "+m[1]+": dispatch this workflow with train="+m[1]+" to publish it.":" If it recorded a train, dispatch this workflow with train=<id> to publish it."));process.exit(1)}const id=d.train?.id??"";if(!id&&d.released==null&&(d.members??[]).length>0){console.error("the train cut "+d.members.length+" member(s), and its JSON names no train id to publish");process.exit(1)}process.stdout.write(id)' "$RUNNER_TEMP/chant-train.json")" || exit 1
+          echo "train=$train" >> "$GITHUB_OUTPUT"
+  publish:
+    needs: [gate, cut]
+    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: echo "CHANT_RELEASE_TRAIN=${CHANT_RELEASE_TRAIN:-${GITHUB_REF_NAME#release-train/npm/}}" >> "$GITHUB_ENV"
+      - run: npx chant workspace train prepare npm "$CHANT_RELEASE_TRAIN"
+      - run: npm run build
+      - run: git config user.name "chant release"
+      - run: git config user.email "chant-release@localhost"
+      - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --require-provenance --yes
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+
+# ==== signing keyless through a private Fulcio ====
+name: chant release train
+on:
+  workflow_dispatch:
+    inputs:
+      levels:
+        description: auto for the levels the commits and intent files give, a level for every member (major, minor or patch), or <member>=<level>, separated by spaces
+        required: false
+        default: auto
+        type: string
+      train:
+        description: a recorded train's id (train-...) to publish instead of cutting one; the gate and cut are skipped, and the publish resumes from its tag
+        required: false
+        default: ""
+        type: string
+  push:
+    tags: ["release-train/npm/*"]
+permissions:
+  contents: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' && inputs.train == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      train: ${{ steps.cut.outputs.train }}
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - id: cut
+        run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant workspace train cut npm --at "$CHANT_RELEASE_COMMIT" --levels "${CHANT_RELEASE_LEVELS:-auto}" --doctor --yes --json > "$RUNNER_TEMP/chant-train.json"
+          train="$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");let d;try{d=JSON.parse(t)}catch(e){const m=/"id": *"(train-[^"]+)"/.exec(t);console.error("the train cut printed more than its JSON document, so the train id can not be read ("+e.message+")."+(m?" The cut recorded "+m[1]+": dispatch this workflow with train="+m[1]+" to publish it.":" If it recorded a train, dispatch this workflow with train=<id> to publish it."));process.exit(1)}const id=d.train?.id??"";if(!id&&d.released==null&&(d.members??[]).length>0){console.error("the train cut "+d.members.length+" member(s), and its JSON names no train id to publish");process.exit(1)}process.stdout.write(id)' "$RUNNER_TEMP/chant-train.json")" || exit 1
+          echo "train=$train" >> "$GITHUB_OUTPUT"
+  publish:
+    needs: [gate, cut]
+    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: echo "CHANT_RELEASE_TRAIN=${CHANT_RELEASE_TRAIN:-${GITHUB_REF_NAME#release-train/npm/}}" >> "$GITHUB_ENV"
+      - run: npx chant workspace train prepare npm "$CHANT_RELEASE_TRAIN"
+      - run: npm run build
+      - run: git config user.name "chant release"
+      - run: git config user.email "chant-release@localhost"
+      - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes
+
+# ==== signing keyless with public Sigstore ====
+name: chant release train
+on:
+  workflow_dispatch:
+    inputs:
+      levels:
+        description: auto for the levels the commits and intent files give, a level for every member (major, minor or patch), or <member>=<level>, separated by spaces
+        required: false
+        default: auto
+        type: string
+      train:
+        description: a recorded train's id (train-...) to publish instead of cutting one; the gate and cut are skipped, and the publish resumes from its tag
+        required: false
+        default: ""
+        type: string
+  push:
+    tags: ["release-train/npm/*"]
+permissions:
+  contents: read
+concurrency:
+  group: chant-release
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' && inputs.train == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.green.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - id: green
+        run: |
+          commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
+          if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+  cut:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      train: ${{ steps.cut.outputs.train }}
+    env:
+      CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
+      CHANT_RELEASE_LEVELS: ${{ inputs.levels }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
+      - id: cut
+        run: |
+          git config user.name "chant release"
+          git config user.email "chant-release@localhost"
+          npx chant workspace train cut npm --at "$CHANT_RELEASE_COMMIT" --levels "${CHANT_RELEASE_LEVELS:-auto}" --doctor --yes --json > "$RUNNER_TEMP/chant-train.json"
+          train="$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");let d;try{d=JSON.parse(t)}catch(e){const m=/"id": *"(train-[^"]+)"/.exec(t);console.error("the train cut printed more than its JSON document, so the train id can not be read ("+e.message+")."+(m?" The cut recorded "+m[1]+": dispatch this workflow with train="+m[1]+" to publish it.":" If it recorded a train, dispatch this workflow with train=<id> to publish it."));process.exit(1)}const id=d.train?.id??"";if(!id&&d.released==null&&(d.members??[]).length>0){console.error("the train cut "+d.members.length+" member(s), and its JSON names no train id to publish");process.exit(1)}process.stdout.write(id)' "$RUNNER_TEMP/chant-train.json")" || exit 1
+          echo "train=$train" >> "$GITHUB_OUTPUT"
+  publish:
+    needs: [gate, cut]
+    if: ${{ always() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.train != '') || (needs.cut.result == 'success' && needs.cut.outputs.train != '')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CHANT_RELEASE_TRAIN: ${{ inputs.train || needs.cut.outputs.train }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.gate.outputs.commit || (inputs.train != '' && format('refs/tags/release-train/npm/{0}', inputs.train)) || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: "Install cosign v3.1.4"
+        run: "curl -fsSL -o \"$RUNNER_TEMP/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  $RUNNER_TEMP/cosign\" | sha256sum -c - && chmod +x \"$RUNNER_TEMP/cosign\" && echo \"CHANT_COSIGN=$RUNNER_TEMP/cosign\" >> \"$GITHUB_ENV\""
+      - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: echo "CHANT_RELEASE_TRAIN=${CHANT_RELEASE_TRAIN:-${GITHUB_REF_NAME#release-train/npm/}}" >> "$GITHUB_ENV"
+      - run: npx chant workspace train prepare npm "$CHANT_RELEASE_TRAIN"
+      - run: npm run build
+      - run: git config user.name "chant release"
+      - run: git config user.email "chant-release@localhost"
+      - run: npx chant workspace train publish npm "$CHANT_RELEASE_TRAIN" --yes
+
 # ==== scan ====
 name: chant release train
 on:

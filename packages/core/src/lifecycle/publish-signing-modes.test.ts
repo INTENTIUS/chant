@@ -24,8 +24,10 @@ import {
   cosignVerifyFlags,
   resolveSigning,
   signingConfigProblems,
+  signingIdentity,
   signingReadiness,
   signingStepVariables,
+  prepareSigning,
   type InTotoStatement,
   type Signer,
   type SigningIdentity,
@@ -444,5 +446,52 @@ describe("a private Fulcio and Rekor", () => {
     const verifies = cosign.calls().filter((c) => c.args[0]!.startsWith("verify"));
     expect(verifies.length).toBe(verified.checks.length);
     for (const c of verifies) expect(c.args).toEqual(expect.arrayContaining(["--trusted-root", root, "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com"]));
+  });
+});
+
+describe("Forgejo (#5458)", () => {
+  const FORGEJO = {
+    GITHUB_ACTIONS: "true",
+    FORGEJO_ACTIONS: "true",
+    FORGEJO_SERVER_URL: "https://code.example",
+    FORGEJO_REPOSITORY: "acme/api",
+    FORGEJO_WORKFLOW_REF: "acme/api/.forgejo/workflows/chant-release.yml@refs/tags/release/v5",
+  };
+  const TOKEN = { ACTIONS_ID_TOKEN_REQUEST_URL: "https://code.example/api/actions/_apis/pipelines/idtoken", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "t" };
+
+  test("a Forgejo job signs keylessly only through a private Fulcio, with the token enable-openid-connect gives it", () => {
+    expect(signingIdentity({ ...FORGEJO, ...TOKEN })).toMatchObject({ reason: expect.stringContaining("release.signing.kms or key") });
+    expect(signingIdentity(FORGEJO, { fulcio: "https://fulcio.test" })).toMatchObject({ reason: expect.stringContaining("enable-openid-connect: true") });
+    expect(signingIdentity({ ...FORGEJO, ...TOKEN }, { fulcio: "https://fulcio.test" })).toEqual({ identity: { issuer: "https://code.example/api/actions", identity: "^https://code\\.example/acme/api/" } });
+    expect(signingIdentity({ ...FORGEJO, ...TOKEN }, { fulcio: "https://fulcio.test", issuer: "https://oidc.example" })).toMatchObject({ identity: { issuer: "https://oidc.example" } });
+  });
+
+  test("with a private Fulcio and the token, the publish signs keylessly and its statement meets --require-provenance", () => {
+    const dir = temp();
+    writeFileSync(join(dir, "trusted_root.json"), "{}");
+    const setting = resolveSigning({ fulcio: "https://fulcio.test", rekor: "https://rekor.test", trustRoot: "trusted_root.json" }, none);
+    const env = { ...FORGEJO, ...TOKEN };
+    const prepared = prepareSigning(setting, { env, cwd: dir, redactor: createRedactor(env), signer: fakeSigner() });
+    expect(prepared).toMatchObject({ context: { identity: { issuer: "https://code.example/api/actions" }, mode: "keyless" } });
+  });
+
+  test("the renderer refuses public keyless signing on Forgejo, and asks for the OIDC token in the jobs that sign through a private Fulcio", () => {
+    const job = (text: string, name: string) => text.split(/\n(?=  [a-z][\w-]*:\n)/).find((j) => j.startsWith(`  ${name}:`)) ?? "";
+    expect(() => renderReleaseWorkflow({ forge: "forgejo", groups: sc, signing: true, keyless: "public", publish: [{ type: "forge", forge: "forgejo" }] })).toThrow(/release\.signing\.kms.*release\.signing\.key/);
+    expect(() => renderReleaseWorkflow({ forge: "forgejo", groups: sc, signing: true, keyless: "public", train: { env: "prod" } })).toThrow(/public Sigstore/);
+    // GitHub's public keyless signing is as it was.
+    expect(renderReleaseWorkflow({ forge: "github", groups: sc, signing: true, keyless: "public" })).not.toContain("enable-openid-connect");
+    const dispatch = renderReleaseWorkflow({ forge: "forgejo", groups: sc, signing: true, keyless: "private", pipeline: { trigger: "dispatch" } });
+    expect(job(dispatch, "publish")).toContain("    enable-openid-connect: true");
+    expect(job(dispatch, "cut")).toContain("    enable-openid-connect: true");
+    expect(job(dispatch, "gate")).not.toContain("enable-openid-connect");
+    const noDoctor = renderReleaseWorkflow({ forge: "forgejo", groups: sc, signing: true, keyless: "private", pipeline: { trigger: "dispatch", doctor: false } });
+    expect(job(noDoctor, "cut")).not.toContain("enable-openid-connect");
+    const train = renderReleaseWorkflow({ forge: "forgejo", groups: sc, signing: true, keyless: "private", train: { env: "prod" }, pipeline: { trigger: "dispatch" } });
+    expect(job(train, "publish")).toContain("    enable-openid-connect: true");
+    // A key or KMS key needs no token, and renders on Forgejo with its variables in the publish step.
+    const kms = renderReleaseWorkflow({ forge: "forgejo", groups: sc, signing: true, signingEnv: ["VAULT_ADDR", "VAULT_TOKEN"], train: { env: "prod" } });
+    expect(kms).not.toContain("enable-openid-connect");
+    expect(job(kms, "publish")).toContain("VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}");
   });
 });

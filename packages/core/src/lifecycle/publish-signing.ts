@@ -198,11 +198,19 @@ function forgejoJob(env: NodeJS.ProcessEnv) {
  * names a workflow of the repository and is issued by the server's token
  * service; in GitLab CI, an ID token named `SIGSTORE_ID_TOKEN` with the
  * audience `sigstore`, whose certificate names the project's pipeline.
- * A Forgejo job is never taken for GitHub (#5458). Anywhere else there is none.
+ * A Forgejo job is never taken for GitHub (#5458): it signs keylessly only
+ * through a private Fulcio (`o.fulcio`) that trusts the instance, with the
+ * token a job with `enable-openid-connect: true` gets, whose issuer is
+ * `<server>/api/actions` unless `o.issuer` names another. Anywhere else
+ * there is none.
  */
-export function signingIdentity(env: NodeJS.ProcessEnv): { identity: SigstoreIdentity } | { reason: string } {
+export function signingIdentity(env: NodeJS.ProcessEnv, o: { fulcio?: string; issuer?: string } = {}): { identity: SigstoreIdentity } | { reason: string } {
   if (isForgejoJob(env)) {
-    return { reason: "this is a Forgejo Actions job, and public Sigstore issues no certificate for a Forgejo token; sign with release.signing.kms or key" };
+    if (!o.fulcio) return { reason: "this is a Forgejo Actions job, and public Sigstore issues no certificate for a Forgejo token; sign with release.signing.kms or key, or name a private Fulcio that trusts this Forgejo (release.signing.fulcio)" };
+    if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return { reason: "this Forgejo Actions job has no OIDC token; give the job enable-openid-connect: true" };
+    const f = forgejoJob(env);
+    if (!f.server || !f.repo) return { reason: "this Forgejo Actions job names no server or repository" };
+    return { identity: { issuer: o.issuer ?? `${f.server}/api/actions`, identity: `^${escape(f.server)}/${escape(f.repo)}/` } };
   }
   if (env.GITHUB_ACTIONS === "true") {
     if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return { reason: "this GitHub Actions job has no OIDC token; give the job permissions: id-token: write" };
@@ -596,7 +604,7 @@ export function signingReadiness(setting: SigningSetting, env: NodeJS.ProcessEnv
     if (setting.publicKey && !existsSync(resolve(cwd, setting.publicKey))) return { code: "publish-signing-key-missing", reason: `release.signing.publicKey names ${setting.publicKey}, which is not there, so nothing could verify what the key signs`, fix: "Commit the key's public half where release.signing.publicKey names it (cosign public-key --key <key>)." };
     return null;
   }
-  const id = signingIdentity(env);
+  const id = signingIdentity(env, setting);
   return "reason" in id ? { code: "publish-signing-no-oidc", reason: `this run can't sign keylessly: ${id.reason}`, fix: KEYLESS_FIX } : null;
 }
 
@@ -624,6 +632,6 @@ export function prepareSigning(setting: SigningSetting, req: { env: NodeJS.Proce
   if (missing) return { refusal: { code: "publish-signing-tool-missing", reason: missing, fix: "Install cosign 3 in the job, as chant release workflow does, or point CHANT_COSIGN at it." } };
   if (setting.mode === "key") return { context: { signer, identity: { key: setting.publicKey! }, mode: "key" } };
   if (setting.mode === "kms") return { context: { signer, identity: { key: setting.publicKey ?? setting.kms! }, mode: "kms" } };
-  const id = signingIdentity(req.env) as { identity: SigstoreIdentity };
+  const id = signingIdentity(req.env, setting) as { identity: SigstoreIdentity };
   return { context: { signer, identity: id.identity, mode: "keyless" } };
 }

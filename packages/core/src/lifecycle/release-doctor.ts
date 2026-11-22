@@ -339,7 +339,7 @@ async function checkSigning(
   const why = setting.from === "config" ? "release.signing" : "the supply-chain group";
   const checks: DoctorCheck[] = [];
   if (setting.mode === "keyless") {
-    const id = signingIdentity(ctx.env);
+    const id = signingIdentity(ctx.env, setting);
     if ("reason" in id) checks.push(missing(ctx, "signing-oidc", `${why} signs images and forge assets keylessly, and ${id.reason}`, KEYLESS_FIX));
     else checks.push({ check: "signing-oidc", status: "ok", message: `the certificate will name ${id.identity.identity}, issuer ${id.identity.issuer}` });
   } else {
