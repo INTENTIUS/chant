@@ -606,7 +606,7 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
   // --dry-run is the default without --yes, and keeps a run with --yes a dry run.
   const dryRun = args.yes !== true || args.dryRun === true;
   const cwd = resolve(".");
-  const { spawnTargetCompiler, ReleaseCompileError, RELEASE_LABEL_ENV } = await import("../../components/release-compile");
+  const { spawnTargetCompiler, releaseChildCommand, ReleaseCompileError, RELEASE_LABEL_ENV } = await import("../../components/release-compile");
   const { cutRelease, planRelease, ReleaseCutError } = await import("../../lifecycle/release-cut");
   const { ReleaseLabelError } = await import("../../lifecycle/release-store");
   const { pushLifecycleRebasing, getHeadCommit } = await import("../../lifecycle/git");
@@ -745,7 +745,8 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
     // #4657: the images release.images declares are built first, and their digests handed to the build command.
     const declaredImages = await releaseImagesOf(cutCwd);
     const digestsFile = declaredImages.length > 0 ? join(tmpdir(), `chant-release-digests-${process.pid}.json`) : undefined;
-    const compiler = spawnTargetCompiler({ ...compileInputs(ctx, params, cutCwd, label), ...(digestsFile ? { releaseDigests: digestsFile } : {}) });
+    // #5474: the compile child runs through the member's release.bin (`yodel chant`), else this chant as it was started.
+    const compiler = spawnTargetCompiler({ ...compileInputs(ctx, params, cutCwd, label), ...(digestsFile ? { releaseDigests: digestsFile } : {}) }, releaseChildCommand(cutCwd));
     const buildImages = digestsFile
       ? async (at: string) => {
           const { buildReleaseImages, checkImagesOutsideGoreleaser, writeReleaseDigests, ReleaseImageError } = await import("../../lifecycle/release-images");

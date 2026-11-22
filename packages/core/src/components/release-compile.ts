@@ -56,6 +56,7 @@ import type { CapabilityRegistry, ReleaseInputs, ReleaseInputsUnbound } from "./
 import { memoryGateLedgerPort } from "../op/gate";
 import type { ReleaseArtifact, ReleaseParam } from "../lifecycle/release-store";
 import { RELEASE_DIGESTS_ENV } from "../lifecycle/release-images";
+import { readMemberPipeline } from "../pipeline/read";
 
 /** The deploy step fields whose literal file paths are a component's templates. */
 export { TEMPLATE_FIELDS } from "./deploy-inputs";
@@ -592,6 +593,29 @@ export function ownChantCommand(): string[] {
   return [process.execPath, ...process.execArgv, main];
 }
 
+/** The command a release cut's chant children run as, and the one a spawn falls back to when the first is not on the PATH. */
+export interface ReleaseChildCommand {
+  command: readonly string[];
+  fallback?: readonly string[];
+}
+
+/**
+ * The command the release cut in member directory `projectDir` starts its
+ * chant children with (#5474): the `release.bin` of the member's
+ * `.chant/pipeline.ts` when it sets one, such as `["yodel", "chant"]`, so
+ * a cut run as `yodel chant release cut` compiles as `yodel chant release
+ * compile`; else `own`, this chant as it was started. Under a `release.bin`,
+ * `own` is the fallback for a cut run where the product's bin is not on the
+ * PATH. A pipeline that does not fold names no bin.
+ */
+export function releaseChildCommand(projectDir: string, own: readonly string[] = ownChantCommand()): ReleaseChildCommand {
+  const read = readMemberPipeline(projectDir);
+  const bin = read.status === "folded" ? read.spec.release?.bin : undefined;
+  return bin && bin.length > 0 ? { command: bin, fallback: own } : { command: own };
+}
+
+const isNotFound = (err: unknown): boolean => (err as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+
 function runChild(
   command: readonly string[],
   args: readonly string[],
@@ -626,13 +650,28 @@ function runChild(
 
 /**
  * The compiler the CLI uses: each environment in a child process of this same
- * chant (`chant release compile --env <env> --json`), with `CHANT_ENV` set to
+ * chant (`chant release compile --env <env> --json`), started as `command`
+ * names it ({@link releaseChildCommand} for a cut), with `CHANT_ENV` set to
  * that environment before anything imports the project. The child writes its
  * result to a file this process names (#4764), and the result is checked for
  * the target's shape, so a project module that prints JSON on load, or prints
  * it and exits, is refused by the environment's name.
  */
-export function spawnTargetCompiler(inputs: CompileInputs, command: readonly string[] = ownChantCommand()): TargetCompiler {
+export function spawnTargetCompiler(inputs: CompileInputs, command: readonly string[] | ReleaseChildCommand = ownChantCommand()): TargetCompiler {
+  const { command: first, fallback } = Array.isArray(command) ? { command: command as readonly string[], fallback: undefined } : (command as ReleaseChildCommand);
+  // #5474: a product's bin that is not on the PATH runs this chant instead, once, and says so.
+  let using = first;
+  const spawnChild = async (args: string[], env: string, resultFile: string) => {
+    const once = () => runChild(using, args, inputs.projectDir, env, inputs.releaseLabel, inputs.releaseDigests, resultFile);
+    try {
+      return await once();
+    } catch (err) {
+      if (!fallback || using === fallback || !isNotFound(err)) throw err;
+      process.stderr.write(`release.bin ${first.join(" ")} is not on the PATH; compiling with ${fallback.join(" ")}\n`);
+      using = fallback;
+      return once();
+    }
+  };
   const common = (): string[] => {
     const args: string[] = [];
     if (inputs.src) args.push("--src", inputs.src);
@@ -646,15 +685,7 @@ export function spawnTargetCompiler(inputs: CompileInputs, command: readonly str
     const dir = mkdtempSync(join(tmpdir(), "chant-release-compile-"));
     const resultFile = join(dir, "result.json");
     try {
-      const run = await runChild(
-        command,
-        ["release", "compile", "--env", env, ...common(), ...extra, "--json"],
-        inputs.projectDir,
-        env,
-        inputs.releaseLabel,
-        inputs.releaseDigests,
-        resultFile,
-      );
+      const run = await spawnChild(["release", "compile", "--env", env, ...common(), ...extra, "--json"], env, resultFile);
       if (run.code !== 0) throw new ReleaseCompileError(`compiling "${env}" failed (exit ${run.code})`);
       const printed = run.stdout.trim();
       const stdoutNote = printed === "" ? "" : `; its stdout began: ${printed.length > 200 ? `${printed.slice(0, 200)}...` : printed}`;
