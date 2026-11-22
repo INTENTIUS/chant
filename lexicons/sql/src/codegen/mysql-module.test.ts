@@ -21,7 +21,7 @@ describe("the MySQL module (#5449)", () => {
   test("makes a union of each list, with every spelling of a type", () => {
     const d = rendered.declarations;
     expect(d).toMatch(/export type MysqlTypeName = "BIGINT" \| "BINARY"/);
-    expect(d).toMatch(/export type MysqlTypeSpelling = [^\n]*"INTEGER"[^\n]*"INT4"/s);
+    expect(d).toMatch(/export type MysqlTypeSpelling = [^\n]*"INT4"[^\n]*"INTEGER"/s);
     expect(d).toContain('export type MysqlEngine = "ARCHIVE" | "BLACKHOLE" | "CSV" | "FEDERATED" | "InnoDB"');
     expect(d).toContain('"utf8mb4"');
     expect(d).toContain('export type MysqlIndexType = "BTREE" | "FULLTEXT" | "HASH" | "SPATIAL";');
