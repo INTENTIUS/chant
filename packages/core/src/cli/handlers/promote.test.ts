@@ -1511,7 +1511,7 @@ describe("a redeploy or a rollback into a stage the pipeline gates waits at the 
   /** Approve the pending fact the gate recorded, as `chant approve shop prod --env prod --plan <digest>` does. */
   const approvePending = async () => {
     const pending = port.appended.at(-1)!;
-    await port.appendResolution!({ version: 1, op: "shop", gate: "prod", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(), planDigest: pending.planDigest!, environment: "prod" });
+    await port.appendResolution!({ op: "shop", gate: "prod", resolvedBy: "alice", timestamp: new Date(Date.now() + 1000).toISOString(), planDigest: pending.planDigest!, environment: "prod" });
     return pending;
   };
 
