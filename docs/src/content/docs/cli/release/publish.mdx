@@ -26,7 +26,7 @@ After a best-effort fetch of `chant/lifecycle`, it refuses before it publishes a
 | `publish-signing-key-missing` | The publish signs with a KMS key (`release.signing.kms`), and a variable its credentials are in is missing, or with a key (`release.signing.key`), and its variable, its file or its password variable is missing; or the public key either names is not there. |
 | `publish-signing-trust-root-missing` | `release.signing.trustRoot` names a trusted root for a private Sigstore instance that is not there. |
 | `publish-signing-tool-missing` | Under the same settings, cosign 3 is not on `PATH` and `CHANT_COSIGN` does not name it. |
-| `publish-scan-tool-missing` | The publish scans before the stage (`release.scan`, or the `supply-chain` group), an `oci`, `forge` or `npm` target is declared, and grype (or trivy) is not on `PATH` or named by `CHANT_GRYPE` (`CHANT_TRIVY`), or, with an `oci` target, syft is not there either (`CHANT_SYFT`). |
+| `publish-scan-tool-missing` | The publish scans before the stage (`release.scan`, or the `supply-chain` group), an `oci`, `forge` or `npm` target is declared, and grype (or trivy) is not on `PATH` or named by `CHANT_GRYPE` (`CHANT_TRIVY`), or, with an `oci` target, syft is not there either (`CHANT_SYFT`). With `release.scan.imageScanner: "wiz"`, also when `WIZ_CLIENT_ID` or `WIZ_CLIENT_SECRET` is unset or `wizcli` is not on `PATH` (`CHANT_WIZCLI`). |
 | `publish-scan-vex-missing` | Under the same settings, a file `vulnPolicy.vexSources` names is not there. |
 | `publish-config-invalid` | `release.publish` in `chant.config.ts` does not validate. |
 | `release-head-mismatch` | A target is declared, and the checkout's `HEAD` is not the release's commit. |

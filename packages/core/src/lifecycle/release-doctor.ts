@@ -385,11 +385,12 @@ async function checkScan(
   const why = setting.from === "config" ? "release.scan" : "the supply-chain group";
   const images = publish.some((d) => d.type === "oci");
   const db = setting.db ? resolve(ctx.cwd, setting.db) : null;
-  const scanner = injected ?? toolReleaseScanner(ctx.env, { tool: tool ?? "grype", db, redactor: ctx.redactor });
+  const { withImageScanner } = await import("./publish-scan-wiz");
+  const scanner = injected ?? withImageScanner(setting, ctx.env, toolReleaseScanner(ctx.env, { tool: tool ?? "grype", db, redactor: ctx.redactor }), { redactor: ctx.redactor });
   const gone = scanner.unavailable({ images });
   const checks: DoctorCheck[] = [
     gone
-      ? missing(ctx, "scan-tool", `${why} scans what the publish puts out before anything is pushed, and ${gone}`, "Install grype (or trivy) and syft, as chant release workflow does in the job, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; or set release.scan: false.")
+      ? missing(ctx, "scan-tool", `${why} scans what the publish puts out before anything is pushed, and ${gone}`, "Install grype (or trivy) and syft, as chant release workflow does in the job, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; with imageScanner wiz, set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET and put wizcli on PATH; or set release.scan: false.")
       : { check: "scan-tool", status: "ok", message: `${scanner.name} scans${images ? ", and syft makes each image's SBOM from its layers" : ""}` },
     db
       ? { check: "scan-database", status: "ok", message: `the scanner reads its database from ${db} and does not update it` }

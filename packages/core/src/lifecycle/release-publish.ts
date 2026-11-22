@@ -744,14 +744,16 @@ export async function preparePublish(req: {
   if (scanSetting.on && scanned.length > 0) {
     const why = scanSetting.from === "config" ? "release.scan in chant.config.ts" : "the supply-chain group";
     const db = scanSetting.db ? resolvePath(cwd, scanSetting.db) : null;
-    const scanner = req.deps?.releaseScanner ?? toolReleaseScanner(env, { tool: fullConfig?.vulnPolicy?.scanner ?? "grype", db, redactor: createRedactor(env) });
+    const { withImageScanner } = await import("./publish-scan-wiz");
+    const redactor = createRedactor(env);
+    const scanner = req.deps?.releaseScanner ?? withImageScanner(scanSetting, env, toolReleaseScanner(env, { tool: fullConfig?.vulnPolicy?.scanner ?? "grype", db, redactor }), { redactor });
     const missing = scanner.unavailable({ images: scanned.some((t) => t.kind === "oci") });
     if (missing) {
       return {
         refusal: {
           code: "publish-scan-tool-missing",
           message: `${name} would be scanned for known vulnerabilities before anything is pushed, as ${why} asks, and ${missing}`,
-          fix: "Install grype (or trivy) and syft in the job, as chant release workflow does, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; or set release.scan: false.",
+          fix: "Install grype (or trivy) and syft in the job, as chant release workflow does, or point CHANT_GRYPE, CHANT_TRIVY and CHANT_SYFT at them; with imageScanner wiz, set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET and put wizcli on PATH; or set release.scan: false.",
         },
       };
     }

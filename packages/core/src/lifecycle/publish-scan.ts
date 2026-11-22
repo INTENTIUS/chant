@@ -65,8 +65,13 @@ import { PublishTargetError, type PublishContext, type PublishTarget } from "./r
  */
 export const RELEASE_SCAN_FLOOR = NEXT_RELEASE;
 
-/** `release.scan` in `chant.config.ts`: `true`, `false`, or `{ db }` to scan with a database already on disk. */
-export type ReleaseScanConfig = boolean | { db?: string };
+/**
+ * `release.scan` in `chant.config.ts`: `true`, `false`, or `{ db }` to scan
+ * with a database already on disk. `imageScanner: "wiz"` scans each image
+ * with the Wiz CLI in place of grype (#5451, ./publish-scan-wiz.ts); the SBOMs
+ * the publish attaches or a package carries still go to grype or trivy.
+ */
+export type ReleaseScanConfig = boolean | { db?: string; imageScanner?: "wiz" };
 
 /** Whether a publish scans, and why. */
 export interface ScanSetting {
@@ -77,6 +82,8 @@ export interface ScanSetting {
   warning: string | null;
   /** The scanner database directory `release.scan.db` names, as written. */
   db?: string;
+  /** `release.scan.imageScanner` (#5451). */
+  imageScanner?: "wiz";
 }
 
 /** Whether a publish scans: `release.scan` first, then the `supply-chain` group. */
@@ -89,7 +96,8 @@ export function resolveScan(config: ReleaseScanConfig | undefined, groups: Reado
     };
   }
   const db = typeof config === "object" && config.db ? { db: config.db } : {};
-  if (config !== undefined) return { on: true, from: "config", warning: null, ...db };
+  const imageScanner = typeof config === "object" && config.imageScanner ? { imageScanner: config.imageScanner } : {};
+  if (config !== undefined) return { on: true, from: "config", warning: null, ...db, ...imageScanner };
   return groups.has("supply-chain") ? { on: true, from: "supply-chain", warning: null } : { on: false, from: "off", warning: null };
 }
 
