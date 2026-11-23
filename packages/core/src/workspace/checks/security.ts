@@ -295,6 +295,17 @@ export const SECURITY_CHECKS: readonly WorkspaceCheck[] = [
           out.push(finding(this, "security-component-no-verify", `member ${m.name}'s components have no verify step, so a signature or attestation is never checked before a deploy`, { pointer, entity: m.name, treeFile: components[0] }));
         }
       }
+      // The root project, when the top level names the group and no member holds the root directory: its own release.images are read too.
+      if (securityGroupsOf(d).has("supply-chain") && !d.members.some((m) => memberDir(m.dir) === "")) {
+        const rootConfig = read(ctx.tree, "chant.config.ts");
+        for (const dockerfile of rootConfig === null ? [] : releaseImageDockerfiles(rootConfig)) {
+          const text = read(ctx.tree, dockerfile);
+          if (text === null) continue;
+          for (const u of unpinnedFroms(text)) {
+            out.push(finding(this, "security-image-base-unpinned", `the root project's release image ${dockerfile} starts FROM ${u.image} on line ${u.line}: ${u.why}`, { pointer, treeFile: dockerfile, line: u.line }));
+          }
+        }
+      }
       for (const l of commandLines(ctx, RELEASE_PUBLISH)) {
         if (/--require-provenance\b/.test(l.text)) continue;
         out.push(finding(this, "security-publish-no-provenance", `${l.path} runs release publish without --require-provenance, so a run with no OIDC token publishes with only a warning`, { pointer, treeFile: l.path, line: l.line }));
