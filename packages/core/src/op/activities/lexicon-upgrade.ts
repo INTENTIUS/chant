@@ -30,6 +30,7 @@ import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId, UpstreamPin } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
 import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
+import { deltaSections, formatDelta, type SurfaceDelta } from "../../codegen/surface-snapshot";
 import { ghHostEnv } from "./gh-host";
 import { restPullRequestForge } from "./forge-pull-request";
 import type { PrForge } from "../../pr-forge";
@@ -253,15 +254,131 @@ export function upgradeBranchName(lexicon: SupportedLexicon, pin?: string): stri
   return pin ? `lexicon-upgrade/${lexicon}-${pin}` : `lexicon-upgrade/${lexicon}`;
 }
 
-/** PR title for an upgrade. */
+/**
+ * PR title for an upgrade. A breaking upgrade (the `breaking` semver label:
+ * a removal, a rename or a breaking change to an entry) is `feat(<lexicon>)!:`,
+ * which the release train ships as a minor on 0.x and a major after; a plain
+ * `feat:` would ship it as a patch on 0.x (#5547).
+ */
 export function upgradePrTitle(
   lexicon: SupportedLexicon,
   from?: string,
   to?: string | null,
   pin?: string,
+  semverLabel?: SemverLabel | null,
 ): string {
-  if (from && to) return `feat(${lexicon}): upgrade ${pin ? `${pin} ` : "spec "}${from} to ${to}`;
-  return `feat(${lexicon}): upgrade to latest spec`;
+  const type = `feat(${lexicon})${semverLabel === "breaking" ? "!" : ""}`;
+  if (from && to) return `${type}: upgrade ${pin ? `${pin} ` : "spec "}${from} to ${to}`;
+  return `${type}: upgrade to latest spec`;
+}
+
+// ── Surface delta that fits ───────────────────────────────────────────
+
+/**
+ * The service or namespace an entry belongs to, read from its resourceType:
+ * `GCP::Compute::Instance` and `AWS::S3::Bucket.Tag` give `GCP::Compute` and
+ * `AWS::S3`, `Microsoft.Cdn/profiles` gives `Microsoft.Cdn`.
+ */
+export function deltaServiceOf(resourceType: string): string {
+  if (resourceType.includes("::")) return resourceType.split("::").slice(0, 2).join("::");
+  const slash = resourceType.indexOf("/");
+  if (slash > 0) return resourceType.slice(0, slash);
+  return resourceType.split(/\s+/)[0] || "(no resourceType)";
+}
+
+function hasDeltaEntries(delta: SurfaceDelta | undefined): delta is SurfaceDelta {
+  return !!delta && delta.added.length + delta.removed.length + delta.renamed.length + delta.changed.length > 0;
+}
+
+const notShown = (n: number) => `  ${n} more not shown here; the surface.snapshot.json diff lists every entry.`;
+
+/**
+ * Render a surface delta in at most `max` characters (#5547). The breaking
+ * sections (Removed, Renamed, Changed) come first and are kept whole. When
+ * the whole delta does not fit, Added is summarised: a count per service or
+ * namespace, then as many names as fit. Only when the breaking sections alone
+ * do not fit are they cut too, each to a fair share of the room, and each
+ * section says how many entries it left out.
+ */
+export function formatDeltaWithin(delta: SurfaceDelta, max: number): string {
+  const full = formatDelta(delta);
+  if (full.length <= max) return full;
+
+  const sections = deltaSections(delta);
+  const breaking = sections.filter((s) => s.title !== "Added");
+  const added = delta.added;
+  const tail = `\n\nSeverity: ${delta.severity}`;
+  const addedBare = added.length > 0 ? `Added (${added.length}): not listed here; the surface.snapshot.json diff lists every entry.` : "";
+  const joinLen = (lines: string[]) => lines.reduce((n, l) => n + l.length + 1, 0);
+
+  const breakingLines: string[] = [];
+  for (const s of breaking) {
+    breakingLines.push(`${s.title} (${s.blocks.length}):`);
+    for (const b of s.blocks) breakingLines.push(...b);
+  }
+
+  // The breaking sections fit whole: give Added the rest of the room.
+  if (joinLen(breakingLines) + addedBare.length + tail.length <= max) {
+    const lines = [...breakingLines];
+    if (added.length > 0) {
+      let room = max - tail.length - joinLen(lines);
+      const counts = new Map<string, number>();
+      for (const a of added) {
+        const svc = deltaServiceOf(a.entry.resourceType);
+        counts.set(svc, (counts.get(svc) ?? 0) + 1);
+      }
+      const byService = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      const head = [`Added (${added.length}), by service:`, ...byService.map(([svc, n]) => `  ${svc}: ${n}`)];
+      if (joinLen(head) + notShown(added.length).length + 1 <= room) {
+        lines.push(...head);
+        room -= joinLen(head);
+        const names = sections.find((s) => s.title === "Added")!.blocks;
+        let listed = 0;
+        const reserve = notShown(added.length).length + 1;
+        const listedHead = "Added entries:";
+        if (joinLen([listedHead]) + reserve <= room) {
+          lines.push(listedHead);
+          room -= joinLen([listedHead]);
+          for (const b of names) {
+            if (joinLen(b) + reserve > room) break;
+            lines.push(...b);
+            room -= joinLen(b);
+            listed++;
+          }
+        }
+        if (listed < added.length) lines.push(notShown(added.length - listed));
+      } else {
+        lines.push(addedBare);
+      }
+    }
+    return lines.join("\n") + tail;
+  }
+
+  // Even the breaking sections do not fit: cut each to a share of the room,
+  // carrying what one leaves unused to the next.
+  const lines: string[] = [];
+  let room = max - tail.length - (addedBare ? addedBare.length + 1 : 0);
+  for (let i = 0; i < breaking.length; i++) {
+    const s = breaking[i]!;
+    let share = Math.floor(room / (breaking.length - i));
+    const header = `${s.title} (${s.blocks.length}):`;
+    const kept: string[] = [header];
+    share -= header.length + 1;
+    const reserve = notShown(s.blocks.length).length + 1;
+    let listed = 0;
+    for (const b of s.blocks) {
+      const len = joinLen(b);
+      if (len + (listed + 1 < s.blocks.length ? reserve : 0) > share) break;
+      kept.push(...b);
+      share -= len;
+      listed++;
+    }
+    if (listed < s.blocks.length) kept.push(notShown(s.blocks.length - listed));
+    lines.push(...kept);
+    room -= joinLen(kept);
+  }
+  if (addedBare) lines.push(addedBare);
+  return lines.join("\n") + tail;
 }
 
 // ── Markdown summary builder ──────────────────────────────────────────
@@ -274,13 +391,33 @@ export function buildUpgradeSummary(opts: {
   from?: string;
   to?: string | null;
   deltaText: string;
+  /**
+   * The structured delta. When it has entries the body renders it (breaking
+   * sections first, Added summarised to fit `maxChars`) in place of
+   * `deltaText` (#5547).
+   */
+  delta?: SurfaceDelta;
+  /** The longest body to aim for. Default: MAX_UPGRADE_BODY_CHARS. */
+  maxChars?: number;
   semverLabel: SemverLabel | null;
   validationOk: boolean;
   failures?: Array<{ step: string; output: string }>;
   /** Set for a pin that moves with other constants: nothing was bumped or regenerated. */
   manualPin?: { file: string; instructions: string };
 }): string {
-  const { lexicon, from, to, deltaText, semverLabel, validationOk, failures = [], manualPin } = opts;
+  const { delta, maxChars = MAX_UPGRADE_BODY_CHARS } = opts;
+  if (!hasDeltaEntries(delta)) return renderUpgradeSummary(opts, opts.deltaText);
+  // Measure everything around the delta, then give the delta what is left.
+  const PLACEHOLDER = "\u0000";
+  const room = maxChars - (renderUpgradeSummary(opts, PLACEHOLDER).length - PLACEHOLDER.length);
+  return renderUpgradeSummary(opts, formatDeltaWithin(delta, Math.max(room, 0)));
+}
+
+function renderUpgradeSummary(
+  opts: Parameters<typeof buildUpgradeSummary>[0],
+  deltaText: string,
+): string {
+  const { lexicon, from, to, semverLabel, validationOk, failures = [], manualPin } = opts;
 
   // Example validation status (#604): the upgrade check lints the lexicon's
   // examples (regenLexicon step 6), and an example failure makes validation
@@ -599,6 +736,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   let from: string | undefined;
   let to: string | null | undefined;
   let freshSnapshotJson: string | null = null;
+  let delta: SurfaceDelta | undefined;
 
   // An injected check stands in for the whole pinned check, so discovery runs
   // only on the real path.
@@ -628,6 +766,9 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
           from: r.from,
           to: r.to,
           deltaText: r.validation?.deltaText ?? "",
+          delta: r.validation?.delta,
+          // Room for the separators and the note on other pins below.
+          maxChars: Math.floor(MAX_UPGRADE_BODY_CHARS / results.length) - 400,
           semverLabel: severityToLabel(r.validation?.severity ?? "none"),
           validationOk: r.fetchError ? false : (r.validation?.ok ?? true),
           failures: r.fetchError
@@ -676,6 +817,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     manualPin = multi ? (rewritable(result) ? undefined : result.manualPin) : result.manualPin;
     severity = result.validation?.severity ?? "none";
     deltaText = result.validation?.deltaText ?? "";
+    delta = result.validation?.delta;
     validationOk = result.validation?.ok ?? true;
     failures = (result.validation?.failures ?? []).map((f) => ({ step: f.step, output: f.output }));
     if (result.validation?.freshSnapshot) {
@@ -689,6 +831,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     hasUpgrade = result.hasUpgrade;
     severity = result.severity;
     deltaText = result.deltaText;
+    delta = result.delta;
     validationOk = result.validationOk;
     failures = (result.failures ?? []).map((f) => ({ step: f.step, output: f.output }));
     if (result.freshSnapshot) {
@@ -712,6 +855,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
         from,
         to,
         deltaText,
+        delta,
         semverLabel,
         validationOk,
         failures,
@@ -765,7 +909,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
 
   // ── 4. Upgrade ready: surface according to mode ───────────────────
 
-  const title = upgradePrTitle(lexicon, from, to, pinLabel);
+  const title = upgradePrTitle(lexicon, from, to, pinLabel, semverLabel);
 
   // #546: rolling lexicons have no version pin, so a "pull-request" would only
   // refresh the baseline snapshot — low signal, no build-output change. Surface

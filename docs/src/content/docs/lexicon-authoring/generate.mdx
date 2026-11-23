@@ -298,6 +298,14 @@ rewrite. A pin with `alsoMoves` stays report-only whatever the mode: the report
 names the newer version and the manual step, and the Op makes no branch and
 opens no PR.
 
+The PR body lists the surface delta with Removed, Renamed and Changed before
+Added, and stays under 60,000 characters. When the whole delta is longer,
+Added is summarised as a count per service followed by as many names as fit,
+so the breaking sections stay whole. A delta whose breaking sections alone are
+too long has each section cut, with a line saying how many entries it left out.
+A breaking upgrade is titled `feat(<lexicon>)!:` and an additive one
+`feat(<lexicon>):`, so the release train ships the first as a minor on 0.x.
+
 ### Several pins: `upstreamPins`
 
 A lexicon that pins more than one upstream keeps `upstreamPin` as it is and

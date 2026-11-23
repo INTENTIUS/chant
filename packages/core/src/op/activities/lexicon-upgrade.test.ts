@@ -11,6 +11,8 @@ import {
   bumpPackageJsonVersion,
   lexiconUpgradeIssueMarker,
   fitUpgradeBody,
+  formatDeltaWithin,
+  deltaServiceOf,
   MAX_UPGRADE_BODY_CHARS,
   type CheckPinnedFn,
   type CheckRollingFn,
@@ -18,6 +20,7 @@ import {
 } from "./lexicon-upgrade";
 import type { UpgradeCheckResult } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult } from "../../codegen/rolling-upgrade";
+import { formatDelta, type SurfaceDelta } from "../../codegen/surface-snapshot";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync, readFileSync, mkdirSync, mkdtempSync } from "node:fs";
@@ -724,6 +727,191 @@ describe("an upgrade summary longer than a forge accepts (#5500)", () => {
     expect(kept.split("\n").slice(0, -1).every((l) => body.split("\n").includes(l))).toBe(true);
     const omitted = Number(/_(\d+) characters/.exec(fitted)![1]);
     expect(kept.length - "\n```".length + omitted).toBe(body.length);
+  });
+});
+
+describe("the breaking sections survive a large upgrade (#5547)", () => {
+  const res = (resourceType: string) => ({ kind: "resource" as const, resourceType });
+  // Shaped like gcp v1.152.0 to v1.161.0: thousands of additions across
+  // services, 2 removals, 97 renames and 12 changes.
+  function bigDelta(): SurfaceDelta {
+    const services = ["Compute", "Storage", "Bigquery", "Run", "Sql"];
+    return {
+      added: Array.from({ length: 3000 }, (_, i) => ({
+        name: `AddedResourceWithALongName${i}`,
+        entry: res(`GCP::${services[i % services.length]}::AddedResourceWithALongName${i}`),
+      })),
+      removed: [
+        { name: "GoneOne", entry: res("GCP::Compute::GoneOne") },
+        { name: "GoneTwo", entry: res("GCP::Storage::GoneTwo") },
+      ],
+      renamed: Array.from({ length: 97 }, (_, i) => ({ from: `OldName${i}`, to: `NewName${i}`, entry: res(`GCP::Run::Thing${i}`) })),
+      changed: Array.from({ length: 12 }, (_, i) => ({ name: `Changed${i}`, removedAttrs: [`lostAttr${i}`] })),
+      severity: "breaking",
+    };
+  }
+
+  function breakingPinned(delta: SurfaceDelta, ok = true): UpgradeCheckResult {
+    return pinnedResult({
+      lexicon: "gcp",
+      from: "v1.152.0",
+      to: "v1.161.0",
+      validation: {
+        ok,
+        changed: true,
+        severity: delta.severity,
+        delta,
+        deltaText: formatDelta(delta),
+        failures: ok ? [] : [{ step: "build", output: "tsc failed" }],
+        freshSnapshot: null,
+      },
+    });
+  }
+
+  async function openPr(result: UpgradeCheckResult) {
+    const lexiconDir = mkdtempSync(join(tmpdir(), "chant-test-lexicon-5547-"));
+    writeFileSync(join(lexiconDir, "package.json"), JSON.stringify({ version: "0.13.1" }) + "\n", "utf-8");
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/7", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    const r = await lexiconUpgrade({
+      lexicon: "gcp",
+      mode: "pull-request",
+      lexiconDir,
+      _checkPinned: vi.fn(async () => result),
+      _applyBump: vi.fn(() => ({ filePath: join(lexiconDir, "versions.ts") })),
+      _bumpPackageVersion: vi.fn(),
+      _forge: null,
+      _gh: gh,
+    });
+    return { r, create: calls.find((c) => c.startsWith("gh pr create")) };
+  }
+
+  test("a huge Added section is summarised and Removed, Renamed and Changed stay whole under the cap", async () => {
+    const delta = bigDelta();
+    expect(formatDelta(delta).length).toBeGreaterThan(MAX_UPGRADE_BODY_CHARS);
+    const { r, create } = await openPr(breakingPinned(delta));
+    const body = r.summary;
+
+    expect(body.length).toBeLessThanOrEqual(MAX_UPGRADE_BODY_CHARS);
+    expect(create!.length).toBeLessThan(65_536);
+    // Nothing was cut by the last-resort cap.
+    expect(body).not.toMatch(/characters of this summary are not shown/);
+
+    expect(body).toContain("Removed (2):");
+    expect(body).toContain("  - GoneOne [resource] (GCP::Compute::GoneOne)");
+    expect(body).toContain("  - GoneTwo [resource] (GCP::Storage::GoneTwo)");
+    expect(body).toContain("Renamed (97):");
+    for (let i = 0; i < 97; i++) expect(body).toContain(`  ~ OldName${i} -> NewName${i} [resource]`);
+    expect(body).toContain("Changed (12):");
+    for (let i = 0; i < 12; i++) {
+      expect(body).toContain(`  ~ Changed${i}\n`);
+      expect(body).toContain(`removed attrs: lostAttr${i}`);
+    }
+
+    // Breaking sections first, then the Added summary.
+    expect(body.indexOf("Removed (2):")).toBeLessThan(body.indexOf("Renamed (97):"));
+    expect(body.indexOf("Renamed (97):")).toBeLessThan(body.indexOf("Changed (12):"));
+    expect(body.indexOf("Changed (12):")).toBeLessThan(body.indexOf("Added (3000)"));
+    expect(body).toContain("Added (3000), by service:");
+    for (const svc of ["Compute", "Storage", "Bigquery", "Run", "Sql"]) expect(body).toContain(`  GCP::${svc}: 600`);
+    const listed = (body.match(/^ {2}\+ AddedResourceWithALongName\d+ /gm) ?? []).length;
+    expect(listed).toBeGreaterThan(0);
+    const more = Number(/^ {2}(\d+) more not shown here/m.exec(body)![1]);
+    expect(listed + more).toBe(3000);
+    expect(body).toContain("Severity: breaking");
+  });
+
+  test("a breaking upgrade is titled feat(<lexicon>)!:", async () => {
+    const { create } = await openPr(breakingPinned(bigDelta()));
+    expect(create).toContain("--title 'feat(gcp)!: upgrade spec v1.152.0 to v1.161.0'");
+  });
+
+  test("an additive upgrade keeps feat(<lexicon>): with no !", async () => {
+    const additive: SurfaceDelta = {
+      added: [{ name: "NewThing", entry: res("GCP::Run::NewThing") }],
+      removed: [],
+      renamed: [],
+      changed: [],
+      severity: "additive",
+    };
+    const { r, create } = await openPr(breakingPinned(additive));
+    expect(r.semverLabel).toBe("minor");
+    expect(create).toContain("--title 'feat(gcp): upgrade spec v1.152.0 to v1.161.0'");
+  });
+
+  test("upgradePrTitle carries ! only for the breaking label", () => {
+    expect(upgradePrTitle("gcp", "v1", "v2", undefined, "breaking")).toBe("feat(gcp)!: upgrade spec v1 to v2");
+    expect(upgradePrTitle("gcp", "v1", "v2", undefined, "minor")).toBe("feat(gcp): upgrade spec v1 to v2");
+    expect(upgradePrTitle("gcp", "v1", "v2", undefined, null)).toBe("feat(gcp): upgrade spec v1 to v2");
+    expect(upgradePrTitle("aws", undefined, undefined, undefined, "breaking")).toBe("feat(aws)!: upgrade to latest spec");
+  });
+
+  test("the issue filed on a validation failure prints the breaking sections first too", async () => {
+    const { gh, calls } = recordingGh();
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    try {
+      const r = await lexiconUpgrade({
+        lexicon: "gcp",
+        mode: "pull-request",
+        _checkPinned: vi.fn(async () => breakingPinned(bigDelta(), false)),
+        _gh: gh,
+      });
+      expect(r.issueUrl).toBe("https://gh/issue/1");
+      const issue = calls.find((c) => c.startsWith("gh issue create"))!;
+      expect(issue.length).toBeLessThan(65_536);
+      expect(issue).toContain("Validation failures");
+      expect(issue).toContain("  - GoneTwo [resource]");
+      expect(issue).toContain("  ~ OldName96 -> NewName96 [resource]");
+      expect(issue).toContain("removed attrs: lostAttr11");
+      expect(issue.indexOf("Removed (2):")).toBeLessThan(issue.indexOf("Added (3000)"));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("when the breaking sections alone exceed the room, each is cut and says how many it left out", () => {
+    const delta: SurfaceDelta = {
+      added: [{ name: "NewThing", entry: res("GCP::Run::NewThing") }],
+      removed: Array.from({ length: 400 }, (_, i) => ({ name: `Gone${i}`, entry: res(`GCP::Compute::Gone${i}`) })),
+      renamed: Array.from({ length: 400 }, (_, i) => ({ from: `Old${i}`, to: `New${i}`, entry: res(`GCP::Run::T${i}`) })),
+      changed: Array.from({ length: 5 }, (_, i) => ({ name: `Changed${i}`, removedAttrs: ["a"] })),
+      severity: "breaking",
+    };
+    const max = 6_000;
+    const text = formatDeltaWithin(delta, max);
+    expect(text.length).toBeLessThanOrEqual(max);
+    const count = (re: RegExp) => (text.match(re) ?? []).length;
+    const notShown = (title: string) => {
+      const section = text.slice(text.indexOf(`${title} (`));
+      const m = /^ {2}(\d+) more not shown here/m.exec(section);
+      return m ? Number(m[1]) : 0;
+    };
+    expect(text).toContain("Removed (400):");
+    expect(text).toContain("Renamed (400):");
+    expect(count(/^ {2}- Gone\d+ /gm) + notShown("Removed")).toBe(400);
+    expect(count(/^ {2}~ Old\d+ -> /gm) + notShown("Renamed")).toBe(400);
+    expect(notShown("Removed")).toBeGreaterThan(0);
+    expect(notShown("Renamed")).toBeGreaterThan(0);
+    // The small Changed section still gets its share and is whole.
+    for (let i = 0; i < 5; i++) expect(text).toContain(`  ~ Changed${i}\n`);
+    expect(text).toContain("Added (1): not listed");
+  });
+
+  test("a delta that fits is printed whole, breaking sections first", () => {
+    const delta = bigDelta();
+    delta.added = delta.added.slice(0, 3);
+    expect(formatDeltaWithin(delta, MAX_UPGRADE_BODY_CHARS)).toBe(formatDelta(delta));
+  });
+
+  test("deltaServiceOf reads the service or namespace from a resourceType", () => {
+    expect(deltaServiceOf("GCP::Compute::Instance")).toBe("GCP::Compute");
+    expect(deltaServiceOf("AWS::S3::Bucket.Tag")).toBe("AWS::S3");
+    expect(deltaServiceOf("Microsoft.Cdn/profiles_customDomains.AFDDomainProperties")).toBe("Microsoft.Cdn");
+    expect(deltaServiceOf("")).toBe("(no resourceType)");
   });
 });
 

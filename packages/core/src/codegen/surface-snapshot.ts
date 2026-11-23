@@ -629,40 +629,53 @@ export function parseSnapshot(json: string): SurfaceSnapshot {
 
 // ── Human-readable output ────────────────────────────────────────────
 
+/** One section of a rendered delta: its title and one block of lines per entry. */
+export interface DeltaSection {
+  title: "Removed" | "Renamed" | "Changed" | "Added";
+  /** One block per entry: the entry's line, then its detail lines. */
+  blocks: string[][];
+}
+
 /**
- * Render a surface delta as human-readable text.
+ * The sections of a delta in the order they are printed: the breaking ones
+ * (Removed, Renamed, Changed) before Added, so a reader, or a cut made to
+ * fit a size limit, meets what breaks a consumer first (#5547). Sections
+ * with no entries are left out.
+ */
+export function deltaSections(delta: SurfaceDelta): DeltaSection[] {
+  const sections: DeltaSection[] = [
+    {
+      title: "Removed",
+      blocks: delta.removed.map((e) => [`  - ${e.name} [${e.entry.kind}] (${e.entry.resourceType})`]),
+    },
+    {
+      title: "Renamed",
+      blocks: delta.renamed.map((r) => [
+        `  ~ ${r.from} -> ${r.to} [${r.entry.kind}] (${r.entry.resourceType})`,
+        ...(r.changes ? formatChanges(r.changes) : []),
+      ]),
+    },
+    {
+      title: "Changed",
+      blocks: delta.changed.map((c) => [`  ~ ${c.name}`, ...formatChanges(c)]),
+    },
+    {
+      title: "Added",
+      blocks: delta.added.map((e) => [`  + ${e.name} [${e.entry.kind}] (${e.entry.resourceType})`]),
+    },
+  ];
+  return sections.filter((s) => s.blocks.length > 0);
+}
+
+/**
+ * Render a surface delta as human-readable text, breaking sections first.
  */
 export function formatDelta(delta: SurfaceDelta): string {
   const lines: string[] = [];
 
-  if (delta.added.length > 0) {
-    lines.push(`Added (${delta.added.length}):`);
-    for (const e of delta.added) {
-      lines.push(`  + ${e.name} [${e.entry.kind}] (${e.entry.resourceType})`);
-    }
-  }
-
-  if (delta.removed.length > 0) {
-    lines.push(`Removed (${delta.removed.length}):`);
-    for (const e of delta.removed) {
-      lines.push(`  - ${e.name} [${e.entry.kind}] (${e.entry.resourceType})`);
-    }
-  }
-
-  if (delta.renamed.length > 0) {
-    lines.push(`Renamed (${delta.renamed.length}):`);
-    for (const r of delta.renamed) {
-      lines.push(`  ~ ${r.from} -> ${r.to} [${r.entry.kind}] (${r.entry.resourceType})`);
-      if (r.changes) lines.push(...formatChanges(r.changes));
-    }
-  }
-
-  if (delta.changed.length > 0) {
-    lines.push(`Changed (${delta.changed.length}):`);
-    for (const c of delta.changed) {
-      lines.push(`  ~ ${c.name}`);
-      lines.push(...formatChanges(c));
-    }
+  for (const s of deltaSections(delta)) {
+    lines.push(`${s.title} (${s.blocks.length}):`);
+    for (const b of s.blocks) lines.push(...b);
   }
 
   if (lines.length === 0) {

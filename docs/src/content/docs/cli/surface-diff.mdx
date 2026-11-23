@@ -26,13 +26,15 @@ The delta has four categories.
 
 `Renamed` exists because a lexicon's TS name can change while the upstream type it stands for does not (chant #1460). The aws lexicon derives short names from the CloudFormation type and disambiguates collisions, so an unrelated neighbour appearing upstream can shift a name. Reported as a removal plus an addition that reads as AWS having deleted something; reported as a rename it reads as what happened.
 
+The breaking sections print first, in the order Removed, Renamed, Changed, and Added comes last.
+
 ```
+Removed (95):
+  - ...
 Renamed (28):
   ~ MacieSession -> Session [resource] (AWS::Macie::Session)
   ~ PanoramaPackage -> Package [resource] (AWS::Panorama::Package)
   ~ Space_SpaceSettings -> SageMakerSpace_SpaceSettings [property] (AWS::SageMaker::Space.SpaceSettings)
-Removed (95):
-  - ...
 Added (55):
   + ...
 
