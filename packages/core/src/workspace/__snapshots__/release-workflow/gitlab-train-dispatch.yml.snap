@@ -10,7 +10,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -78,7 +79,8 @@ chant-release-gate:
       dotenv: chant-release-gate.env
   script:
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -145,7 +147,8 @@ chant-release-gate:
     - "cd release"
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -216,7 +219,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -285,7 +289,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -304,7 +309,7 @@ chant-release-cut:
   script:
     - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
@@ -335,7 +340,7 @@ chant-release-publish:
     - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
     - "git checkout --detach FETCH_HEAD"
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "git fetch origin chant/lifecycle:chant/lifecycle"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
@@ -359,7 +364,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -378,7 +384,7 @@ chant-release-cut:
   script:
     - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
@@ -409,7 +415,7 @@ chant-release-publish:
     - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
     - "git checkout --detach FETCH_HEAD"
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "git fetch origin chant/lifecycle:chant/lifecycle"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
@@ -433,7 +439,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -452,7 +459,7 @@ chant-release-cut:
   script:
     - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
@@ -483,7 +490,7 @@ chant-release-publish:
     - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
     - "git checkout --detach FETCH_HEAD"
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "git fetch origin chant/lifecycle:chant/lifecycle"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
@@ -507,7 +514,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -526,7 +534,7 @@ chant-release-cut:
   script:
     - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
@@ -557,7 +565,7 @@ chant-release-publish:
     - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
     - "git checkout --detach FETCH_HEAD"
     - "npm ci"
-    - "curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\" && export CHANT_COSIGN=/tmp/cosign"
+    - "case \"$(uname -m)\" in x86_64|amd64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 && echo \"424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; aarch64|arm64) curl -fsSL -o \"/tmp/cosign\" https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-arm64 && echo \"ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2  /tmp/cosign\" | sha256sum -c - && chmod +x \"/tmp/cosign\";; *) echo \"no pinned cosign v3.1.4 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_COSIGN=/tmp/cosign"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "git fetch origin chant/lifecycle:chant/lifecycle"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
@@ -581,7 +589,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -597,8 +606,8 @@ chant-release-cut:
   script:
     - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
     - "npm ci"
-    - "mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype && export CHANT_GRYPE=/tmp/grype/grype"
-    - "mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft && export CHANT_SYFT=/tmp/syft/syft"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype;; aarch64|arm64) mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_arm64.tar.gz && echo \"33670612aad351c48cf3c37f4a85d8b043d1b64b21e6034e675bb00b956d78c1  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype;; *) echo \"no pinned grype v0.121.1 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_GRYPE=/tmp/grype/grype"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft;; aarch64|arm64) mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_arm64.tar.gz && echo \"ace61b9397ae28189c674ae332d67a8074dafd71e87724dfb8b22412d8253bb5  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft;; *) echo \"no pinned syft v1.56.0 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_SYFT=/tmp/syft/syft"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
@@ -629,8 +638,8 @@ chant-release-publish:
     - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
     - "git checkout --detach FETCH_HEAD"
     - "npm ci"
-    - "mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype && export CHANT_GRYPE=/tmp/grype/grype"
-    - "mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft && export CHANT_SYFT=/tmp/syft/syft"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype;; aarch64|arm64) mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_arm64.tar.gz && echo \"33670612aad351c48cf3c37f4a85d8b043d1b64b21e6034e675bb00b956d78c1  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype;; *) echo \"no pinned grype v0.121.1 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_GRYPE=/tmp/grype/grype"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_amd64.tar.gz && echo \"1c2493cfcf52d3367d6cb25780d9190c111c2219c34c820574c43e8bae15c528  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft;; aarch64|arm64) mkdir -p \"/tmp/syft\" && curl -fsSL -o \"/tmp/syft/syft.tar.gz\" https://github.com/anchore/syft/releases/download/v1.56.0/syft_1.56.0_linux_arm64.tar.gz && echo \"ace61b9397ae28189c674ae332d67a8074dafd71e87724dfb8b22412d8253bb5  /tmp/syft/syft.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/syft/syft.tar.gz\" -C \"/tmp/syft\" syft;; *) echo \"no pinned syft v1.56.0 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_SYFT=/tmp/syft/syft"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "git fetch origin chant/lifecycle:chant/lifecycle"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
@@ -654,7 +663,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -731,7 +741,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --lane fast --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --lane fast --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -800,7 +811,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "if [ \"$commit\" != \"$CI_COMMIT_SHA\" ]; then echo \"$CI_COMMIT_SHA is not green (the newest green commit below it is $commit), so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
@@ -1006,7 +1018,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1093,7 +1106,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1168,7 +1182,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1237,7 +1252,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1312,7 +1328,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1389,7 +1406,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1464,7 +1482,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1483,7 +1502,7 @@ chant-release-cut:
   script:
     - "git checkout --detach \"$CHANT_RELEASE_COMMIT\""
     - "npm ci"
-    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser;; aarch64|arm64) mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_arm64.tar.gz && echo \"ef33741b684c9f62d6a21e7a3c8b051f139ea7b1d301693b67cc819c46226d53  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser;; *) echo \"no pinned goreleaser v2.19.0 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
@@ -1516,7 +1535,7 @@ chant-release-publish:
     - "git fetch origin \"refs/tags/release-train/npm/$CHANT_RELEASE_TRAIN\""
     - "git checkout --detach FETCH_HEAD"
     - "npm ci"
-    - "mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_x86_64.tar.gz && echo \"ebc3194ad1d1b1787614405285a0039665cd4c5bd3305215a1b201600f90630b  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser;; aarch64|arm64) mkdir -p \"/tmp/goreleaser\" && curl -fsSL -o \"/tmp/goreleaser/goreleaser.tar.gz\" https://github.com/goreleaser/goreleaser/releases/download/v2.19.0/goreleaser_Linux_arm64.tar.gz && echo \"ef33741b684c9f62d6a21e7a3c8b051f139ea7b1d301693b67cc819c46226d53  /tmp/goreleaser/goreleaser.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/goreleaser/goreleaser.tar.gz\" -C \"/tmp/goreleaser\" goreleaser;; *) echo \"no pinned goreleaser v2.19.0 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
     - "git fetch origin chant/lifecycle:chant/lifecycle"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
@@ -1541,7 +1560,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1611,7 +1631,8 @@ chant-release-gate:
   script:
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
 
@@ -1681,7 +1702,8 @@ chant-release-gate:
     - "cd release"
     - "npm ci"
     - "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'"
-    - "commit=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
+    - "green=\"$(npx chant ci last-green --from \"$CI_COMMIT_SHA\" --json)\" || { printf '%s' \"$green\" | node -e 'let t=\"\";try{t=require(\"fs\").readFileSync(0,\"utf8\")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?\" [\"+e.code+\"]\":\"\")+(e.fix||e.hint?\". \"+(e.fix||e.hint):\"\"):\"no release was cut: ci last-green failed\"+(t.trim()?\": \"+t.trim().split(\"\\n\")[0]:\"\"))' >&2; exit 1; }"
+    - "commit=\"$(printf '%s' \"$green\" | node -e 'const f=process.argv[1];const t=f?require(\"fs\").readFileSync(f,\"utf8\"):require(\"fs\").readFileSync(0,\"utf8\");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??\"\"))')\""
     - "if [ -z \"$commit\" ]; then echo \"no green commit at or below $CI_COMMIT_SHA, so no release is cut\" >&2; exit 1; fi"
     - "printf 'CHANT_RELEASE_COMMIT=%s\\n' \"$commit\" > \"$CI_PROJECT_DIR/chant-release-gate.env\""
     - "npx chant workspace train cut npm --at \"$commit\" --levels \"${CHANT_RELEASE_LEVELS:-auto}\" --plan-only --json > /tmp/chant-train-plan.json"
