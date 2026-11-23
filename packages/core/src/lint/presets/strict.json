@@ -22,6 +22,7 @@
     "COMP005": "error",
     "COMP006": "error",
     "COMP007": "warning",
-    "COMP008": "warning"
+    "COMP008": "warning",
+    "COMP009": "warning"
   }
 }

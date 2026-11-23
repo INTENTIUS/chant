@@ -54,7 +54,7 @@ describe("COMP000: component discovery errors", () => {
 });
 
 describe("loadComponentChecks()", () => {
-  it("returns all eight COMP* checks, sorted by id, each error or warning severity", () => {
+  it("returns all nine COMP* checks, sorted by id, each error or warning severity", () => {
     expect(checks.map((c) => c.id)).toEqual([
       "COMP001",
       "COMP002",
@@ -64,6 +64,7 @@ describe("loadComponentChecks()", () => {
       "COMP006",
       "COMP007",
       "COMP008",
+      "COMP009",
     ]);
     for (const check of checks) {
       expect(["error", "warning"]).toContain(check.severity);
