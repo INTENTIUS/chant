@@ -187,6 +187,14 @@ export interface ReleaseWorkflowInput {
    */
   imagePlatforms?: string[];
   /**
+   * The platform the jobs run on, for the QEMU set-up above (#5536). Default
+   * {@link RELEASE_RUNNER_PLATFORM}. A `ci serve` host on arm64 passes
+   * `linux/arm64`, so its own platform needs no QEMU.
+   */
+  runnerPlatform?: string;
+  /** `run`: QEMU's binfmt handlers come from a `docker run --privileged` line on every forge, for a host that runs no actions (#5536). Default: an action on GitHub and Forgejo. */
+  qemuVia?: "action" | "run";
+  /**
    * The registries `release.images` pulls its bases from that need a login
    * (#5457), at the root or in a train's members: the cut and publish jobs
    * log docker in to each before they build ({@link pullLoginSetup}).

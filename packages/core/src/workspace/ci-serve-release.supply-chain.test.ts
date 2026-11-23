@@ -105,7 +105,7 @@ describe("a release served by ci serve --release under supply-chain (#5462)", ()
     const read = await releaseWorkflowInputAt(r.dir);
     expect(hostSigningRefusal(read)).toBeNull();
     expect([read.signs, read.scans]).toEqual([true, true]);
-    const job = hostReleaseJob(read, TOOLS);
+    const job = hostReleaseJob(read, TOOLS, "linux/amd64");
     const ran: string[] = [];
     const refusals: PublishRefusal[] = [];
     const errors: unknown[] = [];
@@ -191,7 +191,7 @@ describe("a release served by ci serve --release under supply-chain (#5462)", ()
     images.write("Dockerfile", "FROM node:22\nCOPY . /app\n");
     images.commit("init");
     // The host's job builds the images in its own step, the one the rendered workflow holds, before the build and the publish.
-    const job = hostReleaseJob(await releaseWorkflowInputAt(images.dir), TOOLS);
+    const job = hostReleaseJob(await releaseWorkflowInputAt(images.dir), TOOLS, "linux/amd64");
     const runs = job.steps.filter((s) => s.run).map((s) => s.run!);
     const at = runs.findIndex((l) => l.includes(' release images "${GITHUB_REF_NAME#release/}"'));
     expect(at).toBeGreaterThan(-1);

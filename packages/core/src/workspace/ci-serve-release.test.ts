@@ -66,7 +66,7 @@ const isInstall = (run: string): boolean => /CHANT_(COSIGN|GRYPE|SYFT)=/.test(ru
 describe("the host runs the steps the rendered workflow holds (#5462)", () => {
   test("a single release: the GitHub publish job's steps, in order, less the tool installs and GitHub's npm upgrade", () => {
     const github = workflowJob(renderReleaseWorkflow(SINGLE), "publish");
-    const host = hostReleaseJob({ input: SINGLE }, TOOLS);
+    const host = hostReleaseJob({ input: SINGLE }, TOOLS, "linux/amd64");
     const githubRuns = runLines(github);
     // The installs the GitHub job does are the host's, from the same pins, into its cache.
     expect(githubRuns.filter(isInstall)).toHaveLength(3);
@@ -99,7 +99,7 @@ describe("the host runs the steps the rendered workflow holds (#5462)", () => {
   test("a release.tag template reads its label from the ledger, in the same order as the GitHub job", () => {
     const input: ReleaseWorkflowInput = { ...SINGLE, publish: [{ type: "oci", repository: "registry.example.com/acme/api" }], tags: { place: { member: null, path: null }, template: { name: "v{version}", floating: "v{major}", legacy: false } } };
     const github = runLines(workflowJob(renderReleaseWorkflow(input), "publish")).filter((l) => !isInstall(l));
-    const host = runLines(hostReleaseJob({ input }, TOOLS));
+    const host = runLines(hostReleaseJob({ input }, TOOLS, "linux/amd64"));
     expect(host).toEqual(github);
     expect(host.some((l) => l.includes('npx chant release tag "$GITHUB_REF_NAME" --json'))).toBe(true);
     expect(host.at(-1)).toBe('npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes');
@@ -108,7 +108,7 @@ describe("the host runs the steps the rendered workflow holds (#5462)", () => {
   test("a train: the tag-triggered train publish job, even when the train is dispatched on the forge", () => {
     const train: ReleaseWorkflowInput = { ...SINGLE, images: false, imageArchives: [], version: false, pipeline: { trigger: "dispatch" }, train: { env: "prod", images: true, imagePlatforms: ["linux/amd64"] } };
     const github = runLines(workflowJob(renderReleaseWorkflow({ ...train, pipeline: {} }), "publish")).filter((l) => !isInstall(l) && l !== NPM_TRUSTED_PUBLISHING_SETUP);
-    const host = runLines(hostReleaseJob({ input: train }, TOOLS));
+    const host = runLines(hostReleaseJob({ input: train }, TOOLS, "linux/amd64"));
     expect(host).toEqual(github);
     expect(host.indexOf('npx chant workspace train prepare prod "$CHANT_RELEASE_TRAIN"')).toBeLessThan(host.indexOf("npm run build"));
     expect(host.at(-1)).toBe('npx chant workspace train publish prod "$CHANT_RELEASE_TRAIN" --require-provenance --yes');
