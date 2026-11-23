@@ -15,6 +15,7 @@ import { cleanScratch, git, scratchDir, writeFiles } from "./__fixtures__/contra
 import {
   HOST_TOOL_VARIABLES,
   evalCondition,
+  failureReason,
   hostPlatform,
   hostReleaseJob,
   hostReleaseTools,
@@ -25,6 +26,7 @@ import {
   releaseTagMatcher,
   resolveEnv,
   runHostJob,
+  stepLabel,
   workflowJob,
   type HostJob,
   type HostReleaseRequest,
@@ -232,6 +234,22 @@ describe("a step on a host", () => {
     expect(publish).toMatchObject({ OCI_PASSWORD: "pw-host-registry-1", RELEASE_KEY: "pem-host-key-1", [RUNNER_FINGERPRINT_ENV]: "SHA256:host", CHANT_CI_RUN_ID: "run-2" });
     expect(out.join("\n")).not.toContain("pw-host-registry-1");
     expect(out).toContain("using none");
+  });
+
+  test("a failed cut records the error line with its reason code, under a label that names the cut", async () => {
+    const top = scratchDir("chant-host-job-");
+    const lines = [
+      "error: no release was cut: a release image builds from a base not pinned by digest [release-image-base-unpinned]",
+      "  Pin each FROM as name:tag@sha256:<digest>: chant release images --repin ...",
+      "  Fix the dependency or the base image and cut again.",
+    ];
+    const runStep: HostStepRunner = async ({ output }) => (lines.forEach((l) => output(l)), 1);
+    const run = 'git config user.name "chant release"\nnpx chant release cut "$L" --at "$C" --yes --json > out.json';
+    const r = await runHostJob(job([{ run, env: {} }]), { top, commit: "c".repeat(40), tag: "release/v1", runId: "r", fingerprint: "SHA256:h", hostEnv: { PATH: process.env.PATH }, runnerTemp: join(top, ".t"), runStep });
+    expect(r).toMatchObject({ status: "fail", failure: "chant release cut exited 1: no release was cut: a release image builds from a base not pinned by digest [release-image-base-unpinned]", reason: expect.stringContaining("[release-image-base-unpinned]") });
+    expect(stepLabel({ run: "echo hi\necho there", env: {} })).toBe("echo hi");
+    expect(failureReason(["ok", "  last line  "])).toBe("last line");
+    expect(failureReason([])).toBeUndefined();
   });
 
   test("a failing step stops the job and names itself; an expression a host can't read refuses", async () => {

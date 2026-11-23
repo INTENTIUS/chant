@@ -195,11 +195,11 @@ export const HOST_TOOL_VARIABLES = { cosign: "CHANT_COSIGN", grype: "CHANT_GRYPE
 
 /**
  * The publish job the host runs for a release: the release workflow rendered
- * for {@link HOST_RELEASE_RENDER_FORGE} with the tag trigger, with `tools`
+ * for {@link HOST_RELEASE_RENDER_FORGE} and `runnerPlatform` with the tag trigger, with `tools`
  * (the release tools' variables) in its env, so it has no install steps.
  * Per-platform builds need runners of their own and refuse.
  */
-export function hostReleaseJob(read: Pick<ReleaseWorkflowRead, "input">, tools: Record<string, string> = {}): HostJob {
+export function hostReleaseJob(read: Pick<ReleaseWorkflowRead, "input">, tools: Record<string, string> = {}, runnerPlatform: string = hostImagePlatform()): HostJob {
   const p = read.input.pipeline ?? {};
   if ((p.builds?.length ?? 0) > 0 || (read.input.train?.builds?.length ?? 0) > 0) {
     throw new HostReleaseError("release.workflow.builds runs each build on a runner of its own, and a ci serve host is one runner", "Publish from the forge's release workflow, or build the files in the cut.");
@@ -207,7 +207,7 @@ export function hostReleaseJob(read: Pick<ReleaseWorkflowRead, "input">, tools: 
   const pipeline = { ...p, trigger: "tag" as const, ...(Object.keys(tools).length > 0 ? { env: { ...p.env, ...tools } } : {}) };
   let text: string;
   try {
-    text = renderReleaseWorkflow({ ...read.input, forge: HOST_RELEASE_RENDER_FORGE, pipeline });
+    text = renderReleaseWorkflow({ ...read.input, forge: HOST_RELEASE_RENDER_FORGE, pipeline, runnerPlatform, qemuVia: "run" });
   } catch (err) {
     throw new HostReleaseError(`the release workflow could not be rendered: ${err instanceof Error ? err.message : String(err)}`, "Fix release.workflow in chant.config.ts.");
   }
@@ -309,6 +309,16 @@ export function evalCondition(cond: string, scope: HostScope): boolean {
 export function hostPlatform(platform: string = process.platform, arch: string = process.arch): string {
   const a = arch === "x64" ? "amd64" : arch;
   return `${platform}/${a}`;
+}
+
+/**
+ * The linux platform this host builds images for natively, such as
+ * `linux/arm64` on an Apple silicon Mac, whose Docker runs a linux VM of the
+ * host's architecture (#5536). The rendered release job asks QEMU only for
+ * the platforms that differ from it.
+ */
+export function hostImagePlatform(arch: string = process.arch): string {
+  return `linux/${arch === "x64" ? "amd64" : arch}`;
 }
 
 /** Fetches a tool's release file. The default asks the network. */
@@ -469,7 +479,20 @@ export interface HostJobResult {
   ran: Array<{ step: string; status: "ok" | "fail" | "skipped"; why?: string }>;
 }
 
-const stepLabel = (s: HostStep): string => s.name ?? (s.run ?? s.uses ?? "a step").split("\n")[0]!.slice(0, 120);
+/** An unnamed step is labelled by the chant command it runs when it runs one the host reports on, else by its first line. */
+export const stepLabel = (s: HostStep): string => {
+  if (s.name) return s.name;
+  const command = /\bchant (release (?:cut|publish|next|doctor)|ci last-green)\b/.exec(s.run ?? "");
+  if (command) return `chant ${command[1]}`;
+  return (s.run ?? s.uses ?? "a step").split("\n")[0]!.slice(0, 120);
+};
+
+/** The reason a failed step printed: its last `error:` line without the prefix (it carries the reason code), else its last line. */
+export function failureReason(lines: readonly string[]): string | undefined {
+  const text = lines.map((l) => l.replace(/\u001b\[[0-9;]*m/g, "").trim()).filter(Boolean);
+  const error = [...text].reverse().find((l) => /^error:\s*\S/i.test(l));
+  return error ? error.replace(/^error:\s*/i, "") : text.at(-1);
+}
 
 /**
  * The variables one step gets: the runner's base variables and `passEnv`,
@@ -540,8 +563,9 @@ export async function runHostJob(job: HostJob, ctx: HostJobContext): Promise<Hos
     for (const f of Object.values(files)) writeFileSync(f, "");
     const env = hostStepEnv({ ctx, job: jobEnv, carried, step: resolveEnv(step.env, scope(), `the step ${JSON.stringify(label)}'s`), files, paths, publish: isPublishStep(step) });
     output(`$ ${label}`);
-    let last: string | undefined;
-    const code = await runStep({ script, cwd, env, output: (line) => (line.trim() !== "" ? (last = redact ? redact(line) : line) : undefined, output(line)) });
+    const printed: string[] = [];
+    const code = await runStep({ script, cwd, env, output: (line) => (line.trim() !== "" ? printed.push(redact ? redact(line) : line) : undefined, output(line)) });
+    const last = failureReason(printed);
     Object.assign(carried, readCommandFile(readFileSync(files.env, "utf-8")));
     if (step.id) steps[step.id] = { ...steps[step.id], ...readCommandFile(readFileSync(files.output, "utf-8")) };
     paths.unshift(...readFileSync(files.path, "utf-8").split("\n").filter(Boolean).reverse());
@@ -762,7 +786,7 @@ function tryConfig(cwd: string, key: string): boolean {
  * tools in their env. The cut pushes the release's tag, and the host
  * publishes it as any tag, with {@link hostReleaseJob}.
  */
-export function hostDispatchJobs(read: Pick<ReleaseWorkflowRead, "input">, tools: Record<string, string> = {}): { gate: HostJob; cut: HostJob } {
+export function hostDispatchJobs(read: Pick<ReleaseWorkflowRead, "input">, tools: Record<string, string> = {}, runnerPlatform: string = hostImagePlatform()): { gate: HostJob; cut: HostJob } {
   const p = read.input.pipeline ?? {};
   if ((p.builds?.length ?? 0) > 0 || (read.input.train?.builds?.length ?? 0) > 0) {
     throw new HostReleaseError("release.workflow.builds runs each build on a runner of its own, and a ci serve host is one runner", "Release from the forge's release workflow, or build the files in the cut.");
@@ -770,7 +794,7 @@ export function hostDispatchJobs(read: Pick<ReleaseWorkflowRead, "input">, tools
   const pipeline = { ...p, trigger: "dispatch" as const, gate: "head" as const, ...(Object.keys(tools).length > 0 ? { env: { ...p.env, ...tools } } : {}) };
   let text: string;
   try {
-    text = renderReleaseWorkflow({ ...read.input, forge: HOST_RELEASE_RENDER_FORGE, pipeline });
+    text = renderReleaseWorkflow({ ...read.input, forge: HOST_RELEASE_RENDER_FORGE, pipeline, runnerPlatform, qemuVia: "run" });
   } catch (err) {
     throw new HostReleaseError(`the release workflow could not be rendered: ${err instanceof Error ? err.message : String(err)}`, "Fix release.workflow in chant.config.ts.");
   }
