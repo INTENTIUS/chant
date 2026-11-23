@@ -645,12 +645,14 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
     const packument = await answer(ctx, `${registry}/${name.replace("/", "%2f")}`, { method: "GET", headers: { accept: "application/json" } });
     const doc = packument.json as { "dist-tags"?: Record<string, string>; versions?: Record<string, { _npmUser?: { trustedPublisher?: unknown }; dist?: { attestations?: { url?: unknown } } }> } | null;
     const exists = packument.status === 200 && doc !== null;
-    if (packument.status === 404) {
+    if (packument.status === 404 && !npmjs) {
+      checks.push({ check: "npm-registry", status: "ok", message: `${name} is not on ${registry} yet; its first publish creates it there, and its first version becomes latest as soon as it stages` });
+    } else if (packument.status === 404) {
       checks.push({
         check: "npm-registry",
         status: "fail",
         message: `${name} is not on ${registry} yet (publish-npm-never-published, which refuses the cut). npm makes its first version latest as soon as it stages, and trusted publishing can't publish it, since a trusted publisher is set on a package that exists${user ? `; npm's config here signs in as ${user}, which can publish it by hand` : ""}`,
-        fix: `Publish one placeholder version by hand (npm login, then npm publish), then add the trusted publisher on ${npmjs ? "npmjs.com under the package's Settings" : "the registry"}.`,
+        fix: "Publish one placeholder version by hand (npm login, then npm publish), then add the trusted publisher on npmjs.com under the package's Settings.",
       });
     } else if (!exists) {
       checks.push({ check: "npm-registry", status: "unknown", message: `${registry} answered ${packument.status} for ${name}, so whether it exists can't be told${packument.text ? `: ${short(packument.text)}` : ""}` });

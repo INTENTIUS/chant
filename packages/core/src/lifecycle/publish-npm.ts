@@ -371,7 +371,17 @@ export function declaredNpmPackages(
   return [...out.values()];
 }
 
-/** The refusal for packages the registry has never had: npm trusted publishing can't create a package. */
+/** Whether a target's registry is npmjs.org. A target that names none uses npm's config, which is read as npmjs.org here. */
+export function isNpmjsRegistry(registry: string | undefined): boolean {
+  if (registry === undefined) return true;
+  try {
+    return new URL(registry).host === "registry.npmjs.org";
+  } catch {
+    return true;
+  }
+}
+
+/** The refusal for packages npmjs.org has never had: npm trusted publishing can't create a package. */
 export function neverPublishedError(names: readonly string[]): PublishTargetError {
   const list = names.join(", ");
   return new PublishTargetError(
@@ -383,7 +393,7 @@ export function neverPublishedError(names: readonly string[]): PublishTargetErro
 
 /**
  * Refuses a cut whose npm targets name a package the registry has never
- * published (#5230). Run by the cut before anything is recorded or tagged, and
+ * published (#5230). Only npmjs.org is checked. Run by the cut before anything is recorded or tagged, and
  * by the train cut before its first member. A registry that can't answer is a
  * refusal too (`publish-npm-registry-unreadable`), not a pass.
  */
@@ -392,7 +402,10 @@ export function checkPackagesPublished(
   cwd: string,
   lookup: NpmPublishedLookup = npmPublishedLookup(),
 ): void {
-  const missing = declaredNpmPackages(decls, cwd).filter((p) => !lookup(p.name, p.registry)).map((p) => p.name);
+  // Only npmjs.org has trusted publishing, which can't create a package. Another registry takes a first publish with the workflow's own token.
+  const missing = declaredNpmPackages(decls, cwd)
+    .filter((p) => isNpmjsRegistry(p.registry) && !lookup(p.name, p.registry))
+    .map((p) => p.name);
   if (missing.length > 0) throw neverPublishedError(missing);
 }
 

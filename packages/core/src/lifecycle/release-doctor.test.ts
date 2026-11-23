@@ -159,6 +159,16 @@ describe("npm", () => {
     expect(withToken.targets[0]!.checks.find((c) => c.check === "npm-registry")!.message).toContain("publish-npm-never-published");
   });
 
+  test("a package not on a registry other than npmjs.org passes, and says its first publish creates it", async () => {
+    const other = "https://npm.pkg.github.com";
+    const { fetch } = fakeFetch([(url) => (url.startsWith(`${other}/@acme%2fcore`) ? { status: 404, body: { error: "Not found" } } : undefined)]);
+    const report = await releaseDoctor({ cwd: member(), publish: [npmDecl({ registry: other })], env: {}, releaseWorkflow: WORKFLOW, deps: { fetch, run: fakeRun({}) } });
+    const c = report.targets[0]!.checks.find((x) => x.check === "npm-registry")!;
+    expect(c.status).toBe("ok");
+    expect(c.message).toContain("first publish creates it");
+    expect(c.message).not.toContain("trusted publishing");
+  });
+
   test("a token whose user may write the package can move the dist-tag; read-only fails; stage: false needs no dist-tag", async () => {
     const { fetch } = fakeFetch([packument("@acme/core"), provenance("acme/app", WORKFLOW)]);
     const rw = fakeRun({ whoami: { code: 0, stdout: "alice\n" }, "access list collaborators @acme/core": { code: 0, stdout: JSON.stringify({ alice: "read-write" }) } });
