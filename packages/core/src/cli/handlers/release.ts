@@ -51,6 +51,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { attestationLabel } from "../../lifecycle/attestation-label";
 import { formatBold, formatError, formatSuccess, formatWarning } from "../format";
 import { parseParamFlags } from "../build-params-cli";
 import { prereleaseNote, prereleaseOf } from "../../lifecycle/release-prerelease";
@@ -1260,7 +1261,7 @@ function describeItem(i: import("../../lifecycle/release-publish").PublishItem):
         : i.attachment === "signature"
           ? `${i.name} (Sigstore signature)`
           : i.attachment === "attestation"
-            ? `${i.name} (SLSA provenance, Sigstore)`
+            ? `${i.name} (${attestationLabel(i.predicateType)})`
             : i.attachment === "scan"
               ? `${i.name} (vulnerability scan findings)`
               : i.name;
