@@ -587,6 +587,25 @@ describe("formatDelta", () => {
     expect(text).not.toContain("Renamed");
   });
 
+  test("prints the breaking sections before Added (#5547)", () => {
+    const baseline = makeSnapshot({
+      Old: { kind: "resource", resourceType: "X" },
+      Gone: { kind: "resource", resourceType: "G" },
+      Both: { kind: "resource", resourceType: "Y", attrs: ["Arn"] },
+    });
+    const fresh = makeSnapshot({
+      New: { kind: "resource", resourceType: "X" },
+      Fresh: { kind: "resource", resourceType: "Z" },
+      Both: { kind: "resource", resourceType: "Y", attrs: [] },
+    });
+    const text = formatDelta(diffSurface(baseline, fresh));
+    const at = (s: string) => text.indexOf(s);
+    expect(at("Removed (1):")).toBeGreaterThanOrEqual(0);
+    expect(at("Removed (1):")).toBeLessThan(at("Renamed (1):"));
+    expect(at("Renamed (1):")).toBeLessThan(at("Changed (1):"));
+    expect(at("Changed (1):")).toBeLessThan(at("Added (1):"));
+  });
+
   test("renames print as Old -> New with the shared resourceType", () => {
     const baseline = makeSnapshot({ Old: { kind: "resource", resourceType: "X" } });
     const fresh = makeSnapshot({ New: { kind: "resource", resourceType: "X" } });
