@@ -156,6 +156,38 @@ function lockfileAbove(tree: WorkspaceTree, dir: string): boolean {
   }
 }
 
+/** The files an npm package's SBOM is read from at its root, as ../../lifecycle/publish-attachments.ts `PACKAGE_SBOM_FILES` lists them. */
+const PACKAGE_SBOM_FILES = ["sbom.spdx.json", "sbom.cdx.json", "sbom.cyclonedx.json"];
+
+/**
+ * #5518: the package directories an npm target in a member's `chant.config.ts`
+ * publishes that hold no SBOM at their root, read as text: each string in a
+ * `packages: [...]` list, when the config declares a `type: "npm"` target and
+ * the directory holds a `package.json` that is not private. A packed `.tgz`, a
+ * path built at run time or one that leaves the member is not read. A lockfile
+ * does not count: npm keeps no file beside a package, so its SBOM is in it.
+ */
+export function npmPackagesWithoutSbom(tree: WorkspaceTree, dir: string, config: string): string[] {
+  if (!/\btype\s*:\s*["'`]npm["'`]/.test(config)) return [];
+  const out: string[] = [];
+  for (const list of config.matchAll(/\bpackages\s*:\s*\[([^\]]*)\]/g)) {
+    for (const m of list[1]!.matchAll(/(["'`])([^"'`$]+)\1/g)) {
+      const path = m[2]!.replace(/^\.\//, "").replace(/\/$/, "");
+      if (path.split("/").includes("..") || out.includes(path)) continue;
+      const pkgDir = joinPath(dir, path);
+      const manifest = read(tree, joinPath(pkgDir, "package.json"));
+      if (manifest === null) continue;
+      try {
+        if ((JSON.parse(manifest) as { private?: unknown }).private === true) continue;
+      } catch {
+        continue;
+      }
+      if (!PACKAGE_SBOM_FILES.some((f) => tree.stat(joinPath(pkgDir, f)) === "file")) out.push(path);
+    }
+  }
+  return out;
+}
+
 /** The trust policy in the tree read: `.chant/trust.json` and the signers file it names. */
 export function treePolicy(tree: WorkspaceTree): TrustPolicy {
   const source: RecordSource = {
@@ -227,8 +259,21 @@ export const SECURITY_CHECKS: readonly WorkspaceCheck[] = [
           const lines = config.split("\n");
           const off = lines.findIndex((l) => /\bsbom\s*:\s*false\b/.test(l));
           if (off >= 0) out.push(finding(this, "security-sbom-disabled", `member ${m.name}'s chant.config.ts sets sbom: false on a publish target, so what it publishes carries no SBOM`, { pointer, entity: m.name, treeFile: configPath, line: off + 1 }));
-          else if (!/\bsbom\s*:\s*["'`]/.test(config) && !lockfileAbove(ctx.tree, memberDir(m.dir))) {
-            out.push(finding(this, "security-sbom-unsourced", `member ${m.name} publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock in its directory or above it, so publish would refuse it as publish-sbom-missing`, { pointer, entity: m.name, treeFile: configPath }));
+          else if (!/\bsbom\s*:\s*["'`]/.test(config)) {
+            // #5518: an npm package carries its own SBOM, so a lockfile is no source for it.
+            const bare = npmPackagesWithoutSbom(ctx.tree, memberDir(m.dir), config);
+            if (bare.length > 0) {
+              out.push(
+                finding(
+                  this,
+                  "security-sbom-unsourced",
+                  `member ${m.name} publishes the npm package${bare.length === 1 ? "" : "s"} ${bare.join(", ")}, which hold${bare.length === 1 ? "s" : ""} none of ${PACKAGE_SBOM_FILES.join(", ")} at the root, and its npm target names no sbom file; npm keeps no file beside a package, so a lockfile is no source for it, and the cut and the publish would refuse it as publish-sbom-missing`,
+                  { pointer, entity: m.name, treeFile: configPath },
+                ),
+              );
+            } else if (!lockfileAbove(ctx.tree, memberDir(m.dir))) {
+              out.push(finding(this, "security-sbom-unsourced", `member ${m.name} publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock in its directory or above it, so publish would refuse it as publish-sbom-missing`, { pointer, entity: m.name, treeFile: configPath }));
+            }
           }
         }
         // #5457: each Dockerfile release.images names starts from bases pinned by digest.

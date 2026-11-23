@@ -171,6 +171,9 @@ export type ReleaseCutCode =
   | "publish-forge-notes-missing"
   | "publish-npm-never-published"
   | "publish-npm-registry-unreadable"
+  /** An npm package carries no SBOM, or an invalid one, which the publish would refuse (./publish-npm.ts `checkDeclaredPackageSboms`). */
+  | "publish-sbom-missing"
+  | "publish-sbom-invalid"
   /** #5446: the publish's scan, run by the cut before anything is recorded or tagged (./release-cut-scan.ts), under the publish's codes. */
   | "publish-scan-failed"
   | "publish-scan-db-stale"
@@ -1033,6 +1036,23 @@ export async function cutRelease(req: CutRequest): Promise<CutResult> {
     const { PublishTargetError } = await import("./release-publish");
     try {
       checkDeclaredPackageImages((await loadChantConfig(cwd)).config.release?.publish ?? [], release, cwd);
+    } catch (err) {
+      if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
+      throw err;
+    }
+  }
+  // #5518: an npm package with no SBOM in it stops the cut here under supply-chain, as it stops the publish's plan: the scan
+  // below reads one written from the lockfile, and nothing puts that into the package. It runs once the build that
+  // would write the SBOM has run here, which the cut does for a release with no environments, or when there is no build.
+  if (p.envs.length === 0 || req.build === undefined) {
+    const { loadChantConfig } = await import("../config");
+    const { scopeSource } = await import("../workspace/write-scope");
+    const { securityGroupsIn } = await import("../workspace/security");
+    const { checkDeclaredPackageSboms } = await import("./publish-npm");
+    const { PublishTargetError } = await import("./release-publish");
+    try {
+      const decls = (await loadChantConfig(cwd)).config.release?.publish ?? [];
+      if (decls.some((d) => d.type === "npm")) checkDeclaredPackageSboms(decls, cwd, securityGroupsIn(scopeSource(cwd), cwd).has("supply-chain"));
     } catch (err) {
       if (err instanceof PublishTargetError) throw new ReleaseCutError(err.code as ReleaseCutCode, `no release was cut: ${err.message}`, err.fix);
       throw err;

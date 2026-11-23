@@ -93,6 +93,21 @@ describe("security groups (WSP161 to WSP165)", () => {
     expect(await found(root)).toEqual([]);
   });
 
+  test("a lockfile is no SBOM source for an npm package, which must carry its own (#5518)", async () => {
+    const npm = 'export default { release: { publish: [{ type: "npm", packages: ["."] }] } };';
+    const base = { "chant.workspace.json": declaration({ security: ["supply-chain"] }), "package-lock.json": "{}", "app/chant.config.ts": npm, "app/package.json": '{ "name": "@acme/app", "version": "1.0.0" }' };
+    const bare = repo(base);
+    const all = (await runDeclarationChecks(bare, (f) => f, { gather: false })).diagnostics.filter((d) => d.code === "security-sbom-unsourced");
+    expect(all.map((d) => [d.ruleId, d.entity])).toEqual([["WSP162", "app"]]);
+    expect(all[0]!.message).toContain("publishes the npm package ., which holds none of sbom.spdx.json, sbom.cdx.json, sbom.cyclonedx.json at the root");
+    // Carrying one passes, and so does naming the file the build writes.
+    expect(await found(repo({ ...base, "app/sbom.spdx.json": "{}" }))).toEqual([]);
+    expect(await found(repo({ ...base, "app/chant.config.ts": 'export default { release: { publish: [{ type: "npm", packages: ["."], sbom: "sbom.spdx.json" }] } };' }))).toEqual([]);
+    // A private package is the publish's to refuse, and a forge target still takes the lockfile.
+    expect(await found(repo({ ...base, "app/package.json": '{ "name": "@acme/app", "private": true }' }))).toEqual([]);
+    expect(await found(repo({ ...base, "app/chant.config.ts": "export default { release: { publish: [{ forge: {} }] } };" }))).toEqual([]);
+  });
+
   test("who-ran-it reports signedSince, the runner key and an unsigned tick", async () => {
     const root = repo({
       "chant.workspace.json": declaration({ security: ["who-ran-it"], ci: { green: { branch: "main", phases: { test: ["test"] }, require: ["test"] } } }),

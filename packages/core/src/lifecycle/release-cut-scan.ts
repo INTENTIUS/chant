@@ -106,7 +106,7 @@ export async function scanAtCut(
     env: req.env,
     redactor,
     log: say,
-    // A package with no SBOM of its own is scanned through its lockfile here; the publish refuses it, if it must.
+    // A package with no SBOM of its own is scanned through its lockfile here; under supply-chain the cut refuses it before this once its build has run (#5518), and the publish refuses it otherwise.
     requireSbom: false,
     scan: plan.scan,
   };
