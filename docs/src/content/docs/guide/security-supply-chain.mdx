@@ -97,6 +97,30 @@ A publish stages every target before it reveals any, but staging is not private:
 
 Each SBOM goes through the gate a component's `vuln-gate` step runs, with the project's `vulnPolicy` in `chant.config.ts`: `failSeverity` (default `critical`), `fixableOnly`, `failOnKev`, the EPSS thresholds, and the VEX files `vexSources` names. A finding the policy blocks stops the publish with `publish-scan-failed` and the list of findings, and nothing reaches a registry: no layer, manifest or referrer. Fix the dependency or the base image and build the release again, or record a VEX statement when the finding is not exploitable.
 
+### How a VEX statement is matched
+
+The scan reads OpenVEX documents and CycloneDX documents with embedded VEX from the files `vulnPolicy.vexSources` names. A statement clears a finding only where it says it applies. All three of these must hold:
+
+- the statement names the finding's advisory: its `name`, `@id` or one of its `aliases` is the finding's id, or one of the ids grype gives as related (`relatedVulnerabilities`);
+- one of the statement's `products` is what was scanned;
+- when that product lists `subcomponents`, one of them is the package the finding is in.
+
+A product is matched against what was scanned by its `@id`, the values of its `identifiers`, and its `hashes`:
+
+- An image is named by repository, such as `ghcr.io/acme/api`, which covers every tag and digest pushed to it. `ghcr.io/acme/api:1.4.0` names one tag, and `ghcr.io/acme/api@sha256:...` one digest. An OCI purl names it too: `pkg:oci/api?repository_url=ghcr.io/acme/api`, with the digest as its version and `tag` as a qualifier when it should name only those. A `sha-256` hash names the image's digest.
+- An npm package is named by its purl, `pkg:npm/%40acme/core` or `pkg:npm/%40acme/core@1.4.0`.
+- A forge release's SBOM is named by the repository's purl, `pkg:github/acme/api@v1.4.0` or `pkg:gitlab/...`.
+
+Purls compare by the purl spec's rule for a less specific purl: type, namespace and name must be equal, the version must be equal when the statement gives one, and a qualifier the statement leaves out matches any value. So `pkg:deb/debian/openssl@3.0.11-1` covers the `pkg:deb/debian/openssl@3.0.11-1?arch=amd64&distro=debian-12` grype reports, and `pkg:golang/golang.org/x/net@v0.57.0` does not cover x/net v0.58.0. A subcomponent that is not a purl is compared with the package's name, and with its version when it ends in `@<version>`. A statement that names a tag matches only where the scan knows the tags the image goes out under; `chant release scan` of a published release knows the digest, not the tags, so name the repository, or the repository and digest.
+
+A CycloneDX document's product is its `metadata.component`, and each vulnerability's `affects` refs are the subcomponents, resolved through the document's `bom-ref`s to their purls.
+
+A statement with no products clears nothing. The scan prints a line naming the file and the statement's index and saying it is not applied, and the scan record lists it under `vex.invalid`. Name the image or package the statement is about in its `products`. A statement whose products match nothing scanned, or whose advisory is not found where it applies, is listed under `vex.unused` and printed too, so a statement left behind after the dependency moved on shows up in the next scan. Neither stops the publish.
+
+Each finding a statement cleared is recorded with outcome `suppressed` and, in `statement`, the file and index of the statement, such as `security/vex/tofu.openvex.json#statements[0]`. An `affected` or `under_investigation` statement that covers the same finding in the same product keeps it gating, whatever another statement says.
+
+A component's `vuln-gate` step does not know which product it scans, so it still matches a statement by advisory alone.
+
 The cut runs the same scan first, on the same targets, once it has built the images and before it signs, records or tags the release ([The scan before the tag](/chant/cli/release/cut/#the-scan-before-the-tag)). A finding the policy blocks refuses the cut with `publish-scan-failed`, so no tag names a release the publish would refuse and the label is not spent. The publish keeps its own scan: it runs later, perhaps against a newer database, and it gates a release whichever way it was cut. Both scans read the same `vulnPolicy`, VEX files, scanner and database age bound.
 
 The scanner is grype, or trivy with `vulnPolicy.scanner: "trivy"`, and syft makes an image's SBOM. A publish finds them in `CHANT_GRYPE`, `CHANT_TRIVY` and `CHANT_SYFT`, else on `PATH`, and is refused (`publish-scan-tool-missing`) without them. The workflow `chant release workflow` renders installs grype and syft at versions pinned by SHA-256 in its cut and publish jobs, on GitHub, GitLab and Forgejo and in a train's jobs, with nothing to add to `release.workflow`. A cut run on a workstation needs them too. `chant release doctor` reports a missing scanner before a cut: a warning on a workstation, a failure in CI.

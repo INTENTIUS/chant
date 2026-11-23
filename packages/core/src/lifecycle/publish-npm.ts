@@ -675,14 +675,16 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
       const subjects: import("./publish-scan").ScanSubject[] = [];
       for (const pkg of readChecked(ctx)) {
         const id = `${pkg.name}@${pkg.version}`;
+        // #5481: what a VEX statement's products are matched against.
+        const product = { purls: [`pkg:npm/${pkg.name.replace(/^@/, "%40")}@${encodeURIComponent(pkg.version)}`], ...(pkg.digest ? { digest: pkg.digest } : {}) };
         if (pkg.sbom) {
           const bytes = isDir(pkg.abs) ? readFileSync(join(pkg.abs, pkg.sbom), "utf-8") : execFileSync("tar", ["-xzOf", pkg.abs, `package/${pkg.sbom}`], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
-          subjects.push({ target: this.name, name: `${pkg.sbom} of ${id}`, sbom: sbomDocumentOf(bytes, "carried"), ...(pkg.digest ? { digest: pkg.digest } : {}) });
+          subjects.push({ target: this.name, name: `${pkg.sbom} of ${id}`, sbom: sbomDocumentOf(bytes, "carried"), ...(pkg.digest ? { digest: pkg.digest } : {}), product });
           continue;
         }
         const manifest = (packageManifest(pkg.abs) ?? {}) as NpmPackageRoot["manifest"];
         const written = memberSbom({ ...ctx, requireSbom: false }, undefined, id, this.name, { manifest: { ...manifest, name: pkg.name }, ...(isDir(pkg.abs) ? { dir: pkg.abs } : {}) });
-        if (written) subjects.push({ target: this.name, name: `the lockfile of ${id}`, sbom: sbomDocumentOf(written.bytes, "lockfile"), ...(pkg.digest ? { digest: pkg.digest } : {}) });
+        if (written) subjects.push({ target: this.name, name: `the lockfile of ${id}`, sbom: sbomDocumentOf(written.bytes, "lockfile"), ...(pkg.digest ? { digest: pkg.digest } : {}), product });
       }
       return subjects;
     },

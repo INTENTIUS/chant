@@ -61,6 +61,10 @@ export interface VulnFinding {
   /** Affected package name. */
   package: string;
   installedVersion: string;
+  /** The affected package's purl, when the scanner reports one: what a VEX statement's subcomponents are matched against (./vex.ts). */
+  purl?: string;
+  /** Other ids the scanner gives the same vulnerability (grype's `relatedVulnerabilities`), so a VEX statement naming any of them matches. */
+  aliases?: string[];
   /** First version that fixes it, when the scanner reports one. */
   fixedVersion?: string;
   /** True when a fix exists (upgradeable) — the beginner-safe default gate blocks only fixable findings, since an unfixable one can't be actioned by bumping. */
@@ -118,7 +122,8 @@ interface GrypeOutput {
         knownRansomwareCampaignUse?: string;
       }>;
     };
-    artifact?: { name?: string; version?: string };
+    relatedVulnerabilities?: Array<{ id?: string }>;
+    artifact?: { name?: string; version?: string; purl?: string };
   }>;
 }
 
@@ -131,6 +136,7 @@ interface TrivyOutput {
       PkgName?: string;
       InstalledVersion?: string;
       FixedVersion?: string;
+      PkgIdentifier?: { PURL?: string };
     }>;
   }>;
 }
@@ -142,11 +148,15 @@ export function parseGrypeOutput(stdout: string): VulnFinding[] {
     const fixVersions = m.vulnerability?.fix?.versions ?? [];
     const epss = m.vulnerability?.epss?.[0];
     const kev = m.vulnerability?.knownExploited?.[0];
+    const id = m.vulnerability?.id ?? "UNKNOWN";
+    const aliases = [...new Set((m.relatedVulnerabilities ?? []).map((r) => r.id).filter((x): x is string => typeof x === "string" && x !== "" && x !== id))];
     return {
-      cveId: m.vulnerability?.id ?? "UNKNOWN",
+      cveId: id,
       severity: normalizeSeverity(m.vulnerability?.severity),
       package: m.artifact?.name ?? "unknown",
       installedVersion: m.artifact?.version ?? "",
+      ...(m.artifact?.purl ? { purl: m.artifact.purl } : {}),
+      ...(aliases.length > 0 ? { aliases } : {}),
       fixedVersion: fixVersions[0],
       fixable: m.vulnerability?.fix?.state === "fixed" || fixVersions.length > 0,
       epss: epss?.epss,
@@ -176,6 +186,7 @@ export function parseTrivyOutput(stdout: string): VulnFinding[] {
         installedVersion: v.InstalledVersion ?? "",
         fixedVersion: v.FixedVersion || undefined,
         fixable: Boolean(v.FixedVersion),
+        ...(v.PkgIdentifier?.PURL ? { purl: v.PkgIdentifier.PURL } : {}),
       });
     }
   }
@@ -287,6 +298,7 @@ export function scanWithDatabase(doc: Pick<SbomDocument, "bytes">, db: AdvisoryD
         severity: normalizeSeverity(a.severity),
         package: pkg.name,
         installedVersion: pkg.version,
+        purl: `pkg:${pkg.ecosystem}/${pkg.name}@${pkg.version}`,
         ...(a.fixed ? { fixedVersion: a.fixed } : {}),
         fixable: Boolean(a.fixed),
       });

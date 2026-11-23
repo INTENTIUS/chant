@@ -72,5 +72,5 @@ export async function resolveScanContext(req: {
   const { profilesOf, scanDatabaseBound } = await import("../workspace/security-profiles");
   const scanConfig = config?.release?.scan;
   const dbAge = scanDatabaseBound(typeof scanConfig === "object" ? scanConfig.dbMaxAgeHours : undefined, profilesOf(req.declaration));
-  return { scan: { scanner, policy: config ? resolveVulnPolicy(config) : {}, vex, ...(dbAge ? { dbAge } : {}) }, warning: setting.warning };
+  return { scan: { scanner, policy: config ? resolveVulnPolicy(config) : {}, vex, vexSources: [...(config?.vulnPolicy?.vexSources ?? [])], ...(dbAge ? { dbAge } : {}) }, warning: setting.warning };
 }
