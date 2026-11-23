@@ -67,6 +67,7 @@ import { resolveCommitSha } from "../lifecycle/commit-sha";
 import { refuseGateWithoutRecording } from "../lifecycle/no-record";
 import { gateCheckpointDigest, gateCheckpointText, readGateCheckpointText, writeGateCheckpoint, type GateCheckpoint } from "../lifecycle/gate-checkpoint";
 import type { ResolvedGateAlias } from "./gate-alias";
+import type { GateRuleNotice } from "../workspace/identity";
 
 /**
  * What appending a pending fact learned about reaching the remote.
@@ -105,9 +106,18 @@ export interface GateLedgerPort {
    * null when none applies: the declaration's `identity.gates`, read at base.
    * `at.base` names that commit, as an op wave reads every rule at its
    * `--base` (#3841); absent, origin/HEAD, else `main`, else `master`.
-   * Absent, every approval is judged as before.
+   * A base with no declaration names no rule, even when the change being
+   * gated adds one (#5508); only with no base at all is the working tree's
+   * declaration read. Absent, every approval is judged as before.
    */
   approvalRule?(gate: string, at?: { base?: string }): Promise<GateApprovalRule | null>;
+  /**
+   * Why {@link GateLedgerPort.approvalRule} found no rule for `gate` although
+   * the change names one (#5508): the base has no declaration, so the
+   * change's `identity.gates` entry takes effect once it merges. Null
+   * otherwise. `at` as for `approvalRule`. Absent on a port that reads no rule.
+   */
+  approvalRuleNotice?(gate: string, at?: { base?: string }): Promise<GateRuleNotice | null>;
   /**
    * The judge a gate's approval rules are met by (#4290): which approvals
    * prove their approver (a seal verified against the signers at base) and
@@ -218,6 +228,10 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       // Loaded on demand: the rule lives in the workspace modules, which import the Op modules.
       const { gateAdmission } = await import("../workspace/identity");
       return gateAdmission(opts?.cwd ?? process.cwd(), gate, at?.base);
+    },
+    async approvalRuleNotice(gate, at) {
+      const { gateRuleNotice } = await import("../workspace/identity");
+      return gateRuleNotice(opts?.cwd ?? process.cwd(), gate, at?.base);
     },
     async quorumJudge(_gate, at) {
       // #4290: the signers and role grants at base, never the approver's claim.

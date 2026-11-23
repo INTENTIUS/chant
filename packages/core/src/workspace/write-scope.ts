@@ -354,8 +354,20 @@ export function judgePath(declaration: Declaration | null, writer: Writer, path:
 /** The declaration and policy a write on this machine is judged by. */
 export interface ScopeSource {
   declaration: Declaration | null;
-  /** Where the declaration was read: the base revision, or the working tree when there is no base or no declaration at it. */
+  /**
+   * Where the declaration was read: the base revision, or the working tree
+   * when there is no base or no declaration at it. A write's scope takes the
+   * working tree's then, but an identity rule does not (#5508): see `base`.
+   */
   from: "base" | "working-tree" | null;
+  /**
+   * The base the declaration was looked for at: its commit, or the revision
+   * `at` named when that names no commit. Absent when no base was named and
+   * none resolved. With `from` "working-tree", the change being judged is the
+   * one that adds the declaration, so `gateAdmissionFrom` and
+   * `releaseRuleFrom` read no rule from it (#5508).
+   */
+  base?: string;
   /** The workspace root on disk, or null without a declaration. */
   rootOnDisk: string | null;
   /** The workspace root from the git root, "." for the git root, or null without a declaration. */
@@ -389,8 +401,10 @@ function readAt(cwd: string, at?: string): ReadAt | null {
  * The scope for a write from `cwd`: the declaration and the trust policy at
  * the base revision (`origin/HEAD`, `main` or `master`), so a write can't
  * widen its own scope by editing its copy of the declaration. Without a base,
- * or without a declaration at it, the working tree's declaration. `at` names
- * the base instead, as an op wave's `--base` does (#3841).
+ * or without a declaration at it, the working tree's declaration, with
+ * `from` saying so. A write scope reads that; the identity rules for gates
+ * and release cuts read nothing from it when a base exists (#5508). `at`
+ * names the base instead, as an op wave's `--base` does (#3841).
  */
 export function scopeSource(cwd: string, at?: string): ScopeSource {
   const top = gitRoot(cwd);
@@ -400,13 +414,15 @@ export function scopeSource(cwd: string, at?: string): ScopeSource {
     const { tree, ...rest } = read;
     return { ...rest, classes: loadClassRegistry(read.declaration.pins, read.rootOnDisk, { tree }).registry };
   };
+  const named = base?.commit ?? at;
+  const baseField = named !== undefined ? { base: named } : {};
   if (base?.commit) {
     const atBase = readAt(cwd, base.commit);
-    if (atBase) return { ...withClasses(atBase), from: "base", policy };
+    if (atBase) return { ...withClasses(atBase), from: "base", base: base.commit, policy };
   }
   const here = readOrFailure(cwd);
-  if (here instanceof WorkspaceReadError) return { declaration: null, from: null, rootOnDisk: null, root: null, policy, classes: coreClassRegistry(), failure: here };
-  return { ...withClasses(here), from: "working-tree", policy };
+  if (here instanceof WorkspaceReadError) return { declaration: null, from: null, rootOnDisk: null, root: null, policy, classes: coreClassRegistry(), failure: here, ...baseField };
+  return { ...withClasses(here), from: "working-tree", ...baseField, policy };
 }
 
 const toPosix = (p: string) => (sep === "/" ? p : p.split(sep).join("/"));

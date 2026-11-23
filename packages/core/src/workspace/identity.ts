@@ -153,10 +153,75 @@ export interface GateAdmission {
 /** What {@link gateAdmissionFrom} reads: the declaration, policy and classes at base, as `scopeSource` gives them. */
 export interface GateRuleSource extends IdentitySource {
   classes: ClassRegistry;
+  /** Where `scopeSource` read the declaration. Absent, as in a source built by hand, it counts as base. */
+  from?: "base" | "working-tree" | null;
+  /** The base `scopeSource` looked at, absent when there was none to look at. */
+  base?: string;
 }
 
 /**
- * The rule for `gate`, or null when the declaration at base names none. An
+ * The declaration a gate's rule is read from (#5508): the one at base. When a
+ * base exists and has no readable declaration, the working tree's is the
+ * change being judged, so it is not read and no rule applies. With no base at
+ * all (no `origin/HEAD`, `main` or `master`, and none named), the working
+ * tree's still is: there is nothing reviewed to compare it with, and the
+ * signers at base are empty then too.
+ */
+function ruleDeclaration(source: GateRuleSource): Declaration | null {
+  if (source.from === "working-tree" && source.base !== undefined) return null;
+  return source.declaration;
+}
+
+/** The code of {@link GateRuleNotice}. */
+export const GATE_RULE_NOT_AT_BASE = "identity-gates-not-at-base";
+
+/**
+ * Why a gate the change itself names in `identity.gates` is judged without
+ * that entry (#5508): the base has no declaration, so the entry takes effect
+ * once the change merges, and until then the gate runs under the default
+ * policy.
+ */
+export interface GateRuleNotice {
+  code: typeof GATE_RULE_NOT_AT_BASE;
+  gate: string;
+  message: string;
+}
+
+const shortBase = (base: string) => (/^[0-9a-f]{40,64}$/.test(base) ? base.slice(0, 12) : base);
+
+/**
+ * The notice for `gate` when the base has no declaration and this change's
+ * declaration names the gate in `identity.gates`, else null. What a gated
+ * run and `chant approve` print beside a gate whose rule reads as absent.
+ */
+export function gateRuleNoticeFrom(source: GateRuleSource, gate: string): GateRuleNotice | null {
+  return noticeFor(source, gate, "this change is gated under the default policy");
+}
+
+/** {@link gateRuleNoticeFrom} for the `release` entry a cut is judged by: the cut takes the default rule, which checks a signature alone. */
+export function releaseRuleNoticeFrom(source: GateRuleSource): GateRuleNotice | null {
+  return noticeFor(source, RELEASE_GATE, "a cut from it is judged under the default rule, which checks a signature alone");
+}
+
+function noticeFor(source: GateRuleSource, gate: string, meanwhile: string): GateRuleNotice | null {
+  if (source.from !== "working-tree" || source.base === undefined) return null;
+  if (!source.declaration?.identity?.gates[gate]) return null;
+  return {
+    code: GATE_RULE_NOT_AT_BASE,
+    gate,
+    message: `identity.gates.${gate} in this change takes effect after it merges: base ${shortBase(source.base)} has no chant.workspace.json, so ${meanwhile}`,
+  };
+}
+
+/** {@link gateRuleNoticeFrom} for the workspace holding `cwd`, at `base` as {@link gateAdmission} reads. */
+export function gateRuleNotice(cwd: string, gate: string, base?: string): GateRuleNotice | null {
+  return gateRuleNoticeFrom(scopeSource(cwd, base), gate);
+}
+
+/**
+ * The rule for `gate`, or null when the declaration at base names none or
+ * there is no declaration at base (#5508): a change that adds the file is
+ * not judged by the entry it adds. An
  * approval counts only when its seal verifies for its approver against the
  * signers at base and, when the rule names a class, the approver's role
  * grants at base put it in that class. A class no pinned package supplies
@@ -165,7 +230,7 @@ export interface GateRuleSource extends IdentitySource {
  * the one at base, never a returned work's copy.
  */
 export function gateAdmissionFrom(source: GateRuleSource, gate: string): GateAdmission | null {
-  const requirement = source.declaration?.identity?.gates[gate];
+  const requirement = ruleDeclaration(source)?.identity?.gates[gate];
   if (!requirement) return null;
   const { policy, classes } = source;
   const rule = { gate, class: requirement.class, signers: policy, roles: roleGrants(policy), classes: classes.all() };
@@ -177,17 +242,20 @@ export function gateAdmissionFrom(source: GateRuleSource, gate: string): GateAdm
  * `identity.gates.release` entry with its class, read at base, or, when the
  * declaration names no `release` gate, a rule with no class, which checks a
  * cut's signature alone. `requirement` is null in that case, and a cut may
- * then be made unsigned.
+ * then be made unsigned. A base with no declaration names no `release` gate
+ * either (#5508), whatever the working tree's declaration says.
  */
 export function releaseRuleFrom(source: GateRuleSource): { requirement: SignedGate | null; rule: GateAdmissionRule } {
-  const requirement = source.declaration?.identity?.gates[RELEASE_GATE] ?? null;
+  const requirement = ruleDeclaration(source)?.identity?.gates[RELEASE_GATE] ?? null;
   const { policy, classes } = source;
   return { requirement, rule: { gate: RELEASE_GATE, class: requirement?.class ?? null, signers: policy, roles: roleGrants(policy), classes: classes.all() } };
 }
 
 /**
  * The rule for `gate` in the workspace holding `cwd`, read at base (the
- * target branch tip), or null when there is no declaration or it names none.
+ * target branch tip), or null when there is no declaration at base or it
+ * names none. The working tree's declaration counts only when there is no
+ * base at all (#5508).
  * What a run, `chant approve` and `workspace status` ask before counting an
  * approval. `base` names the commit to read at instead, as an op wave reads
  * every rule at its `--base` (#3841).

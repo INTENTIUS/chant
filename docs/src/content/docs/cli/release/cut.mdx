@@ -657,7 +657,7 @@ Who may cut a release is an `identity.gates` entry for a gate named `release` ([
 }
 ```
 
-With the entry, a cut must be signed with `--sign`, by a key `.chant/allowed_signers` at base lists for the actor. With `class`, the role grants in `.chant/trust.json` at base must also put the actor in that class. A class no pinned package supplies lets nothing through. Without the entry anyone may cut, and a signature is optional.
+With the entry, a cut must be signed with `--sign`, by a key `.chant/allowed_signers` at base lists for the actor. With `class`, the role grants in `.chant/trust.json` at base must also put the actor in that class. A class no pinned package supplies lets nothing through. Without the entry anyone may cut, and a signature is optional. A cut from a change that adds `chant.workspace.json`, whose base has none, is judged without the entry that change adds, and prints a warning with the code `identity-gates-not-at-base` saying the entry takes effect after the change merges.
 
 `--sign <key file>` signs with that ssh key, and `--sign` alone uses git's `user.signingkey` when `gpg.format` is `ssh`, as `chant approve --sign` does for a [signed gate](/chant/reference/workspace-declaration/#identity). When `--actor` is not given, the actor is the principal the signers file at base lists for that key, if it lists exactly one. `--actor` names the signer otherwise, as in the cut below.
 

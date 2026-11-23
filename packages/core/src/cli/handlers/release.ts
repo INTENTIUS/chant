@@ -650,8 +650,11 @@ export async function runReleaseCut(ctx: CommandContext): Promise<number> {
         ws.checkCleanTree(top, commit);
       }
       const { scopeSource } = await import("../../workspace/write-scope");
-      const { releaseRuleFrom } = await import("../../workspace/identity");
+      const { releaseRuleFrom, releaseRuleNoticeFrom } = await import("../../workspace/identity");
       const source = scopeSource(cwd);
+      // #5508: a release rule this change adds is not read until it merges.
+      const notice = releaseRuleNoticeFrom(source);
+      if (notice) console.error(formatWarning({ message: `${notice.message} [${notice.code}]` }));
       const greenDecl = source.declaration?.ci?.green ?? null;
       const primary = ws.resolveTrunk(top, greenDecl?.branch ?? null);
       trunk = primary;
@@ -1554,7 +1557,7 @@ export async function runReleaseStatusChange(ctx: CommandContext, verb: import("
   // The actor, as a cut finds it: --actor, the signer of --sign's key, the CI's actor, git, $USER.
   const ws = await import("../../lifecycle/release-workstation");
   const { scopeSource } = await import("../../workspace/write-scope");
-  const { releaseRuleFrom } = await import("../../workspace/identity");
+  const { releaseRuleFrom, releaseRuleNoticeFrom } = await import("../../workspace/identity");
   let publicKey: string | null = null;
   if (args.sign !== undefined) {
     const { resolveSigningKey, SealError } = await import("../../workspace/trust/seal");
@@ -1571,7 +1574,11 @@ export async function runReleaseStatusChange(ctx: CommandContext, verb: import("
       return fail("release-signer-refused", `nothing was changed: ${err.message}`);
     }
   }
-  const who = ws.resolveCutActor({ cwd, ...(args.actor ? { explicit: args.actor } : {}), publicKey, signers: releaseRuleFrom(scopeSource(cwd)).rule.signers.signers });
+  const ruleSource = scopeSource(cwd);
+  // #5508: a release rule this change adds is not read until it merges.
+  const notice = releaseRuleNoticeFrom(ruleSource);
+  if (notice) console.error(formatWarning({ message: `${notice.message} [${notice.code}]` }));
+  const who = ws.resolveCutActor({ cwd, ...(args.actor ? { explicit: args.actor } : {}), publicKey, signers: releaseRuleFrom(ruleSource).rule.signers.signers });
   if (!who) return fail("release-actor-unknown", "nothing was changed: no actor could be found", "Pass --actor explicitly, or set git's user.email, GITHUB_ACTOR, GITLAB_USER_LOGIN or USER.");
 
   const { prepareStatusChange, runStatusChange, StatusRunError } = await import("../../lifecycle/release-status-change");

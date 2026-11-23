@@ -2021,7 +2021,9 @@ async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, ap
   const ledger = options.gates ?? gitGateLedgerPort({ cwd });
   // #5488: with no commit before this one there is no declaration at base. The rule is not read from the working tree, which is the change itself.
   const atBase = (g: string) => (isEmptyBase(base) ? Promise.resolve(null) : (ledger.approvalRule?.(g, { base }) ?? Promise.resolve(null)));
-  if (approval !== "sealed") return { ledger, port: ledger.approvalRule ? { ...ledger, approvalRule: atBase } : ledger };
+  // #5508: why the rule the change names is not read, at the same base.
+  const notice = ledger.approvalRuleNotice ? { approvalRuleNotice: (g: string) => ledger.approvalRuleNotice!(g, { base }) } : {};
+  if (approval !== "sealed") return { ledger, port: ledger.approvalRule ? { ...ledger, approvalRule: atBase, ...notice } : ledger };
   // #3684: only an approval sealed by a signer listed at base counts.
   const review = await import("./gate-review");
   const sealed = review.sealedApprovalRule(gate, (options.trust ?? ((b) => review.trustPolicyAt(cwd, b)))(base));
@@ -2029,12 +2031,19 @@ async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, ap
     ledger,
     port: {
       ...ledger,
+      ...notice,
       async approvalRule(g) {
         const own = await atBase(g);
         return g === gate ? review.bothRules(own, sealed) : own;
       },
     },
   };
+}
+
+/** Log that the gate is judged without the `identity.gates` entry the change adds (#5508). A read that fails logs nothing: the line is advice. */
+async function logRuleNotice(port: GateLedgerPort, log: (line: string) => void, label: string, gate: string): Promise<void> {
+  const notice = await port.approvalRuleNotice?.(gate).catch(() => null);
+  if (notice) log(`${label}: ${notice.message}`);
 }
 
 /** Log each approval of the digest a rule did not count (#3841), so a wait says why. */
@@ -4303,6 +4312,7 @@ async function settleGate(options: RunOpWaveOptions, ctx: WaveContext, decision:
   // #4574: the run target a product's approve line names.
   const target = waveApproveTarget(wave.name, members.map((m) => m.member));
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
+  await logRuleNotice(port, ctx.log, `wave ${k} (${wave.name})`, gate);
   const now = options.now ?? new Date().toISOString();
   // #3784: under the spend rule at base, an approval a wave already applied under counts for nothing.
   const spent: AppliedGateRecord[] | undefined = decision.spend === "base" ? ((await ledger.readApplied?.(spec.name)) ?? []).filter((a) => a.gate === gate) : undefined;
@@ -4459,6 +4469,7 @@ async function settleQuorumGate(options: RunOpWaveOptions, ctx: WaveContext, dec
   const rules = quorumRules(nodes);
   const { gate, digest, approval, base, policy, members } = decision;
   const { ledger, port } = await gatePort(options, cwd, gate, approval, base);
+  await logRuleNotice(port, log, `wave ${k} (${wave.name})`, gate);
   const now = options.now ?? new Date().toISOString();
   const spent: AppliedGateRecord[] | undefined = decision.spend === "base" ? ((await ledger.readApplied?.(spec.name)) ?? []).filter((a) => a.gate === gate) : undefined;
   const review = await import("./gate-review");

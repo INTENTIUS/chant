@@ -137,6 +137,12 @@ export interface StepRecord {
    */
   refusal?: string;
   /**
+   * Set on a `gate` step judged without the `identity.gates` entry the change
+   * itself adds (#5508): the base has no declaration, so the entry takes
+   * effect once the change merges and this run's gate has the default policy.
+   */
+  notice?: { code: string; message: string };
+  /**
    * Set on an activity step that asked a decision point still open (#2749):
    * the question the run now waits on. The step's status is `skipped` and the
    * run's is `waiting`: nothing broke, and a person answers the question.
@@ -867,6 +873,9 @@ async function runGateStep(
   } catch (err) {
     return { record: { phase: phaseName, fn: gateFn(step), args: {}, status: "fail", durationMs: Date.now() - start, error: errMessage(err) } };
   }
+  // #5508: a change that adds the gate's entry is judged without it, and the record says so.
+  const ruleNotice = rule === null ? await gates.port.approvalRuleNotice?.(gateName(step)).catch(() => null) : null;
+  const notice = ruleNotice ? { notice: { code: ruleNotice.code, message: ruleNotice.message } } : {};
   const approval = resolveGateApproval(step, resultsById, gates.env, rule?.requirement.quorum, rule?.requirement);
   // #3947: a gate that resumes stores the outputs the steps after it read.
   const resumeAt = gates.resume?.gates.get(step);
@@ -947,6 +956,7 @@ async function runGateStep(
         status: "ok",
         durationMs: Date.now() - start,
         approval: passedApproval,
+        ...notice,
       },
     };
   }
@@ -963,6 +973,7 @@ async function runGateStep(
       status: "skipped",
       durationMs: Date.now() - start,
       ...refusal,
+      ...notice,
     },
     pending: check.pending,
     pushed: check.pushed,
