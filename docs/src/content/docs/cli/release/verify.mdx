@@ -27,7 +27,7 @@ It exits 1 with one of these codes:
 
 | Code | When |
 |---|---|
-| `release-unsigned` | No cut of the release is signed. |
+| `release-unsigned` | No cut of the release is signed. With `--sigstore`, it is not raised when every Sigstore bundle verifies and the declaration at the release's commit names no `release` gate (see [Checking the Sigstore signatures](#checking-the-sigstore-signatures)). |
 | `release-signature-unverified` | No cut's signature verifies against the signers file at the release's commit, such as one signed by a key the file does not list. |
 | `release-digest-mismatch` | The stored release is not the digest of what it holds, so it was changed after the cut. |
 | `release-not-found` | No cut names the label or digest in this member. |
@@ -36,7 +36,7 @@ It exits 1 with one of these codes:
 
 The green gate each cut records is reported as `signed` when the cut's signature verifies and covers it, and `unsigned` otherwise. When more than one cut verifies, the one whose gate is signed is the one shown. A release whose verified cut was signed before chant signed the gate (see [Who may cut](/chant/cli/release/cut/#who-may-cut)) still verifies, and the line after the success says its gate is not covered by the signature.
 
-`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason`, `gate` (`status`, `signed` or `unsigned`, and `reason`) and each cut with its `signatureCheck` (whose `gate` is `signed` or `unsigned`), and its `green` gate or `override` when the cut recorded one (see [The green gate](/chant/cli/release/cut/#the-green-gate)). A release that does not verify adds `error` with its `code` and `message`. Without `--sigstore`, `sigstore.recorded` counts the Sigstore bundles the publish record holds.
+`--json` prints `releaseDigest`, `label`, `member`, `commit`, `signers` (`path`, `at`, `active`), `digestMatches`, `status` (`verified`, `unsigned` or `unverified`), `verifiedBy` (`actor`, `key`, or `null`), `reason`, `carriedBy` (`ssh` when a cut's signature verified, `sigstore` when the Sigstore bundles carried the result, `null` when the release does not verify), `releaseGate` (whether the declaration at the release's commit names a `release` gate), `gate` (`status`, `signed` or `unsigned`, and `reason`) and each cut with its `signatureCheck` (whose `gate` is `signed` or `unsigned`), and its `green` gate or `override` when the cut recorded one (see [The green gate](/chant/cli/release/cut/#the-green-gate)). A release that does not verify adds `error` with its `code` and `message`. Without `--sigstore`, `sigstore.recorded` counts the Sigstore bundles the publish record holds.
 
 ## Checking the Sigstore signatures
 
@@ -53,5 +53,7 @@ The bundles it checks for an image are its cosign signature, its SLSA provenance
 |---|---|
 | `release-sigstore-unsigned` | The publish record holds no Sigstore bundle for the release. |
 | `release-sigstore-unverified` | A bundle does not verify for the identity, differs from what was uploaded, or can't be checked (no cosign, or a forge bundle not in `--assets`). |
+
+A release cut in CI has no ssh-signed cut, because the workflow holds no ssh key. With `--sigstore`, when no cut is ssh-signed, every Sigstore bundle verifies (and at least one exists), the digest matches and the declaration at the release's commit names no `release` gate in `identity.gates`, the release verifies by its Sigstore identity and the command exits 0. It prints that no cut is ssh-signed and that the release is verified by its Sigstore identity. `--json` keeps `status: "unsigned"` and sets `carriedBy` to `sigstore`. A workspace that names a `release` gate still exits 1 with `release-unsigned`, since it asked for a signer in a class, and `release-signature-unverified` and `release-digest-mismatch` are unchanged. Without `--sigstore` nothing changes.
 
 `--json` adds `sigstore`: its `status` (`verified`, `failed` or `none`), `reason` and each check with its `name`, `kind`, `target`, `attachment` (`signature` or `attestation`), `signs`, `identity`, `status` (`verified`, `failed` or `unchecked`) and `reason`.

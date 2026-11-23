@@ -1282,7 +1282,7 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "release verify needs a release", hint: USAGE }));
     return 1;
   }
-  const { verifyRelease, verificationCode, verifySigstore, recordedSignatures } = await import("../../lifecycle/release-verify");
+  const { verifyRelease, verificationCode, verifySigstore, recordedSignatures, sigstoreCarries } = await import("../../lifecycle/release-verify");
   const result = await verifyRelease({ cwd: resolve("."), ref });
   if ("error" in result) {
     if (args.json) console.log(JSON.stringify({ ref, error: result.error }, null, 2));
@@ -1290,18 +1290,27 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     return 1;
   }
   let code: string | null = verificationCode(result);
+  // #5164: --sigstore checks the bundles the publish recorded; without it, verify stays offline and says how many there are.
+  const sigstore = args.sigstore ? await verifySigstore({ cwd: resolve("."), releaseDigest: result.releaseDigest, ...(args.assets ? { assetsDir: args.assets } : {}) }) : null;
+  const recorded = sigstore ? sigstore.checks.length : (await recordedSignatures(resolve("."), result.releaseDigest)).length;
+  // The Sigstore identity carries a CI release no cut of which is ssh-signed, unless the workspace names a `release` gate.
+  const bySigstore = code === "release-unsigned" && sigstoreCarries(result, sigstore);
+  if (bySigstore) {
+    code = null;
+    result.reason = "no cut is ssh-signed; the release is verified by its Sigstore identity";
+  }
+  result.carriedBy = code ? null : bySigstore ? "sigstore" : "ssh";
   // #4657: a package built here that pins an image digest the release does not record fails the check.
   const pins = code ? null : await unknownPackagePins(resolve("."), result.releaseDigest);
   if (pins) {
     code = "release-pin-unknown";
     result.reason = pins;
+    result.carriedBy = null;
   }
-  // #5164: --sigstore checks the bundles the publish recorded; without it, verify stays offline and says how many there are.
-  const sigstore = args.sigstore ? await verifySigstore({ cwd: resolve("."), releaseDigest: result.releaseDigest, ...(args.assets ? { assetsDir: args.assets } : {}) }) : null;
-  const recorded = sigstore ? sigstore.checks.length : (await recordedSignatures(resolve("."), result.releaseDigest)).length;
   if (!code && sigstore && sigstore.status !== "verified") {
     code = sigstore.status === "none" ? "release-sigstore-unsigned" : "release-sigstore-unverified";
     result.reason = sigstore.reason;
+    result.carriedBy = null;
   }
   if (args.json) {
     console.log(JSON.stringify({ ...result, ...(sigstore ? { sigstore } : { sigstore: { recorded } }), ...(code ? { error: { code, message: result.reason } } : {}) }, null, 2));
@@ -1330,8 +1339,8 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     );
     return 1;
   }
-  console.error(formatSuccess(`Verified ${name}: ${result.reason}; green gate ${result.gate.status}${sigstore ? `; ${sigstore.reason}` : ""}`));
-  if (result.gate.status === "unsigned") console.error(`  ${result.gate.reason}`);
+  console.error(formatSuccess(`Verified ${name}: ${result.reason}${bySigstore ? "" : `; green gate ${result.gate.status}`}${sigstore ? `; ${sigstore.reason}` : ""}`));
+  if (result.gate.status === "unsigned" && !bySigstore) console.error(`  ${result.gate.reason}`);
   return 0;
 }
 
