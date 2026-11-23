@@ -72,7 +72,7 @@ export interface TrainWorkflowInput {
   files?: boolean;
   /** Steps that set up goreleaser, in the cut and publish jobs, for a member's `release.artifacts` it builds (#5216); on GitLab, script lines. */
   goreleaser?: string[];
-  /** GitLab: the publish signs with Sigstore, so a cut that runs the doctor gets `SIGSTORE_ID_TOKEN` to check it. */
+  /** The publish signs with Sigstore, so a cut that runs the doctor gets the OIDC token to check it: `id-token: write` on GitHub and Forgejo, `SIGSTORE_ID_TOKEN` on GitLab. */
   signing?: boolean;
   /** GitLab: entries the members' targets add under the publish job's `id_tokens:` beside `SIGSTORE_ID_TOKEN`, such as `PYPI_ID_TOKEN`. */
   idTokens?: string[];
@@ -262,7 +262,8 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       "  cut:",
       ...(builds.length > 0 ? [`    needs: [gate, ${builds.map((b) => `build-${b.name}`).join(", ")}]`, "    if: ${{ !cancelled() && needs.gate.result == 'success' && !contains(needs.*.result, 'failure') }}"] : ["    needs: gate"]),
       "    runs-on: ubuntu-latest",
-      ...jobPermissions(o.extra, { contents: "write" }, "cut"),
+      // A cut that runs the doctor for a release that signs gets the OIDC token the doctor checks (`signing-oidc`), as one release's cut does.
+      ...jobPermissions(o.extra, { contents: "write", ...(o.doctor && o.signing ? { "id-token": "write" } : {}) }, "cut"),
       ...defaults,
       "    outputs:",
       "      train: ${{ steps.cut.outputs.train }}",

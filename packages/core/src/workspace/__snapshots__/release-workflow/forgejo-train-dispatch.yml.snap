@@ -461,6 +461,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -567,6 +568,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     outputs:
       train: ${{ steps.cut.outputs.train }}
     env:
@@ -676,6 +678,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     enable-openid-connect: true
     outputs:
       train: ${{ steps.cut.outputs.train }}

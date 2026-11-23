@@ -1166,6 +1166,41 @@ describe("a dispatched train workflow (#5154)", () => {
     expect(JSON.stringify(train())).not.toContain("train verify");
   });
 
+  test("a cut that runs the doctor for a train that signs gets the OIDC token the doctor checks, on every forge, as one release's cut does", () => {
+    const ghTrain = (forge: "github" | "forgejo", over: Partial<ReleaseWorkflowInput> = {}) =>
+      parseYAML(renderReleaseWorkflow({ forge, groups: new Set<SecurityGroup>(["supply-chain"]), pipeline: { trigger: "dispatch" }, train: { env: "npm", images: true }, signing: true, ...(forge === "forgejo" ? { keyless: "private" as const } : { keyless: "public" as const }), ...over })) as GhDoc & { jobs: Record<string, GhJob & { "enable-openid-connect"?: boolean }> };
+    for (const forge of ["github", "forgejo"] as const) {
+      const doc = ghTrain(forge);
+      expect(doc.jobs.cut!.steps.find((s) => s.id === "cut")!.run, forge).toContain("--doctor");
+      expect(doc.jobs.cut!.permissions, forge).toEqual({ contents: "write", "id-token": "write" });
+      expect(doc.jobs.publish!.permissions, forge).toMatchObject({ contents: "write", "id-token": "write" });
+      // The same config released as one member: the cut job has the same scopes.
+      const single = parseYAML(renderReleaseWorkflow({ forge, groups: new Set<SecurityGroup>(["supply-chain"]), pipeline: { trigger: "dispatch" }, signing: true, ...(forge === "forgejo" ? { keyless: "private" as const } : { keyless: "public" as const }) })) as GhDoc;
+      expect(doc.jobs.cut!.permissions, forge).toEqual(single.jobs.cut!.permissions);
+      // No doctor, or nothing signs: the cut job has no OIDC token.
+      expect(ghTrain(forge, { pipeline: { trigger: "dispatch", doctor: false } }).jobs.cut!.permissions, forge).toEqual({ contents: "write" });
+      expect(ghTrain(forge, { signing: false }).jobs.cut!.permissions, forge).toEqual({ contents: "write" });
+    }
+    // Forgejo hands the token only to a job that asks for it.
+    expect(ghTrain("forgejo").jobs.cut!["enable-openid-connect"]).toBe(true);
+    expect(ghTrain("forgejo", { pipeline: { trigger: "dispatch", doctor: false } }).jobs.cut!["enable-openid-connect"]).toBeUndefined();
+    // GitLab: SIGSTORE_ID_TOKEN in the cut job that runs the doctor.
+    const gl = (over: Partial<ReleaseWorkflowInput> = {}) =>
+      (parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set<SecurityGroup>(["supply-chain"]), pipeline: { trigger: "dispatch" }, train: { env: "npm", images: true }, signing: true, keyless: "public", ...over })) as Record<string, { id_tokens?: Record<string, { aud: string }> }>)["chant-release-cut"]!;
+    expect(gl().id_tokens).toEqual({ SIGSTORE_ID_TOKEN: { aud: "sigstore" } });
+    expect(gl({ pipeline: { trigger: "dispatch", doctor: false } }).id_tokens).toBeUndefined();
+  });
+
+  test("id-token and contents in release.workflow.permissions are refused with what the cut and publish jobs already have", () => {
+    for (const forge of ["github", "forgejo"] as const) {
+      for (const scope of ["id-token", "contents"]) {
+        expect(() => renderReleaseWorkflow({ forge, groups: new Set(), pipeline: { trigger: "dispatch", permissions: { [scope]: "write" } }, train: { env: "npm" } }), `${forge} ${scope}`).toThrow(
+          `release.workflow.permissions: ${scope} is already granted to the jobs that need it: the publish job has contents: write and id-token: write, and the cut job contents: write, plus id-token: write when it runs the doctor for a release that signs`,
+        );
+      }
+    }
+  });
+
   test("GitLab renders the train: started with CHANT_RELEASE_LEVELS, resumed with CHANT_RELEASE_TRAIN, published from the train's tag (#5216)", () => {
     const doc = parseYAML(renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { trigger: "dispatch" }, train: { env: "npm", artifacts: true } })) as Record<string, { rules: Array<{ if: string }>; script: string[]; needs?: unknown; artifacts?: { paths?: string[] } }>;
     expect(Object.keys(doc)).toEqual(["chant-release-gate", "chant-release-cut", "chant-release-publish"]);
