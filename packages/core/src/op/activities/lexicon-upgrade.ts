@@ -14,6 +14,8 @@
  * own package.json version according to the semver label (minor → minor bump,
  * breaking → major bump). Merging the PR carries the version change so
  * publish-on-merge can ship just that lexicon without a full monorepo release.
+ * A breaking upgrade also appends a section to the lexicon's upgrade note
+ * (`docs/pages/upgrade-notes.mdx`, see ./lexicon-upgrade-note.ts) in that PR.
  *
  * Rolling lexicons (aws, github, fly) drift on their own cadence and are not
  * version-bumped here — they move to drift-issues per #546.
@@ -35,6 +37,7 @@ import { ghHostEnv } from "./gh-host";
 import { restPullRequestForge } from "./forge-pull-request";
 import type { PrForge } from "../../pr-forge";
 import { postOrUpdateGithubIssue } from "./reconcile";
+import { writeUpgradeNote } from "./lexicon-upgrade-note";
 
 export { bumpPackageJsonVersion };
 
@@ -108,6 +111,8 @@ export interface LexiconUpgradeArgs {
    * elsewhere (#3798). For tests.
    */
   _forge?: PrForge | null;
+  /** The day the upgrade note is dated, `YYYY-MM-DD`. Default: today (UTC). For tests. */
+  _today?: () => string;
 }
 
 export interface LexiconUpgradeResult {
@@ -1003,6 +1008,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   try {
     await gh(`git checkout ${shellQuote(branch)}`);
 
+    let bumpedVersion: string | null = null;
     // For pinned lexicons: apply the spec version bump permanently on this branch.
     if (pinned && to) {
       const applyBump = args._applyBump ?? (await getRealApplyBump());
@@ -1018,7 +1024,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
         const raw = readFileSync(pkgJsonPath, "utf-8");
         const pkg = JSON.parse(raw) as { version?: string };
         const currentVersion = pkg.version ?? "0.0.0";
-        const bumpedVersion = computeBumpedVersion(currentVersion, semverLabel);
+        bumpedVersion = computeBumpedVersion(currentVersion, semverLabel);
         if (bumpedVersion) {
           const doBump = args._bumpPackageVersion ?? bumpPackageJsonVersion;
           doBump(pkgJsonPath, bumpedVersion);
@@ -1033,6 +1039,20 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       const snapshotPath = join(lexiconDir, SNAPSHOT_FILENAME);
       writeFileSync(snapshotPath, freshSnapshotJson, "utf-8");
       await gh(`git add ${shellQuote(snapshotPath)}`).catch(() => {/* best-effort */});
+    }
+
+    // A breaking upgrade ships a note of the names it removed, renamed or
+    // changed, in the lexicon's docs (#5550). Additions alone write none.
+    if (semverLabel === "breaking" && delta) {
+      const notePath = writeUpgradeNote(lexiconDir, {
+        lexicon,
+        delta,
+        version: bumpedVersion,
+        from,
+        to,
+        date: args._today?.() ?? new Date().toISOString().slice(0, 10),
+      });
+      if (notePath) await gh(`git add ${shellQuote(notePath)}`).catch(() => {/* best-effort */});
     }
 
     await gh(`git commit -m ${shellQuote(title)} --allow-empty`);

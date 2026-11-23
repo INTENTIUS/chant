@@ -23,7 +23,8 @@ import type { RollingUpgradeResult } from "../../codegen/rolling-upgrade";
 import { formatDelta, type SurfaceDelta } from "../../codegen/surface-snapshot";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, readFileSync, mkdirSync, mkdtempSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, existsSync } from "node:fs";
+import { upgradeNotePath, writeUpgradeNote } from "./lexicon-upgrade-note";
 
 // ── Classification ────────────────────────────────────────────────────
 
@@ -1168,5 +1169,155 @@ describe("lexiconUpgrade pull request over REST", () => {
     expect(r.prUrl).toBe("https://forge/pulls/9");
     expect(calls).toContain("edit 9");
     expect(calls.some((c) => c.startsWith("open"))).toBe(false);
+  });
+});
+
+// ── A breaking upgrade ships an upgrade note (#5550) ──────────────────
+
+describe("a breaking upgrade writes an upgrade note for the lexicon (#5550)", () => {
+  const res = (resourceType: string) => ({ kind: "resource" as const, resourceType });
+  const breaking = (): SurfaceDelta => ({
+    added: [{ name: "BrandNew", entry: res("GCP::Run::BrandNew") }],
+    removed: [{ name: "Gone", entry: res("GCP::Compute::Gone") }],
+    renamed: [{ from: "OldName", to: "NewName", entry: res("GCP::Run::Thing") }],
+    changed: [
+      { name: "LostSome", removedAttrs: ["selfLink"], removedProps: ["legacyField"] },
+      { name: "OnlyGained", addedProps: ["extra"] },
+    ],
+    severity: "breaking",
+  });
+  const additive = (): SurfaceDelta => ({
+    added: [{ name: "BrandNew", entry: res("GCP::Run::BrandNew") }],
+    removed: [],
+    renamed: [],
+    changed: [],
+    severity: "additive",
+  });
+
+  function lexiconDir(version = "0.13.1"): string {
+    const dir = mkdtempSync(join(tmpdir(), "chant-test-lexicon-5550-"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version }) + "\n", "utf-8");
+    return dir;
+  }
+
+  async function upgrade(dir: string, delta: SurfaceDelta, from: string, to: string, today = "2026-11-22") {
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/8", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    await lexiconUpgrade({
+      lexicon: "gcp",
+      mode: "pull-request",
+      lexiconDir: dir,
+      _checkPinned: vi.fn(async () =>
+        pinnedResult({
+          lexicon: "gcp",
+          from,
+          to,
+          validation: {
+            ok: true,
+            changed: true,
+            severity: delta.severity,
+            delta,
+            deltaText: formatDelta(delta),
+            failures: [],
+            freshSnapshot: null,
+          },
+        }),
+      ),
+      _applyBump: vi.fn(() => ({ filePath: join(dir, "versions.ts") })),
+      _bumpPackageVersion: vi.fn(),
+      _today: () => today,
+      _forge: null,
+      _gh: gh,
+    });
+    return calls;
+  }
+
+  test("lists each old name and what replaces it, and stages the note in the upgrade commit", async () => {
+    const dir = lexiconDir();
+    const calls = await upgrade(dir, breaking(), "v1.152.0", "v1.161.0");
+    const path = upgradeNotePath(dir);
+    expect(path).toBe(join(dir, "docs", "pages", "upgrade-notes.mdx"));
+    expect(existsSync(path)).toBe(true);
+    const note = readFileSync(path, "utf-8");
+
+    // An authored docs page the pipeline publishes under Reference.
+    expect(note.startsWith("---\ntitle: \"Upgrade notes\"\n")).toBe(true);
+    expect(note).toContain("\ndiataxis: reference\n");
+
+    expect(note).toContain("## 0.14.0 (spec v1.152.0 to v1.161.0)");
+    expect(note).toContain("Upgraded on 2026-11-22.");
+    expect(note).toContain("| `OldName` | `NewName` | `GCP::Run::Thing` |");
+    expect(note).toContain("| `Gone` | `GCP::Compute::Gone` |");
+    expect(note).toContain("| `LostSome` | attributes dropped: `selfLink`; properties dropped: `legacyField` |");
+    // Additions are not in the note, and neither is a change that only adds.
+    expect(note).not.toContain("BrandNew");
+    expect(note).not.toContain("OnlyGained");
+    // Plain text: no em dashes, no issue links.
+    expect(note).not.toMatch(/—/);
+    expect(note).not.toMatch(/#\d/);
+
+    const add = calls.indexOf(`git add '${path}'`);
+    expect(add).toBeGreaterThanOrEqual(0);
+    expect(add).toBeLessThan(calls.findIndex((c) => c.startsWith("git commit")));
+  });
+
+  test("an additions-only upgrade writes no note", async () => {
+    const dir = lexiconDir();
+    const calls = await upgrade(dir, additive(), "v1.152.0", "v1.161.0");
+    expect(existsSync(upgradeNotePath(dir))).toBe(false);
+    expect(calls.some((c) => c.includes("upgrade-notes.mdx"))).toBe(false);
+  });
+
+  test("a second breaking upgrade appends its section and keeps the first", async () => {
+    const dir = lexiconDir();
+    await upgrade(dir, breaking(), "v1.152.0", "v1.161.0");
+    const first = readFileSync(upgradeNotePath(dir), "utf-8");
+
+    // The first upgrade merged: the package is now 0.14.0.
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.14.0" }) + "\n", "utf-8");
+    const second: SurfaceDelta = {
+      added: [],
+      removed: [{ name: "AlsoGone", entry: res("GCP::Sql::AlsoGone") }],
+      renamed: [],
+      changed: [],
+      severity: "breaking",
+    };
+    await upgrade(dir, second, "v1.161.0", "v1.162.0", "2026-11-29");
+    const note = readFileSync(upgradeNotePath(dir), "utf-8");
+
+    expect(note.startsWith(first.trimEnd())).toBe(true);
+    expect(note.match(/^title: /gm)).toHaveLength(1);
+    const a = note.indexOf("## 0.14.0 (spec v1.152.0 to v1.161.0)");
+    const b = note.indexOf("## 0.15.0 (spec v1.161.0 to v1.162.0)");
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(a);
+    expect(note).toContain("Upgraded on 2026-11-29.");
+    expect(note.slice(b)).toContain("| `AlsoGone` | `GCP::Sql::AlsoGone` |");
+    expect(note.slice(b)).not.toContain("OldName");
+  });
+
+  test("the same upgrade written again replaces its own section rather than adding a copy", () => {
+    const dir = lexiconDir();
+    const opts = { lexicon: "gcp", delta: breaking(), version: "0.14.0", from: "v1", to: "v2", date: "2026-11-22" };
+    writeUpgradeNote(dir, opts);
+    const later = { ...opts, version: "0.15.0", from: "v2", to: "v3", date: "2026-11-24", delta: { ...breaking(), removed: [{ name: "Later", entry: res("GCP::Run::Later") }] } };
+    writeUpgradeNote(dir, later);
+    writeUpgradeNote(dir, { ...opts, date: "2026-11-23" });
+    const note = readFileSync(upgradeNotePath(dir), "utf-8");
+    expect(note.match(/^## 0\.14\.0 /gm)).toHaveLength(1);
+    expect(note.match(/^## 0\.15\.0 /gm)).toHaveLength(1);
+    expect(note).toContain("Upgraded on 2026-11-23.");
+    expect(note).not.toContain("Upgraded on 2026-11-22.");
+    expect(note.indexOf("## 0.14.0")).toBeLessThan(note.indexOf("## 0.15.0"));
+  });
+
+  test("writeUpgradeNote returns null and writes nothing for an additions-only delta", () => {
+    const dir = lexiconDir();
+    expect(writeUpgradeNote(dir, { lexicon: "gcp", delta: additive(), version: "0.13.2", date: "2026-11-22" })).toBeNull();
+    expect(existsSync(upgradeNotePath(dir))).toBe(false);
   });
 });

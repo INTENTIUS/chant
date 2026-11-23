@@ -498,7 +498,8 @@ function isAdditiveChange(c: EntryChanges): boolean {
   );
 }
 
-function isBreakingChange(c: EntryChanges): boolean {
+/** Whether one entry's changes break a consumer (what makes a delta "breaking"). */
+export function isBreakingChange(c: EntryChanges): boolean {
   return (
     c.resourceTypeChanged !== undefined ||
     c.kindChanged !== undefined ||
