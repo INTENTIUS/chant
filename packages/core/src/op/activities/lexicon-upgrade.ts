@@ -31,7 +31,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId, UpstreamPin } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
-import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
+import { bumpForSeverity, bumpPackageJsonVersion, followWorkspaceRanges } from "../../codegen/version-bump";
 import { deltaSections, formatDelta, type SurfaceDelta } from "../../codegen/surface-snapshot";
 import { ghHostEnv } from "./gh-host";
 import { restPullRequestForge } from "./forge-pull-request";
@@ -105,6 +105,11 @@ export interface LexiconUpgradeArgs {
    * Defaults to bumpPackageJsonVersion.
    */
   _bumpPackageVersion?: BumpPackageVersionFn;
+  /**
+   * Override the writer that moves dependents' ranges and the lockfile after
+   * the bump. Inject a mock in tests; defaults to followWorkspaceRanges.
+   */
+  _followRanges?: FollowRangesFn;
   /**
    * The REST client the pull request is found, opened and labelled through,
    * or null for `gh`. Default: one on a Forgejo or GitLab job, `gh`
@@ -182,6 +187,13 @@ export type ApplyBumpFn = (
  * Injectable for tests via LexiconUpgradeArgs._bumpPackageVersion.
  */
 export type BumpPackageVersionFn = (packageJsonPath: string, newVersion: string) => void;
+
+/**
+ * Move the ranges other workspace packages declare on the bumped package, and
+ * the lockfile's entries, returning the files changed (#5556). Injectable for
+ * tests via LexiconUpgradeArgs._followRanges.
+ */
+export type FollowRangesFn = (packageDir: string, newVersion: string) => string[];
 
 // ── Package.json version bumping ──────────────────────────────────────
 
@@ -1029,6 +1041,12 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
           const doBump = args._bumpPackageVersion ?? bumpPackageJsonVersion;
           doBump(pkgJsonPath, bumpedVersion);
           await gh(`git add ${shellQuote(pkgJsonPath)}`).catch(() => {/* best-effort */});
+          // A caret at 0.x does not cross a minor, so a dependent left on the
+          // old range installs the old release from the registry (#5556).
+          const follow = args._followRanges ?? followWorkspaceRanges;
+          for (const path of follow(lexiconDir, bumpedVersion)) {
+            await gh(`git add ${shellQuote(path)}`).catch(() => {/* best-effort */});
+          }
         }
       }
     }

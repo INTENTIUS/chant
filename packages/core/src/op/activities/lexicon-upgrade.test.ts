@@ -1019,6 +1019,37 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
     expect(bumps[0]!.version).toBe("0.13.2");
   });
 
+  test("pinned lexicon: dependents' ranges follow the bump and their files are staged (#5556)", async () => {
+    const lexiconDir = mkdtempSync(join(tmpdir(), "chant-test-lexicon-5556-"));
+    writeFileSync(join(lexiconDir, "package.json"), JSON.stringify({ name: "@intentius/chant-lexicon-k8s", version: "0.13.1" }, null, 2) + "\n", "utf-8");
+    const follow = vi.fn(() => ["/ws/lexicons/helm/package.json", "/ws/package-lock.json"]);
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/2", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+
+    await lexiconUpgrade({
+      lexicon: "k8s",
+      mode: "pull-request",
+      lexiconDir,
+      _checkPinned: vi.fn(async () => pinnedResult()),
+      _applyBump: vi.fn(() => ({ filePath: join(lexiconDir, "versions.ts") })),
+      _bumpPackageVersion: vi.fn(),
+      _followRanges: follow,
+      _gh: gh,
+    });
+
+    expect(follow).toHaveBeenCalledWith(lexiconDir, "0.13.2");
+    const commit = calls.findIndex((c) => c.startsWith("git commit"));
+    for (const path of ["/ws/lexicons/helm/package.json", "/ws/package-lock.json"]) {
+      const add = calls.findIndex((c) => c.startsWith("git add") && c.includes(path));
+      expect(add, path).toBeGreaterThan(-1);
+      expect(add, path).toBeLessThan(commit);
+    }
+  });
+
   test("rolling lexicon (aws) in pull-request mode opens an issue, not a PR (#546)", async () => {
     const checkRolling: CheckRollingFn = vi.fn(async () => rollingResult());
     const bumpFn: BumpPackageVersionFn = vi.fn();

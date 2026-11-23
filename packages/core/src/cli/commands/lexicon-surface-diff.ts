@@ -20,7 +20,7 @@
 import { existsSync, readFileSync } from "fs";
 import { resolve, join } from "path";
 import { regenLexicon, writeSurfaceSnapshot, SNAPSHOT_FILENAME, type RegenResult } from "../../codegen/lexicon-regen";
-import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
+import { bumpForSeverity, bumpPackageJsonVersion, followWorkspaceRanges } from "../../codegen/version-bump";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -105,6 +105,7 @@ export async function runSurfaceDiff(opts: SurfaceDiffOptions): Promise<RegenRes
         const bumped = bumpForSeverity(current, result.severity);
         if (bumped) {
           bumpPackageJsonVersion(pkgPath, bumped);
+          for (const path of followWorkspaceRanges(dir, bumped)) process.stderr.write(`Range followed: ${path}\n`);
           process.stderr.write(`Version bumped: ${current} -> ${bumped} (${result.severity})\n`);
         } else {
           process.stderr.write(`Version unchanged: could not bump ${current} for severity ${result.severity}\n`);
