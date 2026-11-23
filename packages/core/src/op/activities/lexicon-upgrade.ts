@@ -345,6 +345,34 @@ export function buildUpgradeSummary(opts: {
   return lines.join("\n");
 }
 
+/**
+ * The longest summary posted as a pull request or issue body. GitHub refuses
+ * a body over 65,536 characters (#5500); this leaves room under it.
+ */
+export const MAX_UPGRADE_BODY_CHARS = 60_000;
+
+/**
+ * Cut `body` to at most `max` characters, at a line boundary, closing a code
+ * fence left open and saying how much was left out (#5500). A large upstream
+ * release (gcp's v1.152.0 to v1.161.0 adds over a thousand resources) makes a
+ * surface delta far longer than a forge accepts, and `gh pr create` then
+ * fails after the branch is pushed.
+ */
+export function fitUpgradeBody(body: string, lexicon: SupportedLexicon, max = MAX_UPGRADE_BODY_CHARS): string {
+  if (body.length <= max) return body;
+  const note = (omitted: number) =>
+    `\n\n_${omitted} characters of this summary are not shown, to stay under the forge's body limit. ` +
+    `On the upgrade pull request, the \`lexicons/${lexicon}/surface.snapshot.json\` diff is the whole surface change._`;
+  // Room for the note and a closing fence; the omitted count never has more
+  // digits than the body's length.
+  const budget = max - note(body.length).length - "\n```".length;
+  let cut = body.lastIndexOf("\n", budget);
+  if (cut <= 0) cut = budget;
+  let kept = body.slice(0, cut);
+  if ((kept.match(/^```/gm) ?? []).length % 2 === 1) kept += "\n```";
+  return kept + note(body.length - cut);
+}
+
 // ── Shell helpers ─────────────────────────────────────────────────────
 
 function shellQuote(s: string): string {
@@ -655,18 +683,22 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   }
 
   const semverLabel = severityToLabel(severity);
-  const summary =
+  // Fitted before anything is posted, so the idempotency check below compares
+  // an open pull request's body with what this run would post.
+  const summary = fitUpgradeBody(
     summaryOverride ??
-    buildUpgradeSummary({
-      lexicon,
-      from,
-      to,
-      deltaText,
-      semverLabel,
-      validationOk,
-      failures,
-      manualPin,
-    });
+      buildUpgradeSummary({
+        lexicon,
+        from,
+        to,
+        deltaText,
+        semverLabel,
+        validationOk,
+        failures,
+        manualPin,
+      }),
+    lexicon,
+  );
 
   // ── 2. No upgrade ─────────────────────────────────────────────────
 
