@@ -545,6 +545,8 @@ For each stack the read makes three calls: `DescribeStacks`, `GetTemplate` (the 
 
 `meta.awsMember.stacks` has one entry per stack: `name`, `region`, `read`, `status` (the `StackStatus`), `outputs`, and `resources`, each with the `node` it is drawn as, its `logicalId`, `type`, `physicalId` and `status`. A stack that cannot be read has `read: false` and a `reason`, such as `no stack named <name> in <region>`, or the AWS error followed by the credentials, calls and region the read needs. The other stacks are still read and the graph does not fail. A `cloudformation-stacks.json` that is not `{ "stacks": [...], "region": "..." }` is reported in the member's warnings and the member draws nothing from it.
 
+`workspace graph --live` reads each node drawn from a named stack from that stack, in the file's region, by its logical id, whatever `--env` is. A resource the stack lists is present with its physical id and status; one it does not list is absent. A node from a template file beside the stacks is read from the stack named after the environment, as for a member with no `cloudformation-stacks.json`.
+
 ## Overlapping probes
 
 Several kinds can claim one directory. A chant project that also holds a `main.tf` passes the probes of `chant` and `terraform`. The highest precedence decides.
