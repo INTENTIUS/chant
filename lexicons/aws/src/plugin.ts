@@ -39,7 +39,7 @@ import { canDescribe, describeCloudControlProperties, describeOwnProperties, sta
 import { stampProviderDefaults } from "./defaults";
 import { resolveTemplateAttrs } from "./live-attrs";
 import { CFParser } from "./import/parser";
-import { lastMemberReport, setLastMemberReport } from "./member-report";
+import { lastMemberReport, memberStackReads, setLastMemberReport } from "./member-report";
 import { awsStateLocations } from "./state-locations";
 import { CFGenerator } from "./import/generator";
 import { parseStackTemplate } from "./import/live-export";
@@ -661,8 +661,46 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     stack?: string;
     region?: string;
     owned?: boolean;
+    /** Entity name to the stack's logical id, where the two differ (a member's named stack, #5504). */
+    logicalIds?: Map<string, string>;
   }): Promise<ObservationResult> {
-    const { observation, unobservedAll } = await import("@intentius/chant/observation");
+    const { observation, unobservedAll, normalizeObservation, mergeObservations } = await import("@intentius/chant/observation");
+
+    // A cloudformation member that names its deployed stacks (#5504): each
+    // node it drew from a stack is read from that stack, in the region the
+    // member's cloudformation-stacks.json names, not from the stack named
+    // after the environment. Only when no stack was asked for: core passes
+    // one for a project that declares its own.
+    const named = options.stack === undefined ? memberStackReads(lastMemberReport(), options.entityNames) : undefined;
+    if (named) {
+      const subset = (names: string[]) => {
+        const all = options.entities;
+        return all ? { entities: new Map(names.flatMap((n) => (all.has(n) ? [[n, all.get(n)!] as const] : []))) } : {};
+      };
+      // Each part is this read with a stack named, so it does not come back here.
+      const readStack = awsPlugin.describeResources as unknown as (o: typeof options) => Promise<ObservationResult>;
+      const parts = [];
+      for (const read of named.reads) {
+        const names = [...read.logicalIds.keys()];
+        parts.push(
+          normalizeObservation(
+            await readStack({
+              ...options,
+              entityNames: names,
+              ...subset(names),
+              stack: read.stack,
+              region: read.region ?? options.region,
+              logicalIds: read.logicalIds,
+            }),
+          ),
+        );
+      }
+      if (named.rest.length > 0) {
+        parts.push(normalizeObservation(await readStack({ ...options, entityNames: named.rest, ...subset(named.rest), stack: options.environment })));
+      }
+      return { observation: "v1", ...mergeObservations(parts) };
+    }
+
     const resources: Record<string, ResourceMetadata> = {};
     // The applier's own transport, pointed at the read APIs (#1206). Multi-region
     // estates target this stack's region, not the ambient one.
@@ -781,7 +819,7 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
     const stackExports = Object.keys(exports).length > 0 ? { [stackName]: exports } : undefined;
 
     for (const entityName of options.entityNames) {
-      const stackResource = stackResourceMap.get(entityName);
+      const stackResource = stackResourceMap.get(options.logicalIds?.get(entityName) ?? entityName);
       if (!stackResource) continue;
 
       resources[entityName] = {
