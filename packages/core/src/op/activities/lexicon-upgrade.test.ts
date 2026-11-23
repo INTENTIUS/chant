@@ -342,6 +342,99 @@ describe("lexiconUpgrade issue mode", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  test("CHANT_GITHUB_TOKEN outranks GH_TOKEN for the issue, so the workflow token finds it (#5515)", async () => {
+    // The lexicon-upgrade workflow's App token cannot list issues, so the
+    // workflow hands the issue calls github.token as CHANT_GITHUB_TOKEN.
+    const calls: Array<{ cmd: string; env?: NodeJS.ProcessEnv }> = [];
+    const gh = vi.fn(async (cmd: string, opts?: { env?: NodeJS.ProcessEnv }) => {
+      calls.push({ cmd, env: opts?.env });
+      if (cmd.includes("--paginate")) return { stdout: "5497\n", stderr: "" };
+      if (cmd.includes("--method PATCH")) return { stdout: "https://github.com/acme/infra/issues/5497\n", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("FORGEJO_ACTIONS", "");
+    vi.stubEnv("GITEA_ACTIONS", "");
+    vi.stubEnv("GH_TOKEN", "ghs-app-token");
+    vi.stubEnv("CHANT_GITHUB_TOKEN", "ghs-workflow-token");
+    try {
+      const r = await lexiconUpgrade({ lexicon: "k8s", mode: "issue", _checkPinned: vi.fn(async () => pinnedResult()), _gh: gh });
+      expect(r.issueUrl).toBe("https://github.com/acme/infra/issues/5497");
+      expect(calls.some((c) => c.cmd.includes("--method POST"))).toBe(false);
+      for (const call of calls) expect(call.env?.GH_TOKEN).toBe("ghs-workflow-token");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("a finding that reaches no issue or pull request fails the run (#5515)", () => {
+  test("an issue the forge returns no URL for throws instead of reporting ok", async () => {
+    const gh = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    vi.stubEnv("GITHUB_REPOSITORY", "acme/infra");
+    vi.stubEnv("GITHUB_API_URL", "");
+    vi.stubEnv("FORGEJO_ACTIONS", "");
+    vi.stubEnv("GITEA_ACTIONS", "");
+    vi.stubEnv("CHANT_GITHUB_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "ghs-workflow");
+    try {
+      await expect(
+        lexiconUpgrade({ lexicon: "k8s", mode: "issue", _checkPinned: vi.fn(async () => pinnedResult()), _gh: gh }),
+      ).rejects.toThrow(/no issue URL, so nothing was reported/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("a validation failure in pull-request mode that posts no issue throws", async () => {
+    const gh = vi.fn(async () => ({ stdout: "\n", stderr: "" }));
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    try {
+      await expect(
+        lexiconUpgrade({
+          lexicon: "k8s",
+          mode: "pull-request",
+          _checkPinned: vi.fn(async () =>
+            pinnedResult({
+              validation: {
+                ok: false,
+                changed: true,
+                severity: "breaking",
+                delta: { added: [], changed: [], removed: [], renamed: [], severity: "breaking" },
+                deltaText: "",
+                failures: [{ step: "build", output: "Cannot find module '../generated/index'" }],
+                freshSnapshot: null,
+              },
+            }),
+          ),
+          _gh: gh,
+        }),
+      ).rejects.toThrow(/found an upgrade in pull-request mode/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("the URL of the issue a run reported is written to stderr for the job log", async () => {
+    const { gh } = recordingGh();
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    try {
+      await lexiconUpgrade({ lexicon: "gcp", mode: "issue", _checkPinned: vi.fn(async () => pinnedResult()), _gh: gh });
+      expect(write.mock.calls.map((c) => String(c[0]))).toContain("lexiconUpgrade gcp: issue https://gh/issue/1\n");
+    } finally {
+      write.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("report mode posts nothing and needs no URL", async () => {
+    const r = await lexiconUpgrade({ lexicon: "k8s", mode: "report", _checkPinned: vi.fn(async () => pinnedResult()) });
+    expect(r.hasUpgrade).toBe(true);
+    expect(r.prUrl ?? r.issueUrl).toBeUndefined();
+  });
 });
 
 // ── validation failure never becomes a PR ─────────────────────────────
