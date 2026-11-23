@@ -1,8 +1,8 @@
 /** The vulnerability scan before the stage (#5446): grype and syft in the jobs that run chant release. */
-import { TOOL_PINS, toolInstallLine } from "../../tool-pins";
+import { TOOL_PINS, toolInstallLineForRunner } from "../../tool-pins";
 import type { OpSetupStep } from "../../lexicon";
 import type { ReleasePipelineConfig, ReleaseWorkflowForge } from "../release-workflow";
-import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
+import type { ReleaseWorkflowFeature } from "./types";
 
 /** Whether the config's setup or env already names `variable`, so it brings its own tool. */
 function brings(p: ReleasePipelineConfig, variable: string): boolean {
@@ -23,8 +23,8 @@ export function scanSetup(forge: ReleaseWorkflowForge, p: ReleasePipelineConfig)
   ].filter((t) => !brings(p, t.variable));
   return tools.map(({ pin, variable }) =>
     forge === "gitlab"
-      ? { run: `${toolInstallLine(pin, RELEASE_RUNNER_PLATFORM, `/tmp/${pin.name}`)} && export ${variable}=/tmp/${pin.name}/${pin.name}` }
-      : { name: `Install ${pin.name} ${pin.version}`, run: `${toolInstallLine(pin, RELEASE_RUNNER_PLATFORM, `$RUNNER_TEMP/${pin.name}`)} && echo "${variable}=$RUNNER_TEMP/${pin.name}/${pin.name}" >> "$GITHUB_ENV"` },
+      ? { run: `${toolInstallLineForRunner(pin, `/tmp/${pin.name}`)} && export ${variable}=/tmp/${pin.name}/${pin.name}` }
+      : { name: `Install ${pin.name} ${pin.version}`, run: `${toolInstallLineForRunner(pin, `$RUNNER_TEMP/${pin.name}`)} && echo "${variable}=$RUNNER_TEMP/${pin.name}/${pin.name}" >> "$GITHUB_ENV"` },
   );
 }
 

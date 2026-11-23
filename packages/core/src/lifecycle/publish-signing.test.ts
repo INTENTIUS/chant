@@ -50,7 +50,7 @@ import { makeRelease, type ReleaseArtifact } from "./release-store";
 import { verifySigstore } from "./release-verify";
 import { cutRelease } from "./release-cut";
 import { renderReleaseWorkflow } from "../workspace/release-workflow";
-import { TOOL_PINS, toolInstallLine } from "../tool-pins";
+import { TOOL_PINS, toolInstallLine, toolInstallLineForRunner } from "../tool-pins";
 import { TestRepo } from "../workspace/trust/test-repo";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { startFakeForge, startFakeRegistry, writeLockfile, writeOciLayout } from "./__fixtures__/publish-fakes";
@@ -558,5 +558,26 @@ describe("the release workflow", () => {
     );
     expect(toolInstallLine(TOOL_PINS.cosign, "linux/arm64", "/tmp")).toMatch(/cosign-linux-arm64 && echo "[0-9a-f]{64}  \/tmp\/cosign" \| sha256sum -c - && chmod \+x "\/tmp\/cosign"$/);
     expect(() => toolInstallLine(TOOL_PINS.goreleaser, "darwin/arm64", "/tmp")).toThrow(/pinned for linux\/amd64, linux\/arm64/);
+  });
+
+  test("the runner's own line picks the build by uname -m, each checked against its own SHA-256, and fails on another architecture", () => {
+    for (const pin of [TOOL_PINS.cosign, TOOL_PINS.grype, TOOL_PINS.syft, TOOL_PINS.goreleaser, TOOL_PINS.nfpm]) {
+      const line = toolInstallLineForRunner(pin, "/tmp/t");
+      expect(line).toContain(`x86_64|amd64) ${toolInstallLine(pin, "linux/amd64", "/tmp/t")};;`);
+      expect(line).toContain(`aarch64|arm64) ${toolInstallLine(pin, "linux/arm64", "/tmp/t")};;`);
+      expect(line).toContain(pin.platforms["linux/arm64"]!.sha256);
+      expect(line).toMatch(/\*\) echo "no pinned \w+ v[\d.]+ build for \$\(uname -m\)" >&2; exit 1;; esac$/);
+      expect(pin.platforms["linux/arm64"]!.sha256).not.toBe(pin.platforms["linux/amd64"]!.sha256);
+    }
+  });
+
+  test("the cosign, grype and syft steps of the release workflow carry both builds, on every forge", () => {
+    for (const forge of ["github", "forgejo", "gitlab"] as const) {
+      const text = renderReleaseWorkflow({ forge, groups: new Set(["supply-chain"]), signing: true, scan: true, pipeline: { trigger: "dispatch" } });
+      for (const pin of [TOOL_PINS.cosign, TOOL_PINS.grype, TOOL_PINS.syft]) {
+        expect(text).toContain(pin.platforms["linux/amd64"]!.sha256);
+        expect(text).toContain(pin.platforms["linux/arm64"]!.sha256);
+      }
+    }
   });
 });

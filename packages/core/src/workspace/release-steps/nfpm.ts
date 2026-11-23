@@ -1,7 +1,7 @@
 /** nfpm for the `release.artifacts` entries it packages (#5233). */
-import { TOOL_PINS, toolInstallLine } from "../../tool-pins";
+import { TOOL_PINS, toolInstallLineForRunner } from "../../tool-pins";
 import type { ReleasePipelineConfig, ReleaseWorkflowForge } from "../release-workflow";
-import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
+import type { ReleaseWorkflowFeature } from "./types";
 
 /**
  * What a job that packages nfpm entries runs first: the pinned nfpm,
@@ -10,8 +10,8 @@ import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
  */
 export function nfpmSetup(forge: ReleaseWorkflowForge, p: ReleasePipelineConfig): { github: string[]; gitlab: string[] } {
   if (p.env?.CHANT_NFPM !== undefined) return { github: [], gitlab: [] };
-  if (forge === "gitlab") return { github: [], gitlab: [`${toolInstallLine(TOOL_PINS.nfpm, RELEASE_RUNNER_PLATFORM, "/tmp/nfpm")} && export CHANT_NFPM=/tmp/nfpm/nfpm`] };
-  const line = `${toolInstallLine(TOOL_PINS.nfpm, RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP/nfpm")} && echo "CHANT_NFPM=$RUNNER_TEMP/nfpm/nfpm" >> "$GITHUB_ENV"`;
+  if (forge === "gitlab") return { github: [], gitlab: [`${toolInstallLineForRunner(TOOL_PINS.nfpm, "/tmp/nfpm")} && export CHANT_NFPM=/tmp/nfpm/nfpm`] };
+  const line = `${toolInstallLineForRunner(TOOL_PINS.nfpm, "$RUNNER_TEMP/nfpm")} && echo "CHANT_NFPM=$RUNNER_TEMP/nfpm/nfpm" >> "$GITHUB_ENV"`;
   return { github: [`      - name: nfpm ${TOOL_PINS.nfpm.version}`, `        run: ${JSON.stringify(line)}`], gitlab: [] };
 }
 
