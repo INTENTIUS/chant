@@ -39,7 +39,40 @@ export const GHCR_DENIED = JSON.stringify({ errors: [{ code: "DENIED", message: 
 export interface FakeRegistryFaults {
   denyPuts?: number;
   expireTokenAfter?: number;
+  /**
+   * #5540: the media types the registry knows, as registry.gitlab.com keeps
+   * them. A manifest whose `artifactType` or config type is not among them is
+   * refused with GitLab's 400 `MANIFEST_INVALID` body; an unknown layer type
+   * is taken, as GitLab only logs it.
+   */
+  knownTypes?: ReadonlySet<string>;
 }
+
+/**
+ * #5540: media types registry.gitlab.com's metadata database knows, from the
+ * `media_types` migrations of gitlab-org/container-registry (the seed list and
+ * later additions): the ones a chant publish could put in a manifest's
+ * `artifactType` or config, and nothing chant-specific.
+ */
+export const GITLAB_REGISTRY_TYPES: ReadonlySet<string> = new Set([
+  "application/json",
+  "application/octet-stream",
+  "application/vnd.oci.image.manifest.v1+json",
+  "application/vnd.oci.image.index.v1+json",
+  "application/vnd.oci.image.config.v1+json",
+  "application/vnd.oci.empty.v1+json",
+  "application/vnd.oci.image.layer.v1.tar",
+  "application/vnd.oci.image.layer.v1.tar+gzip",
+  "application/vnd.docker.distribution.manifest.v2+json",
+  "application/vnd.docker.distribution.manifest.list.v2+json",
+  "application/vnd.docker.container.image.v1+json",
+  "application/spdx+json",
+  "application/vnd.cyclonedx+json",
+  "application/vnd.in-toto+json",
+  "application/vnd.dev.sigstore.bundle.v0.3+json",
+  "application/vnd.cncf.helm.config.v1+json",
+  "application/vnd.cncf.helm.chart.content.v1.tar+gzip",
+]);
 
 /** A registry fake with a Bearer token service that accepts `username` and `password`. */
 export async function startFakeRegistry(creds: { username: string; password: string; token: string }, faults: FakeRegistryFaults = {}): Promise<FakeRegistry> {
@@ -103,8 +136,10 @@ export async function startFakeRegistry(creds: { username: string; password: str
     if (m && req.method === "PUT") {
       const ref = m[2]!;
       if (ref.startsWith("sha256:") && sha(body) !== ref) return send(400, {}, "manifest digest invalid");
-      const parsed = JSON.parse(body.toString("utf-8")) as { config?: { digest: string }; layers?: Array<{ digest: string }> };
+      const parsed = JSON.parse(body.toString("utf-8")) as { artifactType?: string; config?: { digest: string; mediaType?: string }; layers?: Array<{ digest: string }> };
       for (const d of [parsed.config, ...(parsed.layers ?? [])]) if (d && !blobs.has(d.digest)) return send(400, {}, `blob unknown ${d.digest}`);
+      const unknown = faults.knownTypes ? [parsed.artifactType, parsed.config?.mediaType].find((t) => t !== undefined && !faults.knownTypes!.has(t)) : undefined;
+      if (unknown !== undefined) return send(400, { "content-type": "application/json" }, JSON.stringify({ errors: [{ code: "MANIFEST_INVALID", message: "manifest invalid", detail: `unknown media type: ${unknown}` }] }));
       manifests.set(ref, { name: m[1]!, type: String(req.headers["content-type"]), bytes: body });
       return send(201, { "docker-content-digest": sha(body) });
     }

@@ -495,7 +495,13 @@ export const recordedBlocks = (f: Pick<RecordedFinding, "outcome">): boolean => 
 /** Whether a recorded scan holds a finding the policy blocks. */
 export const scanRecordBlocks = (r: Pick<ScanRecord, "subjects">): boolean => r.subjects.some((s) => s.findings.some(recordedBlocks));
 
-/** The media type of an image's findings referrer. */
+/**
+ * The media type of an image's findings document. The referrer is pushed as
+ * `application/json` with this type in its `io.intentius.chant.media-type`
+ * annotation (#5540), since registries that check an artifact type against
+ * the types they know refuse this one; releases published before kept it as
+ * the referrer's `artifactType`.
+ */
 export const SCAN_FINDINGS_MEDIA_TYPE = "application/vnd.intentius.chant.scan.v1+json";
 /** The file name an image's findings are attached under. */
 export const SCAN_FINDINGS_FILE = "scan.json";

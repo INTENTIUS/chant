@@ -464,14 +464,56 @@ interface Referrer {
   attachment: Attachment;
   manifest: Uint8Array;
   digest: string;
+  /** #5540: the digest of the manifest an earlier chant pushed for the same file, when it was another shape. */
+  legacyDigest?: string;
 }
 
 /**
+ * #5540: the media types an artifact manifest carries as they are, as its
+ * `artifactType` and its layer's type. A registry that checks those against
+ * a list of types it knows (registry.gitlab.com refuses an unknown
+ * `artifactType` with `MANIFEST_INVALID`) knows each of these.
+ */
+export const REFERRER_KNOWN_TYPES: ReadonlySet<string> = new Set(["application/spdx+json", "application/vnd.cyclonedx+json", "application/vnd.in-toto+json", SIGSTORE_BUNDLE_MEDIA_TYPE]);
+/** #5540: the type a referrer of any other media type is pushed under, which such registries know too. */
+export const REFERRER_GENERIC_TYPE = "application/json";
+/** #5540: the annotation that names the attachment's own media type when the manifest carries {@link REFERRER_GENERIC_TYPE}. */
+export const CHANT_MEDIA_TYPE_ANNOTATION = "io.intentius.chant.media-type";
+
+/**
  * The artifact manifest that attaches `a` to the image `subject` (OCI image
- * spec 1.1): `artifactType` is the file's media type, the config is the empty
- * descriptor, the one layer is the file, and `subject` is the image.
+ * spec 1.1): the config is the empty descriptor, the one layer is the file,
+ * and `subject` is the image. `artifactType` and the layer's type are the
+ * file's media type when it is one of {@link REFERRER_KNOWN_TYPES}; any other
+ * (the scan's findings, `application/vnd.intentius.chant.scan.v1+json`) is
+ * pushed as `application/json` and named in the
+ * `io.intentius.chant.media-type` annotation on the manifest and the layer,
+ * which the referrers API copies into its index (#5540).
  */
 export function referrerManifest(a: Attachment, subject: { mediaType: string; digest: string; size: number }): Uint8Array {
+  const known = REFERRER_KNOWN_TYPES.has(a.mediaType);
+  const type = known ? a.mediaType : REFERRER_GENERIC_TYPE;
+  const annotations = { "org.opencontainers.image.title": a.name, ...(known ? {} : { [CHANT_MEDIA_TYPE_ANNOTATION]: a.mediaType }) };
+  const manifest = {
+    schemaVersion: 2,
+    mediaType: IMAGE_MANIFEST,
+    artifactType: type,
+    config: { mediaType: EMPTY_CONFIG.mediaType, digest: bytesDigest(EMPTY_CONFIG.bytes), size: EMPTY_CONFIG.bytes.byteLength },
+    layers: [{ mediaType: type, digest: a.digest, size: a.bytes.byteLength, annotations }],
+    subject,
+    annotations,
+  };
+  return new Uint8Array(Buffer.from(JSON.stringify(manifest)));
+}
+
+/**
+ * The artifact manifest chant pushed for `a` before #5540, with the file's
+ * own media type as `artifactType` and as the layer's type. Null when
+ * that is the manifest {@link referrerManifest} makes now. A resumed stage
+ * keeps a referrer an earlier chant pushed in this shape.
+ */
+export function legacyReferrerManifest(a: Attachment, subject: { mediaType: string; digest: string; size: number }): Uint8Array | null {
+  if (REFERRER_KNOWN_TYPES.has(a.mediaType)) return null;
   const manifest = {
     schemaVersion: 2,
     mediaType: IMAGE_MANIFEST,
@@ -629,7 +671,8 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     ].filter((a): a is Attachment => a !== null);
     return files.map((attachment) => {
       const manifest = referrerManifest(attachment, subject);
-      return { attachment, manifest, digest: bytesDigest(manifest) };
+      const legacy = legacyReferrerManifest(attachment, subject);
+      return { attachment, manifest, digest: bytesDigest(manifest), ...(legacy ? { legacyDigest: bytesDigest(legacy) } : {}) };
     });
   };
   const referrerItem = (r: Referrer): PublishItem => ({ name: r.attachment.name, destination: `${decl.repository}@${r.digest}, a referrer of the image`, digest: r.digest, attachment: r.attachment.kind });
@@ -870,6 +913,12 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
         for (const r of attached) {
           if (await registry.hasManifest(r.digest, IMAGE_MANIFEST)) {
             items.push({ ...referrerItem(r), present: true });
+            continue;
+          }
+          // #5540: a resumed stage keeps the referrer an earlier chant pushed for the same file in the shape it used then.
+          if (r.legacyDigest && (await registry.hasManifest(r.legacyDigest, IMAGE_MANIFEST))) {
+            ctx.log(`${decl.repository} already holds ${r.attachment.name} for ${layout.top.digest} as referrer ${r.legacyDigest}; it is not attached again`);
+            items.push({ ...referrerItem({ ...r, digest: r.legacyDigest }), present: true });
             continue;
           }
           ctx.log(`attaching ${r.attachment.name} to ${layout.top.digest} as referrer ${r.digest}`);
