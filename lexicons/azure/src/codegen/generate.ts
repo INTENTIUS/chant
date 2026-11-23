@@ -12,7 +12,7 @@ import {
 } from "@intentius/chant/codegen/generate";
 import { fetchArmSchemas } from "../spec/fetch";
 import { parseArmSchema, armShortName, type ArmSchemaParseResult } from "../spec/parse";
-import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
+import { NamingStrategy, publishedNames, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
 import {
@@ -53,7 +53,14 @@ const azurePipelineConfig: GeneratePipelineConfig<ArmSchemaParseResult> = {
  * Run the full Azure generation pipeline.
  */
 export async function generate(opts: GenerateOptions = {}): Promise<GenerateResult> {
-  return generatePipeline(azurePipelineConfig, opts);
+  // #5551: a published name stays with the type that published it, so an
+  // upstream type sharing its short name is the one prefixed. A caller-supplied
+  // schema set names its fixtures by the rule alone.
+  const reserved = opts.schemaSource ? {} : publishedNames();
+  return generatePipeline(
+    { ...azurePipelineConfig, createNaming: (results) => new NamingStrategy(results, reserved) },
+    opts,
+  );
 }
 
 /**
