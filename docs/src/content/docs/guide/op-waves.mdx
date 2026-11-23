@@ -1058,6 +1058,8 @@ A pending fact the product recorded before the move still stands for its digest,
 
 The policy, the approval mode, the decision point, the spend rule and the hooks for wave `k` come from the spec file as it was at the base commit, `HEAD^1` by default. On a merge or a squash onto the branch, that is the branch before the change. A pull request that sets prod to `never` merges, and prod still waits under the policy the branch had. If the wave or the file does not exist at the base commit, the wave is `always`. The jobs check out the full history so the base commit is there.
 
+A repository's first commit has no parent, so there is no base commit: nothing was reviewed before it. The spec reads as absent at base, every wave is `always` and waits for a person's approval, and the log says `this commit has no parent, so the spec is absent at base`. The commit being applied is never read as its own base, so the first push cannot set its own gate. Nothing else is read from that commit as if it were at base either: no hooks, no approval mode, no signers and no `identity.gates` rule. This holds for a `base` of `HEAD^1`, `HEAD^`, `HEAD~1` or `HEAD~`. A shallow checkout is different: its commit names a parent the checkout does not have, and the wave fails, asking for the full history.
+
 The same goes for hooks. A change cannot add, edit or remove a hook that its own apply runs, and the log says so when the change's hooks differ from the ones at base. A wave or file missing at base has no hooks. If the hooks at base are malformed, none of them run and the wave waits for an approval.
 
 Everything else in the spec is read from the commit being applied.
@@ -1341,7 +1343,7 @@ A tool that runs its own waves can decide a gate by these rules without running 
 | `decideGateApproval({ ledger, gate, planDigest, mode, signers, review, spend })` | decides a plan-bound gate from its ledger lines under `ledger`, `pr-review` or `sealed`, and returns `approved` (with the resolution or the review) or `waiting` (with the standing pending fact, the approval of another digest, and each approval of this digest that did not count, with the reason). With `spend` and `ledger.applied`, an approval a wave applied under counts for nothing and comes back as `spent` |
 | `parseAppliedGateLines(text)`, `isApprovalSpent(applied, approval)` | read `_gates/<op>/applied.jsonl`, and say whether an approval is spent by it |
 | `appliedGateApplies(records)` | the applied lines as `gate-audit` applies |
-| `baseCommit(repo)` | the first parent of HEAD, fetched when the checkout is shallow |
+| `baseCommit(repo)` | the first parent of HEAD, fetched when the checkout is shallow. For a repository's first commit, the empty tree, where every file reads as absent, as `chant run wave` reads it; `isEmptyBase(base)` says when that is the answer |
 | `gateSignersAt(repo, base)` | the signers file at base, at the path `.chant/trust.json` names there. An invalid trust.json turns attestation off, as it does in chant |
 | `gateSealRefusal(signers, approval)` | why a seal does not count for its approver, or null when it does |
 | `identityGatesAt(repo, base)` | the gates `chant.workspace.json` at base lists under `identity.gates`, each with its `quorum` ([#4324](https://github.com/INTENTIUS/chant/issues/4324)), `policy`, `mode` and `context` ([#4404](https://github.com/INTENTIUS/chant/issues/4404)) when the entry sets them |

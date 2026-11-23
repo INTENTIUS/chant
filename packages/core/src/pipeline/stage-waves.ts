@@ -32,6 +32,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
 import { NEXT_RELEASE } from "../release-floors";
+import { isEmptyBase, rootCommitBase } from "../op/root-commit-base";
 import type { OpWavesSpec } from "../op/op-waves";
 import type { OpWaveShowAtBase, RunOpWaveOptions, RunOpWaveResult } from "../op/op-waves-run";
 import type { ReleaseRecord } from "../lifecycle/release-ledger";
@@ -73,12 +74,18 @@ const STAGE_SPEC_FILE = /^\.chant\/op-waves\/[^/]+\.spec\.json$/;
 
 const posixPath = (p: string): string => p.replace(/^\.\//, "").split("\\").join(posix.sep);
 
-/** `git show <base>:<path>` in `cwd`, with the commit resolved; text null when the commit has no such file. */
+/**
+ * `git show <base>:<path>` in `cwd`, with the commit resolved; text null when the commit has no such file. A base that is
+ * the first parent of a commit with none is the empty tree (#5488), where every file is absent, as `gitShowAtBase` has it.
+ */
 const gitShowFile: OpWaveShowAtBase = (base, path, cwd) => {
+  if (isEmptyBase(base)) return { sha: base, text: null };
   let sha: string;
   try {
     sha = execFileSync("git", ["rev-parse", "--verify", `${base}^{commit}`], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch {
+    const none = rootCommitBase(cwd, base);
+    if (none) return { sha: none, text: null };
     throw new Error(`the gate policy is read at ${base}, which this checkout does not have. Check out the full history (fetch-depth: 0 on GitHub and Forgejo, GIT_DEPTH: "0" on GitLab).`);
   }
   try {
