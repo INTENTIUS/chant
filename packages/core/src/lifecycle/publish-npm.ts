@@ -37,7 +37,10 @@
  * first of `sbom.spdx.json`, `sbom.cdx.json`, `sbom.cyclonedx.json` it holds,
  * such as `npm sbom` writes. A package with none publishes without one,
  * except under the `supply-chain` group (#4168) or when `sbom` names a file,
- * where it is refused (`publish-sbom-missing`). Moving a dist-tag over
+ * where it is refused (`publish-sbom-missing`); the cut runs the same check
+ * ({@link checkDeclaredPackageSboms}), so the label is not spent on such a
+ * release. A lockfile is no SBOM source for a package: the scan reads one
+ * written from it, but nothing writes it into the package. Moving a dist-tag over
  * OIDC needs "Allow npm dist-tag" on the package's trusted-publisher record.
  * npm makes the first version of a new package `latest` whatever tag it is
  * published under, so a package's first release is visible when it stages.
@@ -295,6 +298,35 @@ export function checkDeclaredPackageImages(
       }
     });
     checkPackageImages(release, cwd, pkgs, bin, env);
+  }
+}
+
+/**
+ * #5518: the SBOM check of each npm target's plan ({@link packageSbom}), run by the
+ * cut before anything is recorded or tagged, so a package the publish would
+ * refuse with `publish-sbom-missing` stops the cut instead of the publish job
+ * after the label is spent. A package with none is refused when `required`
+ * (the `supply-chain` group) or when the target's `sbom` names a file; a
+ * lockfile is no source here, since npm keeps no file beside a package and
+ * the SBOM has to be in it. `sbom: false` is never refused. A package that
+ * is not there yet, can't be read or is private is left for the publish's
+ * plan, which refuses it with its own code.
+ */
+export function checkDeclaredPackageSboms(
+  decls: ReadonlyArray<{ type: string; packages?: readonly string[]; sbom?: string | false }>,
+  cwd: string,
+  required: boolean,
+): void {
+  for (const decl of decls) {
+    if (decl.type !== "npm" || decl.sbom === false) continue;
+    if (!required && decl.sbom === undefined) continue;
+    for (const path of decl.packages ?? []) {
+      const abs = resolve(cwd, path);
+      if (!existsSync(abs)) continue;
+      const manifest = packageManifest(abs);
+      if (!manifest || manifest.private === true) continue;
+      packageSbom(abs, isDir(abs), path, typeof manifest.name === "string" ? manifest.name : path, decl.sbom, required);
+    }
   }
 }
 

@@ -20,7 +20,7 @@ Under `supply-chain`:
 - An `oci` or `forge` target signs what it publishes with Sigstore and adds SLSA provenance, keylessly with the CI job's OIDC token, or with a KMS key or a cosign key (`release.signing.kms`, `release.signing.key`) where there is none. A publish that can't sign is refused (`publish-signing-no-oidc`, `publish-signing-key-missing`, `publish-signing-tool-missing`). `release.signing: false` in `chant.config.ts` turns it off with a warning. [Sigstore signatures](/chant/reference/publish-targets/#sigstore-signatures) has the details.
 - `chant release cut` scans what the publish would put out for known vulnerabilities before it records or tags the release, and `chant release publish` scans it again before anything is pushed or signed. Each stops with `publish-scan-failed` on a finding the policy blocks. `release.scan: false` turns both off with a warning. [The scan before the stage](#the-scan-before-the-stage) has the details.
 
-An SBOM comes from the file a target's `sbom` names. With none named, an image's SBOM is the one the scan made from the image's layers, so it lists the OS packages in the image. Every other SBOM comes from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first. An npm package's SBOM written from `package-lock.json` lists only that package's runtime dependencies, as [the scan before the stage](#the-scan-before-the-stage) describes.
+An SBOM comes from the file a target's `sbom` names. With none named, an image's SBOM is the one the scan made from the image's layers, so it lists the OS packages in the image. A `forge` target's SBOM comes from the lockfile nearest the member: `package-lock.json`, `pom.xml` or `Cargo.lock`. A member whose directory holds a `Cargo.toml` reads `Cargo.lock` first. An npm package carries its SBOM in the package, as `sbom.spdx.json`, `sbom.cdx.json` or `sbom.cyclonedx.json` at its root, since npm keeps no file beside a package; a lockfile is no source for it. `chant release cut` refuses a package with none (`publish-sbom-missing`) before it records or tags anything, as the publish would. The scan reads a package that carries none through an SBOM written from `package-lock.json` with only that package's runtime dependencies, as [the scan before the stage](#the-scan-before-the-stage) describes, but that SBOM is not put in the package.
 
 ## Opt in
 
@@ -41,7 +41,7 @@ A declaration that uses `security` sets `minReader` to `0.124.33` or newer.
 | Code | What to do |
 |---|---|
 | `security-sbom-disabled` | Remove `sbom: false` from the publish target. |
-| `security-sbom-unsourced` | Point `sbom` at the SPDX or CycloneDX file the build writes, or commit the member's lockfile. |
+| `security-sbom-unsourced` | For an npm package, write its SBOM into the package before it is packed (`npm sbom --omit dev --sbom-format spdx > sbom.spdx.json` in the build) and point `sbom` at it; a lockfile does not count. For a `forge` target, point `sbom` at the SPDX or CycloneDX file the build writes, or commit the member's lockfile. |
 | `security-publish-no-provenance` | Pass `--require-provenance` in the publish job, which runs in CI with an OIDC token. |
 | `security-component-no-sbom` | Add a `generateSbom` step to the member's components. |
 | `security-component-no-verify` | Add a `verify` step before the deploy steps. |

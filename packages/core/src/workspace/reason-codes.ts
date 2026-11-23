@@ -260,7 +260,7 @@ export const REASONS = {
   "security-release-gate-missing": "Under verified-releases, identity.gates has no release entry, or it names no class, so a cut is not held to a class of signers.",
   "security-publish-allows-unsigned": "Under verified-releases, a pipeline file runs release publish with --allow-unsigned.",
   "security-sbom-disabled": "Under supply-chain, a member's chant.config.ts sets sbom: false on a publish target.",
-  "security-sbom-unsourced": "Under supply-chain, a member publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock to write one from.",
+  "security-sbom-unsourced": "Under supply-chain, a member publishes and names no sbom file, and an npm package it publishes holds none at its root, or it has no package-lock.json, pom.xml or Cargo.lock to write one from.",
   "security-publish-no-provenance": "Under supply-chain, a pipeline file runs release publish without --require-provenance.",
   "security-component-no-sbom": "Under supply-chain, a member's components have no generate-sbom step.",
   "security-component-no-verify": "Under supply-chain, a member's components have no verify step.",

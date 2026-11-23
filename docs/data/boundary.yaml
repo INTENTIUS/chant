@@ -1622,7 +1622,7 @@ rows:
     concept: "security-sbom-unsourced"
     owner: "chant"
     carrier: "check.schema.json"
-    what: "Under supply-chain, a member publishes, names no sbom file and has no package-lock.json, pom.xml or Cargo.lock to write one from."
+    what: "Under supply-chain, a member publishes and names no sbom file, and an npm package it publishes holds none at its root, or it has no package-lock.json, pom.xml or Cargo.lock to write one from."
   - category: "reason-code"
     concept: "security-publish-no-provenance"
     owner: "chant"
