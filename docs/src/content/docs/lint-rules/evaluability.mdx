@@ -12,7 +12,7 @@ EVL001 and EVL003 share one subset definition with `fold()`, the static AST redu
 
 - **Identifier resolution** — EVL treats any bare name as valid; `fold()` alone resolves it against the file's `const`s and rejects an unbound one. A false negative on EVL's part, never the reverse.
 - **Intrinsic tag registration** — EVL has no lexicon registry at lint time, so it can't tell a registered intrinsic tagged template from a made-up one; it treats any tagged-template interior as opaque. `fold()` has the registry and rejects an unregistered tag.
-- **Intrinsic call-form registration** — an intrinsic its lexicon opted into call-form folding (`Ref(...)`, `Concat(...)`) folds, but only `fold()` is given the registry that says so. EVL has none, so it still flags such a call in a resource's props even though `--fold` reduces it. This is the one place EVL is stricter than the folder. The classifier takes the registry as an optional parameter, so a tool that has one gets the exact answer; wiring it into the lint engine is not done today.
+- **Intrinsic call-form registration** — an intrinsic its lexicon opted into call-form folding (`Ref(...)`, `Concat(...)`, or an eagerly evaluated helper such as cedar's `agentCoreStagedPolicy(...)`) folds. `chant lint` and the editor pass the active lexicons' registry to EVL, so EVL001 accepts such a call in a resource's props, and EVL004 accepts spreading the result of an eagerly evaluated one. A tool that builds a lint context without the registry gets the stricter answer and flags the call.
 - **Spread-source runtime type** — EVL (via EVL004) checks that a spread source is traceable to a `const`; `fold()` additionally rejects it if that const turns out not to be an object or array at all.
 - **A nested `new Type(...)` used as a property value** — shape-valid to EVL either way, but `fold()` rejects a nested resource constructor (as opposed to the top-level one being folded) as a value, because it can't be represented without constructing it, so the file falls back to run.
 - **Short-circuit laziness** — `fold()` evaluates `&&`/`||`/`??`/`? :` lazily, so an unfoldable *untaken* branch doesn't reject. EVL has no notion of "taken" and requires every branch to be shape-valid. That gives false positives relative to `fold()`, never the reverse.
@@ -96,7 +96,7 @@ const region = config["production"];
 
 ## EVL004: Spread From Non-Const Source
 
-The spread operator requires the source to be traceable to a `const` declaration. A binding imported from another module counts, so an exported `const` can be shared and spread across modules.
+The spread operator requires the source to be traceable to a `const` declaration. A binding imported from another module counts, so an exported `const` can be shared and spread across modules. So does a call to a helper an active lexicon registered as eagerly evaluated, such as cedar's `...agentCoreStagedPolicy(...)`, because the folder calls it and spreads the object it returns.
 
 ```typescript
 // ❌ Triggers EVL004

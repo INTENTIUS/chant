@@ -101,6 +101,29 @@ export const cedarPlugin: LexiconPlugin = {
     return cedarCommandGroup();
   },
 
+  // The AgentCore and AVP embedding helpers are what a project writes inside
+  // `new BedrockAgentCorePolicy({...})` or `new VerifiedPermissionsPolicy({...})`
+  // to turn a declared policy into those resources' props. Each is a pure
+  // function of its arguments returning plain data (the statement text, the
+  // `Definition` union, the staged props), so it is registered `foldsEagerly`:
+  // EVL001 accepts the call through the registry, EVL004 accepts spreading its
+  // result, and `fold()` calls the real function with the folded arguments.
+  // The whole-set forms (`agentCorePolicySet`, `avpPolicySet`) take a build's
+  // entity map, which no project source holds, and `avpStatementJSON` runs the
+  // Cedar parser, so none of those is registered (#5514).
+  intrinsics(): IntrinsicDef[] {
+    return [
+      { name: "agentCoreStatement", description: "The policy text AgentCore evaluates, checked against its limits.", isTag: false, foldsEagerly: true },
+      { name: "agentCorePolicyDefinition", description: "The AgentCore `Definition` union, with the arm picked from the policy.", isTag: false, foldsEagerly: true },
+      { name: "agentCorePolicyResource", description: "Every required prop of `AWS::BedrockAgentCore::Policy`, plus the stage.", isTag: false, foldsEagerly: true },
+      { name: "agentCoreStagedPolicy", description: "`Name`, `Definition` and `EnforcementMode` for one policy at a rollout stage.", isTag: false, foldsEagerly: true },
+      { name: "agentCorePolicyName", description: "The chant entity name as a checked AgentCore `Name`.", isTag: false, foldsEagerly: true },
+      { name: "avpStatement", description: "The Cedar text of one policy for `AWS::VerifiedPermissions::Policy`.", isTag: false, foldsEagerly: true },
+      { name: "avpPolicyDefinition", description: "The AVP `Definition.Static` block for one policy.", isTag: false, foldsEagerly: true },
+      { name: "avpPolicyResource", description: "`PolicyStoreId` and `Definition` for one AVP policy.", isTag: false, foldsEagerly: true },
+    ];
+  },
+
   lintRules() {
     return rules;
   },

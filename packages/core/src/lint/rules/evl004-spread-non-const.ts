@@ -1,6 +1,7 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
 import { isInsideCompositeFactory } from "./composite-scope";
+import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../../lexicon";
 
 /**
  * EVL004: Spread From Non-Const Source
@@ -13,17 +14,41 @@ import { isInsideCompositeFactory } from "./composite-scope";
  * be reassigned, and sharing an exported const (a preset, a list of
  * Dockerfile steps) across modules is the point of exporting it. Whether the
  * exporting module declared it `const` is that module's own EVL concern.
+ *
+ * A call to a function an active lexicon registered `foldsEagerly` counts too
+ * (#5514). `fold()` calls such a function with the folded arguments and spreads
+ * the plain object or array it returns, so rejecting the spread here made
+ * EVL004 stricter than the folder for a lexicon's own documented helper
+ * (cedar's `...agentCoreStagedPolicy(...)`). Registration is by name, read off
+ * `LintContext.intrinsics`, which is empty unless the project's lexicons
+ * register something. A `foldsAsCall` intrinsic stays rejected: it folds to a
+ * symbolic envelope, and spreading that would copy the envelope's own fields.
  */
 
-function isTraceableToConst(node: ts.Node, sourceFile: ts.SourceFile): boolean {
+function isEagerIntrinsicCall(node: ts.Node, intrinsics: readonly IntrinsicDef[] | undefined): boolean {
+  if (!intrinsics || !ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  const name = node.expression.text;
+  return intrinsics.some((i) => i.name === name && intrinsicCallFoldsEagerly(i));
+}
+
+function isTraceableToConst(
+  node: ts.Node,
+  sourceFile: ts.SourceFile,
+  intrinsics?: readonly IntrinsicDef[],
+): boolean {
   // Object or array literals are fine
   if (ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node)) {
     return true;
   }
 
+  // A call to an eagerly folded lexicon intrinsic
+  if (isEagerIntrinsicCall(node, intrinsics)) {
+    return true;
+  }
+
   // Property access: follow the chain to the root
   if (ts.isPropertyAccessExpression(node)) {
-    return isTraceableToConst(node.expression, sourceFile);
+    return isTraceableToConst(node.expression, sourceFile, intrinsics);
   }
 
   // Identifier — check if it's a const declaration
@@ -33,12 +58,12 @@ function isTraceableToConst(node: ts.Node, sourceFile: ts.SourceFile): boolean {
 
   // Parenthesized
   if (ts.isParenthesizedExpression(node)) {
-    return isTraceableToConst(node.expression, sourceFile);
+    return isTraceableToConst(node.expression, sourceFile, intrinsics);
   }
 
   // As/satisfies cast
   if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
-    return isTraceableToConst(node.expression, sourceFile);
+    return isTraceableToConst(node.expression, sourceFile, intrinsics);
   }
 
   return false;
@@ -79,7 +104,7 @@ function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnos
 
   // Spread in object literal: { ...expr }
   if (ts.isSpreadAssignment(node)) {
-    if (!isTraceableToConst(node.expression, context.sourceFile)) {
+    if (!isTraceableToConst(node.expression, context.sourceFile, context.intrinsics)) {
       const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
         node.getStart(context.sourceFile),
       );
@@ -96,7 +121,7 @@ function checkNode(node: ts.Node, context: LintContext, diagnostics: LintDiagnos
 
   // Spread in array literal: [...expr]
   if (ts.isSpreadElement(node)) {
-    if (!isTraceableToConst(node.expression, context.sourceFile)) {
+    if (!isTraceableToConst(node.expression, context.sourceFile, context.intrinsics)) {
       const { line, character } = context.sourceFile.getLineAndCharacterOfPosition(
         node.getStart(context.sourceFile),
       );

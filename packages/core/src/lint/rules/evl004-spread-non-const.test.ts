@@ -54,6 +54,51 @@ describe("EVL004: spread-non-const", () => {
     expect(evl004SpreadNonConstRule.check(ctx)).toHaveLength(1);
   });
 
+  test("allows spreading a call to an intrinsic its lexicon registered foldsEagerly", () => {
+    const sourceFile = ts.createSourceFile(
+      "test.ts",
+      `
+      import { stagedPolicy } from "@example/lexicon";
+      export const p = new Policy({ EngineId: "e", ...stagedPolicy("p", "log-only") });
+      const list = [...stagedPolicy("q", "enforce")];
+    `,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const ctx: LintContext = {
+      sourceFile,
+      entities: [],
+      filePath: "test.ts",
+      lexicon: undefined,
+      intrinsics: [{ name: "stagedPolicy", isTag: false, foldsEagerly: true }],
+    };
+    expect(evl004SpreadNonConstRule.check(ctx)).toHaveLength(0);
+  });
+
+  test("still flags that call with no registry, and a foldsAsCall or unregistered intrinsic", () => {
+    const code = `
+      import { stagedPolicy, Ref, other } from "@example/lexicon";
+      const a = { ...stagedPolicy("p", "log-only") };
+      const b = { ...Ref("x") };
+      const c = { ...other() };
+    `;
+    expect(evl004SpreadNonConstRule.check(createContext(code))).toHaveLength(3);
+
+    const sourceFile = ts.createSourceFile("test.ts", code, ts.ScriptTarget.Latest, true);
+    const ctx: LintContext = {
+      sourceFile,
+      entities: [],
+      filePath: "test.ts",
+      lexicon: undefined,
+      intrinsics: [
+        { name: "stagedPolicy", isTag: false, foldsEagerly: true },
+        { name: "Ref", isTag: false, foldsAsCall: true },
+      ],
+    };
+    const diags = evl004SpreadNonConstRule.check(ctx);
+    expect(diags.map((d) => d.line)).toEqual([4, 5]);
+  });
+
   test("flags spread from let variable", () => {
     const ctx = createContext(`
       let base = { a: 1 };
