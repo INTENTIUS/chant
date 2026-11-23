@@ -604,6 +604,11 @@ async function checkOnePin(labeled: LabeledPin, opts: CheckPinnedUpgradeOptions,
       skipBundle: skipBundle ?? false,
       skipLint: skipLint ?? false,
       skipExamples: true,
+      // The upgrade's pull request rewrites surface.snapshot.json, so this is
+      // a re-baseline (#5501): a lexicon gated `"always"` (k8s, azure, sql)
+      // would otherwise fail validate on every upgrade that changes its API.
+      // The delta is still computed and reported; every other check gates.
+      updatingSnapshot: true,
     });
   } finally {
     // Always revert — even if regenLexicon throws

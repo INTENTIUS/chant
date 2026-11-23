@@ -347,6 +347,33 @@ describe("checkPinnedUpgrade — upgrade path (bump + regen + revert)", () => {
     }
   });
 
+  test("validates as a re-baseline, so a lexicon gated \"always\" on its snapshot is not refused for changing its API (#5501)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const dir = makeWorkingLexicon(root, "k8s", "src/spec/fetch.ts", 'export const K8S_SCHEMA_VERSION = "v1.32.0";\n');
+      // Stands in for k8s's `checkSurfaceSnapshot: "always"`: validate fails
+      // unless the run is exempt from the surface-matches-snapshot check.
+      const pkgPath = join(dir, "package.json");
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      pkg.scripts.validate = `node -e "process.exit(process.env.CHANT_SNAPSHOT_UPDATE === '1' ? 0 : 1)"`;
+      writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+
+      const result = await checkPinnedUpgrade({
+        lexiconDir: dir,
+        lexicon: "k8s",
+        resolverOverride: async () => "v1.33.0",
+        skipBuild: true,
+        skipBundle: true,
+        skipLint: true,
+      });
+
+      expect(result.validation?.failures).toEqual([]);
+      expect(result.validation?.ok).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("docker pin embedded in a URL bumps and reverts", async () => {
     const root = mkdtempSync(join(tmpdir(), "chant-up-"));
     try {
