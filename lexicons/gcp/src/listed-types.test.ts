@@ -45,6 +45,15 @@ describe("Cloud Asset types to gcp kinds", () => {
     expect(gcpKindForListedType("cloudbilling.googleapis.com/ProjectBillingInfo", KINDS)).toBeUndefined();
     expect(gcpKindForListedType("GCP::Storage::Bucket", KINDS)).toBeUndefined();
   });
+
+  it("maps a tabled service's asset type to the rule's segment when the lexicon has no kind under the table's (#5548)", () => {
+    const kinds: ReadonlySet<string> = new Set(["GCP::Sql::Instance", "GCP::Sql::User", "GCP::Sqladmin::Backup"]);
+    expect(gcpKindForListedType("sqladmin.googleapis.com/Instance", kinds)).toBe("GCP::Sql::Instance");
+    expect(gcpKindForListedType("sqladmin.googleapis.com/Backup", kinds)).toBe("GCP::Sqladmin::Backup");
+    expect(gcpListedTypeForKind("GCP::Sqladmin::Backup")).toBe("sqladmin.googleapis.com/Backup");
+    expect(gcpListedTypeForKind("GCP::Sql::Instance")).toBe("sqladmin.googleapis.com/Instance");
+    expect(gcpKindForListedType("sqladmin.googleapis.com/Flag", kinds)).toBeUndefined();
+  });
 });
 
 describe("the gcp fixture listing as typed nodes", () => {

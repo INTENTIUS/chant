@@ -10,6 +10,10 @@
  * are a table, where the API's service name is not the lexicon's
  * (`sqladmin` is `Sql`) or the asset type is named differently
  * (`cloudfunctions.googleapis.com/CloudFunction` is `GCP::Cloudfunctions::Function`).
+ * A service in the service table can also have kinds under the rule's own
+ * segment, when Config Connector names a newer API group after the service
+ * (`GCP::Sqladmin::Backup` beside `GCP::Sql::Instance`). The table's kind is
+ * tried first and the rule's second, so each maps to the kind the lexicon has.
  *
  * The mapping says which kind would describe an asset type. Which asset types
  * Cloud Asset actually serves is the API's answer and is not checked here;
@@ -45,15 +49,25 @@ const TYPE_KINDS: Readonly<Record<string, string>> = {
 
 const ASSET_TYPE = /^([a-z0-9-]+)\.googleapis\.com\/([A-Za-z0-9]+)$/;
 
+/**
+ * The kinds the rule (and the tables) give an asset type, most likely first,
+ * before any check that the lexicon has them. A service in the service table
+ * gives its table segment and then the rule's own segment.
+ */
+function gcpKindCandidates(assetType: string): string[] {
+  const table = TYPE_KINDS[assetType];
+  if (table) return [table];
+  const m = ASSET_TYPE.exec(assetType);
+  if (!m) return [];
+  const service = `${m[1]}.googleapis.com`;
+  const bySegment = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+  const segments = [SERVICE_SEGMENTS[service], bySegment].filter((s): s is string => s !== undefined);
+  return [...new Set(segments)].map((segment) => `GCP::${segment}::${m[2]}`);
+}
+
 /** The kind the rule (and the tables) give an asset type, before any check that the lexicon has it. */
 export function gcpKindByRule(assetType: string): string | undefined {
-  const table = TYPE_KINDS[assetType];
-  if (table) return table;
-  const m = ASSET_TYPE.exec(assetType);
-  if (!m) return undefined;
-  const service = `${m[1]}.googleapis.com`;
-  const segment = SERVICE_SEGMENTS[service] ?? m[1].charAt(0).toUpperCase() + m[1].slice(1);
-  return `GCP::${segment}::${m[2]}`;
+  return gcpKindCandidates(assetType)[0];
 }
 
 /** The asset type a kind answers to: the inverse of {@link gcpKindByRule}. */
@@ -87,15 +101,14 @@ function generatedKinds(): ReadonlySet<string> | null {
 }
 
 /**
- * The gcp kind for an asset type, or undefined. The rule's answer must be a
- * kind the lexicon has; with no kind set (no generated registry) the rule's
- * answer stands.
+ * The gcp kind for an asset type, or undefined. The answer is the first of the
+ * rule's kinds the lexicon has; with no kind set (no generated registry) the
+ * rule's first answer stands.
  */
 export function gcpKindForListedType(assetType: string, kinds: ReadonlySet<string> | null = generatedKinds()): string | undefined {
-  const kind = gcpKindByRule(assetType);
-  if (kind === undefined) return undefined;
-  if (kinds && !kinds.has(kind)) return undefined;
-  return kind;
+  const candidates = gcpKindCandidates(assetType);
+  if (!kinds) return candidates[0];
+  return candidates.find((k) => kinds.has(k));
 }
 
 export const gcpListedTypes: ListedTypeMapping = {
