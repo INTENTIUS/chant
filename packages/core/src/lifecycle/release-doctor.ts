@@ -682,6 +682,12 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
       }
     }
 
+    // Signatures are audited where the registry serves them (#5522).
+    if (!npmjs) {
+      const last = checks[checks.length - 1];
+      if (last) last.message += `. The reveal's npm audit signatures is skipped where ${host} serves no signatures; it audits only where the registry does`;
+    }
+
     // The trusted-publisher record: only a run of the workflow it names can test it.
     const env = ctx.environment;
     if (!env.ci) {

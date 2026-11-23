@@ -167,6 +167,7 @@ describe("npm", () => {
     expect(c.status).toBe("ok");
     expect(c.message).toContain("first publish creates it");
     expect(c.message).not.toContain("trusted publishing");
+    expect(c.message).toContain("audits only where the registry does");
   });
 
   test("a token whose user may write the package can move the dist-tag; read-only fails; stage: false needs no dist-tag", async () => {

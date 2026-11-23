@@ -598,6 +598,16 @@ describe("SBOMs and provenance (#4049)", () => {
     expect(readFileSync(log, "utf-8")).toContain(`"args":["audit","signatures"]`);
   });
 
+  test("npm: an audit that finds nothing from a supported registry is skipped with one log line, and the reveal finishes (#5522)", async () => {
+    const dir = temp();
+    writePackage(join(dir, "core"), "@acme/core", "1.0.0");
+    const npm = writeFakeNpm(join(dir, "bin"), join(dir, "npm.log"));
+    const [target] = await createPublishTargets([decl({ type: "npm", packages: ["core"] })], { npm });
+    const ctx = context(dir, { env: { PATH: process.env.PATH, FAKE_NPM_AUDIT_NO_SIGNING: "1" }, provenance: OIDC });
+    await target!.reveal(ctx, await target!.stage(ctx));
+    expect(ctx.lines.filter((l) => l.includes("serves no package signatures"))).toHaveLength(1);
+  });
+
   describe("npm: the reveal waits for the registry to serve what it published (#4244)", () => {
     // `step` is how far the clock moves per sleep, so a long wait costs few npm runs.
     function lagged(env: Record<string, string>, registryWait?: number, step?: number) {

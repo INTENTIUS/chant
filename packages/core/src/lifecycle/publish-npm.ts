@@ -194,6 +194,9 @@ export const NPM_REGISTRY_POLL_MS = 10_000;
 export const NPM_REGISTRY_PROGRESS_MS = 60_000;
 /** How long the audit waits for the registry to serve a package's provenance attestation after the version (#5315). */
 export const NPM_ATTESTATION_WAIT_MS = 120_000;
+/** What `npm audit signatures` prints when the registry serves no signing keys, so it finds nothing it can audit (#5522). */
+export const NPM_AUDIT_NO_SIGNING = /found no dependencies to audit that were installed from a supported registry/i;
+
 /** What `npm audit signatures` prints while the registry does not serve an attestation yet. */
 const NPM_ATTESTATION_NOT_YET = /\b404\b.*\/-\/npm\/v1\/attestations\/|\/-\/npm\/v1\/attestations\/.*\b404\b/;
 /** `npm view`'s answers for a version the registry does not serve yet; any other failure is the registry's error. */
@@ -560,6 +563,11 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
             result = await npm(ctx, args, dir);
             for (const line of result.output) ctx.log(`  ${line}`);
           }
+        }
+        // A registry that serves no signing keys (GitHub Packages) leaves npm nothing to audit: skip the audit, and finish the reveal (#5522).
+        if (result.code !== 0 && args[0] === "audit" && result.output.some((l) => NPM_AUDIT_NO_SIGNING.test(l))) {
+          ctx.log(`${decl.registry ?? "the registry"} serves no package signatures, so npm audit signatures was skipped`);
+          continue;
         }
         if (result.code !== 0) {
           throw new PublishTargetError(
