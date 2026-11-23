@@ -306,6 +306,14 @@ too long has each section cut, with a line saying how many entries it left out.
 A breaking upgrade is titled `feat(<lexicon>)!:` and an additive one
 `feat(<lexicon>):`, so the release train ships the first as a minor on 0.x.
 
+A breaking upgrade also commits an upgrade note in the same pull request:
+`docs/pages/upgrade-notes.mdx` in the lexicon, a Reference page of its docs.
+The Op appends one dated section per upgrade, headed by the package version it
+ships as, and leaves earlier sections as they are. A renamed name is listed
+beside its new name, and a removed name on its own. A changed name is listed
+with the attributes or properties it dropped. An upgrade that only adds names
+writes no section.
+
 ### Several pins: `upstreamPins`
 
 A lexicon that pins more than one upstream keeps `upstreamPin` as it is and
