@@ -7,6 +7,7 @@ import {
   upgradeBranchName,
   upgradePrTitle,
   buildUpgradeSummary,
+  failureOutputWithin,
   computeBumpedVersion,
   bumpPackageJsonVersion,
   lexiconUpgradeIssueMarker,
@@ -87,6 +88,26 @@ describe("branch / PR naming", () => {
 });
 
 // ── Summary builder ───────────────────────────────────────────────────
+
+describe("failureOutputWithin", () => {
+  const esc = "\u001b";
+  const warning = (n: number) => `  ${esc}[90m  ${n}:1 ${esc}[0m  ${esc}[33mwarning${esc}[0m  Inline object in Declarable constructor  COR001`;
+  const error = `  ${esc}[90m   1:1 ${esc}[0m  ${esc}[31merror${esc}[0m  Cannot find module 'x'  LEX001`;
+
+  test("keeps the error that follows a long run of warnings", () => {
+    const output = ["file.ts", ...Array.from({ length: 60 }, (_, i) => warning(i + 1)), "dir", error].join("\n");
+    expect(output.length).toBeGreaterThan(2000);
+    const cut = failureOutputWithin(output, 2000);
+    expect(cut.length).toBeLessThanOrEqual(2000);
+    expect(cut).toContain("Cannot find module 'x'");
+    expect(cut).toContain("60 warning line(s) follow");
+  });
+
+  test("leaves output within the cap as it was", () => {
+    const output = [warning(1), error].join("\n");
+    expect(failureOutputWithin(output, 2000)).toBe(output);
+  });
+});
 
 describe("buildUpgradeSummary", () => {
   test("additive upgrade renders delta + label", () => {

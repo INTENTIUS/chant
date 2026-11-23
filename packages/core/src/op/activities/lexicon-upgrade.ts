@@ -400,6 +400,26 @@ export function formatDeltaWithin(delta: SurfaceDelta, max: number): string {
 
 // ── Markdown summary builder ──────────────────────────────────────────
 
+/** The most of one failing step's output the report shows. */
+const FAILURE_OUTPUT_CHARS = 2000;
+
+/**
+ * A failing step's output cut to `max` characters with its errors kept.
+ * A lint step prints its warnings first and its errors after, so a plain cut
+ * shows the warnings and drops the error that failed the step. Lines that
+ * report a warning move behind the rest (terminal colour codes ignored), and
+ * the cut falls on them.
+ */
+export function failureOutputWithin(output: string, max: number): string {
+  if (output.length <= max) return output;
+  const lines = output.split("\n");
+  const isWarning = (line: string): boolean => /^\s*\d+:\d+\s+warning\s/.test(line.replace(/\u001b\[[0-9;]*m/g, ""));
+  const rest = lines.filter((line) => !isWarning(line));
+  const warnings = lines.filter(isWarning);
+  const ordered = warnings.length > 0 ? [...rest, `(${warnings.length} warning line(s) follow)`, ...warnings] : rest;
+  return ordered.join("\n").slice(0, max);
+}
+
 /** Build the PR/issue/report body from the upgrade result data. */
 export function buildUpgradeSummary(opts: {
   lexicon: SupportedLexicon;
@@ -471,7 +491,7 @@ function renderUpgradeSummary(
     lines.push(``);
     lines.push(`Regen or validation did not pass. Review the failures before merging.`);
     for (const f of failures) {
-      lines.push(``, `**Step: ${f.step}**`, "```", f.output.slice(0, 2000), "```");
+      lines.push(``, `**Step: ${f.step}**`, "```", failureOutputWithin(f.output, FAILURE_OUTPUT_CHARS), "```");
     }
     lines.push(``);
   }
