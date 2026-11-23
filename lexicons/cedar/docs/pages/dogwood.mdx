@@ -108,6 +108,10 @@ export const readAfterLogin = new TemporalPolicy({
 });
 ```
 
+Call the builders through the `dogwood` namespace, as above. `chant lint`
+accepts `dogwood.formerly(...)` in a policy's props. A builder destructured out
+of `dogwood` and called bare is an ordinary package call, and EVL001 flags it.
+
 ## What comes out
 
 | File | What reads it |
@@ -137,6 +141,12 @@ new BedrockAgentCorePolicy({
   ...agentCoreStagedPolicy("writeNeedsApproval", writeNeedsApproval, "log-only"),
 });
 ```
+
+The cedar lexicon registers its embedding helpers (`agentCoreStagedPolicy`,
+`agentCorePolicyDefinition`, `agentCorePolicyResource`, `agentCoreStatement`,
+`agentCorePolicyName`, and the AVP ones) as calls `chant lint` can evaluate, so
+the snippet above lints clean with no rule configuration: EVL001 accepts the
+call and EVL004 accepts spreading its result.
 
 `agentCorePolicyDefinition(name, policy)` picks the arm from the policy itself:
 a `TemporalPolicy`, or any props carrying a temporal clause, goes to `Policy`;

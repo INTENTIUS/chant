@@ -41,8 +41,6 @@ import {
   type AgentCoreEnforcementMode,
 } from "@intentius/chant-lexicon-cedar";
 
-const { compare, ctx, defaultEventSchema, defaultMacroLibrary, formerly, predicate, sumWithin, varRef } = dogwood;
-
 /** Which policy engine these deploy into. In a real project, `engine.ref()`. */
 const POLICY_ENGINE_ID = "GatewayEngine-abcdefghij";
 
@@ -58,7 +56,7 @@ const POLICY_ENGINE_ID = "GatewayEngine-abcdefghij";
  * about someone else's binary.
  */
 export const gatewayEvents = new TemporalEventSchema({
-  schema: defaultEventSchema(),
+  schema: dogwood.defaultEventSchema(),
 });
 
 /**
@@ -70,7 +68,7 @@ export const gatewayEvents = new TemporalEventSchema({
  * this project controls.
  */
 export const gatewayMacros = new TemporalMacroLibrary({
-  macros: defaultMacroLibrary(),
+  macros: dogwood.defaultMacroLibrary(),
   inline: true,
 });
 
@@ -108,10 +106,10 @@ export const writeNeedsApproval = new TemporalPolicy({
   action: { eq: WriteAction },
   resource: { is: "App::Document" },
   whenTemporal: [
-    formerly(
+    dogwood.formerly(
       "1h",
-      predicate(ApproveAction, "response", {
-        "input.document": ctx("input.document"),
+      dogwood.predicate(ApproveAction, "response", {
+        "input.document": dogwood.ctx("input.document"),
       }),
     ),
   ],
@@ -131,11 +129,11 @@ export const sessionSpendBudget = new TemporalPolicy({
   action: { eq: WriteAction },
   resource: { is: "App::Document" },
   whenTemporal: [
-    compare(
-      sumWithin(
+    dogwood.compare(
+      dogwood.sumWithin(
         "cost",
         "12h",
-        predicate(WriteAction, "response", { "output.cost": varRef("cost") }),
+        dogwood.predicate(WriteAction, "response", { "output.cost": dogwood.varRef("cost") }),
       ),
       ">",
       1000,

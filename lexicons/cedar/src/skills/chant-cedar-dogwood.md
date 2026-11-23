@@ -199,6 +199,11 @@ new BedrockAgentCorePolicy({
 });
 ```
 
+The embedding helpers are registered as evaluable calls, so this lints clean:
+EVL001 accepts them in a resource's props and EVL004 accepts the spread. Call
+the dogwood builders as `dogwood.formerly(...)`; a builder destructured out of
+`dogwood` and called bare is flagged by EVL001.
+
 `agentCorePolicyDefinition(name, policy)` picks the arm from the policy itself.
 Templates are refused — AgentCore's union has no template-linked arm, so a
 statement carrying `?principal` or `?resource` throws at authoring time rather

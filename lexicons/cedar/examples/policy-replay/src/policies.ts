@@ -19,7 +19,7 @@
  * The event schema is emitted explicitly rather than left to
  * `ServiceSchema::defaults()`: supplying any event schema opts out of the
  * built-in default entirely, so a project that ships one should ship the whole
- * shape. `defaultEventSchema()` reproduces upstream's `pinned.dwschema`,
+ * shape. `dogwood.defaultEventSchema()` reproduces upstream's `pinned.dwschema`,
  * including the `pin callerPrincipal = principal` that correlates every
  * temporal predicate to the deciding request's own principal.
  */
@@ -31,8 +31,6 @@ import {
   TemporalPolicy,
   dogwood,
 } from "@intentius/chant-lexicon-cedar";
-
-const { ctx, defaultEventSchema, formerly, predicate } = dogwood;
 
 /** Owners read their own documents, with MFA. Plain Cedar — no history involved. */
 export const ownerRead = new Policy({
@@ -47,7 +45,7 @@ export const ownerRead = new Policy({
  * Permit the gateway's `Read` only when the same user logged in within the
  * last hour.
  *
- * `{ "input.user": ctx("input.user") }` is the correlation: the past login's
+ * `{ "input.user": dogwood.ctx("input.user") }` is the correlation: the past login's
  * `input.user` field, out of the logged record, has to equal the current
  * request's `context.input.user`. That is why the trace has to populate both
  * bags — the left side of that comparison comes from the logged record and the
@@ -58,14 +56,14 @@ export const readAfterLogin = new TemporalPolicy({
   effect: "permit",
   action: { eq: 'Drupe::Action::"Read"' },
   whenTemporal: [
-    formerly(
+    dogwood.formerly(
       "1h",
-      predicate('Drupe::Action::"Login"', "response", { "input.user": ctx("input.user") }),
+      dogwood.predicate('Drupe::Action::"Login"', "response", { "input.user": dogwood.ctx("input.user") }),
     ),
   ],
 });
 
 /** The service half of the schema — `request` decides, `response` is history. */
 export const events = new TemporalEventSchema({
-  schema: defaultEventSchema(),
+  schema: dogwood.defaultEventSchema(),
 });
