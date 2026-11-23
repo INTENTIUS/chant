@@ -151,6 +151,10 @@ default:
 
 The release file needs no change. `chant release doctor` does not check that docker and buildx can create the builder, so a runner without them first fails at the build, with `no release was cut: the build of image "<name>" exited 1`.
 
+### Starting a release on GitLab
+
+A dispatched release starts from a pipeline that sets `CHANT_RELEASE_LABEL` (`CHANT_RELEASE_TRAIN` or `CHANT_RELEASE_LEVELS` for a train), from "Run pipeline", the API or a trigger. GitLab refuses to set a pipeline variable when the project's minimum role for it is above the user's, with `Insufficient permissions to set pipeline variables`, and a project created on gitlab.com has the setting at `no_one_allowed`. In Settings, CI/CD, Variables, set "Minimum role to use pipeline variables" to the lowest role that may start a release, or set `ci_pipeline_variables_minimum_override_role` through the project API to `developer`, `maintainer` or `owner`. The release file does not set it.
+
 ## A release train
 
 In the root of a workspace whose members release separately, such as one member per package of a monorepo, `release.train` (see [`chant workspace train cut`](/chant/cli/workspace-train/#cut)) makes the workflow release the members as a train rather than the root as one member:
