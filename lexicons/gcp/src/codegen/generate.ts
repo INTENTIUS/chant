@@ -12,7 +12,7 @@ import {
 } from "@intentius/chant/codegen/generate";
 import { fetchCRDBundle } from "../spec/fetch";
 import { parseGcpCRD, type GcpParseResult } from "../spec/parse";
-import { NamingStrategy, propertyTypeName } from "./naming";
+import { NamingStrategy, publishedNames, propertyTypeName } from "./naming";
 import {
   generateRuntimeIndex as coreGenerateRuntimeIndex,
   type RuntimeIndexEntry,
@@ -59,7 +59,14 @@ const gcpPipelineConfig: GeneratePipelineConfig<GcpParseResult> = {
  * Run the full GCP generation pipeline.
  */
 export async function generate(opts: GenerateOptions = {}): Promise<GenerateResult> {
-  return generatePipeline(gcpPipelineConfig, opts);
+  // #5549: a published name stays with the type that published it, so an
+  // upstream CRD sharing its short name is the one prefixed. A caller-supplied
+  // schema set names its fixtures by the rule alone, as aws does.
+  const reserved = opts.schemaSource ? {} : publishedNames();
+  return generatePipeline(
+    { ...gcpPipelineConfig, createNaming: (results) => new NamingStrategy(results, reserved) },
+    opts,
+  );
 }
 
 /**
