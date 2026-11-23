@@ -21,7 +21,8 @@
  * Each SBOM goes through the same gate a component's `vuln-gate` step runs
  * (../components/verbs/vuln-gate.ts), with the project's `vulnPolicy`:
  * `failSeverity`, `fixableOnly`, `failOnKev`, the EPSS thresholds, and the
- * VEX files `vulnPolicy.vexSources` names. A finding the policy blocks stops
+ * VEX files `vulnPolicy.vexSources` names, each statement applied only to
+ * the products it names ({@link vexForScan}). A finding the policy blocks stops
  * the publish with `publish-scan-failed` before any target stages, so
  * nothing reaches a registry: no layer, manifest or referrer.
  *
@@ -52,7 +53,7 @@ import type { SbomDocument } from "../components/verbs/sbom-generator";
 import { SBOM_MEDIA_TYPES } from "../components/verbs/sbom-generator";
 import { parseGrypeOutput, parseTrivyOutput, type ScannerTool, type VulnFinding } from "../components/verbs/vuln-scan";
 import { createVulnGateCapability, VulnGateFailedError, type BlockingFinding, type VulnPolicy } from "../components/verbs/vuln-gate";
-import type { SuppressedFinding } from "../components/verbs/vex";
+import { applyScopedVex, parseVexDocument, validateScopedStatements, type SuppressedFinding, type VexStatement, type VexSubject } from "../components/verbs/vex";
 import type { Redactor } from "./publish-credentials";
 import { sortedJsonReplacer } from "../utils";
 import { NEXT_RELEASE } from "../release-floors";
@@ -121,6 +122,8 @@ export interface ScanSubject {
   sbom?: SbomDocument;
   /** The digest of what it describes, when known. */
   digest?: string;
+  /** What it is, as a VEX statement's products are matched against it: the image repository and tags, or the package's purl. Absent, no statement applies to it. */
+  product?: VexSubject;
 }
 
 /**
@@ -155,6 +158,8 @@ export interface ScanContext {
   policy: Partial<VulnPolicy>;
   /** The VEX documents `vulnPolicy.vexSources` names, read. */
   vex: string[];
+  /** The paths `vulnPolicy.vexSources` gives, in the order of `vex`, to name a statement in messages. */
+  vexSources?: string[];
   /** The oldest database the publish takes (#5464): `release.scan.dbMaxAgeHours`, or a security profile's hours. Absent, any. */
   dbAge?: import("../workspace/security-profiles").ScanDatabaseBound | null;
 }
@@ -172,12 +177,22 @@ export interface SubjectScan {
   suppressed: SuppressedFinding[];
 }
 
+/** The VEX statements a scan read that cleared nothing: refused ones, and ones that matched no finding it scanned. */
+export interface VexUse {
+  /** Statements refused, such as one that names no products, and why. They clear nothing. */
+  invalid: Array<{ statement: string; vulnerability: string; reason: string }>;
+  /** Statements that matched no finding in anything the scan scanned. */
+  unused: Array<{ statement: string; vulnerability: string }>;
+}
+
 /** What the scan before the stage found. */
 export interface ScanReport {
   scanner: string;
   /** The database the scanner read, or null when it can't say. */
   database: ScanDatabase | null;
   subjects: SubjectScan[];
+  /** Set when the scan read VEX statements that cleared nothing. */
+  vex?: VexUse;
 }
 
 /** `vulnPolicy.scanner`'s default. */
@@ -354,6 +369,33 @@ export function readVexSources(cwd: string, sources: readonly string[] | undefin
   });
 }
 
+/** The VEX statements of a scan, parsed once, with the ones it refuses set apart. */
+interface ScanVex {
+  usable: VexStatement[];
+  invalid: VexUse["invalid"];
+  used: Set<VexStatement>;
+}
+
+/**
+ * The statements of `scan.vex`, each named by the file it is in. A statement
+ * that names no products is refused: the scan says so and it clears nothing,
+ * since a statement written for one image or package must not clear the
+ * same advisory in every other one the release puts out.
+ */
+function vexForScan(scan: ScanContext, say: (line: string) => void): ScanVex {
+  const all = scan.vex.flatMap((doc, i) => parseVexDocument(doc, scan.vexSources?.[i] ?? `vex document ${i + 1}`));
+  const { usable, invalid } = validateScopedStatements(all);
+  for (const x of invalid) say(`  VEX statement ${x.statement.ref} (${x.statement.cveId}) is not applied: ${x.reason}. Name the image or package it is about in its products.`);
+  return { usable, invalid: invalid.map((x) => ({ statement: x.statement.ref ?? x.statement.cveId, vulnerability: x.statement.cveId, reason: x.reason })), used: new Set() };
+}
+
+/** What the scan's VEX statements did not clear, for the report; undefined when every statement matched something. */
+function vexUse(v: ScanVex, say: (line: string) => void): VexUse | undefined {
+  const unused = v.usable.filter((s) => !v.used.has(s)).map((s) => ({ statement: s.ref ?? s.cveId, vulnerability: s.cveId }));
+  for (const u of unused) say(`  VEX statement ${u.statement} (${u.vulnerability}) matched no finding in what was scanned`);
+  return v.invalid.length > 0 || unused.length > 0 ? { invalid: v.invalid, unused } : undefined;
+}
+
 /** One line per blocking finding, for the refusal: the publish's, and the cut's (./release-cut-scan.ts). */
 export function blockingLines(subject: SubjectScan): string[] {
   return subject.blocking.map((b) => `${subject.name}: ${b.finding.cveId} (${b.finding.severity}) in ${b.finding.package} ${b.finding.installedVersion}${b.finding.fixedVersion ? `, fixed in ${b.finding.fixedVersion}` : ""} [${b.reason}]`);
@@ -383,16 +425,18 @@ export async function scanBeforeStage(req: { targets: readonly PublishTarget[]; 
   const { targets, ctx, scan } = req;
   const say = req.say ?? (() => undefined);
   const gate = createVulnGateCapability({ scan: async () => [] });
+  const vex = vexForScan(scan, say);
   const subjects: SubjectScan[] = [];
   for (const target of targets) {
     if (!target.scanSubjects) continue;
     for (const s of await target.scanSubjects(ctx)) {
-      const done = await scanOne(gate, scan, s, say, "block the publish");
+      const done = await scanOne(gate, scan, vex, s, say, "block the publish");
       if (done) subjects.push(done);
     }
   }
   const database = scan.scanner.database ? await scan.scanner.database().catch(() => null) : null;
-  const report: ScanReport = { scanner: scan.scanner.name, database, subjects };
+  const use = vexUse(vex, say);
+  const report: ScanReport = { scanner: scan.scanner.name, database, subjects, ...(use ? { vex: use } : {}) };
   const blocked = subjects.filter((s) => s.blocking.length > 0);
   if (blocked.length > 0) {
     const lines = blocked.flatMap(blockingLines);
@@ -406,19 +450,23 @@ export async function scanBeforeStage(req: { targets: readonly PublishTarget[]; 
 }
 
 /** One subject scanned and judged by the gate; null when it has no SBOM to scan. */
-async function scanOne(gate: ReturnType<typeof createVulnGateCapability>, scan: ScanContext, s: ScanSubject, say: (line: string) => void, blocksWhat: string): Promise<SubjectScan | null> {
+async function scanOne(gate: ReturnType<typeof createVulnGateCapability>, scan: ScanContext, vex: ScanVex, s: ScanSubject, say: (line: string) => void, blocksWhat: string): Promise<SubjectScan | null> {
   const sbom = s.sbom ?? (s.image ? await scan.scanner.imageSbom(s.image) : null);
   if (!sbom) return null;
   const findings = await scan.scanner.scan(sbom);
   const base = { target: s.target, name: s.name, ...(s.digest ? { digest: s.digest } : {}), ...(sbom.packageCount !== undefined ? { packages: sbom.packageCount } : {}), findings };
+  // #5481: a statement clears a finding only in the products it names, so VEX is applied here, where the subject is known, and the gate judges what is left.
+  const { gating, suppressed, used } = applyScopedVex(findings, vex.usable, s.product ?? {});
+  for (const u of used) vex.used.add(u);
+  for (const x of suppressed) say(`  ${x.statement ?? "a VEX statement"} cleared ${x.finding.cveId} in ${x.finding.package} ${x.finding.installedVersion} of ${s.name} (${x.status})`);
   try {
-    const out = await gate.run({ env: "release", component: s.target } as unknown as Parameters<typeof gate.run>[0], { sbom, findings, vex: scan.vex, policy: scan.policy, ...(s.digest ? { digest: s.digest } : {}) });
+    const out = await gate.run({ env: "release", component: s.target } as unknown as Parameters<typeof gate.run>[0], { sbom, findings: gating, vex: [], policy: scan.policy, ...(s.digest ? { digest: s.digest } : {}) });
     say(`  scanned ${s.name}: ${findings.length} finding(s), none blocks${out.warnings.length > 0 ? `; ${out.warnings.length} warning(s)` : ""}`);
-    return { ...base, blocking: [], warnings: out.warnings, suppressed: out.suppressed };
+    return { ...base, blocking: [], warnings: out.warnings, suppressed };
   } catch (err) {
     if (!(err instanceof VulnGateFailedError)) throw err;
     say(`  scanned ${s.name}: ${err.blocking.length} finding(s) ${blocksWhat}`);
-    return { ...base, blocking: err.blocking, warnings: [], suppressed: [] };
+    return { ...base, blocking: err.blocking, warnings: [], suppressed };
   }
 }
 
@@ -430,13 +478,15 @@ async function scanOne(gate: ReturnType<typeof createVulnGateCapability>, scan: 
  */
 export async function scanSubjects(subjects: readonly ScanSubject[], scan: ScanContext, say: (line: string) => void = () => undefined): Promise<ScanReport> {
   const gate = createVulnGateCapability({ scan: async () => [] });
+  const vex = vexForScan(scan, say);
   const out: SubjectScan[] = [];
   for (const s of subjects) {
-    const done = await scanOne(gate, scan, s, say, "block the policy");
+    const done = await scanOne(gate, scan, vex, s, say, "block the policy");
     if (done) out.push(done);
   }
   const database = scan.scanner.database ? await scan.scanner.database().catch(() => null) : null;
-  return { scanner: scan.scanner.name, database, subjects: out };
+  const use = vexUse(vex, say);
+  return { scanner: scan.scanner.name, database, subjects: out, ...(use ? { vex: use } : {}) };
 }
 
 /** Whether a recorded finding is one the policy blocks: anything but a warning, a suppression, or a finding it reported without judging. */
@@ -459,6 +509,8 @@ export interface RecordedFinding {
   fixedVersion?: string;
   /** Why it blocked, or `warning`, `suppressed`, or `reported` when the policy neither blocks nor warns on it. */
   outcome: BlockingFinding["reason"] | "warning" | "suppressed" | "reported";
+  /** For a `suppressed` finding: the VEX statement that cleared it, as `file#statements[n]`. */
+  statement?: string;
   inKev?: boolean;
   epss?: number;
 }
@@ -477,6 +529,8 @@ export interface ScanRecord {
   scanner: string;
   database: ScanDatabase | null;
   subjects: RecordedSubject[];
+  /** VEX statements the scan read that cleared nothing: refused (no products) or matching no finding (#5481). */
+  vex?: VexUse;
   /** On a `rescanned` line (#5466): what the rescan did not scan, and why. */
   skipped?: Array<{ name: string; reason: string }>;
   /**
@@ -491,9 +545,13 @@ export interface ScanRecord {
 function recordedFindings(s: SubjectScan): RecordedFinding[] {
   const key = (f: VulnFinding) => `${f.cveId} ${f.package} ${f.installedVersion}`;
   const outcome = new Map<string, RecordedFinding["outcome"]>();
+  const statement = new Map<string, string>();
   for (const f of s.findings) outcome.set(key(f), "reported");
   for (const f of s.warnings) outcome.set(key(f), "warning");
-  for (const x of s.suppressed) outcome.set(key(x.finding), "suppressed");
+  for (const x of s.suppressed) {
+    outcome.set(key(x.finding), "suppressed");
+    if (x.statement) statement.set(key(x.finding), x.statement);
+  }
   for (const b of s.blocking) outcome.set(key(b.finding), b.reason);
   const seen = new Set<string>();
   return s.findings
@@ -505,6 +563,7 @@ function recordedFindings(s: SubjectScan): RecordedFinding[] {
       version: f.installedVersion,
       ...(f.fixedVersion ? { fixedVersion: f.fixedVersion } : {}),
       outcome: outcome.get(key(f)) ?? "reported",
+      ...(outcome.get(key(f)) === "suppressed" && statement.has(key(f)) ? { statement: statement.get(key(f))! } : {}),
       ...(f.inKev !== undefined ? { inKev: f.inKev } : {}),
       ...(f.epss !== undefined ? { epss: f.epss } : {}),
     }))
@@ -517,6 +576,7 @@ export function scanRecord(report: ScanReport): ScanRecord {
     scanner: report.scanner,
     database: report.database,
     subjects: report.subjects.map((s) => ({ target: s.target, name: s.name, ...(s.digest ? { digest: s.digest } : {}), ...(s.packages !== undefined ? { packages: s.packages } : {}), findings: recordedFindings(s) })),
+    ...(report.vex ? { vex: report.vex } : {}),
   };
 }
 

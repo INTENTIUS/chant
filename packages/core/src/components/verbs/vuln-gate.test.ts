@@ -39,7 +39,7 @@ describe("VEX parsing", () => {
     });
     const stmts = parseOpenVex(doc);
     expect(stmts).toHaveLength(2);
-    expect(stmts[0]).toEqual({ cveId: "CVE-1", status: "not_affected", justification: "vulnerable_code_not_in_execute_path" });
+    expect(stmts[0]).toEqual({ cveId: "CVE-1", status: "not_affected", justification: "vulnerable_code_not_in_execute_path", ids: ["CVE-1"], products: [] });
     expect(stmts[1].status).toBe("affected");
   });
 

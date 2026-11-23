@@ -166,9 +166,21 @@ describe("the scan at the cut (#5446)", () => {
     const r = new TestRepo("release-cut-scan-vex-clear");
     repos.push(r);
     r.write("chant.config.ts", `export default { vulnPolicy: { vexSources: ["vex.json"] }, release: { scan: true, publish: [${OCI}] } };\n`);
-    r.write("vex.json", JSON.stringify({ "@context": "https://openvex.dev/ns/v0.2.0", statements: [{ vulnerability: { name: "CVE-2026-50002" }, status: "not_affected", justification: "vulnerable_code_not_in_execute_path" }] }));
+    r.write("vex.json", JSON.stringify({ "@context": "https://openvex.dev/ns/v0.2.0", statements: [{ vulnerability: { name: "CVE-2026-50002" }, products: [{ "@id": "registry.example.test/acme/api" }], status: "not_affected", justification: "vulnerable_code_not_in_execute_path" }] }));
     r.commit("init");
     expect((await cutRelease(request(r, fakeReleaseScanner()))).cut).not.toBeNull();
+  });
+
+  test("a VEX statement with no products clears nothing at the cut, and the cut says so", async () => {
+    const r = new TestRepo("release-cut-scan-vex-unscoped");
+    repos.push(r);
+    r.write("chant.config.ts", `export default { vulnPolicy: { vexSources: ["vex.json"] }, release: { scan: true, publish: [${OCI}] } };\n`);
+    r.write("vex.json", JSON.stringify({ statements: [{ vulnerability: { name: "CVE-2026-50002" }, status: "not_affected" }] }));
+    r.commit("init");
+    const lines: string[] = [];
+    const err = await refused(request(r, fakeReleaseScanner(), { lines }));
+    expect(err.code).toBe("publish-scan-failed");
+    expect(lines.some((l) => l.includes("vex.json#statements[0] (CVE-2026-50002) is not applied"))).toBe(true);
   });
 
   test("a database older than release.scan.dbMaxAgeHours refuses the cut with the publish's code", async () => {

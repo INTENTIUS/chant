@@ -835,9 +835,11 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
         const image = `${decl.repository}@${layout.top.digest}`;
         const declared = typeof decl.sbom === "string" ? memberSbom(ctx, decl.sbom, image, `oci ${decl.repository}`) : null;
         const layers = ctx.scan ? await layerSbom(ctx, layout.top.digest) : null;
+        // #5481: what a VEX statement's products are matched against.
+        const product = { repository: decl.repository, digest: layout.top.digest, tags: ociTags(decl, ctx) };
         return [
-          ...(layers ? [{ target: this.name, name: image, sbom: layers, digest: layout.top.digest }] : [{ target: this.name, name: image, image: memberFile(ctx.cwd, decl.image), digest: layout.top.digest }]),
-          ...(declared ? [{ target: this.name, name: `${declared.name} of ${image}`, sbom: sbomDocumentOf(declared.bytes, "attached"), digest: layout.top.digest }] : []),
+          ...(layers ? [{ target: this.name, name: image, sbom: layers, digest: layout.top.digest, product }] : [{ target: this.name, name: image, image: memberFile(ctx.cwd, decl.image), digest: layout.top.digest, product }]),
+          ...(declared ? [{ target: this.name, name: `${declared.name} of ${image}`, sbom: sbomDocumentOf(declared.bytes, "attached"), digest: layout.top.digest, product }] : []),
         ];
       } finally {
         layout.cleanup();

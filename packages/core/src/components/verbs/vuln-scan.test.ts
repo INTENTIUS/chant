@@ -77,6 +77,21 @@ describe("parseGrypeOutput", () => {
     expect(findings[1].fixable).toBe(false);
     expect(findings[1].severity).toBe("low");
   });
+
+  test("keeps the package's purl and the related advisory ids, which VEX statements are matched against", () => {
+    const [f] = parseGrypeOutput(
+      JSON.stringify({
+        matches: [
+          {
+            vulnerability: { id: "GHSA-aaaa-bbbb-cccc", severity: "High", fix: { versions: ["v0.60.0"], state: "fixed" } },
+            relatedVulnerabilities: [{ id: "CVE-2026-78663" }, { id: "GHSA-aaaa-bbbb-cccc" }],
+            artifact: { name: "golang.org/x/net", version: "v0.57.0", purl: "pkg:golang/golang.org/x/net@v0.57.0" },
+          },
+        ],
+      }),
+    );
+    expect(f).toMatchObject({ cveId: "GHSA-aaaa-bbbb-cccc", purl: "pkg:golang/golang.org/x/net@v0.57.0", aliases: ["CVE-2026-78663"] });
+  });
 });
 
 describe("parseTrivyOutput", () => {
@@ -259,7 +274,7 @@ describe("scanWithDatabase", () => {
     const findings = scanWithDatabase(SPDX_SBOM, DB);
     expect(findings).toHaveLength(2);
     const lodash = findings.find((f) => f.cveId === "CVE-2024-0001");
-    expect(lodash).toEqual({ cveId: "CVE-2024-0001", severity: "critical", package: "lodash", installedVersion: "4.17.20", fixedVersion: "4.17.21", fixable: true });
+    expect(lodash).toEqual({ cveId: "CVE-2024-0001", severity: "critical", package: "lodash", installedVersion: "4.17.20", purl: "pkg:npm/lodash@4.17.20", fixedVersion: "4.17.21", fixable: true });
     const leftPad = findings.find((f) => f.cveId === "CVE-2024-0002");
     expect(leftPad).toMatchObject({ package: "left-pad", fixable: false });
     expect(leftPad!.fixedVersion).toBeUndefined();

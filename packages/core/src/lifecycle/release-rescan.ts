@@ -158,7 +158,7 @@ export async function recordedSboms(req: { cwd: string; releaseDigest: string; e
           why(`${repository} holds no SBOM blob for ${sbom.digest}`);
           continue;
         }
-        out.subjects.push({ target: r.name, name, sbom: sbomDocumentOf(bytes, "recorded"), digest: image.digest });
+        out.subjects.push({ target: r.name, name, sbom: sbomDocumentOf(bytes, "recorded"), digest: image.digest, product: { repository, digest: image.digest } });
       } catch (err) {
         why(redact(req.redactor, err));
       }
@@ -206,7 +206,7 @@ export async function prepareRescan(req: { cwd: string; env: NodeJS.ProcessEnv; 
   // #5464: the database bound a publish holds, from release.scan.dbMaxAgeHours or a security profile in the declaration.
   const { profilesOf, scanDatabaseBound } = await import("../workspace/security-profiles");
   const dbAge = scanDatabaseBound(typeof setting === "object" ? setting.dbMaxAgeHours : undefined, profilesOf(await declarationAt(req.cwd)));
-  return { scan: { scanner, policy: config ? resolveVulnPolicy(config) : {}, vex, ...(dbAge ? { dbAge } : {}) } };
+  return { scan: { scanner, policy: config ? resolveVulnPolicy(config) : {}, vex, vexSources: [...(config?.vulnPolicy?.vexSources ?? [])], ...(dbAge ? { dbAge } : {}) } };
 }
 
 /** The workspace declaration that holds the member at `cwd`, or null outside a workspace or when it does not read. */

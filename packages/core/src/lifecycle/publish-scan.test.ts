@@ -153,11 +153,63 @@ describe("the scan before the stage", () => {
     writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
     writeLockfile(dir);
     const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], {});
-    const vex = JSON.stringify({ "@context": "https://openvex.dev/ns/v0.2.0", statements: [{ vulnerability: { name: "CVE-2026-50001" }, status: "not_affected", justification: "vulnerable_code_not_in_execute_path" }] });
+    const vex = JSON.stringify({ "@context": "https://openvex.dev/ns/v0.2.0", statements: [{ vulnerability: { name: "CVE-2026-50001" }, products: [{ "@id": "pkg:npm/%40acme/core@1.4.0", subcomponents: [{ "@id": "pkg:npm/left-pad@1.3.0" }] }], status: "not_affected", justification: "vulnerable_code_not_in_execute_path" }] });
     const ctx = context(dir, null);
-    const cleared = await scanBeforeStage({ targets, ctx, scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [vex] } });
+    const cleared = await scanBeforeStage({ targets, ctx, scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [vex], vexSources: ["vex/core.openvex.json"] } });
     expect(cleared.subjects[0]!.suppressed.map((s) => s.finding.cveId)).toEqual(["CVE-2026-50001"]);
+    expect(scanRecord(cleared).subjects[0]!.findings).toEqual([expect.objectContaining({ id: "CVE-2026-50001", outcome: "suppressed", statement: "vex/core.openvex.json#statements[0]" })]);
+    expect(cleared.vex).toBeUndefined();
     await expect(scanBeforeStage({ targets, ctx, scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [] } })).rejects.toMatchObject({ code: "publish-scan-failed" });
+  });
+
+  test("a VEX statement clears the advisory only in the image it names: the same advisory in another image blocks", async () => {
+    const dir = temp();
+    writeOciLayout(join(dir, "image"));
+    LOCK_CLEAN(dir);
+    const targets = await createPublishTargets(
+      [PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: "127.0.0.1:1/acme/api" }), PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: "127.0.0.1:1/acme/worker" })],
+      {},
+    );
+    const only = (repository: string) => JSON.stringify({ statements: [{ vulnerability: { name: "CVE-2026-50002" }, products: [{ "@id": `pkg:oci/${repository.split("/").pop()}?repository_url=${repository}`, subcomponents: [{ "@id": "pkg:deb/debian/openssl@3.0.11-1" }] }], status: "not_affected" }] });
+    const lines: string[] = [];
+    const err = await scanBeforeStage({ targets, ctx: context(dir, null), scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [only("127.0.0.1:1/acme/api")], vexSources: ["api.openvex.json"] }, say: (l) => lines.push(l) }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PublishScanError);
+    const report = (err as PublishScanError).report;
+    expect(report.subjects.map((s) => [s.name.split("@")[0], s.suppressed.length, s.blocking.length])).toEqual([["127.0.0.1:1/acme/api", 1, 0], ["127.0.0.1:1/acme/worker", 0, 1]]);
+    expect((err as Error).message).toContain("127.0.0.1:1/acme/worker@");
+    expect((err as Error).message).not.toContain("127.0.0.1:1/acme/api@");
+    expect(lines.some((l) => l.includes("api.openvex.json#statements[0] cleared CVE-2026-50002 in debian/openssl 3.0.11-1 of 127.0.0.1:1/acme/api@"))).toBe(true);
+    // Naming both images clears both.
+    const both = JSON.stringify({ statements: [{ vulnerability: { name: "CVE-2026-50002" }, products: [{ "@id": "127.0.0.1:1/acme/api" }, { "@id": "127.0.0.1:1/acme/worker" }], status: "not_affected" }] });
+    const ok = await scanBeforeStage({ targets, ctx: context(dir, null), scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [both] } });
+    expect(ok.subjects.map((s) => s.suppressed.length)).toEqual([1, 1]);
+  });
+
+  test("a statement that names no products is refused and one that matches nothing is reported unused, in the report and the record", async () => {
+    const dir = temp();
+    writePackage(join(dir, "pkg"), "@acme/core", "1.4.0", false, { "left-pad": "^1.3.0" });
+    writeLockfile(dir);
+    const targets = await createPublishTargets([PublishDeclarationSchema.parse({ type: "npm", packages: ["pkg"] })], {});
+    const vex = JSON.stringify({
+      statements: [
+        { vulnerability: { name: "CVE-2026-50001" }, status: "not_affected" },
+        { vulnerability: { name: "CVE-2026-50001" }, products: [{ "@id": "pkg:npm/%40acme/cli" }], status: "not_affected" },
+        { vulnerability: { name: "CVE-2026-50001" }, products: [{ "@id": "pkg:npm/%40acme/core" }], status: "fixed" },
+      ],
+    });
+    const lines: string[] = [];
+    const report = await scanBeforeStage({ targets, ctx: context(dir, null), scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [vex], vexSources: ["vex.json"] }, say: (l) => lines.push(l) });
+    expect(report.subjects[0]!.suppressed).toEqual([expect.objectContaining({ status: "fixed", statement: "vex.json#statements[2]" })]);
+    expect(report.vex).toEqual({
+      invalid: [{ statement: "vex.json#statements[0]", vulnerability: "CVE-2026-50001", reason: expect.stringContaining("names no products") }],
+      unused: [{ statement: "vex.json#statements[1]", vulnerability: "CVE-2026-50001" }],
+    });
+    expect(scanRecord(report).vex).toEqual(report.vex);
+    expect(lines.some((l) => l.includes("vex.json#statements[0] (CVE-2026-50001) is not applied"))).toBe(true);
+    expect(lines.some((l) => l.includes("vex.json#statements[1] (CVE-2026-50001) matched no finding"))).toBe(true);
+    // Without the scoped statement, the one without products clears nothing and the finding blocks.
+    const unscoped = JSON.stringify({ statements: [{ vulnerability: { name: "CVE-2026-50001" }, status: "not_affected" }] });
+    await expect(scanBeforeStage({ targets, ctx: context(dir, null), scan: { scanner: fakeReleaseScanner(), policy: {}, vex: [unscoped] } })).rejects.toMatchObject({ code: "publish-scan-failed" });
   });
 
   test("vulnPolicy's failSeverity lowers the bar: a low finding in the image blocks under failSeverity low", async () => {

@@ -732,7 +732,9 @@ export function forgeTarget(decl: ForgePublishDeclaration, deps: PublishDeps): P
     async scanSubjects(ctx) {
       const tag = decl.tag ?? ctx.releaseTag ?? ctx.release.releaseDigest;
       const sbom = memberSbom(ctx, decl.sbom, `${decl.repo}@${tag}`, `the ${decl.forge} target`);
-      return sbom ? [{ target: this.name, name: `${sbom.name} of ${decl.forge} ${decl.repo} ${tag}`, sbom: sbomDocumentOf(sbom.bytes, "attached") }] : [];
+      // #5481: what a VEX statement's products are matched against; forgejo has no purl type, so a statement names its release by the repository's purl only on github and gitlab.
+      const product = decl.forge === "forgejo" ? {} : { purls: [`pkg:${decl.forge}/${decl.repo}@${encodeURIComponent(tag)}`] };
+      return sbom ? [{ target: this.name, name: `${sbom.name} of ${decl.forge} ${decl.repo} ${tag}`, sbom: sbomDocumentOf(sbom.bytes, "attached"), product }] : [];
     },
     async plan(ctx) {
       const { tag, assets, signatures, section } = setup(ctx);

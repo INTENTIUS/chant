@@ -42,6 +42,8 @@ The table is printed from `SECURITY_FEATURES` in `packages/core/src/workspace/se
 | Plan steps hold no forge token | on: the plan job's contract, a listed exception | regenerate the pipeline | none | none |
 | Separate plan and apply cloud identities | off: no job requests an OIDC token | `ci.identity.cloud` | none | none |
 
+The vulnerability scan applies a VEX statement from `vulnPolicy.vexSources` only to the images and packages its `products` name, and to the components its `subcomponents` name. A statement without products clears nothing and is reported, as is one that matched no finding. [How a VEX statement is matched](/chant/guide/security-supply-chain/#how-a-vex-statement-is-matched) gives the rules.
+
 Which crypto module makes each digest and signature, the runner key types (Ed25519, or ECDSA P-256 with `--key-type ecdsa-p256`), and where chant reports the module are in [Signatures and crypto modules](/chant/reference/crypto-modules/).
 
 A CI product's image built on Chainguard's hardened bases (`base: "chainguard"`, or your Chainguard org's registry) is not in the table: it is a key in the product's own config, which no `security` group turns on or checks. [CI products](/chant/concepts/ci-products/#the-product-pipeline) describes it.
