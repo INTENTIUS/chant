@@ -1304,7 +1304,7 @@ describe("a breaking upgrade writes an upgrade note for the lexicon (#5550)", ()
     const dir = lexiconDir();
     const opts = { lexicon: "gcp", delta: breaking(), version: "0.14.0", from: "v1", to: "v2", date: "2026-11-22" };
     writeUpgradeNote(dir, opts);
-    const later = { ...opts, version: "0.15.0", from: "v2", to: "v3", delta: { ...breaking(), removed: [{ name: "Later", entry: res("GCP::Run::Later") }] } };
+    const later = { ...opts, version: "0.15.0", from: "v2", to: "v3", date: "2026-11-24", delta: { ...breaking(), removed: [{ name: "Later", entry: res("GCP::Run::Later") }] } };
     writeUpgradeNote(dir, later);
     writeUpgradeNote(dir, { ...opts, date: "2026-11-23" });
     const note = readFileSync(upgradeNotePath(dir), "utf-8");
