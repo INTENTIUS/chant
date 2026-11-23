@@ -716,6 +716,9 @@ async function approveGate(
   }
 
   const rule = identity.gateAdmissionFrom(scope, gate);
+  // #5508: the change names this gate in identity.gates, and the base has no declaration to judge by yet.
+  const ruleNotice = rule === null ? identity.gateRuleNoticeFrom(scope, gate) : null;
+  if (ruleNotice) console.error(formatWarning({ message: ruleNotice.message }));
   if (rule && opts.sign === undefined && opts.signature === undefined) {
     console.error(formatError({
       message:

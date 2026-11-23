@@ -61,6 +61,9 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr, sealed 
     if (record.refusal) {
       write(`    [refused] ${record.refusal}`);
     }
+    if (record.notice) {
+      write(`    [notice] ${record.notice.message}`);
+    }
     if (record.point) {
       write(`    [waiting] decision point ${record.point.point}: ${record.point.id} is ${record.point.state}`);
     }
