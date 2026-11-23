@@ -795,12 +795,16 @@ async function checkOci(decl: OciPublishDeclaration, ctx: Ctx): Promise<DoctorTa
     }
     const u = new URL(params.realm);
     if (params.service) u.searchParams.set("service", params.service);
-    u.searchParams.set("scope", `repository:${repo.name}:pull,push`);
+    // GitLab's registry creates the repository when it hands out a push-scoped token, so a read-only check asks for pull there.
+    const createsOnPush = /(^|\.)gitlab\./.test(repo.host);
+    u.searchParams.set("scope", `repository:${repo.name}:${createsOnPush ? "pull" : "pull,push"}`);
     const res = await answer(ctx, u.toString(), { method: "GET", headers: basic ? { authorization: basic } : {} });
     const token = (res.json as { token?: unknown; access_token?: unknown } | null)?.token ?? (res.json as { access_token?: unknown } | null)?.access_token;
     if (typeof token === "string") ctx.redactor.add(token);
     if (res.status !== 200 || typeof token !== "string") {
       checks.push({ check: "oci-push", status: basic ? "fail" : "unknown", message: `the token service of ${repo.host} answered ${res.status}${basic ? " to these credentials" : " with no credentials"}${res.text ? `: ${short(res.text)}` : ""}`, ...(basic ? { fix: `Check ${vars}.` } : {}) });
+    } else if (createsOnPush) {
+      checks.push({ check: "oci-push", status: "unknown", message: `${repo.host} takes the credentials; it creates the repository ${repo.name} when it grants push, so the doctor asked for pull only, and whether the credentials may push shows only at the push` });
     } else {
       const actions = jwtAccess(token, repo.name);
       checks.push(

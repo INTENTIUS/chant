@@ -218,6 +218,19 @@ describe("oci", () => {
     expect(JSON.stringify(no)).not.toContain("hub-password-123");
   });
 
+  test("GitLab's registry is asked for pull only, so the check creates no repository, and the push is can't-tell", async () => {
+    const gl: PublishDeclaration = { type: "oci", image: "dist/api.oci.tar", repository: "registry.gitlab.com/acme/api" };
+    const { fetch, calls } = fakeFetch([
+      (url) => (url === "https://registry.gitlab.com/v2/" ? { status: 401, headers: { "www-authenticate": 'Bearer realm="https://gitlab.com/jwt/auth",service="container_registry"' } } : undefined),
+      (url) => (url.startsWith("https://gitlab.com/jwt/auth") ? { status: 200, body: { token: "opaque-token-value" } } : undefined),
+    ]);
+    const r = await releaseDoctor({ cwd: member({}), publish: [gl], env: { OCI_USERNAME: "acme", OCI_PASSWORD: "gl-password-123" }, releaseWorkflow: null, deps: { fetch } });
+    expect(decodeURIComponent(calls[1]!.url)).toContain("scope=repository:acme/api:pull");
+    expect(decodeURIComponent(calls[1]!.url)).not.toContain("push");
+    expect(statuses(r.targets[0]!.checks)["oci-push"]).toBe("unknown");
+    expect(r.targets[0]!.checks.find((c) => c.check === "oci-push")!.message).toContain("creates the repository");
+  });
+
   test("an opaque token can't say what it grants; no credentials in CI fails", async () => {
     const opaque = fakeFetch(bearer("opaque-token-value"));
     const r = await releaseDoctor({ cwd: member({}), publish: [decl], env: { OCI_PASSWORD: "pw-12345" }, releaseWorkflow: null, deps: { fetch: opaque.fetch } });

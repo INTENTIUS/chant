@@ -14,7 +14,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, declaration, git, repoFixture, scratchDir, writeFiles } from "./__fixtures__/contract-repo";
-import { ciServeInterval, hostChantOf, ciServeKey, ciServePass, formatCiServeEvent, readCiServeState, type CiServeEvent, type CiServeForge, type CiServeOptions } from "./ci-serve";
+import { ciServeInterval, ciServeKey, ciServePass, formatCiServeEvent, readCiServeState, type CiServeEvent, type CiServeForge, type CiServeOptions } from "./ci-serve";
 import { ciRun, type CiRunResult } from "./ci-run";
 import { acquireLease, releaseLease } from "../lifecycle/lease";
 import { prApplyGroup, prApplyRecordKey } from "../components/pr-pipeline";
@@ -695,13 +695,5 @@ describe("ci serve follows ci.branches (#4325)", () => {
     const { app, main, release } = routed();
     const { opts } = serve(app, branchForge({ main, release }), { job: { loop: { branch: "main" } } });
     await expect(ciServePass(opts)).rejects.toThrow(/routes member app to release/);
-  });
-});
-
-describe("hostChantOf", () => {
-  test("the flag wins, then release.workflow.chant, then nothing (the chant on PATH)", () => {
-    expect(hostChantOf("node cli.js", "npx chant")).toBe("node cli.js");
-    expect(hostChantOf(undefined, "node /src/chant/dist/cli.js")).toBe("node /src/chant/dist/cli.js");
-    expect(hostChantOf(undefined, undefined)).toBeUndefined();
   });
 });
