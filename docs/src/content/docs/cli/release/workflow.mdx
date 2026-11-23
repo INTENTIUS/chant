@@ -123,6 +123,34 @@ The workflow grants `contents: read` and each job names its own scopes, so the f
 
 With `release.tag` (see [The release's tag](/chant/cli/release/cut/#the-releases-tag)), the tag trigger runs on the tags the template makes, with `{member}` and `{path}` filled in: `v{version}` runs on `v*`. A `floating` tag is left out with a negated pattern (`!v[0-9]+`), so moving it starts nothing; on GitLab the rule is a regular expression with the same effect. The publish job fetches `chant/lifecycle` right after the install, reads the label with `chant release tag "$GITHUB_REF_NAME" --json`, and exits 1 for a tag that names no release of the member. Every later step uses `CHANT_RELEASE_LABEL`, and the after-release job gets it from the publish job. Under `doctor: true` the publish job runs `chant release doctor` once the label is read. A floating tag is pushed by the publish job with git: GitHub and Forgejo jobs can, with `contents: write`; a GitLab job token can't, so `chant release workflow` says so, and a dispatched release on GitLab pushes it with `CHANT_RELEASE_TOKEN`. A dispatched release pushes whatever tag the cut made. A member with no `release.tag` renders the `release/**` file it did.
 
+### Building images in a GitLab job
+
+The GitLab file names no `image` and no `services`: each job runs in the image the project's `.gitlab-ci.yml` gives it. A job that builds `release.images` runs `docker buildx` (the builder is created with `docker buildx create --name chant-release --driver docker-container`), so on GitLab's shared runners the project's `default:` gives the jobs an image that has the docker CLI and Node, and a docker-in-docker service for the daemon:
+
+```yaml
+include:
+  - local: .gitlab/chant-release.yml
+
+default:
+  image: docker:cli
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache nodejs npm git
+```
+
+With GitLab's TLS variables for docker-in-docker (`DOCKER_HOST=tcp://docker:2376`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH`), `docker buildx create` stops with `could not create a builder instance with TLS data loaded from environment`. Create a docker context for the service from the certificates, use it, and unset the three variables, in the `before_script` that runs before the release jobs' own script:
+
+```yaml
+default:
+  before_script:
+    - docker context create dind --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem"
+    - docker context use dind
+    - unset DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH
+```
+
+The release file needs no change. `chant release doctor` does not check that docker and buildx can create the builder, so a runner without them first fails at the build, with `no release was cut: the build of image "<name>" exited 1`.
+
 ## A release train
 
 In the root of a workspace whose members release separately, such as one member per package of a monorepo, `release.train` (see [`chant workspace train cut`](/chant/cli/workspace-train/#cut)) makes the workflow release the members as a train rather than the root as one member:
