@@ -16,7 +16,7 @@ const ARCHIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * Pinned Config Connector version for reproducible codegen.
  */
-export const KCC_VERSION = "v1.152.0";
+export const KCC_VERSION = "v1.162.0";
 
 const CACHE_DIR = join(homedir(), ".chant");
 
