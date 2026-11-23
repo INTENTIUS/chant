@@ -69,6 +69,7 @@ import {
   type WaveStep,
 } from "../wave-engine";
 import type { ReviewApproval } from "../gate-decision";
+import { isEmptyBase, rootCommitBase } from "./root-commit-base";
 import {
   blockedMembers,
   blockedWords,
@@ -643,12 +644,20 @@ export interface OpWaveApplyHooksRun {
 /** Reads one file at one commit, or null when the commit has no such file. Injected for tests. */
 export type OpWaveShowAtBase = (base: string, path: string, cwd: string) => { sha: string; text: string | null };
 
-/** {@link OpWaveShowAtBase} through git: `git show <base>:<path>`. A run-time spec (#4982, `./op-waves-render-spec.ts`) reads every other file through it. */
+/**
+ * {@link OpWaveShowAtBase} through git: `git show <base>:<path>`. A run-time spec (#4982, `./op-waves-render-spec.ts`) reads every other file through it.
+ * A base that is the first parent of a commit with none (`HEAD^1` on a repository's first commit, #5488) is the empty tree,
+ * where every file is absent, as `baseCommit` in `../gate-decision.ts` has it: never the commit being applied. A shallow
+ * checkout whose commit names a parent it lacks keeps the error.
+ */
 export const gitShowAtBase: OpWaveShowAtBase = (base, path, cwd) => {
+  if (isEmptyBase(base)) return { sha: base, text: null };
   let sha: string;
   try {
     sha = execFileSync("git", ["rev-parse", "--verify", `${base}^{commit}`], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   } catch {
+    const none = rootCommitBase(cwd, base);
+    if (none) return { sha: none, text: null };
     throw new Error(
       `the gate policy is read at ${base}, which this checkout does not have. ` +
         `Check out the full history (fetch-depth: 0 on GitHub and Forgejo, GIT_DEPTH: "0" on GitLab), or set the spec's base.`,
@@ -2010,7 +2019,8 @@ export const OP_WAVE_MAX_CHAINED_HOLDS = 10;
  */
 async function gatePort(options: RunOpWaveOptions, cwd: string, gate: string, approval: GateApprovalSource, base: string): Promise<{ ledger: GateLedgerPort; port: GateLedgerPort }> {
   const ledger = options.gates ?? gitGateLedgerPort({ cwd });
-  const atBase = (g: string) => ledger.approvalRule?.(g, { base }) ?? Promise.resolve(null);
+  // #5488: with no commit before this one there is no declaration at base. The rule is not read from the working tree, which is the change itself.
+  const atBase = (g: string) => (isEmptyBase(base) ? Promise.resolve(null) : (ledger.approvalRule?.(g, { base }) ?? Promise.resolve(null)));
   if (approval !== "sealed") return { ledger, port: ledger.approvalRule ? { ...ledger, approvalRule: atBase } : ledger };
   // #3684: only an approval sealed by a signer listed at base counts.
   const review = await import("./gate-review");
@@ -3546,6 +3556,8 @@ async function openWaveDecision(
   const neverOverMcp = rules.neverOverMcp || spec.neverOverMcp === true;
   ctx.gateRule = { approval, base, neverOverMcp };
   noteHooksAtBase(ctx, rules);
+  // #5488: a repository's first commit has nothing reviewed before it, so its own spec does not set its gate.
+  if (isEmptyBase(base)) log(`wave ${k} (${wave.name}): gate ${policy}: this commit has no parent, so the spec is absent at base and the wave waits for a person's approval`);
   // #3836: a point at base that cannot be asked fails the wave; the ledger never stands in for it.
   if (rules.pointRefused) return { end: failed(ctx, `wave ${k} (${wave.name}): ${rules.pointRefused}, so nothing in it was planned or applied`) };
   // #4290: rules at base that cannot be read fail the wave; fewer approvers never stand in for them.
@@ -3904,7 +3916,7 @@ async function decideOpWave(
   const code = await decided(ctx, decision, recordPath);
   if (code.exitCode !== 0) return { end: code };
   log(
-    `wave ${k} (${wave.name}): gate ${policy} (read at ${base.slice(0, 12)}${source === "absent-at-base" ? ", where the wave is absent" : ""}), ` +
+    `wave ${k} (${wave.name}): gate ${policy} (${isEmptyBase(base) ? "the commit has no parent, so the spec is absent at base" : `read at ${base.slice(0, 12)}${source === "absent-at-base" ? ", where the wave is absent" : ""}`}), ` +
       `digest ${digest}: ${decision.status}${decision.approvedBy ? ` by ${decision.approvedBy}` : ""}` +
       (decision.via === "pr-review" ? ` (review of #${decision.review?.pr})` : "") +
       (holds.length > 0 ? `; held by ${holds.join(", ")}` : ""),

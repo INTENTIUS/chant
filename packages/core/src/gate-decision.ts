@@ -45,6 +45,9 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { commitParentLine, emptyTreeOf, isEmptyBase, rootCommitBase } from "./op/root-commit-base";
+
+export { isEmptyBase, rootCommitBase };
 import { readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import {
@@ -176,16 +179,16 @@ function showAt(repo: string, base: string, path: string): string | undefined {
  * own commit: the first parent of HEAD, the branch as it stood before the
  * merge, so a merge that adds a signer or drops a gate does not judge its own
  * apply. A shallow checkout fetches that one commit from `origin`. A root
- * commit has no parent and is its own base. Throws when it cannot be read.
+ * commit has no parent, so nothing was reviewed before it: its base is the
+ * empty tree ({@link isEmptyBase}), where every file is absent, and never the
+ * commit being applied. Throws when the base cannot be read.
  */
 export function baseCommit(repo: string): string {
   const head = git(repo, ["rev-parse", "--verify", "-q", "HEAD^{commit}"]);
   const sha = head.stdout.trim();
   if (head.status !== 0 || !sha) throw new Error(`${repo} has no commit checked out, so the gate cannot be decided`);
-  // The commit object's first `parent` line: a shallow clone keeps it even when it lacks the parent itself.
-  const header = git(repo, ["cat-file", "commit", sha]).stdout.split("\n\n")[0] ?? "";
-  const parent = /^parent ([0-9a-f]{40,64})$/m.exec(header)?.[1];
-  if (!parent) return sha;
+  const parent = commitParentLine(repo, sha);
+  if (!parent) return rootCommitBase(repo, "HEAD^1") ?? emptyTreeOf(repo);
   const has = () => git(repo, ["cat-file", "-e", `${parent}^{commit}`]).status === 0;
   if (!has()) git(repo, ["fetch", "-q", "--depth=1", "origin", parent]);
   if (!has()) throw new Error(`cannot fetch ${parent.slice(0, 12)}, the commit before this one, so the gate cannot be decided`);

@@ -65,6 +65,8 @@ describe("the gate-decision bundle", () => {
       // The release names a wave writes (#4615), checked with the spec.
       "packages/core/src/op/op-waves-release.ts",
       "packages/core/src/op/op-waves.ts",
+      // The base of a repository's first commit (#5488), with only node:child_process.
+      "packages/core/src/op/root-commit-base.ts",
       // A wave's soak is checked with the spec (#5326): its rules, which import only node:crypto.
       "packages/core/src/pipeline/soak.ts",
       "packages/core/src/sorted-json.ts",
@@ -75,8 +77,8 @@ describe("the gate-decision bundle", () => {
       "packages/core/src/workspace/jsonc.ts",
       "packages/core/src/workspace/trust/trust-files.ts",
     ]);
-    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB, and the passkey seal check (#4646) to about 63 KB. The product words and proven approvers (#5349) bring it to about 66.5 KB, and approval rule groups and names (#5354) to about 70.7 KB.
+    // About 49 KB unminified today: 7 KB of it the pinned classes read as data (#3888), 6 KB the approval rules (#4290), and the base approval checks (#4404) bring it to about 55 KB, and the passkey seal check (#4646) to about 63 KB. The product words and proven approvers (#5349) bring it to about 66.5 KB, and approval rule groups and names (#5354) to about 70.7 KB. The base of a repository's first commit (#5488) brings it to about 72.1 KB.
     const bytes = result.outputFiles.reduce((n, f) => n + f.contents.byteLength, 0);
-    expect(bytes).toBeLessThan(72 * 1024);
+    expect(bytes).toBeLessThan(73 * 1024);
   });
 });

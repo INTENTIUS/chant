@@ -62,6 +62,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
 import type { OpWaveShowAtBase } from "./op-waves-run";
 import type { OpWavesSpec } from "./op-waves";
+import { isEmptyBase } from "./root-commit-base";
 
 export { RUNTIME_WAVES_SPEC_FLOOR, RUNTIME_WAVES_SPEC_RUNS_AT_HEAD_FLOOR } from "../release-floors";
 
@@ -172,6 +173,8 @@ export function renderedSpecShow(specFile: string, render: OpWavesSpecRender, fa
   return (base, path, cwd) => {
     if (posixPath(path) !== target) return fallback(base, path, cwd);
     const { sha } = fallback(base, path, cwd);
+    // #5488: no commit before this one, so there is nothing to render the spec at, and the command is not run.
+    if (isEmptyBase(sha)) return { sha, text: null };
     if (!seen.has(sha)) seen.set(sha, render(sha));
     return { sha, text: seen.get(sha)! };
   };
@@ -185,6 +188,7 @@ export function renderedSpecShow(specFile: string, render: OpWavesSpecRender, fa
  */
 export function renderOpWavesSpecFile(options: { specFile: string; base: string; cwd: string; show: OpWaveShowAtBase; parse: (text: string, where: string) => OpWavesSpec }): { spec: OpWavesSpec; sha: string } {
   const { sha, text } = options.show(options.base, options.specFile, options.cwd);
+  if (text === null && isEmptyBase(sha)) throw new Error(`${options.base} names no commit: this commit has no parent, so there is no spec at base to run`);
   if (text === null) throw new Error(`the spec command printed no spec at ${options.base} (${sha.slice(0, 12)}), so the wave has nothing to run`);
   const spec = options.parse(text, `the spec rendered at ${sha.slice(0, 12)}`);
   const path = isAbsolute(options.specFile) ? options.specFile : join(options.cwd, options.specFile);
