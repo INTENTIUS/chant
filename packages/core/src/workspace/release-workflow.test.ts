@@ -1506,7 +1506,7 @@ describe("the release gate's refusal (#5537)", () => {
   const run = (chantBody: string) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-gate-")));
     writeFileSync(join(dir, "fake-chant"), `#!/usr/bin/env bash\n${chantBody}\n`, { mode: 0o755 });
-    const script = ["set -eo pipefail", ...gateScript({ green: "chant", chant: join(dir, "fake-chant"), forge: "gitlab" }, "abc123"), 'echo "commit=$commit"'].join("\n");
+    const script = ["set -eo pipefail", ...gateScript({ green: "chant", chant: join(dir, "fake-chant"), forge: "gitlab", gate: "last-green" }, "abc123"), 'echo "commit=$commit"'].join("\n");
     return spawnSync("bash", ["-c", script], { encoding: "utf-8" });
   };
 

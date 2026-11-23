@@ -132,7 +132,7 @@ export interface ComponentCheck {
 export async function runComponentChecks(
   path: string,
   checks: ComponentCheck[],
-  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies" | "signalOnlyRoots">,
+  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies" | "signalOnlyRoots" | "gatedStages">,
   sandbox?: boolean,
   buildParams?: BuildParamProvenance[],
 ): Promise<ComponentCheckDiagnostic[]> {
@@ -166,6 +166,7 @@ export async function runComponentChecks(
     knownKinds: registryContext?.knownKinds,
     rollbackPolicies: registryContext?.rollbackPolicies,
     signalOnlyRoots: registryContext?.signalOnlyRoots,
+    gatedStages: registryContext?.gatedStages,
   };
   for (const check of checks) {
     diagnostics.push(...check.check(ctx));
