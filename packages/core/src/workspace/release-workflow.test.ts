@@ -53,7 +53,7 @@ describe("a config with only publish (#4656)", () => {
   });
 });
 
-type GhJob = { needs?: string | string[]; permissions?: Record<string, string>; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
+type GhJob = { "runs-on"?: string | string[]; needs?: string | string[]; permissions?: Record<string, string>; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
 type GhDoc = { on: Record<string, unknown>; env?: Record<string, string>; permissions?: Record<string, string>; jobs: Record<string, GhJob> };
 const runs = (job: GhJob): string[] => job.steps.filter((s) => s.run).map((s) => s.run!.trim());
 
@@ -228,6 +228,24 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
     expect(doc.jobs.publish!.permissions!.packages).toBe("write");
     expect(doc.jobs.publish!.env).toEqual(pipeline.env);
     expect(doc.jobs.publish!.steps.some((s) => s.uses?.startsWith("docker/setup-qemu-action@"))).toBe(true);
+  });
+
+  test("runner names the runs-on label of every release job, in a dispatched release, a tag release and a train", () => {
+    const on = (over: Partial<ReleaseWorkflowInput>) => {
+      const doc = parseYAML(renderReleaseWorkflow({ forge: "forgejo", groups: new Set(), ...over })) as GhDoc;
+      return Object.values(doc.jobs).map((j) => j["runs-on"]);
+    };
+    const dispatched = on({ pipeline: { trigger: "dispatch", runner: "docker-host", after: ["true"] } });
+    expect(dispatched).toHaveLength(4);
+    expect(dispatched.every((r) => r === "docker-host")).toBe(true);
+    expect(on({ pipeline: { runner: ["self-hosted", "docker"], after: ["true"] } })).toEqual([["self-hosted", "docker"], ["self-hosted", "docker"]]);
+    expect(on({ pipeline: { trigger: "dispatch", runner: "docker-host" }, train: { env: "npm" } }).every((r) => r === "docker-host")).toBe(true);
+    expect(on({ pipeline: { trigger: "dispatch" } }).every((r) => r === "ubuntu-latest")).toBe(true);
+  });
+
+  test("runner is refused when blank, and by name on GitLab", () => {
+    expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { runner: " " } })).toThrow(/release\.workflow\.runner: a runner label is blank/);
+    expect(() => renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { runner: "x" } })).toThrow(/release\.workflow\.runner: a GitLab job takes its runner from tags/);
   });
 
   test("gitlab: variables and run steps; permissions and an action are refused by name", () => {

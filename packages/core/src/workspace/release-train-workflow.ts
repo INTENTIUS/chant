@@ -35,7 +35,7 @@
  */
 import { ACTION_PINS, tagComments, usesRef } from "../action-pins";
 import type { ReleaseGreenSource } from "../lifecycle/release-green";
-import { field, gateScript, GIT_TOKEN_ENV, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
+import { field, gateScript, GIT_TOKEN_ENV, githubSetup, jobPermissions, LEDGER_FETCH_FIRST, runsOnLine, type JobExtras, type ReleaseWorkflowForge } from "./release-workflow";
 import { RELEASE_ARTIFACTS_ARTIFACT } from "./release-steps/artifacts";
 import { packLine, unpackLine } from "./release-steps/builds";
 import { releaseBuildArchive, releaseBuildArtifact, type ReleaseBuildConfig } from "./release-toolchains";
@@ -234,7 +234,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
     lines.push(
       "  gate:",
       "    if: github.event_name == 'workflow_dispatch' && inputs.train == ''",
-      "    runs-on: ubuntu-latest",
+      runsOnLine(o.extra),
       ...jobPermissions(o.extra, { contents: "read" }, "gate"),
       ...defaults,
       "    outputs:",
@@ -261,7 +261,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       ...buildJobs,
       "  cut:",
       ...(builds.length > 0 ? [`    needs: [gate, ${builds.map((b) => `build-${b.name}`).join(", ")}]`, "    if: ${{ !cancelled() && needs.gate.result == 'success' && !contains(needs.*.result, 'failure') }}"] : ["    needs: gate"]),
-      "    runs-on: ubuntu-latest",
+      runsOnLine(o.extra),
       // A cut that runs the doctor for a release that signs gets the OIDC token the doctor checks (`signing-oidc`), as one release's cut does.
       ...jobPermissions(o.extra, { contents: "write", ...(o.doctor && o.signing ? { "id-token": "write" } : {}) }, "cut"),
       ...defaults,
@@ -308,7 +308,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
   lines.push(
     "  publish:",
     ...(dispatch ? [`    needs: [gate, cut${builds.map((b) => `, build-${b.name}`).join("")}]`, publishIf!] : []),
-    "    runs-on: ubuntu-latest",
+    runsOnLine(o.extra),
     ...jobPermissions(o.extra, { contents: "write", "id-token": "write" }, "publish"),
     ...defaults,
     ...o.extra.githubEnv([...(dispatch ? [`      CHANT_RELEASE_TRAIN: ${dispatchedTrain}`] : []), ...o.forgeToken]),
@@ -346,7 +346,7 @@ export function renderTrainWorkflow(o: TrainWorkflowInput): string {
       "  after-release:",
       `    needs: ${dispatch ? "[gate, cut, publish]" : "publish"}`,
       ...(dispatch ? ["    if: ${{ always() && needs.publish.result == 'success' }}"] : []),
-      "    runs-on: ubuntu-latest",
+      runsOnLine(o.extra),
       ...jobPermissions(o.extra, { contents: "read" }, "after"),
       ...defaults,
       ...(dispatch ? ["    env:", `      CHANT_RELEASE_TRAIN: ${dispatchedTrain}`] : []),

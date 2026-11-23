@@ -88,6 +88,7 @@ release: {
 | `trigger` | `tag` (default) publishes on the release's tag, as above. `dispatch` starts the release by hand with its label |
 | `gate` | For `dispatch`: `last-green` (default) cuts the newest green commit at or below the dispatched one; `head` cuts the dispatched commit and refuses it when it is not green |
 | `install`, `build`, `chant` | As the flags. `install: false` installs nothing and `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
+| `runner` | The `runs-on` label of the gate, cut, publish and post-release jobs, or a list of labels that must all match. Default `ubuntu-latest`. Name a runner that has what the jobs need, such as a docker daemon for `release.images`. A [train](#a-release-train)'s jobs take it too. GitHub and Forgejo; a GitLab job takes its runner from `.gitlab-ci.yml`, and `runner` is refused there. The `builds` name their own |
 | `toolchains` | The toolchains the jobs set up, in place of those the files name: `"node"`, `"go"`, `"python"`, `"rust"`, `"java"`, or `{ name, version }` for a version, such as `[{ name: "go", version: "1.24" }]`. Jobs that run chant get Node as well. `false` sets up nothing and leaves the runner's own. GitHub and Forgejo |
 | `builds` | Per-platform build jobs for `trigger: "dispatch"`, see [Builds on other runners](#builds-on-other-runners) |
 | `after` | Shell lines run once the release is published, with `CHANT_RELEASE_LABEL` set |
