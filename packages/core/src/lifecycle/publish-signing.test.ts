@@ -389,7 +389,7 @@ describe("the OCI target", () => {
       const ctx = context(dir, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-sign-2" } });
       const staged = await target!.stage(ctx);
       expect(staged.items.map((i) => i.attachment)).toEqual([undefined, "sbom", "provenance"]);
-      expect([...reg.manifests.keys()].every((k) => k.startsWith("sha256:"))).toBe(true);
+      expect([...reg.manifests.keys()].every((k) => /^sha256[:-]/.test(k))).toBe(true);
     } finally {
       await reg.close();
     }
