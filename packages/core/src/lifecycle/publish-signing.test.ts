@@ -294,17 +294,20 @@ describe("the OCI target", () => {
       // No tag points at the image yet, apart from the referrers tag.
       expect([...reg.manifests.keys()].filter((k) => !k.startsWith("sha256:"))).toEqual([referrersTagOf(digest)]);
       const index = JSON.parse(reg.manifests.get(referrersTagOf(digest))!.bytes.toString("utf-8")) as { manifests: Array<{ digest: string; artifactType: string; annotations: Record<string, string> }> };
-      expect(index.manifests.map((m) => [m.artifactType, m.annotations[BUNDLE_PREDICATE_ANNOTATION]])).toEqual([
+      // #5546: the SBOM and provenance referrers are listed there too, since this registry has no referrers API.
+      const referrerItems = staged.items.filter((i) => i.attachment === "sbom" || i.attachment === "provenance" || i.attachment === "scan");
+      expect(referrerItems.every((i) => index.manifests.some((m) => m.digest === i.digest))).toBe(true);
+      expect(index.manifests.filter((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE).map((m) => [m.artifactType, m.annotations[BUNDLE_PREDICATE_ANNOTATION]])).toEqual([
         [SIGSTORE_BUNDLE_MEDIA_TYPE, COSIGN_SIGN_PREDICATE],
         [SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE],
         [SIGSTORE_BUNDLE_MEDIA_TYPE, SPDX_PREDICATE],
       ]);
-      const sig = JSON.parse(reg.manifests.get(index.manifests[0]!.digest)!.bytes.toString("utf-8")) as { subject: { digest: string }; layers: Array<{ mediaType: string; digest: string }> };
+      const sig = JSON.parse(reg.manifests.get(index.manifests.find((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE)!.digest)!.bytes.toString("utf-8")) as { subject: { digest: string }; layers: Array<{ mediaType: string; digest: string }> };
       expect(sig.subject.digest).toBe(digest);
       expect(sig.layers[0]!.mediaType).toBe(SIGSTORE_BUNDLE_MEDIA_TYPE);
       const bundle = JSON.parse(reg.blobs.get(sig.layers[0]!.digest)!.toString("utf-8")) as { statement: InTotoStatement };
       expect(bundle.statement).toMatchObject({ predicateType: COSIGN_SIGN_PREDICATE, subject: [{ digest: { sha256: digest.slice(7) } }], predicate: {} });
-      expect(staged.items.filter((i) => i.attachment === "signature" || i.attachment === "attestation").map((i) => i.digest)).toEqual(index.manifests.map((m) => m.digest));
+      expect(staged.items.filter((i) => i.attachment === "signature" || i.attachment === "attestation").map((i) => i.digest)).toEqual(index.manifests.filter((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE).map((m) => m.digest));
 
       // A stage run again finds both and signs nothing.
       const again = await target!.stage(ctx);

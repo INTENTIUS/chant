@@ -19,8 +19,10 @@
  * SBOM and the release's provenance statement (./publish-attachments.ts),
  * each an OCI artifact manifest whose `subject` is the image, so a registry
  * with the referrers API lists them under the image's digest and `oras
- * discover` or `cosign tree` finds them. A referrer the registry already
- * holds is not pushed again.
+ * discover` or `cosign tree` finds them. On a registry without the referrers
+ * API (GHCR, Docker Hub, registry.gitlab.com) they are listed under the
+ * referrers tag `sha256-<hex>` too. A referrer the registry already holds is
+ * not pushed again.
  *
  * When the publish signs (#5164, ./publish-signing.ts), the stage also
  * pushes a cosign signature and SLSA provenance of the image, each a Sigstore
@@ -405,7 +407,7 @@ export class Registry {
 const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
 
 /** One referrer as an index lists it. */
-interface ReferrerDescriptor {
+export interface ReferrerDescriptor {
   mediaType: string;
   digest: string;
   size: number;
@@ -466,6 +468,14 @@ interface Referrer {
   digest: string;
   /** #5540: the digest of the manifest an earlier chant pushed for the same file, when it was another shape. */
   legacyDigest?: string;
+  /** #5546: the manifest behind {@link legacyDigest}. */
+  legacyManifest?: Uint8Array;
+}
+
+/** #5546: how a referrers index lists the artifact manifest `bytes`, read from the manifest itself. */
+export function referrerDescriptor(digest: string, bytes: Uint8Array): ReferrerDescriptor {
+  const m = JSON.parse(Buffer.from(bytes).toString("utf-8")) as { artifactType?: string; annotations?: Record<string, string> };
+  return { mediaType: IMAGE_MANIFEST, digest, size: bytes.byteLength, ...(m.artifactType ? { artifactType: m.artifactType } : {}), ...(m.annotations ? { annotations: m.annotations } : {}) };
 }
 
 /**
@@ -672,7 +682,7 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
     return files.map((attachment) => {
       const manifest = referrerManifest(attachment, subject);
       const legacy = legacyReferrerManifest(attachment, subject);
-      return { attachment, manifest, digest: bytesDigest(manifest), ...(legacy ? { legacyDigest: bytesDigest(legacy) } : {}) };
+      return { attachment, manifest, digest: bytesDigest(manifest), ...(legacy ? { legacyDigest: bytesDigest(legacy), legacyManifest: legacy } : {}) };
     });
   };
   const referrerItem = (r: Referrer): PublishItem => ({ name: r.attachment.name, destination: `${decl.repository}@${r.digest}, a referrer of the image`, digest: r.digest, attachment: r.attachment.kind });
@@ -910,21 +920,30 @@ export function ociTarget(decl: OciPublishDeclaration, deps: PublishDeps): Publi
           items.push(staged);
         }
         // #4049: the SBOM and the provenance statement, as referrers of the image, by digest.
+        // #5546: a registry with no referrers API lists none of them, so each goes in the referrers tag too, as the OCI distribution spec's fallback says.
+        let listedNow: Set<string> | undefined;
+        const listed = async () => (listedNow ??= new Set((await registry.referrers(layout.top.digest)).map((d) => d.digest)));
+        const ensureListed = async (digest: string, manifest: Uint8Array) => {
+          if (!(await listed()).has(digest)) await registry.addToReferrersTag(layout.top.digest, referrerDescriptor(digest, manifest));
+        };
         for (const r of attached) {
           if (await registry.hasManifest(r.digest, IMAGE_MANIFEST)) {
+            await ensureListed(r.digest, r.manifest);
             items.push({ ...referrerItem(r), present: true });
             continue;
           }
           // #5540: a resumed stage keeps the referrer an earlier chant pushed for the same file in the shape it used then.
-          if (r.legacyDigest && (await registry.hasManifest(r.legacyDigest, IMAGE_MANIFEST))) {
+          if (r.legacyDigest && r.legacyManifest && (await registry.hasManifest(r.legacyDigest, IMAGE_MANIFEST))) {
             ctx.log(`${decl.repository} already holds ${r.attachment.name} for ${layout.top.digest} as referrer ${r.legacyDigest}; it is not attached again`);
+            await ensureListed(r.legacyDigest, r.legacyManifest);
             items.push({ ...referrerItem({ ...r, digest: r.legacyDigest }), present: true });
             continue;
           }
           ctx.log(`attaching ${r.attachment.name} to ${layout.top.digest} as referrer ${r.digest}`);
           await registry.pushBlob(bytesDigest(EMPTY_CONFIG.bytes), () => EMPTY_CONFIG.bytes);
           await registry.pushBlob(r.attachment.digest, () => r.attachment.bytes);
-          await registry.putManifest(r.digest, IMAGE_MANIFEST, r.manifest);
+          const listedByApi = await registry.putManifest(r.digest, IMAGE_MANIFEST, r.manifest);
+          if (!listedByApi) await registry.addToReferrersTag(layout.top.digest, referrerDescriptor(r.digest, r.manifest));
           items.push(referrerItem(r));
         }
         // #5164: signed in the stage, so no tag points at an image before its signature is there.
