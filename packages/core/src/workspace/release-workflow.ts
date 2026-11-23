@@ -86,10 +86,13 @@ export interface ReleasePipelineConfig {
   /** Shell lines run after the publish, with `CHANT_RELEASE_LABEL` set: steps that need a published release. */
   after?: string[];
   /**
-   * Scopes added to the workflow's `contents: write` and `id-token: write`
-   * (#4751), such as `{ packages: "write" }` for an `oci` target that pushes to
-   * GHCR with the run's token. A scope already granted is refused. GitHub and
-   * Forgejo only; GitLab has no `permissions:` and refuses it by name.
+   * Scopes added to the cut and publish jobs (#4751), such as
+   * `{ packages: "write" }` for an `oci` target that pushes to GHCR with the
+   * run's token. `contents` and `id-token` are refused: the publish job has
+   * `contents: write` and `id-token: write`, and the cut `contents: write`,
+   * plus `id-token: write` when it runs the doctor for a release that signs,
+   * in one release and in a train. GitHub and Forgejo only; GitLab has no
+   * `permissions:` and refuses it by name.
    */
   permissions?: Record<string, "read" | "write">;
   /**
@@ -806,7 +809,7 @@ export function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge)
     if (uses) throw new Error(`${where}.setup: "${(uses as { uses: string }).uses}" is an action, and a GitLab job runs script lines; give it as { run }`);
   } else {
     for (const [k, v] of permissions) {
-      if (k === "contents" || k === "id-token") throw new Error(`${where}.permissions: ${k} is already granted (contents: write, id-token: write)`);
+      if (k === "contents" || k === "id-token") throw new Error(`${where}.permissions: ${k} is already granted to the jobs that need it: the publish job has contents: write and id-token: write, and the cut job contents: write, plus id-token: write when it runs the doctor for a release that signs`);
       if (!/^[a-z][a-z-]*$/.test(k) || (v !== "read" && v !== "write")) throw new Error(`${where}.permissions: ${k}: ${String(v)} is not a scope and read or write`);
     }
     for (const s of setup) if (!("uses" in s) && s.run.trim() === "") throw new Error(`${where}.setup: a run step is empty`);
