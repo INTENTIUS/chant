@@ -955,12 +955,17 @@ function workflowFilesCheck(dispatched: string): string[] {
   ];
 }
 
+/** Prints the error `ci last-green --json` answered with, as its message and code, or says the command failed. */
+const GATE_ERROR_NODE = `node -e 'let t="";try{t=require("fs").readFileSync(0,"utf8")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?" ["+e.code+"]":"")+(e.fix||e.hint?". "+(e.fix||e.hint):""):"no release was cut: ci last-green failed"+(t.trim()?": "+t.trim().split("\\n")[0]:""))'`;
+
 /** The gate's shell: the commit to cut, from `ci last-green`, refused when there is none or, under `head`, when it is not the dispatched one. */
 export function gateScript(o: Pick<DispatchInput, "green" | "chant" | "lane" | "gate" | "forge">, dispatched: string): string[] {
   // #5149: with no ci/green tags to search, the gate names the dispatched commit and the cut checks it.
   if (o.green !== "chant") return [`commit="${dispatched}"`];
   return [
-    `commit="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json | ${field("d.commit?.sha")})"`,
+    // The refusal's reason is on stdout as JSON, and the step runs under pipefail, so read it before the step dies (#5537).
+    `green="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json)" || { printf '%s' "$green" | ${GATE_ERROR_NODE} >&2; exit 1; }`,
+    `commit="$(printf '%s' "$green" | ${field("d.commit?.sha")})"`,
     `if [ -z "$commit" ]; then echo "no green commit at or below ${dispatched}, so no release is cut" >&2; exit 1; fi`,
     ...(o.gate === "head" ? [`if [ "$commit" != "${dispatched}" ]; then echo "${dispatched} is not green (the newest green commit below it is $commit), so no release is cut" >&2; exit 1; fi`] : []),
     ...(o.forge === "github" && o.gate !== "head" ? workflowFilesCheck(dispatched) : []),

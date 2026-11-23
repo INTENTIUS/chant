@@ -10,7 +10,7 @@ import { IMAGE_PINS } from "../image-pins";
 import { TOOL_PINS } from "../tool-pins";
 import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
-import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleasePipelineConfig, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
+import { NPM_TRUSTED_PUBLISHING_SETUP, gateScript, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleasePipelineConfig, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 import { trainIdScript } from "./release-train-workflow";
 import { resolveTagTemplate, type MemberTags } from "../lifecycle/release-tag";
@@ -1499,5 +1499,33 @@ describe("the cut's own scopes (#5486, #5491)", () => {
     const cut = Object.entries(d.jobs).find(([k]) => k === "cut" || k.endsWith("-cut"))![1];
     expect(cut.permissions!.actions).toBe("read");
     for (const [k, job] of Object.entries(d.jobs)) if (job !== cut) expect(job.permissions?.actions, k).toBeUndefined();
+  });
+});
+
+describe("the release gate's refusal (#5537)", () => {
+  const run = (chantBody: string) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-gate-")));
+    writeFileSync(join(dir, "fake-chant"), `#!/usr/bin/env bash\n${chantBody}\n`, { mode: 0o755 });
+    const script = ["set -eo pipefail", ...gateScript({ green: "chant", chant: join(dir, "fake-chant"), forge: "gitlab" }, "abc123"), 'echo "commit=$commit"'].join("\n");
+    return spawnSync("bash", ["-c", script], { encoding: "utf-8" });
+  };
+
+  test("a ci last-green that answers with an error names its code and message on stderr", () => {
+    const r = run(`printf '{"error":{"code":"ci-green-undeclared","message":"release.green is chant and no ci.green is declared","fix":"Add ci.green to chant.workspace.json."}}'; exit 1`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("[ci-green-undeclared]");
+    expect(r.stderr).toContain("Add ci.green to chant.workspace.json.");
+  });
+
+  test("a ci last-green that fails with no JSON still says why the gate stopped", () => {
+    const r = run("echo boom >&2; exit 3");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("ci last-green failed");
+  });
+
+  test("a green commit passes through", () => {
+    const r = run(`printf '{"commit":{"sha":"deadbeef"}}'`);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("commit=deadbeef");
   });
 });
