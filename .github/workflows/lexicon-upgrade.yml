@@ -88,6 +88,14 @@ jobs:
           git config user.name "chant-bot"
           git config user.email "chant-bot@users.noreply.github.com"
 
+      # A lexicon's build compiles the lexicons it imports from their source
+      # (k8s imports otel and prometheus, otel imports sql), so their
+      # generated barrels must exist before the upgrade's regen builds it.
+      # Without them the build step fails and the upgrade is filed as a
+      # validation failure instead of a pull request (#5515).
+      - name: Generate the lexicons ${{ matrix.lexicon }} builds against
+        run: npx tsx scripts/generate-lexicon-deps.ts ${{ matrix.lexicon }}
+
       - name: Run lexicon upgrade Op (${{ matrix.lexicon }})
         env:
           # pull-request opens/updates the long-lived branch; overridable on manual runs.
@@ -98,6 +106,12 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           # Higher upstream-API rate limit for the spec-version resolvers.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          # The upgrade-status issue is found, edited and opened with the
+          # workflow token (issues: write above), which the issue lookup reads
+          # first. The App installation has no issues permission, so with its
+          # token the open-issue listing never showed the existing issue and
+          # every run opened another one (#5515).
+          CHANT_GITHUB_TOKEN: ${{ github.token }}
         # Print the Op's JSON before failing: a failed step's error is in it.
         run: |
           status=0

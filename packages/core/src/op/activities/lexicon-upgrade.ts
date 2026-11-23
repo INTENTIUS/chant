@@ -446,6 +446,26 @@ async function postLexiconIssue(
   return stdout.trim();
 }
 
+/**
+ * Check that a finding this run was asked to post reached the forge, and say
+ * where in the job log (#5515). An issue or pull-request mode run that finds
+ * an upgrade and comes back with no URL posted nothing a reader can find, so
+ * it fails rather than reporting status "ok". The run's JSON carries only the
+ * HasUpgrade outcome, so the line on stderr is how the job log names the issue
+ * or pull request a run opened or edited.
+ */
+export function reported(result: LexiconUpgradeResult, what: "issue" | "pull request"): LexiconUpgradeResult {
+  const url = (what === "issue" ? result.issueUrl : result.prUrl)?.trim();
+  if (!url) {
+    throw new Error(
+      `lexiconUpgrade ${result.lexicon}: found an upgrade in ${result.mode} mode, but the forge returned no ${what} URL, ` +
+        `so nothing was reported. Check the forge token's permissions for ${what === "issue" ? "issues" : "pull requests"}.`,
+    );
+  }
+  process.stderr.write(`lexiconUpgrade ${result.lexicon}: ${what} ${url}\n`);
+  return result;
+}
+
 // ── PR idempotency helpers ────────────────────────────────────────────
 
 /**
@@ -721,7 +741,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     if (effectiveMode === "issue") {
       const title = `chore(${lexicon}): spec upgrade validation failed`;
       const issueUrl = await postLexiconIssue(lexicon, title, summary, gh);
-      return {
+      return reported({
         lexicon,
         mode,
         hasUpgrade: true,
@@ -730,7 +750,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
         issueUrl,
         summary,
         validationOk: false,
-      };
+      }, "issue");
     }
     return {
       lexicon,
@@ -774,7 +794,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
 
   if (effectiveMode === "issue") {
     const issueUrl = await postLexiconIssue(lexicon, title, summary, gh);
-    return {
+    return reported({
       lexicon,
       mode: effectiveMode,
       hasUpgrade: true,
@@ -783,7 +803,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       issueUrl,
       summary,
       validationOk: true,
-    };
+    }, "issue");
   }
 
   // ── 5. pull-request mode: idempotent branch + PR management ──────
@@ -798,7 +818,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   const existingPrBody = await currentPrBody(branch, gh, forge);
   if (existingPrBody !== null && existingPrBody.trim() === summary.trim()) {
     const existingUrl = await openPrUrl(branch, gh, forge);
-    return {
+    return reported({
       lexicon,
       mode,
       hasUpgrade: true,
@@ -807,7 +827,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       prUrl: existingUrl ?? undefined,
       summary,
       validationOk: true,
-    };
+    }, "pull request");
   }
 
   // Reset/create the long-lived branch from main and commit the changes.
@@ -909,7 +929,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       await ensureLabelOnPr(branch, semverLabel, gh);
     }
 
-    return {
+    return reported({
       lexicon,
       mode,
       hasUpgrade: true,
@@ -918,7 +938,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       prUrl,
       summary,
       validationOk: true,
-    };
+    }, "pull request");
   } finally {
     await gh(`git checkout ${shellQuote(savedBranch)}`).catch(() => {/* best-effort */});
     if (stashed) await gh(`git stash pop`).catch(() => {/* best-effort */});
