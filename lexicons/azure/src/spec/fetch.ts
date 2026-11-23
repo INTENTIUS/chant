@@ -112,7 +112,7 @@ export interface ArmSchemaDefinition {
  * dropped out of the naive "latest by date" pick), and accept the surface
  * with `chant dev surface-diff lexicons/azure --update-snapshot --bump`.
  */
-export const AZURE_SCHEMA_COMMIT = "d15606ffeb7eb87642decae9daf5aab5b3bbee30";
+export const AZURE_SCHEMA_COMMIT = "a1a176c7a0969c020e972d3a97c3f3a331ca05e9";
 
 const TARBALL_URL = `https://github.com/Azure/azure-resource-manager-schemas/archive/${AZURE_SCHEMA_COMMIT}.tar.gz`;
 const CACHE_DIR = join(homedir(), ".chant");
