@@ -125,7 +125,7 @@ describe("release requests (#5462)", () => {
     const input: ReleaseWorkflowInput = { forge: "github", groups: new Set<SecurityGroup>(["supply-chain"]), signing: true, signingEnv: ["RELEASE_KEY", "COSIGN_PASSWORD"], scan: true, images: true, imageArchives: ["build/api.tar"], imagePlatforms: ["linux/amd64"], publish: [{ type: "oci", repository: "r.example/acme/api" }], pipeline: { trigger: "dispatch", gate: "head" } };
     const runs = (j: HostJob) => j.steps.filter((s) => s.run !== undefined).map((s) => s.run!).filter((l) => !/CHANT_(COSIGN|GRYPE|SYFT)=/.test(l) && l !== NPM_TRUSTED_PUBLISHING_SETUP);
     const text = renderReleaseWorkflow(input);
-    const host = hostDispatchJobs({ input: { ...input, pipeline: { trigger: "tag" } } }, { CHANT_COSIGN: "/c" });
+    const host = hostDispatchJobs({ input: { ...input, pipeline: { trigger: "tag" } } }, { CHANT_COSIGN: "/c" }, "linux/amd64");
     expect(runs(host.gate)).toEqual(runs(workflowJob(text, "gate")));
     expect(runs(host.cut)).toEqual(runs(workflowJob(text, "cut")));
     expect(runs(host.gate).join("\n")).toContain('is not green (the newest green commit below it is $commit), so no release is cut');
@@ -137,7 +137,7 @@ describe("release requests (#5462)", () => {
   test("the cut a host runs has the host's scanner and syft, so it scans before it pushes the tag (#5446)", () => {
     const input: ReleaseWorkflowInput = { forge: "github", groups: new Set<SecurityGroup>(["supply-chain"]), scan: true, images: true, imageArchives: ["build/api.tar"], imagePlatforms: ["linux/amd64"], publish: [{ type: "oci", repository: "r.example/acme/api" }], pipeline: { trigger: "dispatch", gate: "head" } };
     const tools = { CHANT_GRYPE: "/host/grype", CHANT_SYFT: "/host/syft" };
-    const { cut } = hostDispatchJobs({ input }, tools);
+    const { cut } = hostDispatchJobs({ input }, tools, "linux/amd64");
     expect(cut.env).toMatchObject(tools);
     // With the variables set, the job installs nothing of its own, and the cut that runs in it finds them.
     expect(cut.steps.some((s) => /Install (grype|syft)/.test(s.name ?? ""))).toBe(false);

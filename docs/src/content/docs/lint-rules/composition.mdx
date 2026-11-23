@@ -303,6 +303,28 @@ To fix it, deploy the root from the member that owns it, or drop `signalOnly` if
 
 ---
 
+## COMP009: Stage And Component Both Gate
+
+Flags a component whose `gate` step applies in an environment that a pipeline stage already gates. A promote into the stage waits for the stage's approval of the release, and the component's gate then waits again, on a fact of its own, for the same change. chant accepts the declaration, so the rule is a warning: a declaration that relies on both approvals keeps working. `chant approve --env <stage>` lists both facts.
+
+The stages come from the member's `.chant/pipeline.ts`. A stage counts when it declares a `gate` whose `policy` is not `never`. A gate step with no `environments` applies in every environment, so it meets every gated stage. The warning names the stage, the pipeline file and the component's gate. A project with no pipeline is not checked.
+
+| | |
+|---|---|
+| **Severity** | Warning |
+| **Category** | Correctness |
+
+```typescript
+// .chant/pipeline.ts declares { name: "prod", ..., gate: { policy: "always" } }
+
+// ⚠ Triggers COMP009: the prod stage already asks for approval
+phase("Roll", [gate("approve-api", { environments: ["staging", "prod"] }), { kind: "cfn-deploy", template: "api.template.json" }]),
+```
+
+To fix it, leave the stage's environment out of the gate's `environments`, or remove the gate and let the stage ask once.
+
+---
+
 ## Auto-fix
 
 No COMP* rule has an automatic fix yet (see [#562](https://github.com/INTENTIUS/chant/issues/562)). COMP007 is the likeliest first one. A fix could scaffold the shared preset call, but the author still picks the preset's name and parameter shape.

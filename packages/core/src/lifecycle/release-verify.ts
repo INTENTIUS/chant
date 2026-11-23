@@ -41,6 +41,14 @@ export interface ReleaseVerification {
   /** The cut whose signature verified, or null. */
   verifiedBy: { actor: string; key: string | null } | null;
   reason: string;
+  /** True when the declaration at the release's commit names a `release` gate in `identity.gates`; such a release needs a signed cut. */
+  releaseGate: boolean;
+  /**
+   * Which check carried the result: `ssh` when a cut's signature verified,
+   * `sigstore` when no cut is signed and `--sigstore` verified every bundle
+   * (see `sigstoreCarries`), else null. Set by `chant release verify`.
+   */
+  carriedBy?: "ssh" | "sigstore" | null;
   /**
    * Whether the gate the verified cut records is covered by its signature
    * (#5177): `signed`, or `unsigned` for a cut signed before chant signed the
@@ -63,6 +71,17 @@ export function verificationCode(v: ReleaseVerification): "release-digest-mismat
   if (!v.digestMatches) return "release-digest-mismatch";
   if (v.status === "verified") return null;
   return v.status === "unsigned" ? "release-unsigned" : "release-signature-unverified";
+}
+
+/**
+ * Whether `--sigstore` carries a release no cut of which is ssh-signed: the
+ * digest matches, the status is `unsigned`, the declaration at its commit
+ * names no `release` gate, and at least one Sigstore bundle exists and every
+ * one verified. A release that names the gate, or whose signature fails,
+ * is not carried.
+ */
+export function sigstoreCarries(v: ReleaseVerification, sigstore: Pick<SigstoreVerification, "status" | "checks"> | null): boolean {
+  return !!sigstore && v.digestMatches && v.status === "unsigned" && !v.releaseGate && sigstore.status === "verified" && sigstore.checks.length > 0;
 }
 
 /** Check the release `ref` names in the member at `cwd`. Reads only the local repository. */
@@ -132,6 +151,7 @@ export async function verifyRelease(req: { cwd: string; ref: string }): Promise<
     status: digestMatches ? status : "unverified",
     verifiedBy: digestMatches && verified ? { actor: verified.actor, key: verified.signatureCheck.key } : null,
     reason,
+    releaseGate: read.requirement !== null && source.from === "base",
     gate: gateOf(digestMatches ? verified : undefined),
     cuts,
   };

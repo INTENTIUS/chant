@@ -7,6 +7,7 @@ import {
   upgradeBranchName,
   upgradePrTitle,
   buildUpgradeSummary,
+  failureOutputWithin,
   computeBumpedVersion,
   bumpPackageJsonVersion,
   lexiconUpgradeIssueMarker,
@@ -87,6 +88,26 @@ describe("branch / PR naming", () => {
 });
 
 // ── Summary builder ───────────────────────────────────────────────────
+
+describe("failureOutputWithin", () => {
+  const esc = "\u001b";
+  const warning = (n: number) => `  ${esc}[90m  ${n}:1 ${esc}[0m  ${esc}[33mwarning${esc}[0m  Inline object in Declarable constructor  COR001`;
+  const error = `  ${esc}[90m   1:1 ${esc}[0m  ${esc}[31merror${esc}[0m  Cannot find module 'x'  LEX001`;
+
+  test("keeps the error that follows a long run of warnings", () => {
+    const output = ["file.ts", ...Array.from({ length: 60 }, (_, i) => warning(i + 1)), "dir", error].join("\n");
+    expect(output.length).toBeGreaterThan(2000);
+    const cut = failureOutputWithin(output, 2000);
+    expect(cut.length).toBeLessThanOrEqual(2000);
+    expect(cut).toContain("Cannot find module 'x'");
+    expect(cut).toContain("60 warning line(s) follow");
+  });
+
+  test("leaves output within the cap as it was", () => {
+    const output = [warning(1), error].join("\n");
+    expect(failureOutputWithin(output, 2000)).toBe(output);
+  });
+});
 
 describe("buildUpgradeSummary", () => {
   test("additive upgrade renders delta + label", () => {
@@ -1017,6 +1038,37 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
     expect(bumps.length).toBe(1);
     expect(bumps[0]!.path).toBe(pkgPath);
     expect(bumps[0]!.version).toBe("0.13.2");
+  });
+
+  test("pinned lexicon: dependents' ranges follow the bump and their files are staged (#5556)", async () => {
+    const lexiconDir = mkdtempSync(join(tmpdir(), "chant-test-lexicon-5556-"));
+    writeFileSync(join(lexiconDir, "package.json"), JSON.stringify({ name: "@intentius/chant-lexicon-k8s", version: "0.13.1" }, null, 2) + "\n", "utf-8");
+    const follow = vi.fn(() => ["/ws/lexicons/helm/package.json", "/ws/package-lock.json"]);
+    const calls: string[] = [];
+    const gh = vi.fn(async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd.includes("gh pr create")) return { stdout: "https://gh/pr/2", stderr: "" };
+      return { stdout: "", stderr: "" };
+    });
+
+    await lexiconUpgrade({
+      lexicon: "k8s",
+      mode: "pull-request",
+      lexiconDir,
+      _checkPinned: vi.fn(async () => pinnedResult()),
+      _applyBump: vi.fn(() => ({ filePath: join(lexiconDir, "versions.ts") })),
+      _bumpPackageVersion: vi.fn(),
+      _followRanges: follow,
+      _gh: gh,
+    });
+
+    expect(follow).toHaveBeenCalledWith(lexiconDir, "0.13.2");
+    const commit = calls.findIndex((c) => c.startsWith("git commit"));
+    for (const path of ["/ws/lexicons/helm/package.json", "/ws/package-lock.json"]) {
+      const add = calls.findIndex((c) => c.startsWith("git add") && c.includes(path));
+      expect(add, path).toBeGreaterThan(-1);
+      expect(add, path).toBeLessThan(commit);
+    }
   });
 
   test("rolling lexicon (aws) in pull-request mode opens an issue, not a PR (#546)", async () => {

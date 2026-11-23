@@ -5,8 +5,12 @@
  * for extracting names from Azure resource types are defined here.
  */
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   NamingStrategy as CoreNamingStrategy,
+  publishedNamingConfig,
+  readPublishedNames,
   type NamingConfig,
   type NamingInput,
 } from "@intentius/chant/codegen/naming";
@@ -143,11 +147,30 @@ const azureNamingConfig: NamingConfig = {
  * Azure-specific NamingStrategy — wraps the core algorithm with Azure data tables.
  */
 export class NamingStrategy extends CoreNamingStrategy {
-  constructor(results: ArmSchemaParseResult[]) {
+  /**
+   * @param reservedNames resource type -> the name the lexicon already
+   *   published for it, normally {@link publishedNames}. A published name
+   *   stays with its type, and an upstream type that shares its short name is
+   *   the one service-prefixed (#5551). Passed in rather than read here so a
+   *   test or a fixture-driven run names its inputs by the rule alone.
+   */
+  constructor(results: ArmSchemaParseResult[], reservedNames: Record<string, string> = {}) {
     const inputs: NamingInput[] = results.map((r) => ({
       typeName: r.resource.typeName,
       propertyTypes: r.propertyTypes,
     }));
-    super(inputs, azureNamingConfig);
+    super(inputs, publishedNamingConfig(inputs, azureNamingConfig, reservedNames));
   }
+}
+
+/** The committed surface snapshot beside this package's `src/`. */
+export const SURFACE_SNAPSHOT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "surface.snapshot.json");
+
+/**
+ * The names the azure lexicon has published, read from its committed surface
+ * snapshot: resource type -> name. Empty when there is no snapshot or it
+ * cannot be parsed.
+ */
+export function publishedNames(snapshotPath: string = SURFACE_SNAPSHOT_PATH): Record<string, string> {
+  return readPublishedNames(snapshotPath);
 }

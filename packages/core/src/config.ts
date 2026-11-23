@@ -261,6 +261,7 @@ export const ChantConfigSchema = z.object({
       install: z.union([z.string().min(1), z.literal(false)]).optional(),
       build: z.union([z.string().min(1), z.literal(false)]).optional(),
       chant: z.string().min(1).optional(),
+      runner: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
       // #5152: the toolchains the jobs set up, and per-platform build jobs before the cut.
       toolchains: z.union([z.array(ReleaseToolchainSchema), z.literal(false)]).optional(),
       builds: z.array(z.object({

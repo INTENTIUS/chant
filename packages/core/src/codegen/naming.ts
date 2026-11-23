@@ -29,6 +29,8 @@
  * which is a genuine breaking change rather than an incidental one.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+
 /**
  * Minimal input required by the naming strategy — avoids coupling
  * to any specific schema parser output format.
@@ -89,6 +91,71 @@ export function reservedNamesFromSnapshot(
     reserved[entry.resourceType] ??= tsName;
   }
   return reserved;
+}
+
+/**
+ * The names a lexicon has published, read from its committed
+ * `surface.snapshot.json`: spec type -> name. Empty when the file is missing
+ * or cannot be parsed, so generation falls back to the rule alone and
+ * `surface-diff` shows any rename that follows.
+ *
+ * Generation reads the snapshot before `surface-diff --update-snapshot`
+ * rewrites it, so an upgrade keeps the names of the release before it.
+ */
+export function readPublishedNames(snapshotPath: string): Record<string, string> {
+  try {
+    if (!existsSync(snapshotPath)) return {};
+    return reservedNamesFromSnapshot(JSON.parse(readFileSync(snapshotPath, "utf-8")));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A naming config that keeps published names with the types that published
+ * them (chant #5551, first done for gcp in #5549).
+ *
+ * Each type with a published name is given it through `reservedNames`. Every
+ * other type is pinned to the name the rule alone gives it over the whole
+ * input. Reserving takes the published types out of the short-name contest,
+ * so without that pin a newcomer whose short name only published types share
+ * would look unshared and take the bare name: a new `Transcoder::Job` would be
+ * `Job` beside `BQJob` and `DataflowJob`. A rule name that a published type in
+ * the input holds is left to the contest instead of being pinned over it.
+ *
+ * A published name that is one of the type's own `priorityAliases` is not
+ * reserved: the snapshot lists aliases as resource entries too, and claiming
+ * one as the primary name would drop the alias and move the primary.
+ *
+ * With no published names this returns `config` unchanged.
+ */
+export function publishedNamingConfig(
+  inputs: NamingInput[],
+  config: NamingConfig,
+  published: Record<string, string>,
+): NamingConfig {
+  const reserved: Record<string, string> = {};
+  for (const [typeName, name] of Object.entries(published)) {
+    if (config.priorityAliases[typeName]?.includes(name)) continue;
+    reserved[typeName] = name;
+  }
+
+  const present = inputs.filter((i) => reserved[i.typeName] !== undefined);
+  if (present.length === 0) return config;
+  const held = new Set(present.map((i) => reserved[i.typeName]));
+  const rule = new NamingStrategy(inputs, { ...config, reservedNames: {} });
+  const newcomers: Record<string, string> = {};
+  for (const { typeName } of inputs) {
+    if (config.priorityNames[typeName] !== undefined || reserved[typeName] !== undefined) continue;
+    const name = rule.resolve(typeName);
+    if (name !== undefined && !held.has(name)) newcomers[typeName] = name;
+  }
+
+  return {
+    ...config,
+    priorityNames: { ...newcomers, ...config.priorityNames },
+    reservedNames: reserved,
+  };
 }
 
 export class NamingStrategy {

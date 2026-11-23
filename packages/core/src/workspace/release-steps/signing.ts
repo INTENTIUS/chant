@@ -1,8 +1,8 @@
 /** Sigstore signing (#5164): cosign in the jobs that run chant release, the OIDC token the doctor checks, and (#5458) the key's variables in the publish step. */
-import { TOOL_PINS, toolInstallLine } from "../../tool-pins";
+import { TOOL_PINS, toolInstallLineForRunner } from "../../tool-pins";
 import type { OpSetupStep } from "../../lexicon";
 import type { ReleasePipelineConfig, ReleaseWorkflowForge } from "../release-workflow";
-import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
+import type { ReleaseWorkflowFeature } from "./types";
 
 /**
  * The step that installs cosign for Sigstore signing (#5164): the binary
@@ -12,8 +12,8 @@ import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
  */
 export function cosignSetup(forge: ReleaseWorkflowForge, p: ReleasePipelineConfig): OpSetupStep[] {
   if ((p.setup ?? []).some((s) => !("uses" in s) && s.run.includes("CHANT_COSIGN")) || p.env?.CHANT_COSIGN !== undefined) return [];
-  if (forge === "gitlab") return [{ run: `${toolInstallLine(TOOL_PINS.cosign, RELEASE_RUNNER_PLATFORM, "/tmp")} && export CHANT_COSIGN=/tmp/cosign` }];
-  return [{ name: `Install cosign ${TOOL_PINS.cosign.version}`, run: `${toolInstallLine(TOOL_PINS.cosign, RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP")} && echo "CHANT_COSIGN=$RUNNER_TEMP/cosign" >> "$GITHUB_ENV"` }];
+  if (forge === "gitlab") return [{ run: `${toolInstallLineForRunner(TOOL_PINS.cosign, "/tmp")} && export CHANT_COSIGN=/tmp/cosign` }];
+  return [{ name: `Install cosign ${TOOL_PINS.cosign.version}`, run: `${toolInstallLineForRunner(TOOL_PINS.cosign, "$RUNNER_TEMP")} && echo "CHANT_COSIGN=$RUNNER_TEMP/cosign" >> "$GITHUB_ENV"` }];
 }
 
 /**

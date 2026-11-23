@@ -645,12 +645,14 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
     const packument = await answer(ctx, `${registry}/${name.replace("/", "%2f")}`, { method: "GET", headers: { accept: "application/json" } });
     const doc = packument.json as { "dist-tags"?: Record<string, string>; versions?: Record<string, { _npmUser?: { trustedPublisher?: unknown }; dist?: { attestations?: { url?: unknown } } }> } | null;
     const exists = packument.status === 200 && doc !== null;
-    if (packument.status === 404) {
+    if (packument.status === 404 && !npmjs) {
+      checks.push({ check: "npm-registry", status: "ok", message: `${name} is not on ${registry} yet; its first publish creates it there, and its first version becomes latest as soon as it stages` });
+    } else if (packument.status === 404) {
       checks.push({
         check: "npm-registry",
         status: "fail",
         message: `${name} is not on ${registry} yet (publish-npm-never-published, which refuses the cut). npm makes its first version latest as soon as it stages, and trusted publishing can't publish it, since a trusted publisher is set on a package that exists${user ? `; npm's config here signs in as ${user}, which can publish it by hand` : ""}`,
-        fix: `Publish one placeholder version by hand (npm login, then npm publish), then add the trusted publisher on ${npmjs ? "npmjs.com under the package's Settings" : "the registry"}.`,
+        fix: "Publish one placeholder version by hand (npm login, then npm publish), then add the trusted publisher on npmjs.com under the package's Settings.",
       });
     } else if (!exists) {
       checks.push({ check: "npm-registry", status: "unknown", message: `${registry} answered ${packument.status} for ${name}, so whether it exists can't be told${packument.text ? `: ${short(packument.text)}` : ""}` });
@@ -678,6 +680,12 @@ async function checkNpm(decl: NpmPublishDeclaration, ctx: Ctx): Promise<DoctorTa
           checks.push({ check: "npm-last-publisher", status: "unknown", message: `${name}@${latest} carries no GitHub Actions provenance, so where it was published from can't be read${trusted ? "; it was published by trusted publishing" : ""}` });
         }
       }
+    }
+
+    // Signatures are audited where the registry serves them (#5522).
+    if (!npmjs) {
+      const last = checks[checks.length - 1];
+      if (last) last.message += `. The reveal's npm audit signatures is skipped where ${host} serves no signatures; it audits only where the registry does`;
     }
 
     // The trusted-publisher record: only a run of the workflow it names can test it.
@@ -793,12 +801,16 @@ async function checkOci(decl: OciPublishDeclaration, ctx: Ctx): Promise<DoctorTa
     }
     const u = new URL(params.realm);
     if (params.service) u.searchParams.set("service", params.service);
-    u.searchParams.set("scope", `repository:${repo.name}:pull,push`);
+    // GitLab's registry creates the repository when it hands out a push-scoped token, so a read-only check asks for pull there.
+    const createsOnPush = /(^|\.)gitlab\./.test(repo.host);
+    u.searchParams.set("scope", `repository:${repo.name}:${createsOnPush ? "pull" : "pull,push"}`);
     const res = await answer(ctx, u.toString(), { method: "GET", headers: basic ? { authorization: basic } : {} });
     const token = (res.json as { token?: unknown; access_token?: unknown } | null)?.token ?? (res.json as { access_token?: unknown } | null)?.access_token;
     if (typeof token === "string") ctx.redactor.add(token);
     if (res.status !== 200 || typeof token !== "string") {
       checks.push({ check: "oci-push", status: basic ? "fail" : "unknown", message: `the token service of ${repo.host} answered ${res.status}${basic ? " to these credentials" : " with no credentials"}${res.text ? `: ${short(res.text)}` : ""}`, ...(basic ? { fix: `Check ${vars}.` } : {}) });
+    } else if (createsOnPush) {
+      checks.push({ check: "oci-push", status: "unknown", message: `${repo.host} takes the credentials; it creates the repository ${repo.name} when it grants push, so the doctor asked for pull only, and whether the credentials may push shows only at the push` });
     } else {
       const actions = jwtAccess(token, repo.name);
       checks.push(

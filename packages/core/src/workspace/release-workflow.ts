@@ -110,6 +110,15 @@ export interface ReleasePipelineConfig {
    */
   setup?: OpSetupStep[];
   /**
+   * The runner label for the gate, cut, publish and post-release jobs: a
+   * `runs-on` label, or a list of labels that all must match. Default
+   * `ubuntu-latest`. Name the label of a runner that has what the jobs need,
+   * such as a docker daemon for `release.images`. GitHub and Forgejo;
+   * GitLab jobs take their runner from tags in `.gitlab-ci.yml` and refuse
+   * it by name. The per-platform `builds` name their own.
+   */
+  runner?: string | string[];
+  /**
    * The toolchains the jobs set up (#5152): `node`, `go`, `python`, `rust`,
    * `java`, each by name or as `{ name, version }`. Default: those the
    * project's root files name (`package.json`, `go.mod`, `pyproject.toml`,
@@ -177,6 +186,14 @@ export interface ReleaseWorkflowInput {
    * and publish jobs, before `release.workflow.setup`.
    */
   imagePlatforms?: string[];
+  /**
+   * The platform the jobs run on, for the QEMU set-up above (#5536). Default
+   * {@link RELEASE_RUNNER_PLATFORM}. A `ci serve` host on arm64 passes
+   * `linux/arm64`, so its own platform needs no QEMU.
+   */
+  runnerPlatform?: string;
+  /** `run`: QEMU's binfmt handlers come from a `docker run --privileged` line on every forge, for a host that runs no actions (#5536). Default: an action on GitHub and Forgejo. */
+  qemuVia?: "action" | "run";
   /**
    * The registries `release.images` pulls its bases from that need a login
    * (#5457), at the root or in a train's members: the cut and publish jobs
@@ -540,7 +557,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     "  contents: read",
     "jobs:",
     "  publish:",
-    "    runs-on: ubuntu-latest",
+    runsOnLine(extra),
     ...jobPermissions(extra, { contents: "write", "id-token": "write" }, "publish"),
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     ...extra.githubEnv(forgeToken),
@@ -562,7 +579,7 @@ export function renderReleaseWorkflow(input: ReleaseWorkflowInput): string {
     lines.push(
       "  after-release:",
       "    needs: publish",
-      "    runs-on: ubuntu-latest",
+      runsOnLine(extra),
       ...jobPermissions(extra, { contents: "read" }, "after"),
       ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
       "    steps:",
@@ -693,7 +710,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     "  contents: read",
     "jobs:",
     "  publish:",
-    "    runs-on: ubuntu-latest",
+    runsOnLine(extra),
     ...jobPermissions(extra, { contents: "write", "id-token": "write" }, "publish"),
     ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
     ...(after.length > 0 ? ["    outputs:", "      label: ${{ steps.label.outputs.label }}"] : []),
@@ -720,7 +737,7 @@ function renderTemplatedTagWorkflow(input: ReleaseWorkflowInput, o: TemplatedInp
     lines.push(
       "  after-release:",
       "    needs: publish",
-      "    runs-on: ubuntu-latest",
+      runsOnLine(extra),
       ...jobPermissions(extra, { contents: "read" }, "after"),
       ...(root ? ["    defaults:", "      run:", `        working-directory: ${root}`] : []),
       "    env:",
@@ -753,6 +770,13 @@ export interface JobExtras {
   openIdConnect?: ReadonlyArray<"cut" | "publish">;
   /** The scopes only the cut takes (#5486, #5491), from {@link cutScopes}. */
   cutPermissions?: ReadonlyArray<readonly [string, string]>;
+  /** The `runs-on` value of the release jobs, from `release.workflow.runner`. Default `ubuntu-latest`. */
+  runsOn?: string;
+}
+
+/** A release job's `runs-on:` line. */
+export function runsOnLine(extra: Pick<JobExtras, "runsOn">): string {
+  return `    runs-on: ${extra.runsOn ?? "ubuntu-latest"}`;
 }
 
 /**
@@ -803,7 +827,10 @@ export function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge)
   const setup = p.setup ?? [];
   const where = "release.workflow";
   for (const [k, v] of env) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) || typeof v !== "string") throw new Error(`${where}.env: ${JSON.stringify(k)} is not a variable name with a string value`);
+  const runners = p.runner === undefined ? undefined : Array.isArray(p.runner) ? p.runner : [p.runner];
+  if (runners !== undefined && (runners.length === 0 || runners.some((r) => typeof r !== "string" || r.trim() === "" || /[\r\n]/.test(r)))) throw new Error(`${where}.runner: a runner label is blank`);
   if (forge === "gitlab") {
+    if (runners !== undefined) throw new Error(`${where}.runner: a GitLab job takes its runner from tags in .gitlab-ci.yml; leave runner out`);
     if (permissions.length > 0) throw new Error(`${where}.permissions: GitLab has no permissions: block; a GitLab job's token scopes are the project's`);
     const uses = setup.find((s) => "uses" in s);
     if (uses) throw new Error(`${where}.setup: "${(uses as { uses: string }).uses}" is an action, and a GitLab job runs script lines; give it as { run }`);
@@ -826,6 +853,7 @@ export function jobExtras(p: ReleasePipelineConfig, forge: ReleaseWorkflowForge)
   ]);
   return {
     permissions,
+    ...(runners ? { runsOn: runners.length === 1 ? runners[0]! : `[${runners.map(q).join(", ")}]` } : {}),
     githubEnv: (base) => (base.length + env.length > 0 ? ["    env:", ...base, ...map("      ", env)] : []),
     githubSteps,
     gitlabVariables: map("    ", env),
@@ -935,12 +963,17 @@ function workflowFilesCheck(dispatched: string): string[] {
   ];
 }
 
+/** Prints the error `ci last-green --json` answered with, as its message and code, or says the command failed. */
+const GATE_ERROR_NODE = `node -e 'let t="";try{t=require("fs").readFileSync(0,"utf8")}catch{}let e;try{e=JSON.parse(t).error}catch{}console.log(e?e.message+(e.code?" ["+e.code+"]":"")+(e.fix||e.hint?". "+(e.fix||e.hint):""):"no release was cut: ci last-green failed"+(t.trim()?": "+t.trim().split("\\n")[0]:""))'`;
+
 /** The gate's shell: the commit to cut, from `ci last-green`, refused when there is none or, under `head`, when it is not the dispatched one. */
 export function gateScript(o: Pick<DispatchInput, "green" | "chant" | "lane" | "gate" | "forge">, dispatched: string): string[] {
   // #5149: with no ci/green tags to search, the gate names the dispatched commit and the cut checks it.
   if (o.green !== "chant") return [`commit="${dispatched}"`];
   return [
-    `commit="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json | ${field("d.commit?.sha")})"`,
+    // The refusal's reason is on stdout as JSON, and the step runs under pipefail, so read it before the step dies (#5537).
+    `green="$(${o.chant} ci last-green --from "${dispatched}"${o.lane ? ` --lane ${o.lane}` : ""} --json)" || { printf '%s' "$green" | ${GATE_ERROR_NODE} >&2; exit 1; }`,
+    `commit="$(printf '%s' "$green" | ${field("d.commit?.sha")})"`,
     `if [ -z "$commit" ]; then echo "no green commit at or below ${dispatched}, so no release is cut" >&2; exit 1; fi`,
     ...(o.gate === "head" ? [`if [ "$commit" != "${dispatched}" ]; then echo "${dispatched} is not green (the newest green commit below it is $commit), so no release is cut" >&2; exit 1; fi`] : []),
     ...(o.forge === "github" && o.gate !== "head" ? workflowFilesCheck(dispatched) : []),
@@ -1053,7 +1086,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     "  CHANT_RELEASE_LABEL: ${{ inputs.label }}",
     "jobs:",
     "  gate:",
-    "    runs-on: ubuntu-latest",
+    runsOnLine(o.extra),
     ...jobPermissions(o.extra, { contents: "read" }, "gate"),
     ...defaults,
     "    outputs:",
@@ -1069,7 +1102,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...buildJobs,
     "  cut:",
     `    needs: ${built.length > 0 ? `[gate, ${built.join(", ")}]` : "gate"}`,
-    "    runs-on: ubuntu-latest",
+    runsOnLine(o.extra),
     ...jobPermissions(o.extra, { contents: "write", ...(o.context.signing && o.context.doctor ? { "id-token": "write" } : {}) }, "cut"),
     ...defaults,
     ...o.extra.githubEnv([`      CHANT_RELEASE_COMMIT: ${commit}`, `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...cutEnvToken(o), ...(cutUploads ? GIT_TOKEN_ENV : [])]),
@@ -1085,7 +1118,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...cutStep("afterCut"),
     "  publish:",
     `    needs: [gate, cut${built.map((b) => `, ${b}`).join("")}]`,
-    "    runs-on: ubuntu-latest",
+    runsOnLine(o.extra),
     ...jobPermissions(o.extra, { contents: "write", "id-token": "write" }, "publish"),
     ...defaults,
     ...o.extra.githubEnv([`      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, ...o.forgeToken]),
@@ -1103,7 +1136,7 @@ function renderGithubDispatch(o: DispatchInput): string {
     ...publishStepEnv(publish("publishEnv")),
   ];
   if (o.after.length > 0) {
-    lines.push("  after-release:", "    needs: [gate, publish]", "    runs-on: ubuntu-latest", ...jobPermissions(o.extra, { contents: "read" }, "after"), ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
+    lines.push("  after-release:", "    needs: [gate, publish]", runsOnLine(o.extra), ...jobPermissions(o.extra, { contents: "read" }, "after"), ...defaults, "    env:", `      CHANT_RELEASE_LABEL: ${GATE_LABEL}`, "    steps:", ...githubSetup(commit, o.fullSetup), ...installLines, ...o.after.map((l) => `      - run: ${l}`));
   }
   return tagComments(`${lines.join("\n")}\n`);
 }

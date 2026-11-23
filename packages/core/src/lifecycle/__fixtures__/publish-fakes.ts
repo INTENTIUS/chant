@@ -224,7 +224,7 @@ export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): voi
  * - `install` (#4049) checks that every dependency in `./package.json` is in
  *   its registry at that version, and installs nothing.
  * - `audit signatures` (#4049) prints what npm prints for verified
- *   signatures and attestations, and exits 1 when `$FAKE_NPM_AUDIT_FAIL` is set.
+ *   signatures and attestations, and exits 1 when `$FAKE_NPM_AUDIT_FAIL` is set, or, with `$FAKE_NPM_AUDIT_NO_SIGNING`, with npm's line for a registry that serves no signing keys.
  * - `$FAKE_NPM_LAG` (#4244), `<name>=<n>[,<name>=<n>]`: after a publish of
  *   that name, the next `n` views of the version find nothing, as a registry
  *   that accepted a publish but does not serve it yet.
@@ -338,6 +338,7 @@ if (args[0] === "publish") {
       process.exit(1);
     }
   }
+  if (process.env.FAKE_NPM_AUDIT_NO_SIGNING) { console.error("npm error found no dependencies to audit that were installed from a supported registry"); process.exit(1); }
   if (process.env.FAKE_NPM_AUDIT_FAIL) { console.error(n + " packages have invalid attestations"); process.exit(1); }
   console.log("audited " + n + " packages");
   console.log(n + " packages have verified registry signatures");

@@ -45,8 +45,14 @@ describe("checkPackagesPublished", () => {
 
   test("passes when every package is published, and asks the declared registry", () => {
     const asked: Array<[string, string | undefined]> = [];
-    checkPackagesPublished([{ type: "npm", packages: ["a"], registry: "https://r.example" }], tree(), (n, r) => (asked.push([n, r]), true));
-    expect(asked).toEqual([["@acme/a", "https://r.example"]]);
+    checkPackagesPublished([{ type: "npm", packages: ["a"], registry: "https://registry.npmjs.org" }], tree(), (n, r) => (asked.push([n, r]), true));
+    expect(asked).toEqual([["@acme/a", "https://registry.npmjs.org"]]);
+  });
+
+  test("does not refuse a first publish on a registry that is not npmjs.org", () => {
+    const asked: string[] = [];
+    expect(() => checkPackagesPublished([{ type: "npm", packages: ["a"], registry: "https://npm.pkg.github.com" }], tree(), (n) => (asked.push(n), false))).not.toThrow();
+    expect(asked).toEqual([]);
   });
 
   test("refuses a package never published, naming it and the first-publish step", () => {

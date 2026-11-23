@@ -93,7 +93,7 @@ chant ci serve --forge git --env prod --land --build-command 'npm ci && npx chan
   --release --secrets /etc/chant/release.env
 ```
 
-To have the host cut the release as well, push a request from any clone once the commit is green: `chant ci run --at <sha> --release --label <label>`. The host runs the release workflow's gate and cut for it, then publishes the tag the cut pushed. Two hosts serving one repository take turns on a lease and publish each release once.
+To have the host cut the release as well, push a request from any clone once the commit is green: `chant ci run --at <sha> --release --label <label>`. The host runs the release workflow's gate and cut for it, then publishes the tag the cut pushed. Two hosts serving one repository take turns on a lease and publish each release once. The first poll of a new state directory only records the tags that exist, so a host run once with `--once` serves a request on its second run ([release requests](/chant/cli/ci/#release-requests)).
 
 The host signs with a key, since it has no CI OIDC token: set `release.signing.kms` or `release.signing.key`, and give the key's variables and the registry credentials in the secrets file. See [Releases](/chant/cli/ci/#releases) in the `ci serve` reference for the steps, the tools and what the record names.
 

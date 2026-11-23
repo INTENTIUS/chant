@@ -31,7 +31,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UpgradeCheckResult, LexiconId, UpstreamPin } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
-import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
+import { bumpForSeverity, bumpPackageJsonVersion, followWorkspaceRanges } from "../../codegen/version-bump";
 import { deltaSections, formatDelta, type SurfaceDelta } from "../../codegen/surface-snapshot";
 import { ghHostEnv } from "./gh-host";
 import { restPullRequestForge } from "./forge-pull-request";
@@ -105,6 +105,11 @@ export interface LexiconUpgradeArgs {
    * Defaults to bumpPackageJsonVersion.
    */
   _bumpPackageVersion?: BumpPackageVersionFn;
+  /**
+   * Override the writer that moves dependents' ranges and the lockfile after
+   * the bump. Inject a mock in tests; defaults to followWorkspaceRanges.
+   */
+  _followRanges?: FollowRangesFn;
   /**
    * The REST client the pull request is found, opened and labelled through,
    * or null for `gh`. Default: one on a Forgejo or GitLab job, `gh`
@@ -182,6 +187,13 @@ export type ApplyBumpFn = (
  * Injectable for tests via LexiconUpgradeArgs._bumpPackageVersion.
  */
 export type BumpPackageVersionFn = (packageJsonPath: string, newVersion: string) => void;
+
+/**
+ * Move the ranges other workspace packages declare on the bumped package, and
+ * the lockfile's entries, returning the files changed (#5556). Injectable for
+ * tests via LexiconUpgradeArgs._followRanges.
+ */
+export type FollowRangesFn = (packageDir: string, newVersion: string) => string[];
 
 // ── Package.json version bumping ──────────────────────────────────────
 
@@ -388,6 +400,26 @@ export function formatDeltaWithin(delta: SurfaceDelta, max: number): string {
 
 // ── Markdown summary builder ──────────────────────────────────────────
 
+/** The most of one failing step's output the report shows. */
+const FAILURE_OUTPUT_CHARS = 2000;
+
+/**
+ * A failing step's output cut to `max` characters with its errors kept.
+ * A lint step prints its warnings first and its errors after, so a plain cut
+ * shows the warnings and drops the error that failed the step. Lines that
+ * report a warning move behind the rest (terminal colour codes ignored), and
+ * the cut falls on them.
+ */
+export function failureOutputWithin(output: string, max: number): string {
+  if (output.length <= max) return output;
+  const lines = output.split("\n");
+  const isWarning = (line: string): boolean => /^\s*\d+:\d+\s+warning\s/.test(line.replace(/\u001b\[[0-9;]*m/g, ""));
+  const rest = lines.filter((line) => !isWarning(line));
+  const warnings = lines.filter(isWarning);
+  const ordered = warnings.length > 0 ? [...rest, `(${warnings.length} warning line(s) follow)`, ...warnings] : rest;
+  return ordered.join("\n").slice(0, max);
+}
+
 /** Build the PR/issue/report body from the upgrade result data. */
 export function buildUpgradeSummary(opts: {
   lexicon: SupportedLexicon;
@@ -459,7 +491,7 @@ function renderUpgradeSummary(
     lines.push(``);
     lines.push(`Regen or validation did not pass. Review the failures before merging.`);
     for (const f of failures) {
-      lines.push(``, `**Step: ${f.step}**`, "```", f.output.slice(0, 2000), "```");
+      lines.push(``, `**Step: ${f.step}**`, "```", failureOutputWithin(f.output, FAILURE_OUTPUT_CHARS), "```");
     }
     lines.push(``);
   }
@@ -1029,6 +1061,12 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
           const doBump = args._bumpPackageVersion ?? bumpPackageJsonVersion;
           doBump(pkgJsonPath, bumpedVersion);
           await gh(`git add ${shellQuote(pkgJsonPath)}`).catch(() => {/* best-effort */});
+          // A caret at 0.x does not cross a minor, so a dependent left on the
+          // old range installs the old release from the registry (#5556).
+          const follow = args._followRanges ?? followWorkspaceRanges;
+          for (const path of follow(lexiconDir, bumpedVersion)) {
+            await gh(`git add ${shellQuote(path)}`).catch(() => {/* best-effort */});
+          }
         }
       }
     }

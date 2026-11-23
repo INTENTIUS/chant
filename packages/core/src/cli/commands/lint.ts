@@ -9,7 +9,7 @@ import { findInfraFiles, detectLexicons } from "../../index";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
 import { loadCoreRules } from "../../lint/rules/index";
-import { loadComponentChecks, signalOnlyRootsOf } from "../../lint/rules/comp/index";
+import { gatedStagesOf, loadComponentChecks, signalOnlyRootsOf } from "../../lint/rules/comp/index";
 import { runComponentChecks, type ComponentCheckDiagnostic } from "../../lint/component-checks";
 import { canaryConfigDiagnostics } from "../../lint/canary-checks";
 import { buildCapabilityRegistry } from "../../components/capability-plugin-loader";
@@ -475,7 +475,9 @@ async function runComponentCheckDiagnostics(
   const registryContext = await resolveRegistryContext(infraPath);
   // COMP008 (#4490) reads the project's signalOnly terraform roots.
   const signalOnlyRoots = await signalOnlyRootsOf(findProjectRoot(infraPath));
-  const raw = await runComponentChecks(infraPath, checks, { ...registryContext, signalOnlyRoots }, sandbox, buildParams);
+  // COMP009 (#5482) reads the stages of the member's pipeline that declare a gate.
+  const gatedStages = await gatedStagesOf(findProjectRoot(infraPath));
+  const raw = await runComponentChecks(infraPath, checks, { ...registryContext, signalOnlyRoots, gatedStages }, sandbox, buildParams);
 
   const fileDirectivesCache = new Map<string, ReturnType<typeof parseDisableComments>>();
   const fileLevelDisable = (

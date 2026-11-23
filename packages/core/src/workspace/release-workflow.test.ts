@@ -10,7 +10,7 @@ import { IMAGE_PINS } from "../image-pins";
 import { TOOL_PINS } from "../tool-pins";
 import type { CommandContext } from "../cli/registry";
 import { GENERATED_OUT_ENV, GENERATED_ROOT_ENV } from "../generated-check";
-import { NPM_TRUSTED_PUBLISHING_SETUP, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleasePipelineConfig, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
+import { NPM_TRUSTED_PUBLISHING_SETUP, gateScript, releaseWorkflowHeader, renderReleaseWorkflow, runReleaseWorkflow, RELEASE_DIGESTS_PATHS, RELEASE_WORKFLOW_FILES, type ReleasePipelineConfig, type ReleaseWorkflowInput, type ReleaseWorkflowTarget } from "./release-workflow";
 import type { SecurityGroup } from "./security";
 import { trainIdScript } from "./release-train-workflow";
 import { resolveTagTemplate, type MemberTags } from "../lifecycle/release-tag";
@@ -53,7 +53,7 @@ describe("a config with only publish (#4656)", () => {
   });
 });
 
-type GhJob = { needs?: string | string[]; permissions?: Record<string, string>; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
+type GhJob = { "runs-on"?: string | string[]; needs?: string | string[]; permissions?: Record<string, string>; outputs?: Record<string, string>; env?: Record<string, string>; steps: Array<{ id?: string; uses?: string; run?: string; with?: Record<string, unknown> }> };
 type GhDoc = { on: Record<string, unknown>; env?: Record<string, string>; permissions?: Record<string, string>; jobs: Record<string, GhJob> };
 const runs = (job: GhJob): string[] => job.steps.filter((s) => s.run).map((s) => s.run!.trim());
 
@@ -228,6 +228,24 @@ describe("the release workflow's permissions, env and setup (#4751)", () => {
     expect(doc.jobs.publish!.permissions!.packages).toBe("write");
     expect(doc.jobs.publish!.env).toEqual(pipeline.env);
     expect(doc.jobs.publish!.steps.some((s) => s.uses?.startsWith("docker/setup-qemu-action@"))).toBe(true);
+  });
+
+  test("runner names the runs-on label of every release job, in a dispatched release, a tag release and a train", () => {
+    const on = (over: Partial<ReleaseWorkflowInput>) => {
+      const doc = parseYAML(renderReleaseWorkflow({ forge: "forgejo", groups: new Set(), ...over })) as GhDoc;
+      return Object.values(doc.jobs).map((j) => j["runs-on"]);
+    };
+    const dispatched = on({ pipeline: { trigger: "dispatch", runner: "docker-host", after: ["true"] } });
+    expect(dispatched).toHaveLength(4);
+    expect(dispatched.every((r) => r === "docker-host")).toBe(true);
+    expect(on({ pipeline: { runner: ["self-hosted", "docker"], after: ["true"] } })).toEqual([["self-hosted", "docker"], ["self-hosted", "docker"]]);
+    expect(on({ pipeline: { trigger: "dispatch", runner: "docker-host" }, train: { env: "npm" } }).every((r) => r === "docker-host")).toBe(true);
+    expect(on({ pipeline: { trigger: "dispatch" } }).every((r) => r === "ubuntu-latest")).toBe(true);
+  });
+
+  test("runner is refused when blank, and by name on GitLab", () => {
+    expect(() => renderReleaseWorkflow({ forge: "github", groups: new Set(), pipeline: { runner: " " } })).toThrow(/release\.workflow\.runner: a runner label is blank/);
+    expect(() => renderReleaseWorkflow({ forge: "gitlab", groups: new Set(), pipeline: { runner: "x" } })).toThrow(/release\.workflow\.runner: a GitLab job takes its runner from tags/);
   });
 
   test("gitlab: variables and run steps; permissions and an action are refused by name", () => {
@@ -1481,5 +1499,33 @@ describe("the cut's own scopes (#5486, #5491)", () => {
     const cut = Object.entries(d.jobs).find(([k]) => k === "cut" || k.endsWith("-cut"))![1];
     expect(cut.permissions!.actions).toBe("read");
     for (const [k, job] of Object.entries(d.jobs)) if (job !== cut) expect(job.permissions?.actions, k).toBeUndefined();
+  });
+});
+
+describe("the release gate's refusal (#5537)", () => {
+  const run = (chantBody: string) => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-gate-")));
+    writeFileSync(join(dir, "fake-chant"), `#!/usr/bin/env bash\n${chantBody}\n`, { mode: 0o755 });
+    const script = ["set -eo pipefail", ...gateScript({ green: "chant", chant: join(dir, "fake-chant"), forge: "gitlab", gate: "last-green" }, "abc123"), 'echo "commit=$commit"'].join("\n");
+    return spawnSync("bash", ["-c", script], { encoding: "utf-8" });
+  };
+
+  test("a ci last-green that answers with an error names its code and message on stderr", () => {
+    const r = run(`printf '{"error":{"code":"ci-green-undeclared","message":"release.green is chant and no ci.green is declared","fix":"Add ci.green to chant.workspace.json."}}'; exit 1`);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("[ci-green-undeclared]");
+    expect(r.stderr).toContain("Add ci.green to chant.workspace.json.");
+  });
+
+  test("a ci last-green that fails with no JSON still says why the gate stopped", () => {
+    const r = run("echo boom >&2; exit 3");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("ci last-green failed");
+  });
+
+  test("a green commit passes through", () => {
+    const r = run(`printf '{"commit":{"sha":"deadbeef"}}'`);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("commit=deadbeef");
   });
 });

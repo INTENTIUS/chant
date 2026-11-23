@@ -101,3 +101,21 @@ export function toolInstallLine(pin: ToolPin, platform: string, dir: string): st
   const path = `${dir}/${pin.name}`;
   return `curl -fsSL -o "${path}" ${file.url} && echo "${file.sha256}  ${path}" | sha256sum -c - && chmod +x "${path}"`;
 }
+
+/** The `uname -m` names of each architecture a pin has a build for. */
+const UNAME_ARCHES: ReadonlyArray<readonly [platform: string, names: string]> = [
+  ["linux/amd64", "x86_64|amd64"],
+  ["linux/arm64", "aarch64|arm64"],
+];
+
+/**
+ * Shell that does what {@link toolInstallLine} does for the architecture the
+ * job runs on, chosen when the job runs: each build the pin has is checked
+ * against its own SHA-256, and an architecture with no build fails the step
+ * with a message that names it. The line is one shell command, so it takes
+ * the place of `toolInstallLine`'s wherever that went.
+ */
+export function toolInstallLineForRunner(pin: ToolPin, dir: string): string {
+  const branches = UNAME_ARCHES.filter(([platform]) => pin.platforms[platform] !== undefined).map(([platform, names]) => `${names}) ${toolInstallLine(pin, platform, dir)};;`);
+  return `case "$(uname -m)" in ${branches.join(" ")} *) echo "no pinned ${pin.name} ${pin.version} build for $(uname -m)" >&2; exit 1;; esac`;
+}

@@ -89,7 +89,7 @@ describe("a publish that fails resumes", () => {
       const npmCalls = () => (existsSync(log) ? readFileSync(log, "utf-8").trim().split("\n").filter(Boolean).map((l) => (JSON.parse(l) as { args: string[] }).args) : []);
       const visible = () => ({
         npm: Object.fromEntries(Object.entries(readFakeNpmRegistry(log).packages).map(([n, p]) => [n, p.distTags.latest])),
-        ociTags: [...reg.manifests.keys()].filter((k) => !k.startsWith("sha256:")),
+        ociTags: [...reg.manifests.keys()].filter((k) => !/^sha256[:-]/.test(k)),
         forge: forge.visible(),
       });
       const records = () => parsePublishRecords(r.git(["show", `chant/lifecycle:_releases/${PUBLISHES_FILE}`])).records;

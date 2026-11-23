@@ -1358,6 +1358,11 @@ function preMergeOf(cwd: string): string[] {
   return pre;
 }
 
+/** The chant a host's jobs run: the `--chant` flag, else the one `release.workflow.chant` names, else the one on PATH. */
+export function hostChantOf(flag: string | undefined, workflowChant: string | undefined): string | undefined {
+  return flag || workflowChant || undefined;
+}
+
 /** `chant ci serve` (#4095). */
 export async function runCiServe(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -1419,6 +1424,8 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
     }
     // #5462: release tags, published on this host with the runner key as the builder.
     let release: CiServeReleaseOptions | undefined;
+    // One chant for every job the host runs: --chant, else the one release.workflow.chant names.
+    let hostChant = args.ciChant;
     if (args.ciRelease) {
       if (runnerKey === undefined) throw new CiRunError("--release names this host's runner key as the builder of what it publishes, and there is no trusted runner key here; make one with chant ci serve --setup-key and list it with --trust");
       let read: Awaited<ReturnType<typeof releaseWorkflowInputAt>>;
@@ -1427,6 +1434,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
       } catch (err) {
         throw new CiRunError(`--release reads the release config, which could not be read: ${message(err)}`);
       }
+      hostChant = hostChantOf(args.ciChant, read.release?.workflow?.chant);
       const refused = hostSigningRefusal(read);
       if (refused) throw new CiRunError(`--release: ${refused.message}. ${refused.fix ?? ""}`.trim());
       const toolCache = join(stateDir, "tools");
@@ -1446,7 +1454,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
         hostEnv: process.env,
         ...(secrets ? { secrets } : {}),
         ...(args.passEnv?.length ? { passEnv: args.passEnv } : {}),
-        ...(args.ciChant ? { chant: args.ciChant } : {}),
+        ...(hostChant ? { chant: hostChant } : {}),
         output: (line) => void process.stderr.write(`${line}\n`),
       };
       console.error(`ci serve: publishes each new ${read.release?.train ? `release-train/${read.release.train.env}/*` : "release"} tag on this host, naming the runner key ${fingerprint} as the builder`);
@@ -1481,7 +1489,7 @@ export async function runCiServe(ctx: CommandContext): Promise<number> {
         ...(args.runIndexLimit ? { runIndexLimit: args.runIndexLimit } : {}),
         ...(args.image ? { image: args.image } : {}),
         ...(args.beforeScript?.length ? { beforeScript: args.beforeScript } : {}),
-        ...(args.ciChant ? { chant: args.ciChant } : {}),
+        ...(hostChant ? { chant: hostChant } : {}),
         ...(args.passEnv?.length ? { passEnv: args.passEnv } : {}),
         ...(status ? { status } : {}),
         ...(secrets ? { secrets } : {}),

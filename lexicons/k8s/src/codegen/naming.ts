@@ -3,8 +3,12 @@
  * to user-friendly TypeScript class names.
  */
 
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   NamingStrategy as CoreNamingStrategy,
+  publishedNamingConfig,
+  readPublishedNames,
   type NamingConfig,
   type NamingInput,
 } from "@intentius/chant/codegen/naming";
@@ -191,11 +195,30 @@ const k8sNamingConfig: NamingConfig = {
  * Extends core NamingStrategy with K8s naming config.
  */
 export class NamingStrategy extends CoreNamingStrategy {
-  constructor(results: K8sParseResult[]) {
+  /**
+   * @param reservedNames type -> the name the lexicon already published for
+   *   it, normally {@link publishedNames}. A published name stays with its
+   *   type, and a new kind or CRD that shares its short name is the one
+   *   group-prefixed (#5551). Passed in rather than read here so a test or a
+   *   fixture-driven run names its inputs by the rule alone.
+   */
+  constructor(results: K8sParseResult[], reservedNames: Record<string, string> = {}) {
     const inputs: NamingInput[] = results.map((r) => ({
       typeName: r.resource.typeName,
       propertyTypes: r.propertyTypes,
     }));
-    super(inputs, k8sNamingConfig);
+    super(inputs, publishedNamingConfig(inputs, k8sNamingConfig, reservedNames));
   }
+}
+
+/** The committed surface snapshot beside this package's `src/`. */
+export const SURFACE_SNAPSHOT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "surface.snapshot.json");
+
+/**
+ * The names the k8s lexicon has published, read from its committed surface
+ * snapshot: type -> name. Empty when there is no snapshot or it cannot be
+ * parsed.
+ */
+export function publishedNames(snapshotPath: string = SURFACE_SNAPSHOT_PATH): Record<string, string> {
+  return readPublishedNames(snapshotPath);
 }

@@ -1,5 +1,13 @@
+import { join } from "node:path";
 import { describe, test, expect } from "vitest";
-import { NamingStrategy, reservedNamesFromSnapshot, type NamingConfig, type NamingInput } from "./naming";
+import {
+  NamingStrategy,
+  publishedNamingConfig,
+  readPublishedNames,
+  reservedNamesFromSnapshot,
+  type NamingConfig,
+  type NamingInput,
+} from "./naming";
 
 /**
  * chant #1459 — a published TypeScript name belongs to the type that published
@@ -125,5 +133,62 @@ describe("reservation boundaries", () => {
   test("no reservations at all reproduces the previous behaviour exactly", () => {
     const types = ["AWS::Macie::Session", "AWS::Athena::Session", "AWS::MSK::Channel"];
     expect(name(types, { reservedNames: {} })).toEqual(name(types));
+  });
+});
+
+describe("publishedNamingConfig (#5551)", () => {
+  const resolveAll = (types: string[], published: Record<string, string>, over: Partial<NamingConfig> = {}) => {
+    const inputs: NamingInput[] = types.map((typeName) => ({ typeName, propertyTypes: [] }));
+    const strategy = new NamingStrategy(inputs, publishedNamingConfig(inputs, { ...config, ...over }, published));
+    return Object.fromEntries(types.map((t) => [t, strategy.resolve(t)]));
+  };
+
+  test("a newcomer sharing a published short name is prefixed and the published type keeps its name", () => {
+    const types = ["Cloud::Pubsub::Schema", "Cloud::Discovery::Schema", "Cloud::Compute::Instance"];
+    const names = resolveAll(types, { "Cloud::Pubsub::Schema": "Schema" });
+    expect(names).toEqual({
+      "Cloud::Pubsub::Schema": "Schema",
+      "Cloud::Discovery::Schema": "DiscoverySchema",
+      "Cloud::Compute::Instance": "Instance",
+    });
+    expect(resolveAll([...types].reverse(), { "Cloud::Pubsub::Schema": "Schema" })).toEqual(names);
+  });
+
+  test("a newcomer whose short name only published, prefixed types share is still prefixed", () => {
+    expect(
+      resolveAll(["Cloud::Bigquery::Job", "Cloud::Dataflow::Job", "Cloud::Transcoder::Job", "Cloud::Example::Widget"], {
+        "Cloud::Bigquery::Job": "BigqueryJob",
+        "Cloud::Dataflow::Job": "DataflowJob",
+      }),
+    ).toEqual({
+      "Cloud::Bigquery::Job": "BigqueryJob",
+      "Cloud::Dataflow::Job": "DataflowJob",
+      "Cloud::Transcoder::Job": "TranscoderJob",
+      "Cloud::Example::Widget": "Widget",
+    });
+  });
+
+  test("a type's own alias listed in the snapshot is not claimed as its primary name", () => {
+    const over = { priorityAliases: { "Cloud::Batch::Job": ["BatchJob"] } };
+    const published = { "Cloud::Batch::Job": "BatchJob", "Cloud::Batch::CronJob": "CronJob" };
+    const types = ["Cloud::Batch::Job", "Cloud::Batch::CronJob"];
+    expect(resolveAll(types, published, over)).toEqual({ "Cloud::Batch::Job": "Job", "Cloud::Batch::CronJob": "CronJob" });
+  });
+
+  test("with no published names the config is returned unchanged", () => {
+    const inputs: NamingInput[] = [{ typeName: "Cloud::Pubsub::Schema", propertyTypes: [] }];
+    expect(publishedNamingConfig(inputs, config, {})).toBe(config);
+  });
+
+  test("a second generation over the names the first one wrote names every type the same", () => {
+    const types = ["Cloud::Pubsub::Schema", "Cloud::Discovery::Schema", "Cloud::Transcoder::Job", "Cloud::Bigquery::Job"];
+    const first = resolveAll(types, { "Cloud::Pubsub::Schema": "Schema", "Cloud::Bigquery::Job": "BigqueryJob" });
+    const written = Object.fromEntries(Object.entries(first).map(([t, n]) => [t, n!]));
+    expect(resolveAll(types, written)).toEqual(first);
+  });
+
+  test("a missing or unparseable snapshot reserves nothing", () => {
+    expect(readPublishedNames(join(import.meta.dirname, "no-such-dir", "surface.snapshot.json"))).toEqual({});
+    expect(readPublishedNames(join(import.meta.dirname, "naming.test.ts"))).toEqual({});
   });
 });

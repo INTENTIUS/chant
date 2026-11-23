@@ -64,6 +64,19 @@ export interface ComponentCheckContext {
    * undefined when none was resolved, in which case COMP008 flags nothing.
    */
   signalOnlyRoots?: ReadonlyMap<string, SignalOnlyRoot>;
+  /**
+   * The pipeline stages that declare a `gate` (#5482), keyed by stage name,
+   * read from the member's `.chant/pipeline.ts` by `chant lint`
+   * (`gatedStagesOf` in ./rules/comp/comp009-stage-and-component-both-gate.ts);
+   * undefined when none was resolved, in which case COMP009 flags nothing.
+   */
+  gatedStages?: ReadonlyMap<string, GatedStage>;
+}
+
+/** A pipeline stage that declares a gate (#5482). */
+export interface GatedStage {
+  /** The pipeline file the stage is declared in. */
+  file: string;
 }
 
 /** One `terraform.roots` entry marked `signalOnly` (#4490). */
@@ -119,7 +132,7 @@ export interface ComponentCheck {
 export async function runComponentChecks(
   path: string,
   checks: ComponentCheck[],
-  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies" | "signalOnlyRoots">,
+  registryContext?: Pick<ComponentCheckContext, "knownKinds" | "rollbackPolicies" | "signalOnlyRoots" | "gatedStages">,
   sandbox?: boolean,
   buildParams?: BuildParamProvenance[],
 ): Promise<ComponentCheckDiagnostic[]> {
@@ -153,6 +166,7 @@ export async function runComponentChecks(
     knownKinds: registryContext?.knownKinds,
     rollbackPolicies: registryContext?.rollbackPolicies,
     signalOnlyRoots: registryContext?.signalOnlyRoots,
+    gatedStages: registryContext?.gatedStages,
   };
   for (const check of checks) {
     diagnostics.push(...check.check(ctx));

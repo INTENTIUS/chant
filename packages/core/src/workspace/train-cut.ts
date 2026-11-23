@@ -52,6 +52,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { npmCause } from "../lifecycle/npm-cause";
 import { readCuts } from "../lifecycle/release-store";
 import { readDeclaration } from "./declaration";
 import { bumpLabel, parseVersion, RELEASE_BUMPS, type ReleaseBump, type ReleaseChangedMember } from "./release-changed";
@@ -192,7 +193,7 @@ export function npmVersions(npm = "npm", env: NodeJS.ProcessEnv = process.env): 
     const out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
     if (r.status !== 0) {
       if (/E404|404 Not Found/.test(out)) return null;
-      throw new TrainCutError("train-registry-unreadable", `npm view ${name} versions failed, so the version floor of ${name} is unknown: ${(r.error?.message ?? out).trim().split("\n").at(-1)}`, "Check that npm can reach the registry, and run the train again.");
+      throw new TrainCutError("train-registry-unreadable", `npm view ${name} versions failed, so the version floor of ${name} is unknown: ${npmCause(r.error?.message ?? out, "no output")}`, "Check that npm can reach the registry, and run the train again.");
     }
     // npm's notices ("npm notice ...", "npm warn ...") can share stdout with the JSON.
     const text = (r.stdout ?? "")

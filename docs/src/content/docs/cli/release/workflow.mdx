@@ -20,7 +20,7 @@ chant release workflow
 
 The job checks out the tag and builds what the targets upload. Then it fetches the ci tags and `chant/lifecycle` and publishes with `--yes`. It always has the OIDC permission, so what it uploads carries provenance when the token is there. The workspace's security groups add the rest: `supply-chain` adds `--require-provenance`, and `verified-releases` adds a `chant release verify` step before the publish. With neither, nothing refuses a run that lacks them.
 
-When the publish signs with Sigstore (`release.signing`, or `supply-chain` with an `oci` or `forge` target), the jobs download cosign pinned by SHA-256 for the runner's platform and set `CHANT_COSIGN` to it, unless `release.workflow` sets `CHANT_COSIGN` itself. With `release.signing.kms`, the step that runs `chant release publish` (in a train, `chant workspace train publish`) gets the variables the KMS's credentials are in, and with `release.signing.key` the key's variable and its password variable, each from the repository's secret of the same name, and no other step or job gets them; a variable `release.workflow.env` sets is left to it. That holds for credentials kept as repository secrets. When the job gets its cloud credentials from the forge's OIDC token through a step of the project's own, for example one that assumes an AWS role and exports session credentials to the job's environment, those credentials are in the environment of every step after it, and chant does not scope them. To keep the exposure small, put that step as late as the job allows, give the role only the sign and get-public-key actions on the one key, and keep the session short. Under `supply-chain` a KMS key or a key signs for any target, so the jobs install cosign then too. On GitLab the file names none of them: a project's CI/CD variables reach every job, so mark them protected and scope them to the environment the release runs in. On Forgejo, keyless signing needs a private Fulcio (`release.signing.fulcio`), since public Fulcio issues no certificate for a Forgejo token: with one, the publish job and a dispatched cut job that runs the doctor get `enable-openid-connect: true`, and without one the command refuses to write the file and names `release.signing.kms` and `key`. The same holds for a train's file.
+When the publish signs with Sigstore (`release.signing`, or `supply-chain` with an `oci` or `forge` target), the jobs download cosign pinned by SHA-256 for the runner's architecture (linux amd64 or arm64, chosen by `uname -m` when the job runs, each build checked against its own SHA-256; another architecture fails the step) and set `CHANT_COSIGN` to it, unless `release.workflow` sets `CHANT_COSIGN` itself. With `release.signing.kms`, the step that runs `chant release publish` (in a train, `chant workspace train publish`) gets the variables the KMS's credentials are in, and with `release.signing.key` the key's variable and its password variable, each from the repository's secret of the same name, and no other step or job gets them; a variable `release.workflow.env` sets is left to it. That holds for credentials kept as repository secrets. When the job gets its cloud credentials from the forge's OIDC token through a step of the project's own, for example one that assumes an AWS role and exports session credentials to the job's environment, those credentials are in the environment of every step after it, and chant does not scope them. To keep the exposure small, put that step as late as the job allows, give the role only the sign and get-public-key actions on the one key, and keep the session short. Under `supply-chain` a KMS key or a key signs for any target, so the jobs install cosign then too. On GitLab the file names none of them: a project's CI/CD variables reach every job, so mark them protected and scope them to the environment the release runs in. On Forgejo, keyless signing needs a private Fulcio (`release.signing.fulcio`), since public Fulcio issues no certificate for a Forgejo token: with one, the publish job and a dispatched cut job that runs the doctor get `enable-openid-connect: true`, and without one the command refuses to write the file and names `release.signing.kms` and `key`. The same holds for a train's file.
 
 With `release.scan: { schedule: "<cron>" }` the command also writes `chant-release-scan.yml` beside the publish workflow, a scheduled job that runs [`chant release scan --deployed`](/chant/cli/release/scan/) (`.gitlab/chant-release-scan.yml` on GitLab, for a pipeline schedule with the same cron expression).
 
@@ -88,6 +88,7 @@ release: {
 | `trigger` | `tag` (default) publishes on the release's tag, as above. `dispatch` starts the release by hand with its label |
 | `gate` | For `dispatch`: `last-green` (default) cuts the newest green commit at or below the dispatched one; `head` cuts the dispatched commit and refuses it when it is not green |
 | `install`, `build`, `chant` | As the flags. `install: false` installs nothing and `build: false` builds nothing. The cut runs `build` as its `--build`, and so does the publish job |
+| `runner` | The `runs-on` label of the gate, cut, publish and post-release jobs, or a list of labels that must all match. Default `ubuntu-latest`. Name a runner that has what the jobs need, such as a docker daemon for `release.images`. A [train](#a-release-train)'s jobs take it too. GitHub and Forgejo; a GitLab job takes its runner from `.gitlab-ci.yml`, and `runner` is refused there. The `builds` name their own |
 | `toolchains` | The toolchains the jobs set up, in place of those the files name: `"node"`, `"go"`, `"python"`, `"rust"`, `"java"`, or `{ name, version }` for a version, such as `[{ name: "go", version: "1.24" }]`. Jobs that run chant get Node as well. `false` sets up nothing and leaves the runner's own. GitHub and Forgejo |
 | `builds` | Per-platform build jobs for `trigger: "dispatch"`, see [Builds on other runners](#builds-on-other-runners) |
 | `after` | Shell lines run once the release is published, with `CHANT_RELEASE_LABEL` set |
@@ -121,6 +122,38 @@ With `release.images` (see [Images the package pins](/chant/cli/release/cut/#ima
 The workflow grants `contents: read` and each job names its own scopes, so the file passes `chant audit --fail-on merge-worthy`. The gate and the after-release job have `contents: read`. The cut has `contents: write` to push the tag, plus `checks: read`, `statuses: read` and `actions: read` under `green: "forge-checks"`, `packages: read` when `permissions` asks for `packages: read` or a `pull` entry logs in to `ghcr.io` with the run's token, and `id-token: write` when it signs and runs the doctor. The cut never gets `packages: write`. The publish job has `contents: write` (the forge release, the floating tag and the ledger) and `id-token: write`, plus `packages: write` for an `oci` target on `ghcr.io`. Any other scope from `permissions` goes to the cut and the publish job. A tag-triggered file has the publish job alone, with the publish job's scopes. A cut job that hands images or files to the publish job uploads a workflow artifact, so its checkout sets `persist-credentials: false` and keeps no token in `.git/config` for the upload to pick up. Its git reads the job's token from the environment instead: `CHANT_RELEASE_GIT_TOKEN` and a credential helper for the forge's own host in `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`, which the fetches, the ledger push and the tag push use.
 
 With `release.tag` (see [The release's tag](/chant/cli/release/cut/#the-releases-tag)), the tag trigger runs on the tags the template makes, with `{member}` and `{path}` filled in: `v{version}` runs on `v*`. A `floating` tag is left out with a negated pattern (`!v[0-9]+`), so moving it starts nothing; on GitLab the rule is a regular expression with the same effect. The publish job fetches `chant/lifecycle` right after the install, reads the label with `chant release tag "$GITHUB_REF_NAME" --json`, and exits 1 for a tag that names no release of the member. Every later step uses `CHANT_RELEASE_LABEL`, and the after-release job gets it from the publish job. Under `doctor: true` the publish job runs `chant release doctor` once the label is read. A floating tag is pushed by the publish job with git: GitHub and Forgejo jobs can, with `contents: write`; a GitLab job token can't, so `chant release workflow` says so, and a dispatched release on GitLab pushes it with `CHANT_RELEASE_TOKEN`. A dispatched release pushes whatever tag the cut made. A member with no `release.tag` renders the `release/**` file it did.
+
+### Building images in a GitLab job
+
+The GitLab file names no `image` and no `services`: each job runs in the image the project's `.gitlab-ci.yml` gives it. A job that builds `release.images` runs `docker buildx` (the builder is created with `docker buildx create --name chant-release --driver docker-container`), so on GitLab's shared runners the project's `default:` gives the jobs an image that has the docker CLI and Node, and a docker-in-docker service for the daemon:
+
+```yaml
+include:
+  - local: .gitlab/chant-release.yml
+
+default:
+  image: docker:cli
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache nodejs npm git
+```
+
+With GitLab's TLS variables for docker-in-docker (`DOCKER_HOST=tcp://docker:2376`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH`), `docker buildx create` stops with `could not create a builder instance with TLS data loaded from environment`. Create a docker context for the service from the certificates, use it, and unset the three variables, in the `before_script` that runs before the release jobs' own script:
+
+```yaml
+default:
+  before_script:
+    - docker context create dind --docker "host=$DOCKER_HOST,ca=$DOCKER_CERT_PATH/ca.pem,cert=$DOCKER_CERT_PATH/cert.pem,key=$DOCKER_CERT_PATH/key.pem"
+    - docker context use dind
+    - unset DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH
+```
+
+The release file needs no change. `chant release doctor` does not check that docker and buildx can create the builder, so a runner without them first fails at the build, with `no release was cut: the build of image "<name>" exited 1`.
+
+### Starting a release on GitLab
+
+A dispatched release starts from a pipeline that sets `CHANT_RELEASE_LABEL` (`CHANT_RELEASE_TRAIN` or `CHANT_RELEASE_LEVELS` for a train), from "Run pipeline", the API or a trigger. GitLab refuses to set a pipeline variable when the project's minimum role for it is above the user's, with `Insufficient permissions to set pipeline variables`, and a project created on gitlab.com has the setting at `no_one_allowed`. In Settings, CI/CD, Variables, set "Minimum role to use pipeline variables" to the lowest role that may start a release, or set `ci_pipeline_variables_minimum_override_role` through the project API to `developer`, `maintainer` or `owner`. The release file does not set it.
 
 ## A release train
 

@@ -10,7 +10,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { cutRelease } from "./release-cut";
-import { verificationCode, verifyRelease, type ReleaseVerification } from "./release-verify";
+import { sigstoreCarries, verificationCode, verifyRelease, type ReleaseVerification } from "./release-verify";
 import type { ReleaseArtifact } from "./release-store";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { hasSshKeygen, TestRepo, type Key } from "../workspace/trust/test-repo";
@@ -78,6 +78,22 @@ describe("chant release verify", () => {
     expect(v.cuts).toEqual([expect.objectContaining({ actor: "alice", signatureCheck: { status: "unsigned", key: null, reason: "the cut carries no signature", gate: "unsigned" } })]);
     expect(v.gate.status).toBe("unsigned");
     expect(verificationCode(v)).toBe("release-unsigned");
+    expect(v.releaseGate).toBe(false);
+  });
+
+  test("Sigstore carries an unsigned release only when every bundle verified and no release gate is named", async () => {
+    const { r } = setup();
+    await cut(r, "v1", "alice");
+    const v = await checked(r, "v1");
+    const check = { name: "a.sigstore.json", kind: "forge", target: "gh", attachment: "signature" as const, signs: [], identity: null, status: "verified" as const, reason: "ok" };
+    expect(sigstoreCarries(v, { status: "verified", checks: [check] })).toBe(true);
+    expect(sigstoreCarries(v, { status: "verified", checks: [] })).toBe(false);
+    expect(sigstoreCarries(v, { status: "failed", checks: [{ ...check, status: "failed" }] })).toBe(false);
+    expect(sigstoreCarries(v, { status: "none", checks: [] })).toBe(false);
+    expect(sigstoreCarries(v, null)).toBe(false);
+    expect(sigstoreCarries({ ...v, releaseGate: true }, { status: "verified", checks: [check] })).toBe(false);
+    expect(sigstoreCarries({ ...v, digestMatches: false }, { status: "verified", checks: [check] })).toBe(false);
+    expect(sigstoreCarries({ ...v, status: "unverified" }, { status: "verified", checks: [check] })).toBe(false);
   });
 
   test.skipIf(!hasSshKeygen)("fails for a release signed by a key the signers file does not list, also once a later commit lists it", async () => {

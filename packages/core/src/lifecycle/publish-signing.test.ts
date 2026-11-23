@@ -50,7 +50,7 @@ import { makeRelease, type ReleaseArtifact } from "./release-store";
 import { verifySigstore } from "./release-verify";
 import { cutRelease } from "./release-cut";
 import { renderReleaseWorkflow } from "../workspace/release-workflow";
-import { TOOL_PINS, toolInstallLine } from "../tool-pins";
+import { TOOL_PINS, toolInstallLine, toolInstallLineForRunner } from "../tool-pins";
 import { TestRepo } from "../workspace/trust/test-repo";
 import type { CompiledTarget, TargetCompiler } from "../components/release-compile";
 import { startFakeForge, startFakeRegistry, writeLockfile, writeOciLayout } from "./__fixtures__/publish-fakes";
@@ -294,17 +294,20 @@ describe("the OCI target", () => {
       // No tag points at the image yet, apart from the referrers tag.
       expect([...reg.manifests.keys()].filter((k) => !k.startsWith("sha256:"))).toEqual([referrersTagOf(digest)]);
       const index = JSON.parse(reg.manifests.get(referrersTagOf(digest))!.bytes.toString("utf-8")) as { manifests: Array<{ digest: string; artifactType: string; annotations: Record<string, string> }> };
-      expect(index.manifests.map((m) => [m.artifactType, m.annotations[BUNDLE_PREDICATE_ANNOTATION]])).toEqual([
+      // #5546: the SBOM and provenance referrers are listed there too, since this registry has no referrers API.
+      const referrerItems = staged.items.filter((i) => i.attachment === "sbom" || i.attachment === "provenance" || i.attachment === "scan");
+      expect(referrerItems.every((i) => index.manifests.some((m) => m.digest === i.digest))).toBe(true);
+      expect(index.manifests.filter((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE).map((m) => [m.artifactType, m.annotations[BUNDLE_PREDICATE_ANNOTATION]])).toEqual([
         [SIGSTORE_BUNDLE_MEDIA_TYPE, COSIGN_SIGN_PREDICATE],
         [SIGSTORE_BUNDLE_MEDIA_TYPE, SLSA_PROVENANCE_PREDICATE],
         [SIGSTORE_BUNDLE_MEDIA_TYPE, SPDX_PREDICATE],
       ]);
-      const sig = JSON.parse(reg.manifests.get(index.manifests[0]!.digest)!.bytes.toString("utf-8")) as { subject: { digest: string }; layers: Array<{ mediaType: string; digest: string }> };
+      const sig = JSON.parse(reg.manifests.get(index.manifests.find((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE)!.digest)!.bytes.toString("utf-8")) as { subject: { digest: string }; layers: Array<{ mediaType: string; digest: string }> };
       expect(sig.subject.digest).toBe(digest);
       expect(sig.layers[0]!.mediaType).toBe(SIGSTORE_BUNDLE_MEDIA_TYPE);
       const bundle = JSON.parse(reg.blobs.get(sig.layers[0]!.digest)!.toString("utf-8")) as { statement: InTotoStatement };
       expect(bundle.statement).toMatchObject({ predicateType: COSIGN_SIGN_PREDICATE, subject: [{ digest: { sha256: digest.slice(7) } }], predicate: {} });
-      expect(staged.items.filter((i) => i.attachment === "signature" || i.attachment === "attestation").map((i) => i.digest)).toEqual(index.manifests.map((m) => m.digest));
+      expect(staged.items.filter((i) => i.attachment === "signature" || i.attachment === "attestation").map((i) => i.digest)).toEqual(index.manifests.filter((m) => m.artifactType === SIGSTORE_BUNDLE_MEDIA_TYPE).map((m) => m.digest));
 
       // A stage run again finds both and signs nothing.
       const again = await target!.stage(ctx);
@@ -386,7 +389,7 @@ describe("the OCI target", () => {
       const ctx = context(dir, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-sign-2" } });
       const staged = await target!.stage(ctx);
       expect(staged.items.map((i) => i.attachment)).toEqual([undefined, "sbom", "provenance"]);
-      expect([...reg.manifests.keys()].every((k) => k.startsWith("sha256:"))).toBe(true);
+      expect([...reg.manifests.keys()].every((k) => /^sha256[:-]/.test(k))).toBe(true);
     } finally {
       await reg.close();
     }
@@ -555,5 +558,26 @@ describe("the release workflow", () => {
     );
     expect(toolInstallLine(TOOL_PINS.cosign, "linux/arm64", "/tmp")).toMatch(/cosign-linux-arm64 && echo "[0-9a-f]{64}  \/tmp\/cosign" \| sha256sum -c - && chmod \+x "\/tmp\/cosign"$/);
     expect(() => toolInstallLine(TOOL_PINS.goreleaser, "darwin/arm64", "/tmp")).toThrow(/pinned for linux\/amd64, linux\/arm64/);
+  });
+
+  test("the runner's own line picks the build by uname -m, each checked against its own SHA-256, and fails on another architecture", () => {
+    for (const pin of [TOOL_PINS.cosign, TOOL_PINS.grype, TOOL_PINS.syft, TOOL_PINS.goreleaser, TOOL_PINS.nfpm]) {
+      const line = toolInstallLineForRunner(pin, "/tmp/t");
+      expect(line).toContain(`x86_64|amd64) ${toolInstallLine(pin, "linux/amd64", "/tmp/t")};;`);
+      expect(line).toContain(`aarch64|arm64) ${toolInstallLine(pin, "linux/arm64", "/tmp/t")};;`);
+      expect(line).toContain(pin.platforms["linux/arm64"]!.sha256);
+      expect(line).toMatch(/\*\) echo "no pinned \w+ v[\d.]+ build for \$\(uname -m\)" >&2; exit 1;; esac$/);
+      expect(pin.platforms["linux/arm64"]!.sha256).not.toBe(pin.platforms["linux/amd64"]!.sha256);
+    }
+  });
+
+  test("the cosign, grype and syft steps of the release workflow carry both builds, on every forge", () => {
+    for (const forge of ["github", "forgejo", "gitlab"] as const) {
+      const text = renderReleaseWorkflow({ forge, groups: new Set(["supply-chain"]), signing: true, scan: true, pipeline: { trigger: "dispatch" } });
+      for (const pin of [TOOL_PINS.cosign, TOOL_PINS.grype, TOOL_PINS.syft]) {
+        expect(text).toContain(pin.platforms["linux/amd64"]!.sha256);
+        expect(text).toContain(pin.platforms["linux/arm64"]!.sha256);
+      }
+    }
   });
 });

@@ -7,7 +7,7 @@ chant-release-scan:
     GIT_DEPTH: "0"
   script:
     - "npm ci"
-    - "mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype && export CHANT_GRYPE=/tmp/grype/grype"
+    - "case \"$(uname -m)\" in x86_64|amd64) mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_amd64.tar.gz && echo \"bc3ea3f9e6fd56ac781c08c6c5e614271b79f438200757f6932085c19b0a4657  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype;; aarch64|arm64) mkdir -p \"/tmp/grype\" && curl -fsSL -o \"/tmp/grype/grype.tar.gz\" https://github.com/anchore/grype/releases/download/v0.121.1/grype_0.121.1_linux_arm64.tar.gz && echo \"33670612aad351c48cf3c37f4a85d8b043d1b64b21e6034e675bb00b956d78c1  /tmp/grype/grype.tar.gz\" | sha256sum -c - && tar -xzf \"/tmp/grype/grype.tar.gz\" -C \"/tmp/grype\" grype;; *) echo \"no pinned grype v0.121.1 build for $(uname -m)\" >&2; exit 1;; esac && export CHANT_GRYPE=/tmp/grype/grype"
     - "chant_auth=\"$(printf 'oauth2:%s' \"$CHANT_RELEASE_TOKEN\" | base64 | tr -d '\\n')\""
     - "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic $chant_auth\""
     - "unset chant_auth"

@@ -22,7 +22,7 @@ import {
 import { loadMultipleCRDs } from "../crd/loader";
 import { CRD_SOURCES } from "../crd/crd-sources";
 import type { CRDSource } from "../crd/types";
-import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
+import { NamingStrategy, publishedNames, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateOperationsJSON } from "./generate-operations";
 import { generateListMapKeysJSON } from "./generate-list-map-keys";
@@ -101,6 +101,10 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
   let specPairs: Array<[string, string[]]> = [];
   // chant #3093 — the declaration-only interfaces, which only the `.d.ts` emits.
   let definitionTypes: ParsedDefinitionType[] = [];
+  // #5551: a published name stays with the type that published it, so a new
+  // kind or CRD sharing its short name is the one prefixed. A caller-supplied
+  // schema set names its fixtures by the rule alone.
+  const reserved = opts.schemaSource ? {} : publishedNames();
 
   const config: GeneratePipelineConfig<K8sParseResult> = {
     fetchSchemas: async (fetchOpts) => {
@@ -120,7 +124,7 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
       return results[0];
     },
 
-    createNaming: (results) => new NamingStrategy(results),
+    createNaming: (results) => new NamingStrategy(results, reserved),
 
     augmentSchemas: async (schemas, _opts, log) => {
       // Load third-party CRDs and return as extraResults so they are

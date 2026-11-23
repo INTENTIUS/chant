@@ -84,6 +84,14 @@ describe("security groups (WSP161 to WSP165)", () => {
     expect(await found(repo({ "chant.workspace.json": declaration(), "app/chant.config.ts": config, "app/docker/Dockerfile": "FROM node:22\n" }))).toEqual([]);
   });
 
+  test("supply-chain reads a root project's release images when no member holds the root", async () => {
+    const config = 'export default { rootOnly: true, release: { images: [{ name: "app", dockerfile: "Dockerfile" }] } };';
+    const unpinned = repo({ "chant.workspace.json": declaration({ security: ["supply-chain"] }, []), "chant.config.ts": config, Dockerfile: "FROM alpine:3.22\n" });
+    expect(await found(unpinned)).toEqual([["WSP162", "security-image-base-unpinned", null]]);
+    const pinned = repo({ "chant.workspace.json": declaration({ security: ["supply-chain"] }, []), "chant.config.ts": config, Dockerfile: `FROM alpine:3.22@sha256:${"c".repeat(64)}\n` });
+    expect(await found(pinned)).toEqual([]);
+  });
+
   test("a Cargo.lock above the member is an SBOM source", async () => {
     const root = repo({
       "chant.workspace.json": declaration({ security: ["supply-chain"] }),

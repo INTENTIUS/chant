@@ -1,9 +1,9 @@
 /** goreleaser for the `release.artifacts` entries it builds (#5151). */
 import { ACTION_PINS, usesRef } from "../../action-pins";
-import { TOOL_PINS, toolInstallLine } from "../../tool-pins";
+import { TOOL_PINS, toolInstallLineForRunner } from "../../tool-pins";
 import { buildJobToolchains } from "../release-toolchains";
 import type { ReleasePipelineConfig, ReleaseWorkflowForge } from "../release-workflow";
-import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
+import type { ReleaseWorkflowFeature } from "./types";
 
 /**
  * What a job that builds goreleaser entries runs first (#5151): Go from the
@@ -17,13 +17,13 @@ import { RELEASE_RUNNER_PLATFORM, type ReleaseWorkflowFeature } from "./types";
 export function goreleaserSetup(forge: ReleaseWorkflowForge, root: string | null, p: ReleasePipelineConfig, goSetUp = false): { github: string[]; gitlab: string[] } {
   const install = p.env?.CHANT_GORELEASER === undefined;
   if (forge === "gitlab") {
-    return { github: [], gitlab: install ? [`${toolInstallLine(TOOL_PINS.goreleaser, RELEASE_RUNNER_PLATFORM, "/tmp/goreleaser")} && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser`] : [] };
+    return { github: [], gitlab: install ? [`${toolInstallLineForRunner(TOOL_PINS.goreleaser, "/tmp/goreleaser")} && export CHANT_GORELEASER=/tmp/goreleaser/goreleaser`] : [] };
   }
   const go =
     goSetUp || (p.setup ?? []).some((s) => "uses" in s && /^actions\/setup-go@/.test(s.uses))
       ? []
       : [`      - uses: ${usesRef(ACTION_PINS.setupGo7)}`, "        with:", `          go-version-file: ${root ? `${root}/` : ""}go.mod`, "          cache: false"];
-  const line = `${toolInstallLine(TOOL_PINS.goreleaser, RELEASE_RUNNER_PLATFORM, "$RUNNER_TEMP/goreleaser")} && echo "CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser" >> "$GITHUB_ENV"`;
+  const line = `${toolInstallLineForRunner(TOOL_PINS.goreleaser, "$RUNNER_TEMP/goreleaser")} && echo "CHANT_GORELEASER=$RUNNER_TEMP/goreleaser/goreleaser" >> "$GITHUB_ENV"`;
   return { github: [...go, ...(install ? [`      - name: goreleaser ${TOOL_PINS.goreleaser.version}`, `        run: ${JSON.stringify(line)}`] : [])], gitlab: [] };
 }
 
