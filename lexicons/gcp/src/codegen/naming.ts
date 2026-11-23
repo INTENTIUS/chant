@@ -2,10 +2,25 @@
  * GCP-specific naming configuration for the core NamingStrategy.
  *
  * Maps Config Connector resource types to concise TypeScript class names.
+ *
+ * A name the lexicon has published stays with the type that published it
+ * (#5549). The committed surface snapshot records which resource type holds
+ * each name, and generation reserves those names before short names are
+ * contested, so when upstream adds a CRD whose short name an existing type
+ * already has, only the newcomer is service-prefixed. Property type names are
+ * `<ResourceName>_<Def>`, so they follow their resource and keep their names
+ * too. A type with no published name (every type on a first generation, or a
+ * type new in this upgrade) is named by the rule below over the whole input:
+ * priority name, else short name, else `<Service><Name>` when the short name
+ * is shared. No list here has to grow when upstream adds a collision.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   NamingStrategy as CoreNamingStrategy,
+  reservedNamesFromSnapshot,
   type NamingConfig,
   type NamingInput,
 } from "@intentius/chant/codegen/naming";
@@ -17,6 +32,11 @@ import { gcpShortName, gcpServiceName } from "../spec/parse";
 
 /**
  * Fixed TypeScript class names for key GCP resources.
+ *
+ * These outrank published names, so an entry here is a deliberate choice of
+ * name. They also name these types where no snapshot exists. Keeping names
+ * stable across upgrades is the snapshot's job; this table does not need an
+ * entry for each type upstream might collide with.
  */
 const priorityNames: Record<string, string> = {
   "GCP::Compute::Instance": "ComputeInstance",
@@ -167,11 +187,69 @@ const gcpNamingConfig: NamingConfig = {
  * GCP-specific NamingStrategy — wraps the core algorithm with GCP data tables.
  */
 export class NamingStrategy extends CoreNamingStrategy {
-  constructor(results: GcpParseResult[]) {
+  /**
+   * @param reservedNames resource type -> the name the lexicon already
+   *   published for it, normally {@link publishedNames}. Passed in rather than
+   *   read here so a test or a fixture-driven run names its inputs by the
+   *   rule alone unless it asks for the published surface.
+   */
+  constructor(results: GcpParseResult[], reservedNames: Record<string, string> = {}) {
     const inputs: NamingInput[] = results.map((r) => ({
       typeName: r.resource.typeName,
       propertyTypes: r.propertyTypes,
     }));
-    super(inputs, gcpNamingConfig);
+    super(inputs, {
+      ...gcpNamingConfig,
+      priorityNames: { ...newcomerNames(inputs, reservedNames), ...priorityNames },
+      reservedNames,
+    });
+  }
+}
+
+/**
+ * The names of the types with no published name, as the rule alone would
+ * name them over the whole input.
+ *
+ * Reserving every published name takes those types out of the short-name
+ * contest, so without this a newcomer whose short name only published types
+ * share would look unshared and take the bare name: a new `Job` type would be
+ * `Job` beside `BQJob` and `DataflowJob`. Naming newcomers by the rule over
+ * every type keeps a shared short name prefixed, as it was before names were
+ * reserved. A rule name that a published type in the input holds is left to
+ * the core contest instead of being pinned over it.
+ */
+function newcomerNames(inputs: NamingInput[], reservedNames: Record<string, string>): Record<string, string> {
+  const present = inputs.filter((i) => reservedNames[i.typeName] !== undefined);
+  if (present.length === 0) return {};
+  const held = new Set(present.map((i) => reservedNames[i.typeName]));
+  const rule = new CoreNamingStrategy(inputs, gcpNamingConfig);
+  const names: Record<string, string> = {};
+  for (const { typeName } of inputs) {
+    if (priorityNames[typeName] !== undefined || reservedNames[typeName] !== undefined) continue;
+    const name = rule.resolve(typeName);
+    if (name !== undefined && !held.has(name)) names[typeName] = name;
+  }
+  return names;
+}
+
+/** The committed surface snapshot beside this package's `src/`. */
+export const SURFACE_SNAPSHOT_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "surface.snapshot.json");
+
+/**
+ * The names the gcp lexicon has published, read from its committed surface
+ * snapshot: resource type -> name. Empty when there is no snapshot or it
+ * cannot be parsed, so generation falls back to the rule and `surface-diff`
+ * shows any rename that follows.
+ *
+ * Generation reads the snapshot before `surface-diff --update-snapshot`
+ * rewrites it, so an upgrade keeps the names of the release before it, and a
+ * second run over the updated snapshot names every type the same way.
+ */
+export function publishedNames(snapshotPath: string = SURFACE_SNAPSHOT_PATH): Record<string, string> {
+  try {
+    if (!existsSync(snapshotPath)) return {};
+    return reservedNamesFromSnapshot(JSON.parse(readFileSync(snapshotPath, "utf-8")));
+  } catch {
+    return {};
   }
 }
