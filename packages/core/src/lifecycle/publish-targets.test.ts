@@ -232,7 +232,7 @@ describe("npm", () => {
     const [target] = await createPublishTargets([decl({ type: "npm", packages: ["packages/core", "packages/cli", "packages/kit"] })], { npm });
     const err = await refused(target!.stage(context(dir, { env: { PATH: process.env.PATH, FAKE_NPM_FAIL: "packages/cli" } })));
     expect(err.code).toBe("publish-npm-failed");
-    expect(err.message).toMatch(/npm publish of @acme\/cli@1\.4\.0 exited 1, after @acme\/core@1\.4\.0 were staged under next: npm error 403 Forbidden/);
+    expect(err.message).toMatch(/npm publish of @acme\/cli@1\.4\.0 exited 1, after @acme\/core@1\.4\.0 were staged under next: 403 Forbidden/);
     expect(latest(log)["@acme/core"]).toBe("1.3.0");
 
     const before = calls(log).length;
@@ -288,18 +288,20 @@ describe("oci", () => {
       expect(referrers).toEqual(planned.slice(1).map((i) => i.digest));
       // Two image blobs, then the empty config and each attached file.
       expect(reg.uploads).toBe(5);
-      // Staged: the manifest and its referrers are there by digest, and no tag names them yet.
-      expect([...reg.manifests.keys()]).toEqual([digest, ...referrers]);
+      // Staged: the manifest and its referrers are there by digest, and no release tag names them yet.
+      // The one tag is the referrers tag (#5546), which lists them on a registry with no referrers API.
+      expect([...reg.manifests.keys()].filter((k) => !k.startsWith("sha256-"))).toEqual([digest, ...referrers]);
+      expect([...reg.manifests.keys()].filter((k) => k.startsWith("sha256-"))).toEqual([digest.replace(":", "-")]);
       expect(reg.requests.some((r) => r.authorization === "Bearer registry-token-abcdef")).toBe(true);
 
       const again = await target!.stage(ctx);
       expect(again.items.map((i) => i.present)).toEqual([true, true, true]);
       expect(reg.uploads).toBe(5);
-      expect([...reg.manifests.keys()]).toEqual([digest, ...referrers]);
+      expect([...reg.manifests.keys()].filter((k) => !k.startsWith("sha256-"))).toEqual([digest, ...referrers]);
 
       const done = await target!.reveal(ctx, staged);
       expect(done.items[0]!.destination).toBe(`${repo}@${digest}`);
-      expect([...reg.manifests.keys()].sort()).toEqual([digest, ...referrers, "latest", "v1.4.0"].sort());
+      expect([...reg.manifests.keys()].filter((k) => !k.startsWith("sha256-")).sort()).toEqual([digest, ...referrers, "latest", "v1.4.0"].sort());
       expect(reg.manifests.get("v1.4.0")!.type).toBe("application/vnd.oci.image.manifest.v1+json");
       const out = ctx.lines.join("\n");
       expect(out).toContain("with credentials from OCI_PASSWORD");
@@ -669,7 +671,7 @@ describe("SBOMs and provenance (#4049)", () => {
       const [target] = await createPublishTargets([d], deps);
       const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
       expect(err.code).toBe("publish-npm-registry-failed");
-      expect(err.message).toBe("npm view @acme/cli@1.0.0 exited 1 while the reveal waited for the registry to serve it, so nothing was audited: npm error 500 Internal Server Error - GET https://registry.example/@acme/cli");
+      expect(err.message).toBe("npm view @acme/cli@1.0.0 exited 1 while the reveal waited for the registry to serve it, so nothing was audited: code E500: 500 Internal Server Error - GET https://registry.example/@acme/cli");
       expect(sleeps).toEqual([]);
       expect(installs(log)).toBe(0);
     });
