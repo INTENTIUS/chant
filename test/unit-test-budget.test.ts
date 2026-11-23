@@ -41,7 +41,7 @@ describe("the per-file budget for the named slow files (chant #4472)", () => {
     expect(SLOW_UNIT_TEST_FILES.length).toBeGreaterThan(0);
     expect(new Set(SLOW_UNIT_TEST_FILES).size).toBe(SLOW_UNIT_TEST_FILES.length);
     for (const file of SLOW_UNIT_TEST_FILES) {
-      expect(file).toMatch(/^packages\/core\/src\/(workspace|lifecycle|op)\/[a-z-]+\.test\.ts$/);
+      expect(file).toMatch(/^packages\/core\/src\/(workspace|lifecycle|op|graph-schema|cli\/handlers)\/[a-z-]+\.test\.ts$/);
       expect(existsSync(join(repoRoot, file)), file).toBe(true);
     }
   });

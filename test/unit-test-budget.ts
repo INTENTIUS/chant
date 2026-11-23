@@ -128,6 +128,12 @@ export const SLOW_UNIT_TEST_FILES: readonly string[] = [
   ].map((name) => `packages/core/src/lifecycle/${name}.test.ts`),
   // The same, through a whole wave job on a bare remote (op-waves-ledger-lock), 1.1 to 6.2s per test alone on a loaded Mac.
   ...["operator", "work-lease-run", "op-waves-ledger-lock"].map((name) => `packages/core/src/op/${name}.test.ts`),
+  // #5557: generates the whole graph schema from the TypeScript types in one test, 5.4s on a CI runner; that one
+  // failure on main revoked a green commit, which no release can then be cut from.
+  "packages/core/src/graph-schema/graph-schema.test.ts",
+  // #5521: each test runs a promote through a stage's op waves in a temp repo, 5.0 to 5.4s on a CI shard and on a
+  // loaded Mac.
+  "packages/core/src/cli/handlers/promote-stage-waves.test.ts",
 ];
 
 const slowFiles = new Set(SLOW_UNIT_TEST_FILES);
