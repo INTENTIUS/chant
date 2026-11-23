@@ -59,6 +59,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { npmCause } from "./npm-cause";
 import { memberSbom, packageSbom } from "./publish-attachments";
 import type { NpmPackageRoot } from "../components/verbs/lockfile-sbom-generator";
 import { sbomDocumentOf } from "./publish-scan";
@@ -342,7 +343,7 @@ export function npmPublishedLookup(bin = "npm", env: NodeJS.ProcessEnv = process
     if (/\bE404\b|\b404 Not Found\b/.test(out)) return false;
     throw new PublishTargetError(
       "publish-npm-registry-unreadable",
-      `npm view ${name} exited ${r.status ?? "without a status"}, so whether ${name} has ever been published is unknown: ${(r.error?.message ?? out).trim().split("\n").filter(Boolean).at(-1) ?? "no output"}`,
+      `npm view ${name} exited ${r.status ?? "without a status"}, so whether ${name} has ever been published is unknown: ${npmCause(r.error?.message ?? out, "no output")}`,
       "Check that npm can reach the registry, and cut again.",
     );
   };
@@ -472,7 +473,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     const r = await npm(ctx, ["view", `${pkg.name}@${pkg.version}`, "version", ...(decl.registry ? ["--registry", decl.registry] : [])]);
     if (r.code === 0) return r.output.some((l) => l.trim() === pkg.version || l.trim() === JSON.stringify(pkg.version));
     if (r.output.some((l) => NPM_VIEW_NOT_YET.test(l))) return false;
-    const said = r.output.filter((l) => /^npm (error|ERR!)/.test(l)).at(-1) ?? r.output.at(-1) ?? "npm printed nothing";
+    const said = npmCause(r.output);
     throw new PublishTargetError(
       "publish-npm-registry-failed",
       `npm view ${pkg.name}@${pkg.version} exited ${r.code} while the reveal waited for the registry to serve it, so nothing was audited: ${said}`,
@@ -537,7 +538,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
             if (now() - start >= NPM_ATTESTATION_WAIT_MS) {
               throw new PublishTargetError(
                 "publish-npm-audit-failed",
-                `the registry did not serve the provenance attestation for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")} within ${Math.round(NPM_ATTESTATION_WAIT_MS / 1000)}s of the publish, so the attestation never appeared and was not verified, after latest moved: ${result.output.at(-1) ?? "npm printed nothing"}`,
+                `the registry did not serve the provenance attestation for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")} within ${Math.round(NPM_ATTESTATION_WAIT_MS / 1000)}s of the publish, so the attestation never appeared and was not verified, after latest moved: ${npmCause(result.output)}`,
                 "Each package was published. Once the registry serves the attestation, run the publish again: it publishes nothing twice and audits again.",
               );
             }
@@ -550,7 +551,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
         if (result.code !== 0) {
           throw new PublishTargetError(
             "publish-npm-audit-failed",
-            `npm ${args.slice(0, 2).join(" ")} exited ${result.code} for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}, after latest moved: ${result.output.at(-1) ?? "npm printed nothing"}`,
+            `npm ${args.slice(0, 2).join(" ")} exited ${result.code} for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}, after latest moved: ${npmCause(result.output)}`,
             "Each package was published; check its signature and provenance on the registry. Running the publish again moves no tag that moved and audits again.",
           );
         }
@@ -564,7 +565,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
     const r = await npm(ctx, ["view", name, `dist-tags.${tag}`, ...(decl.registry ? ["--registry", decl.registry] : [])]);
     if (r.code === 0) return r.output.some((l) => l.trim() === version || l.trim() === JSON.stringify(version));
     if (r.output.some((l) => NPM_VIEW_NOT_YET.test(l))) return false;
-    const said = r.output.filter((l) => /^npm (error|ERR!)/.test(l)).at(-1) ?? r.output.at(-1) ?? "npm printed nothing";
+    const said = npmCause(r.output);
     throw new PublishTargetError(
       "publish-npm-registry-failed",
       `npm view ${name} dist-tags.${tag} exited ${r.code} while the train waited for ${name}@${version} to be ${tag}: ${said}`,
@@ -640,7 +641,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
       const pkgs = ctx.revealed.filter((i) => i.attachment === undefined && !i.refused).map((i) => splitSpec(i.name));
       const actions: StatusAction[] = [];
       const fail = (what: string, r: { code: number; output: string[] }, fix?: string): never => {
-        throw new PublishTargetError("release-status-npm-failed", `${what} exited ${r.code}: ${r.output.filter((l) => /^npm (error|ERR!)/.test(l)).at(-1) ?? r.output.at(-1) ?? "npm printed nothing"}`, fix);
+        throw new PublishTargetError("release-status-npm-failed", `${what} exited ${r.code}: ${npmCause(r.output)}`, fix);
       };
       const message = ctx.status === "active" ? "" : statusMessage(ctx);
       for (const [name, version] of pkgs) {
@@ -739,7 +740,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
           const done = items.map((i) => i.name);
           throw new PublishTargetError(
             "publish-npm-failed",
-            `npm publish of ${item.name} exited ${result.code}${done.length > 0 ? `, after ${done.join(", ")} were ${staging ? "staged" : "published"} under ${stageTag(ctx)}` : `, before any package was ${staging ? "staged" : "published"}`}: ${result.output.at(-1) ?? "npm printed nothing"}`,
+            `npm publish of ${item.name} exited ${result.code}${done.length > 0 ? `, after ${done.join(", ")} were ${staging ? "staged" : "published"} under ${stageTag(ctx)}` : `, before any package was ${staging ? "staged" : "published"}`}: ${npmCause(result.output)}`,
           );
         }
         items.push(item);
@@ -765,7 +766,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
           const moved = items.map((i) => i.name);
           throw new PublishTargetError(
             "publish-npm-tag-failed",
-            `npm dist-tag add ${pkg.name}@${pkg.version} ${tag} exited ${result.code}${moved.length > 0 ? `, after ${tag} moved for ${moved.join(", ")}` : `, before ${tag} moved for any package`}: ${result.output.at(-1) ?? "npm printed nothing"}`,
+            `npm dist-tag add ${pkg.name}@${pkg.version} ${tag} exited ${result.code}${moved.length > 0 ? `, after ${tag} moved for ${moved.join(", ")}` : `, before ${tag} moved for any package`}: ${npmCause(result.output)}`,
             `Moving a dist-tag needs npm credentials that may change dist-tags; over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record.`,
           );
         }
