@@ -17,7 +17,13 @@ import { parsePublishRecords, publishProgress } from "./publish-record";
 import { createPublishTargets } from "./publish-targets";
 import { PublishRunError, runPublish, type PublishContext, type PublishItem } from "./release-publish";
 import { makeRelease, type ReleaseArtifact } from "./release-store";
-import { startFakeRegistry, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
+import { GITLAB_REGISTRY_TYPES, startFakeRegistry, writeLockfile, writeOciLayout, writePackage } from "./__fixtures__/publish-fakes";
+import { bundleReferrerManifest, CHANT_MEDIA_TYPE_ANNOTATION, legacyReferrerManifest, referrerManifest } from "./publish-oci";
+import { IN_TOTO_MEDIA_TYPE, type Attachment } from "./publish-attachments";
+import { HELM_CHART_MEDIA_TYPE, HELM_CONFIG_MEDIA_TYPE } from "./publish-helm";
+import { SBOM_MEDIA_TYPES } from "../components/verbs/sbom-generator";
+import { SIGSTORE_BUNDLE_MEDIA_TYPE, SPDX_PREDICATE } from "./publish-signing";
+import { bytesDigest } from "./publish-targets";
 import { fakeReleaseScanner, layerSpdx } from "./__fixtures__/scan-fakes";
 
 const dirs: string[] = [];
@@ -337,13 +343,99 @@ describe("what the scan found is kept with the release (#5446)", () => {
       const run = await runPublish({ cwd: dir, release: ctx.release, label: ctx.label, targets: [target!], ctx, record: false });
       const findings = run.published[0]!.items.find((i) => i.attachment === "scan")!;
       expect(findings.name).toBe(SCAN_FINDINGS_FILE);
-      const manifest = JSON.parse(reg.manifests.get(findings.digest!)!.bytes.toString("utf-8")) as { artifactType: string; subject: { digest: string }; layers: Array<{ digest: string }> };
-      expect(manifest.artifactType).toBe(SCAN_FINDINGS_MEDIA_TYPE);
+      const manifest = JSON.parse(reg.manifests.get(findings.digest!)!.bytes.toString("utf-8")) as { artifactType: string; subject: { digest: string }; layers: Array<{ digest: string; mediaType: string; annotations: Record<string, string> }>; annotations: Record<string, string> };
+      // #5540: pushed as application/json, the findings' own type in an annotation.
+      expect(manifest.artifactType).toBe("application/json");
+      expect(manifest.layers[0]!.mediaType).toBe("application/json");
+      expect(manifest.annotations[CHANT_MEDIA_TYPE_ANNOTATION]).toBe(SCAN_FINDINGS_MEDIA_TYPE);
+      expect(manifest.layers[0]!.annotations[CHANT_MEDIA_TYPE_ANNOTATION]).toBe(SCAN_FINDINGS_MEDIA_TYPE);
+      expect(manifest.annotations["org.opencontainers.image.title"]).toBe(SCAN_FINDINGS_FILE);
       expect(manifest.subject.digest).toBe(digest);
       const doc = JSON.parse(reg.blobs.get(manifest.layers[0]!.digest)!.toString("utf-8")) as { scanner: string; database: unknown; subject: string; subjects: Array<{ findings: Array<{ id: string; outcome: string }> }> };
       expect(doc).toMatchObject({ scanner: "fake-grype v0.0.1", database: { version: "v6.0.2" }, subject: digest });
       expect(doc.subjects[0]!.findings).toEqual([expect.objectContaining({ id: "CVE-2026-50003", outcome: "reported" })]);
       expect(findingsAttachment(run.scan!, "sha256:other")).toBeNull();
+    } finally {
+      await reg.close();
+    }
+  });
+});
+
+
+describe("a registry that checks media types takes every referrer (#5540)", () => {
+  const subject = { mediaType: "application/vnd.oci.image.manifest.v1+json", digest: `sha256:${"a".repeat(64)}`, size: 100 };
+  const file = (kind: Attachment["kind"], name: string, mediaType: string): Attachment => {
+    const bytes = new Uint8Array(Buffer.from(`{"name":"${name}"}`));
+    return { kind, name, mediaType, bytes, digest: bytesDigest(bytes) };
+  };
+  type Manifest = { artifactType: string; config: { mediaType: string }; layers: Array<{ mediaType: string }>; annotations: Record<string, string> };
+  const parse = (bytes: Uint8Array) => JSON.parse(Buffer.from(bytes).toString("utf-8")) as Manifest;
+
+  test("every type chant puts in an artifact manifest's artifactType, config or layer is one registry.gitlab.com knows", () => {
+    const manifests = [
+      referrerManifest(file("sbom", "sbom.spdx.json", SBOM_MEDIA_TYPES.spdx), subject),
+      referrerManifest(file("sbom", "sbom.cdx.json", SBOM_MEDIA_TYPES.cyclonedx), subject),
+      referrerManifest(file("provenance", "release.intoto.json", IN_TOTO_MEDIA_TYPE), subject),
+      referrerManifest(file("scan", SCAN_FINDINGS_FILE, SCAN_FINDINGS_MEDIA_TYPE), subject),
+      bundleReferrerManifest(file("provenance", "attestation.sigstore.json", SIGSTORE_BUNDLE_MEDIA_TYPE), SPDX_PREDICATE, subject),
+    ].map(parse);
+    const types = new Set(manifests.flatMap((m) => [m.artifactType, m.config.mediaType, ...m.layers.map((l) => l.mediaType)]));
+    for (const t of [...types, HELM_CONFIG_MEDIA_TYPE, HELM_CHART_MEDIA_TYPE]) expect(GITLAB_REGISTRY_TYPES.has(t), t).toBe(true);
+  });
+
+  test("the SBOM and provenance referrers keep their shape, so their digests do not move", () => {
+    for (const a of [file("sbom", "sbom.spdx.json", SBOM_MEDIA_TYPES.spdx), file("provenance", "release.intoto.json", IN_TOTO_MEDIA_TYPE)]) {
+      const m = parse(referrerManifest(a, subject));
+      expect([m.artifactType, m.layers[0]!.mediaType]).toEqual([a.mediaType, a.mediaType]);
+      expect(m.annotations).toEqual({ "org.opencontainers.image.title": a.name });
+      expect(legacyReferrerManifest(a, subject)).toBeNull();
+    }
+    const old = parse(legacyReferrerManifest(file("scan", SCAN_FINDINGS_FILE, SCAN_FINDINGS_MEDIA_TYPE), subject)!);
+    expect(old.artifactType).toBe(SCAN_FINDINGS_MEDIA_TYPE);
+    expect(GITLAB_REGISTRY_TYPES.has(old.artifactType)).toBe(false);
+  });
+
+  test("a publish with the scan stages an image and its findings on a registry that refuses unknown artifact types", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-known-1", token: "tok-known-1" }, { knownTypes: GITLAB_REGISTRY_TYPES });
+    try {
+      const dir = temp();
+      const { digest } = writeOciLayout(join(dir, "image"));
+      LOCK_CLEAN(dir);
+      const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: `${reg.host}/acme/api` })], {});
+      const scanner = { ...fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1"] }), database: async () => ({ version: "v6.0.2" }) };
+      const ctx = context(dir, { scanner, policy: {}, vex: [] }, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-known-1" } });
+      const run = await runPublish({ cwd: dir, release: ctx.release, label: ctx.label, targets: [target!], ctx, record: false });
+      const findings = run.published[0]!.items.find((i) => i.attachment === "scan")!;
+      const manifest = parse(new Uint8Array(reg.manifests.get(findings.digest!)!.bytes));
+      expect(manifest.annotations[CHANT_MEDIA_TYPE_ANNOTATION]).toBe(SCAN_FINDINGS_MEDIA_TYPE);
+      expect(JSON.parse(reg.manifests.get(findings.digest!)!.bytes.toString("utf-8")).subject.digest).toBe(digest);
+    } finally {
+      await reg.close();
+    }
+  });
+
+  test("a resumed stage keeps a findings referrer an earlier chant pushed in the old shape and does not attach a second", async () => {
+    const reg = await startFakeRegistry({ username: "robot", password: "pw-legacy-1", token: "tok-legacy-1" });
+    try {
+      const dir = temp();
+      const { digest } = writeOciLayout(join(dir, "image"));
+      LOCK_CLEAN(dir);
+      const [target] = await createPublishTargets([PublishDeclarationSchema.parse({ type: "oci", image: "image", repository: `${reg.host}/acme/api` })], {});
+      const scanner = { ...fakeReleaseScanner({ image: ["pkg:deb/debian/openssl@3.0.15-1"] }), database: async () => ({ version: "v6.0.2" }) };
+      const ctx = context(dir, { scanner, policy: {}, vex: [] }, { env: { OCI_USERNAME: "robot", OCI_PASSWORD: "pw-legacy-1" } });
+      const run = await runPublish({ cwd: dir, release: ctx.release, label: ctx.label, targets: [target!], ctx, record: false });
+      const pushed = run.published[0]!.items.find((i) => i.attachment === "scan")!;
+      // What an earlier chant left: the same findings under the old manifest, and not the new one.
+      const f = findingsAttachment(run.scan!, digest)!;
+      const { subject: imageSubject } = JSON.parse(reg.manifests.get(pushed.digest!)!.bytes.toString("utf-8")) as { subject: { mediaType: string; digest: string; size: number } };
+      const legacy = legacyReferrerManifest({ kind: "scan", ...f, digest: bytesDigest(f.bytes) }, imageSubject)!;
+      const legacyDigest = bytesDigest(legacy);
+      reg.manifests.delete(pushed.digest!);
+      reg.manifests.set(legacyDigest, { name: "acme/api", type: "application/vnd.oci.image.manifest.v1+json", bytes: Buffer.from(legacy) });
+      const again = await target!.stage({ ...ctx, scanReport: run.scan! });
+      const kept = again.items.find((i) => i.attachment === "scan")!;
+      expect(kept).toMatchObject({ digest: legacyDigest, present: true });
+      expect(reg.manifests.has(pushed.digest!)).toBe(false);
     } finally {
       await reg.close();
     }
