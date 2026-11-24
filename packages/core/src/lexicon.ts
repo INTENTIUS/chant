@@ -507,6 +507,14 @@ export interface UpstreamPin {
    * nothing. Say what to move and how.
    */
   readonly alsoMoves?: string;
+  /**
+   * An npm package in the lexicon's `package.json` whose version is this pin.
+   * The upgrade moves that dependency to the new version in the same commit
+   * and refreshes the lock file, so the installed package cannot lag the
+   * constant. The pin then holds a bare npm version, so give `upstream` a
+   * `tagVersion` that drops the tag's `v`.
+   */
+  readonly npmPackage?: string;
   /** Where to query for the latest stable upstream tag. */
   readonly upstream: {
     readonly owner: string;

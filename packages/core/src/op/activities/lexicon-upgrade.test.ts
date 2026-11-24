@@ -555,6 +555,28 @@ describe("discovered pinned lexicons (#3266)", () => {
     expect(r.hasUpgrade).toBe(true);
   });
 
+  test("a pin that mirrors an npm dependency refreshes the lock file and stages package.json (#5573)", async () => {
+    const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
+    const applyBump = vi.fn(async () => ({ filePath: "/x/src/pin.ts", extraFiles: ["/x/package.json"] }));
+    const { gh, calls } = recordingGh();
+    const dir = join(tmpdir(), `chant-5573-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    await lexiconUpgrade({
+      lexicon: "k3s",
+      lexiconDir: dir,
+      mode: "pull-request",
+      _loadPin: async () => pin,
+      _checkPinned: checkPinned,
+      _applyBump: applyBump,
+      _bumpPackageVersion: vi.fn(),
+      _gh: gh,
+    });
+    expect(calls).toContain("npm install --package-lock-only --ignore-scripts");
+    expect(calls.some((c) => c.startsWith("git add") && c.includes("/x/package.json"))).toBe(true);
+    expect(calls.some((c) => c.includes("package-lock.json"))).toBe(true);
+  });
+
   test("a lexicon with no pin and not rolling is rejected", async () => {
     await expect(
       lexiconUpgrade({ lexicon: "helm", mode: "report", _loadPin: async () => null }),
