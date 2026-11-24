@@ -715,6 +715,34 @@ describe("SBOMs and provenance (#4049)", () => {
       expect(sleeps).toEqual([]);
     });
 
+    test("a FETCH_ERROR from the audit is tried again, with one line saying so (#5562)", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_AUDIT_FETCH_ERROR: "1" });
+      const [target] = await createPublishTargets([d], deps);
+      await target!.reveal(ctx, await target!.stage(ctx));
+      expect(audits(log)).toBe(2);
+      expect(sleeps).toEqual([10_000]);
+      expect(ctx.lines.filter((l) => l.includes("could not read a registry answer"))).toHaveLength(1);
+    });
+
+    test("a FETCH_ERROR that does not clear ends with the audit could not run, quoting the line (#5562)", async () => {
+      const { log, deps, ctx, d } = lagged({ FAKE_NPM_AUDIT_FETCH_ERROR: "always" });
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-audit-unavailable");
+      expect(err.message).toContain("could not run");
+      expect(err.message).toContain("invalid json response body");
+      expect(audits(log)).toBe(4);
+    });
+
+    test("an invalid signature fails on the first try, not as a fetch error (#5562)", async () => {
+      const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_AUDIT_FAIL: "1" });
+      const [target] = await createPublishTargets([d], deps);
+      const err = await refused(target!.reveal(ctx, await target!.stage(ctx)));
+      expect(err.code).toBe("publish-npm-audit-failed");
+      expect(audits(log)).toBe(1);
+      expect(sleeps).toEqual([]);
+    });
+
     test("an install that fails with ETARGET waits and installs once more", async () => {
       const { log, deps, ctx, d, sleeps } = lagged({ FAKE_NPM_INSTALL_ETARGET: "1" });
       const [target] = await createPublishTargets([d], deps);

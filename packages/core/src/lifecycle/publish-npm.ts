@@ -194,6 +194,10 @@ export const NPM_REGISTRY_POLL_MS = 10_000;
 export const NPM_REGISTRY_PROGRESS_MS = 60_000;
 /** How long the audit waits for the registry to serve a package's provenance attestation after the version (#5315). */
 export const NPM_ATTESTATION_WAIT_MS = 120_000;
+/** How many more times the audit runs after npm could not fetch an answer (`FETCH_ERROR`) it needed. */
+export const NPM_AUDIT_FETCH_RETRIES = 3;
+/** What `npm audit signatures` prints when a registry answer could not be read, which says nothing about a signature. */
+const NPM_AUDIT_FETCH_ERROR = /\bFETCH_ERROR\b/;
 /** What `npm audit signatures` prints when the registry serves no signing keys, so it finds nothing it can audit (#5522). */
 export const NPM_AUDIT_NO_SIGNING = /found no dependencies to audit that were installed from a supported registry/i;
 
@@ -559,6 +563,26 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
               );
             }
             ctx.log("the registry does not serve the provenance attestation yet; waiting, then auditing again");
+            await sleep(NPM_REGISTRY_POLL_MS);
+            result = await npm(ctx, args, dir);
+            for (const line of result.output) ctx.log(`  ${line}`);
+          }
+        }
+        // A registry answer npm could not read (FETCH_ERROR) is no verdict on a signature: audit again a few times, then say the audit could not run.
+        if (result.code !== 0 && args[0] === "audit") {
+          let tries = 0;
+          while (result.code !== 0 && result.output.some((l) => NPM_AUDIT_FETCH_ERROR.test(l))) {
+            if (tries >= NPM_AUDIT_FETCH_RETRIES) {
+              const at = result.output.findIndex((l) => NPM_AUDIT_FETCH_ERROR.test(l));
+              const line = result.output.slice(at, at + 3).join(" / ");
+              throw new PublishTargetError(
+                "publish-npm-audit-unavailable",
+                `npm audit signatures could not run for ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}: the registry's answers could not be read in ${tries + 1} tries, so no signature was checked, after latest moved: ${line}`,
+                "Each package was published. Once the registry answers, run the publish again: it publishes nothing twice and audits again.",
+              );
+            }
+            tries++;
+            ctx.log(`npm audit signatures could not read a registry answer; waiting, then auditing again (try ${tries} of ${NPM_AUDIT_FETCH_RETRIES})`);
             await sleep(NPM_REGISTRY_POLL_MS);
             result = await npm(ctx, args, dir);
             for (const line of result.output) ctx.log(`  ${line}`);
