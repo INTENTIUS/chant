@@ -74,7 +74,7 @@ The commands are argv templates. `{op}`, `{target}`, `{wave}` and `{plan}` are f
 { "planDigest": "jcs1-sha256:...", "destructive": false, "empty": false }
 ```
 
-`planDigest` names the plan; two plans that would do the same thing share one. `destructive` is what `on-destructive` waits on. A run whose plan is `empty` changes nothing, and a wave whose runs are all empty never waits.
+`planDigest` names the plan: two plans that say the same thing share one. A plan does not show everything an apply does, so the digest leaves out what the planner cannot see; [What a Pulumi digest leaves out](/chant/reference/change-set/#what-a-pulumi-digest-leaves-out) lists it for Pulumi. `destructive` is what `on-destructive` waits on. A run whose plan is `empty` changes nothing, and a wave whose runs are all empty never waits.
 
 ## Render the pipeline
 
