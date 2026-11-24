@@ -75,20 +75,28 @@ export interface NamingConfig {
  * snapshot (chant #1459).
  *
  * The snapshot is keyed by TypeScript name with the spec type inside, which is
- * exactly the mapping phase 1a needs, inverted. Only `resource` entries are
- * reserved: property-type names are derived from their owning resource's name
- * (phase 5), so pinning the resource pins them, and reserving them separately
- * would freeze aliases that are meant to follow their parent.
+ * exactly the mapping phase 1a needs, inverted. By default only `resource`
+ * entries are reserved: property-type names are derived from their owning
+ * resource's name (phase 5), so pinning the resource pins them, and reserving
+ * them separately would freeze aliases that are meant to follow their parent.
+ * Pass `kind: "interface"` for the declaration-only interface names a lexicon
+ * records (k8s definitions): upstream definition key -> name, from the
+ * `interface` entries and from the `interface` field of a registry entry that
+ * shares its name with one.
  */
 export function reservedNamesFromSnapshot(
-  snapshot: { entries?: Record<string, { kind?: string; resourceType?: string }> } | undefined,
+  snapshot:
+    | { entries?: Record<string, { kind?: string; resourceType?: string; interface?: string }> }
+    | undefined,
+  kind: "resource" | "interface" = "resource",
 ): Record<string, string> {
   const reserved: Record<string, string> = {};
   for (const [tsName, entry] of Object.entries(snapshot?.entries ?? {})) {
-    if (entry.kind !== "resource" || !entry.resourceType) continue;
+    const key = entry.kind === kind ? entry.resourceType : kind === "interface" ? entry.interface : undefined;
+    if (!key) continue;
     // First writer wins: a snapshot that somehow lists one spec type under two
     // names keeps the earlier, rather than silently preferring iteration order.
-    reserved[entry.resourceType] ??= tsName;
+    reserved[key] ??= tsName;
   }
   return reserved;
 }
@@ -102,10 +110,13 @@ export function reservedNamesFromSnapshot(
  * Generation reads the snapshot before `surface-diff --update-snapshot`
  * rewrites it, so an upgrade keeps the names of the release before it.
  */
-export function readPublishedNames(snapshotPath: string): Record<string, string> {
+export function readPublishedNames(
+  snapshotPath: string,
+  kind: "resource" | "interface" = "resource",
+): Record<string, string> {
   try {
     if (!existsSync(snapshotPath)) return {};
-    return reservedNamesFromSnapshot(JSON.parse(readFileSync(snapshotPath, "utf-8")));
+    return reservedNamesFromSnapshot(JSON.parse(readFileSync(snapshotPath, "utf-8")), kind);
   } catch {
     return {};
   }

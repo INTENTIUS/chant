@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, test, expect } from "vitest";
 import { k8sShortName, type K8sParseResult } from "../spec/parse";
-import { NamingStrategy, publishedNames } from "./naming";
+import { NamingStrategy, publishedNames, publishedDefinitionNames } from "./naming";
 
 /**
  * Chant's naming philosophy: 1:1 with the K8s spec.
@@ -113,5 +113,17 @@ describe("published names stay with the type that published them (#5551)", () =>
 
   test("a missing snapshot reserves nothing", () => {
     expect(publishedNames(join(import.meta.dirname, "no-such-dir", "surface.snapshot.json"))).toEqual({});
+  });
+});
+
+describe("published definition interface names (#5551)", () => {
+  test("the committed snapshot records the definition interfaces, including one that shares a registry name", () => {
+    const published = publishedDefinitionNames();
+    expect(published["io.k8s.api.apps.v1.DeploymentSpec"]).toBe("DeploymentSpec");
+    expect(published["io.k8s.api.discovery.v1.Endpoint"]).toBe("Endpoint");
+  });
+
+  test("a missing snapshot reserves no definition names", () => {
+    expect(publishedDefinitionNames(join(import.meta.dirname, "no-such-dir", "surface.snapshot.json"))).toEqual({});
   });
 });

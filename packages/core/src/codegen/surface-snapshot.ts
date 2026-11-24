@@ -13,16 +13,39 @@
  * (b) the registry JSON already encodes everything a consumer needs.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 // ── Surface types ───────────────────────────────────────────────────
 
 /**
  * A single entry in the surface snapshot.
  * "resource" entries carry attrs and props; "property" entries are lightweight.
+ * "interface" entries are declaration-only types the lexicon names but does not
+ * register (k8s definition interfaces); they record only the name and the
+ * upstream definition it was given to, so a rename shows in the diff.
  */
 export interface SurfaceEntry {
-  kind: "resource" | "property";
-  /** The cloud-provider resource type string (e.g. "AWS::S3::Bucket"). */
+  kind: "resource" | "property" | "interface";
+  /**
+   * The cloud-provider resource type string (e.g. "AWS::S3::Bucket"). For an
+   * "interface" entry, the upstream definition key
+   * (e.g. "io.k8s.api.apps.v1.DeploymentSpec").
+   */
   resourceType: string;
+  /**
+   * The upstream schema the name was generated from, when the lexicon records
+   * it (fly property types). Lets a generator tell which of two schemas with
+   * the same short name owns a published name. Not compared by the diff.
+   */
+  source?: string;
+  /**
+   * The upstream definition key of a declaration-only interface exported
+   * under the same name as this registry entry (a k8s definition interface
+   * whose name a CRD property type also lists). The name has no "interface"
+   * entry of its own, so this is where it is recorded. Not compared by the diff.
+   */
+  interface?: string;
   /** Readonly attribute names (resource entries only). */
   attrs?: string[];
   /**
@@ -139,6 +162,7 @@ export interface SurfaceDelta {
 interface LexiconEntry {
   kind?: "resource" | "property";
   resourceType?: string;
+  source?: string;
   attrs?: Record<string, string>;
   createOnly?: string[];
   tagging?: { taggable?: boolean };
@@ -155,8 +179,16 @@ interface LexiconEntry {
  *
  * @param lexiconJSON   Contents of `src/generated/<name>.json`
  * @param typesDTS      Contents of `src/generated/index.d.ts`
+ * @param interfaces    Declaration-only interface names -> upstream definition
+ *   key, from `src/generated/interfaces.json` ({@link readInterfaceNames}).
+ *   Recorded as "interface" entries; a name the registry already lists keeps
+ *   its registry entry, which records the definition in `interface`.
  */
-export function extractSurface(lexiconJSON: string, typesDTS: string): SurfaceSnapshot {
+export function extractSurface(
+  lexiconJSON: string,
+  typesDTS: string,
+  interfaces: Record<string, string> = {},
+): SurfaceSnapshot {
   const registry = JSON.parse(lexiconJSON) as Record<string, LexiconEntry>;
 
   // Build prop map from .d.ts
@@ -169,6 +201,7 @@ export function extractSurface(lexiconJSON: string, typesDTS: string): SurfaceSn
     const resourceType = raw.resourceType ?? "";
 
     const entry: SurfaceEntry = { kind, resourceType };
+    if (raw.source) entry.source = raw.source;
 
     if (kind === "resource") {
       const attrs = raw.attrs ? Object.keys(raw.attrs).sort() : [];
@@ -189,6 +222,12 @@ export function extractSurface(lexiconJSON: string, typesDTS: string): SurfaceSn
     entries[name] = entry;
   }
 
+  for (const [name, definition] of Object.entries(interfaces)) {
+    const listed = entries[name];
+    if (listed) listed.interface = definition;
+    else entries[name] = { kind: "interface", resourceType: definition };
+  }
+
   // Sort keys for stable output
   const sorted: Record<string, SurfaceEntry> = {};
   for (const key of Object.keys(entries).sort()) {
@@ -200,6 +239,32 @@ export function extractSurface(lexiconJSON: string, typesDTS: string): SurfaceSn
     generatedAt: new Date().toISOString(),
     entries: sorted,
   };
+}
+
+/**
+ * The generated file a lexicon writes its declaration-only interface names to:
+ * interface name -> upstream definition key.
+ */
+export const INTERFACES_FILENAME = "interfaces.json";
+
+/**
+ * Read `interfaces.json` from a lexicon's generated directory. Empty when the
+ * lexicon writes none or the file cannot be parsed.
+ */
+export function readInterfaceNames(generatedDir: string): Record<string, string> {
+  const path = join(generatedDir, INTERFACES_FILENAME);
+  try {
+    if (!existsSync(path)) return {};
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const names: Record<string, string> = {};
+    for (const [name, definition] of Object.entries(parsed)) {
+      if (typeof definition === "string") names[name] = definition;
+    }
+    return names;
+  } catch {
+    return {};
+  }
 }
 
 /**

@@ -260,3 +260,56 @@ describe("parseK8sSwaggerTypes", () => {
     expect(names).toEqual([...names].sort());
   });
 });
+
+describe("published definition names stay with their definitions (#5551)", () => {
+  const ref = (key: string) => ({ $ref: `#/definitions/${key}` });
+  // A release published `DeploymentSpec` and `PodFailurePolicy`. Upstream then
+  // adds a second `DeploymentSpec` in another group and a second
+  // `PodFailurePolicy` in another version of the same group.
+  const spec = (newcomers: boolean) =>
+    JSON.stringify({
+      definitions: {
+        "io.k8s.api.apps.v1.Deployment": {
+          "x-kubernetes-group-version-kind": [{ group: "apps", version: "v1", kind: "Deployment" }],
+          properties: {
+            spec: ref("io.k8s.api.apps.v1.DeploymentSpec"),
+            policy: ref("io.k8s.api.batch.v1.PodFailurePolicy"),
+            ...(newcomers
+              ? {
+                  rollout: ref("io.k8s.api.rollouts.v1.DeploymentSpec"),
+                  nextPolicy: ref("io.k8s.api.batch.v2.PodFailurePolicy"),
+                }
+              : {}),
+          },
+        },
+        "io.k8s.api.apps.v1.DeploymentSpec": { properties: { replicas: { type: "integer" } } },
+        "io.k8s.api.batch.v1.PodFailurePolicy": { properties: { rules: { type: "string" } } },
+        "io.k8s.api.rollouts.v1.DeploymentSpec": { properties: { steps: { type: "integer" } } },
+        "io.k8s.api.batch.v2.PodFailurePolicy": { properties: { rules: { type: "string" } } },
+      },
+    });
+  const names = (parse: ReturnType<typeof parseK8sSwaggerTypes>) =>
+    Object.fromEntries(parse.definitionTypes.map((d) => [d.defKey, d.name]));
+
+  const published = names(parseK8sSwaggerTypes(spec(false)));
+
+  test("the release before the newcomers names each definition by its last segment", () => {
+    expect(published).toEqual({
+      "io.k8s.api.apps.v1.DeploymentSpec": "DeploymentSpec",
+      "io.k8s.api.batch.v1.PodFailurePolicy": "PodFailurePolicy",
+    });
+  });
+
+  test("with the published names, the newcomers are qualified and the published interfaces keep theirs", () => {
+    expect(names(parseK8sSwaggerTypes(spec(true), { publishedDefinitions: published }))).toEqual({
+      "io.k8s.api.apps.v1.DeploymentSpec": "DeploymentSpec",
+      "io.k8s.api.rollouts.v1.DeploymentSpec": "RolloutsDeploymentSpec",
+      "io.k8s.api.batch.v1.PodFailurePolicy": "PodFailurePolicy",
+      "io.k8s.api.batch.v2.PodFailurePolicy": "BatchV2PodFailurePolicy",
+    });
+  });
+
+  test("without them, the rule alone renames the published interfaces", () => {
+    expect(names(parseK8sSwaggerTypes(spec(true)))["io.k8s.api.apps.v1.DeploymentSpec"]).toBe("AppsDeploymentSpec");
+  });
+});

@@ -11,6 +11,7 @@ import {
   type GenerateResult,
   type GeneratePipelineConfig,
 } from "@intentius/chant/codegen/generate";
+import { INTERFACES_FILENAME } from "@intentius/chant/codegen/surface-snapshot";
 import { fetchSchemas } from "../spec/fetch";
 import {
   parseK8sSwaggerTypes,
@@ -22,7 +23,7 @@ import {
 import { loadMultipleCRDs } from "../crd/loader";
 import { CRD_SOURCES } from "../crd/crd-sources";
 import type { CRDSource } from "../crd/types";
-import { NamingStrategy, publishedNames, propertyTypeName, extractDefName } from "./naming";
+import { NamingStrategy, publishedNames, publishedDefinitionNames, propertyTypeName, extractDefName } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateOperationsJSON } from "./generate-operations";
 import { generateListMapKeysJSON } from "./generate-list-map-keys";
@@ -105,6 +106,9 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
   // kind or CRD sharing its short name is the one prefixed. A caller-supplied
   // schema set names its fixtures by the rule alone.
   const reserved = opts.schemaSource ? {} : publishedNames();
+  // The same for the definition interfaces, which the snapshot records as
+  // `interface` entries.
+  const publishedDefinitions = opts.schemaSource ? {} : publishedDefinitionNames();
 
   const config: GeneratePipelineConfig<K8sParseResult> = {
     fetchSchemas: async (fetchOpts) => {
@@ -115,7 +119,7 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
       // The K8s schema is a single document — parseK8sSwaggerTypes returns multiple results.
       // The pipeline calls this once per schema entry. We return the first result
       // and use augmentResults to inject the rest.
-      const { results, definitionTypes: defs } = parseK8sSwaggerTypes(data);
+      const { results, definitionTypes: defs } = parseK8sSwaggerTypes(data, { publishedDefinitions });
       definitionTypes = defs;
       specPairs = specListMapKeyPairs(data);
       if (results.length === 0) return null;
@@ -165,10 +169,25 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
       // chant #1441 — the spec's own associative-list keys, so drift compares
       // list elements by identity instead of by index.
       "list-map-keys.json": generateListMapKeysJSON(specPairs, results),
+      // The definition interface names, which the surface snapshot records so
+      // the next generation keeps them (#5551).
+      [INTERFACES_FILENAME]: generateInterfacesJSON(definitionTypes),
     }),
   };
 
   return generatePipeline(config, opts);
+}
+
+/**
+ * The definition interfaces as interface name -> definition key, sorted by
+ * name, for the surface snapshot.
+ */
+export function generateInterfacesJSON(definitionTypes: ParsedDefinitionType[]): string {
+  const names: Record<string, string> = {};
+  for (const dt of [...definitionTypes].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    names[dt.name] = dt.defKey;
+  }
+  return JSON.stringify(names, null, 2) + "\n";
 }
 
 /**

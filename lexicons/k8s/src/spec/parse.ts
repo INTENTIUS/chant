@@ -13,6 +13,12 @@ import {
   primaryType,
   type JsonSchemaProperty,
 } from "@intentius/chant/codegen/json-schema";
+import {
+  NamingStrategy,
+  publishedNamingConfig,
+  type NamingConfig,
+  type NamingInput,
+} from "@intentius/chant/codegen/naming";
 import { namespaceSegmentForGroup } from "../group-namespace";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -269,12 +275,22 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
   return parseK8sSwaggerTypes(data).results;
 }
 
+export interface K8sSwaggerParseOptions {
+  /**
+   * Definition key -> the interface name the lexicon already published for it,
+   * normally the `interface` entries of the committed surface snapshot. A
+   * published name stays with its definition, and a new definition with the
+   * same last segment is the one qualified (#5551).
+   */
+  publishedDefinitions?: Record<string, string>;
+}
+
 /**
  * Parse the swagger document into resource and property-type results, and the
  * declaration-only interfaces for every other object definition a resource
  * reaches (chant #3093).
  */
-export function parseK8sSwaggerTypes(data: string | Buffer): K8sSwaggerParse {
+export function parseK8sSwaggerTypes(data: string | Buffer, opts: K8sSwaggerParseOptions = {}): K8sSwaggerParse {
   const spec: SwaggerSpec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8"));
   const definitions = spec.definitions ?? {};
   const results: K8sParseResult[] = [];
@@ -299,7 +315,7 @@ export function parseK8sSwaggerTypes(data: string | Buffer): K8sSwaggerParse {
   const reachable = reachableDefinitions(resourceDefs.map((r) => r.def), definitions);
   const ctx: TypeContext = {
     definitions,
-    names: nameDefinitions(reachable, definitions),
+    names: nameDefinitions(reachable, definitions, opts.publishedDefinitions),
     resources: new Set(resourceDefs.map((r) => r.defKey)),
   };
 
@@ -459,41 +475,58 @@ function definitionKeyParts(defKey: string): { group: string; version: string; k
  * version when one group has several (`ResourceV1beta2Device`). The rule
  * reads only the set of keys, so the result does not depend on the order of
  * the document.
+ *
+ * `published` (definition key -> name) keeps each published name with its
+ * definition through core's {@link publishedNamingConfig}, the step that keeps
+ * resource names: a new definition sharing a published name's last segment is
+ * the one qualified, and the published interface is not renamed (#5551).
  */
-function nameDefinitions(reachable: string[], definitions: Record<string, SwaggerDefinition>): Map<string, string> {
-  const names = new Map<string, string>();
-  const taken = new Set<string>();
+function nameDefinitions(
+  reachable: string[],
+  definitions: Record<string, SwaggerDefinition>,
+  published: Record<string, string> = {},
+): Map<string, string> {
+  // Fixed names: the friendly property types, and every resource kind, which
+  // no interface may take. A kind enters as a pseudo-type that only holds its
+  // name.
+  const fixed: Record<string, string> = {};
+  for (const [defKey, config] of Object.entries(PROPERTY_TYPE_DEFS)) fixed[defKey] = k8sShortName(config.typeName);
   for (const def of Object.values(definitions)) {
-    for (const gvk of def["x-kubernetes-group-version-kind"] ?? []) taken.add(gvk.kind);
-  }
-  for (const [defKey, config] of Object.entries(PROPERTY_TYPE_DEFS)) {
-    const name = k8sShortName(config.typeName);
-    names.set(defKey, name);
-    taken.add(name);
+    for (const gvk of def["x-kubernetes-group-version-kind"] ?? []) fixed[`gvk:${gvk.kind}`] = gvk.kind;
   }
 
-  const byKind = new Map<string, string[]>();
-  for (const defKey of reachable) {
-    if (names.has(defKey)) continue;
-    const { kind } = definitionKeyParts(defKey);
-    byKind.set(kind, [...(byKind.get(kind) ?? []), defKey]);
+  const contenders = reachable.filter((k) => fixed[k] === undefined);
+  const groupsByKind = new Map<string, Map<string, number>>();
+  for (const defKey of contenders) {
+    const { group, kind } = definitionKeyParts(defKey);
+    const groups = groupsByKind.get(kind) ?? new Map<string, number>();
+    groups.set(group, (groups.get(group) ?? 0) + 1);
+    groupsByKind.set(kind, groups);
   }
+  // The qualifier a contender takes when its last segment is shared: its
+  // group, or group and version when that group has several of the segment.
+  const qualifier = (defKey: string): string => {
+    const { group, version, kind } = definitionKeyParts(defKey);
+    return groupsByKind.get(kind)!.get(group)! > 1 ? `${group}${version}` : group;
+  };
 
-  for (const [kind, keys] of byKind) {
-    if (keys.length === 1 && !taken.has(kind)) {
-      names.set(keys[0], kind);
-      continue;
-    }
-    const groupCount = new Map<string, number>();
-    for (const k of keys) {
-      const { group } = definitionKeyParts(k);
-      groupCount.set(group, (groupCount.get(group) ?? 0) + 1);
-    }
-    for (const k of keys) {
-      const { group, version } = definitionKeyParts(k);
-      names.set(k, groupCount.get(group)! > 1 ? `${group}${version}${kind}` : `${group}${kind}`);
-    }
-  }
+  const inputs: NamingInput[] = [...Object.keys(fixed), ...contenders].map((typeName) => ({
+    typeName,
+    propertyTypes: [],
+  }));
+  const config: NamingConfig = {
+    priorityNames: fixed,
+    priorityAliases: {},
+    priorityPropertyAliases: {},
+    serviceAbbreviations: {},
+    shortName: (defKey) => definitionKeyParts(defKey).kind,
+    serviceName: qualifier,
+  };
+  const naming = new NamingStrategy(inputs, publishedNamingConfig(inputs, config, published));
+
+  const names = new Map<string, string>();
+  for (const [defKey, config] of Object.entries(PROPERTY_TYPE_DEFS)) names.set(defKey, k8sShortName(config.typeName));
+  for (const defKey of contenders) names.set(defKey, naming.resolve(defKey)!);
 
   const owner = new Map<string, string>();
   for (const [defKey, name] of names) {

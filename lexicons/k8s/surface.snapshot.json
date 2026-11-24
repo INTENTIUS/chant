@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-24T04:59:28.640Z",
+  "generatedAt": "2026-11-24T19:16:20.830Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -18,6 +18,10 @@
       "props": [
         "groups:true"
       ]
+    },
+    "APIResource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.APIResource"
     },
     "APIResourceList": {
       "kind": "resource",
@@ -43,6 +47,10 @@
         "metadata:false"
       ]
     },
+    "APIServiceSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.kube-aggregator.pkg.apis.apiregistration.v1.APIServiceSpec"
+    },
     "APIVersions": {
       "kind": "resource",
       "resourceType": "K8s::Core::APIVersions",
@@ -62,6 +70,10 @@
     "AWSClusterControllerIdentity_AllowedNamespaces": {
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSClusterControllerIdentity.allowedNamespaces"
+    },
+    "AWSElasticBlockStoreVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.AWSElasticBlockStoreVolumeSource"
     },
     "AWSManagedCluster": {
       "kind": "resource",
@@ -239,9 +251,21 @@
       "kind": "property",
       "resourceType": "K8s::Gateway::Gateway.addresses"
     },
+    "AdmissionregistrationServiceReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ServiceReference"
+    },
+    "AdmissionregistrationWebhookClientConfig": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.WebhookClientConfig"
+    },
     "Affinity": {
       "kind": "property",
       "resourceType": "K8s::Core::Affinity"
+    },
+    "AggregationRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.rbac.v1.AggregationRule"
     },
     "Alert": {
       "kind": "resource",
@@ -440,6 +464,22 @@
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::Instrumentation.apacheHttpd"
     },
+    "ApiextensionsServiceReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.ServiceReference"
+    },
+    "ApiextensionsWebhookClientConfig": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.WebhookClientConfig"
+    },
+    "ApiregistrationServiceReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.kube-aggregator.pkg.apis.apiregistration.v1.ServiceReference"
+    },
+    "AppArmorProfile": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.AppArmorProfile"
+    },
     "AppProject": {
       "kind": "resource",
       "resourceType": "K8s::Argo::AppProject",
@@ -565,9 +605,17 @@
       "kind": "property",
       "resourceType": "K8s::Argo::Application.syncPolicy"
     },
+    "ApplyConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ApplyConfiguration"
+    },
     "AttachMetadata": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.attachMetadata"
+    },
+    "AuditAnnotation": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.AuditAnnotation"
     },
     "AuthSecret": {
       "kind": "property",
@@ -588,6 +636,18 @@
     "AwsLaunchTemplate": {
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.awsLaunchTemplate"
+    },
+    "AzureDiskVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.AzureDiskVolumeSource"
+    },
+    "AzureFilePersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.AzureFilePersistentVolumeSource"
+    },
+    "AzureFileVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.AzureFileVolumeSource"
     },
     "AzureSDConfig": {
       "kind": "property",
@@ -649,6 +709,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.bootstrap"
     },
+    "BoundObjectReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authentication.v1.BoundObjectReference"
+    },
     "Buffering": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.buffering"
@@ -689,6 +753,10 @@
       "kind": "property",
       "resourceType": "K8s::CAPI::Cluster.topology"
     },
+    "CELDeviceSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.CELDeviceSelector"
+    },
     "CM": {
       "kind": "resource",
       "resourceType": "K8s::Core::ConfigMap",
@@ -715,6 +783,10 @@
         "metadata:false"
       ]
     },
+    "CSIDriverSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.CSIDriverSpec"
+    },
     "CSINode": {
       "kind": "resource",
       "resourceType": "K8s::Storage::CSINode",
@@ -723,6 +795,10 @@
         "spec:true"
       ]
     },
+    "CSINodeDriver": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.CSINodeDriver"
+    },
     "CSINodeList": {
       "kind": "resource",
       "resourceType": "K8s::Storage::CSINodeList",
@@ -730,6 +806,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "CSINodeSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.CSINodeSpec"
+    },
+    "CSIPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.CSIPersistentVolumeSource"
     },
     "CSIStorageCapacity": {
       "kind": "resource",
@@ -750,9 +834,33 @@
         "metadata:false"
       ]
     },
+    "CSIVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.CSIVolumeSource"
+    },
     "Capabilities": {
       "kind": "property",
       "resourceType": "K8s::Core::Capabilities"
+    },
+    "CapacityRequestPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.CapacityRequestPolicy"
+    },
+    "CapacityRequestPolicyRange": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.CapacityRequestPolicyRange"
+    },
+    "CapacityRequirements": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.CapacityRequirements"
+    },
+    "CephFSPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.CephFSPersistentVolumeSource"
+    },
+    "CephFSVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.CephFSVolumeSource"
     },
     "Certificate": {
       "kind": "resource",
@@ -795,6 +903,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "CertificateSigningRequestSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.certificates.v1.CertificateSigningRequestSpec"
     },
     "Certificate_AdditionalOutputFormat": {
       "kind": "property",
@@ -867,6 +979,14 @@
     "ChartRef": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.chartRef"
+    },
+    "CinderPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.CinderPersistentVolumeSource"
+    },
+    "CinderVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.CinderVolumeSource"
     },
     "CircuitBreaker": {
       "kind": "property",
@@ -1096,6 +1216,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::TLSOption.clientAuth"
     },
+    "ClientIPConfig": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ClientIPConfig"
+    },
     "ClusterIssuer": {
       "kind": "resource",
       "resourceType": "K8s::CertManager::ClusterIssuer",
@@ -1278,6 +1402,14 @@
         "metadata:false"
       ]
     },
+    "ClusterTrustBundleProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ClusterTrustBundleProjection"
+    },
+    "ClusterTrustBundleSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.certificates.v1beta1.ClusterTrustBundleSpec"
+    },
     "CnpgCluster": {
       "kind": "resource",
       "resourceType": "K8s::Cnpg::Cluster",
@@ -1422,6 +1554,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::FluxReport.components"
     },
+    "ComponentCondition": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ComponentCondition"
+    },
     "ComponentStatus": {
       "kind": "resource",
       "resourceType": "K8s::Core::ComponentStatus",
@@ -1456,6 +1592,10 @@
         "metadata:false"
       ]
     },
+    "ConfigMapEnvSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ConfigMapEnvSource"
+    },
     "ConfigMapKeySelector": {
       "kind": "property",
       "resourceType": "K8s::Core::ConfigMapKeySelector"
@@ -1467,6 +1607,18 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ConfigMapNodeConfigSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ConfigMapNodeConfigSource"
+    },
+    "ConfigMapProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ConfigMapProjection"
+    },
+    "ConfigMapVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ConfigMapVolumeSource"
     },
     "Configmap": {
       "kind": "property",
@@ -1483,6 +1635,22 @@
     "ContainerPort": {
       "kind": "property",
       "resourceType": "K8s::Core::ContainerPort"
+    },
+    "ContainerResizePolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ContainerResizePolicy"
+    },
+    "ContainerResourceMetricSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.ContainerResourceMetricSource"
+    },
+    "ContainerRestartRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ContainerRestartRule"
+    },
+    "ContainerRestartRuleOnExitCodes": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ContainerRestartRuleOnExitCodes"
     },
     "ContentType": {
       "kind": "property",
@@ -1509,6 +1677,10 @@
         "metadata:false"
       ]
     },
+    "CoreEndpointPort": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.EndpointPort"
+    },
     "CoreEventList": {
       "kind": "resource",
       "resourceType": "K8s::Core::EventList",
@@ -1517,9 +1689,25 @@
         "metadata:false"
       ]
     },
+    "CoreEventSeries": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.EventSeries"
+    },
+    "CoreResourceClaim": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ResourceClaim"
+    },
     "Cors": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.cors"
+    },
+    "Counter": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.Counter"
+    },
+    "CounterSet": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.CounterSet"
     },
     "CrdbCluster": {
       "kind": "resource",
@@ -1589,6 +1777,22 @@
         "metadata:false"
       ]
     },
+    "CronJobSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.CronJobSpec"
+    },
+    "CrossVersionObjectReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.CrossVersionObjectReference"
+    },
+    "CustomResourceColumnDefinition": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceColumnDefinition"
+    },
+    "CustomResourceConversion": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceConversion"
+    },
     "CustomResourceDefinition": {
       "kind": "resource",
       "resourceType": "K8s::Apiextensions::CustomResourceDefinition",
@@ -1604,6 +1808,30 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "CustomResourceDefinitionNames": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinitionNames"
+    },
+    "CustomResourceDefinitionSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinitionSpec"
+    },
+    "CustomResourceDefinitionVersion": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceDefinitionVersion"
+    },
+    "CustomResourceSubresourceScale": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceSubresourceScale"
+    },
+    "CustomResourceSubresources": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceSubresources"
+    },
+    "CustomResourceValidation": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.CustomResourceValidation"
     },
     "DBInstance": {
       "kind": "resource",
@@ -1681,9 +1909,14 @@
         "metadata:false"
       ]
     },
+    "DaemonSetSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.DaemonSetSpec"
+    },
     "DaemonSetUpdateStrategy": {
       "kind": "property",
-      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.daemonSetUpdateStrategy"
+      "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.daemonSetUpdateStrategy",
+      "interface": "io.k8s.api.apps.v1.DaemonSetUpdateStrategy"
     },
     "DataStore": {
       "kind": "property",
@@ -1745,6 +1978,10 @@
         "metadata:false"
       ]
     },
+    "DeploymentSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.DeploymentSpec"
+    },
     "DeploymentStrategy": {
       "kind": "property",
       "resourceType": "K8s::Apps::DeploymentStrategy"
@@ -1761,6 +1998,26 @@
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.destinationServiceAccounts"
     },
+    "Device": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.Device"
+    },
+    "DeviceAttribute": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceAttribute"
+    },
+    "DeviceCapacity": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceCapacity"
+    },
+    "DeviceClaim": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceClaim"
+    },
+    "DeviceClaimConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceClaimConfiguration"
+    },
     "DeviceClass": {
       "kind": "resource",
       "resourceType": "K8s::Resource::DeviceClass",
@@ -1769,6 +2026,10 @@
         "spec:true"
       ]
     },
+    "DeviceClassConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceClassConfiguration"
+    },
     "DeviceClassList": {
       "kind": "resource",
       "resourceType": "K8s::Resource::DeviceClassList",
@@ -1776,6 +2037,30 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "DeviceClassSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceClassSpec"
+    },
+    "DeviceConstraint": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceConstraint"
+    },
+    "DeviceCounterConsumption": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceCounterConsumption"
+    },
+    "DeviceRequest": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceRequest"
+    },
+    "DeviceSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceSelector"
+    },
+    "DeviceSubRequest": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceSubRequest"
     },
     "DeviceTaintRule": {
       "kind": "resource",
@@ -1793,6 +2078,18 @@
         "metadata:false"
       ]
     },
+    "DeviceTaintRuleSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1beta2.DeviceTaintRuleSpec"
+    },
+    "DeviceTaintSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1beta2.DeviceTaintSelector"
+    },
+    "DeviceToleration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceToleration"
+    },
     "DigestAuth": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.digestAuth"
@@ -1800,6 +2097,10 @@
     "DigitalOceanSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.digitalOceanSDConfigs"
+    },
+    "DiscoveryEndpointPort": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.discovery.v1.EndpointPort"
     },
     "DnsSDConfig": {
       "kind": "property",
@@ -1821,6 +2122,18 @@
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::Instrumentation.dotnet"
     },
+    "DownwardAPIProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.DownwardAPIProjection"
+    },
+    "DownwardAPIVolumeFile": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.DownwardAPIVolumeFile"
+    },
+    "DownwardAPIVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.DownwardAPIVolumeSource"
+    },
     "DriftDetection": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.driftDetection"
@@ -1832,6 +2145,10 @@
     "Ec2SDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.ec2SDConfigs"
+    },
+    "EmptyDirVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.EmptyDirVolumeSource"
     },
     "EncodedCharacters": {
       "kind": "property",
@@ -1847,11 +2164,24 @@
     },
     "Endpoint": {
       "kind": "property",
-      "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints"
+      "resourceType": "K8s::Monitoring::ServiceMonitor.endpoints",
+      "interface": "io.k8s.api.discovery.v1.Endpoint"
     },
     "EndpointAccess": {
       "kind": "property",
       "resourceType": "K8s::Controlplane::AWSManagedControlPlane.endpointAccess"
+    },
+    "EndpointAddress": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.EndpointAddress"
+    },
+    "EndpointConditions": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.discovery.v1.EndpointConditions"
+    },
+    "EndpointHints": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.discovery.v1.EndpointHints"
     },
     "EndpointSlice": {
       "kind": "resource",
@@ -1870,6 +2200,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "EndpointSubset": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.EndpointSubset"
     },
     "Endpoints": {
       "kind": "resource",
@@ -1905,7 +2239,8 @@
     },
     "EphemeralVolumeSource": {
       "kind": "property",
-      "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumeSource"
+      "resourceType": "K8s::Cnpg::Cluster.ephemeralVolumeSource",
+      "interface": "io.k8s.api.core.v1.EphemeralVolumeSource"
     },
     "EphemeralVolumesSizeLimit": {
       "kind": "property",
@@ -1942,7 +2277,8 @@
     },
     "EventSource": {
       "kind": "property",
-      "resourceType": "K8s::Flux::Alert.eventSources"
+      "resourceType": "K8s::Flux::Alert.eventSources",
+      "interface": "io.k8s.api.core.v1.EventSource"
     },
     "EventsEvent": {
       "kind": "resource",
@@ -1973,6 +2309,10 @@
         "metadata:false"
       ]
     },
+    "EventsEventSeries": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.events.v1.EventSeries"
+    },
     "Eviction": {
       "kind": "resource",
       "resourceType": "K8s::Policy::Eviction",
@@ -1980,6 +2320,10 @@
         "deleteOptions:false",
         "metadata:false"
       ]
+    },
+    "ExactDeviceRequest": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.ExactDeviceRequest"
     },
     "ExecAction": {
       "kind": "property",
@@ -1989,6 +2333,10 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::Prometheus.exemplars"
     },
+    "ExemptPriorityLevelConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.ExemptPriorityLevelConfiguration"
+    },
     "Explainer": {
       "kind": "property",
       "resourceType": "K8s::KServe::InferenceService.explainer"
@@ -1997,13 +2345,37 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.externalClusters"
     },
+    "ExternalDocumentation": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.ExternalDocumentation"
+    },
+    "ExternalMetricSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.ExternalMetricSource"
+    },
     "ExternalSecret": {
       "kind": "property",
       "resourceType": "K8s::ClickHouse::ClickHouseCluster.externalSecret"
     },
+    "FCVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.FCVolumeSource"
+    },
     "Failover": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.failover"
+    },
+    "FieldSelectorAttributes": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.FieldSelectorAttributes"
+    },
+    "FieldSelectorRequirement": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.FieldSelectorRequirement"
+    },
+    "FileKeySelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.FileKeySelector"
     },
     "FileSDConfig": {
       "kind": "property",
@@ -2016,6 +2388,22 @@
     "FilterTags": {
       "kind": "property",
       "resourceType": "K8s::Flux::ImagePolicy.filterTags"
+    },
+    "FlexPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.FlexPersistentVolumeSource"
+    },
+    "FlexVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.FlexVolumeSource"
+    },
+    "FlockerVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.FlockerVolumeSource"
+    },
+    "FlowDistinguisherMethod": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.FlowDistinguisherMethod"
     },
     "FlowSchema": {
       "kind": "resource",
@@ -2032,6 +2420,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "FlowSchemaSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.FlowSchemaSpec"
+    },
+    "FlowcontrolSubject": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.Subject"
     },
     "FluxBucket": {
       "kind": "resource",
@@ -2157,6 +2553,14 @@
       "kind": "property",
       "resourceType": "K8s::Flux::FluxReport.sync"
     },
+    "ForNode": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.discovery.v1.ForNode"
+    },
+    "ForZone": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.discovery.v1.ForZone"
+    },
     "ForwardAuth": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.forwardAuth"
@@ -2168,6 +2572,14 @@
     "From": {
       "kind": "property",
       "resourceType": "K8s::Gateway::ReferenceGrant.from"
+    },
+    "GCEPersistentDiskVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.GCEPersistentDiskVolumeSource"
+    },
+    "GRPCAction": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.GRPCAction"
     },
     "GRPCRoute": {
       "kind": "resource",
@@ -2245,6 +2657,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::ImageUpdateAutomation.git"
     },
+    "GitRepoVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.GitRepoVolumeSource"
+    },
     "GitRepository": {
       "kind": "resource",
       "resourceType": "K8s::Flux::GitRepository",
@@ -2276,6 +2692,14 @@
     "GitRepository_Verify": {
       "kind": "property",
       "resourceType": "K8s::Flux::GitRepository.verify"
+    },
+    "GlusterfsPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.GlusterfsPersistentVolumeSource"
+    },
+    "GlusterfsVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.GlusterfsVolumeSource"
     },
     "Go": {
       "kind": "property",
@@ -2561,6 +2985,18 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::PrometheusRule.groups"
     },
+    "GroupResource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.GroupResource"
+    },
+    "GroupSubject": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.GroupSubject"
+    },
+    "GroupVersionForDiscovery": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.GroupVersionForDiscovery"
+    },
     "GrpcServerTlsConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ThanosRuler.grpcServerTlsConfig"
@@ -2577,13 +3013,29 @@
         "spec:true"
       ]
     },
+    "HPAScalingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.HPAScalingPolicy"
+    },
+    "HPAScalingRules": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.HPAScalingRules"
+    },
     "HTTPGetAction": {
       "kind": "property",
       "resourceType": "K8s::Core::HTTPGetAction"
     },
+    "HTTPHeader": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.HTTPHeader"
+    },
     "HTTPIngressPath": {
       "kind": "property",
       "resourceType": "K8s::Networking::HTTPIngressPath"
+    },
+    "HTTPIngressRuleValue": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.HTTPIngressRuleValue"
     },
     "HTTPRoute": {
       "kind": "resource",
@@ -2781,9 +3233,17 @@
         "metadata:false"
       ]
     },
+    "HorizontalPodAutoscalerSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.HorizontalPodAutoscalerSpec"
+    },
     "HostAlias": {
       "kind": "property",
       "resourceType": "K8s::Core::HostAlias"
+    },
+    "HostPathVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.HostPathVolumeSource"
     },
     "HttpRoute": {
       "kind": "property",
@@ -2808,6 +3268,22 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "IPAddressSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.IPAddressSpec"
+    },
+    "IPBlock": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.IPBlock"
+    },
+    "ISCSIPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ISCSIPersistentVolumeSource"
+    },
+    "ISCSIVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ISCSIVolumeSource"
     },
     "IamAuthenticatorConfig": {
       "kind": "property",
@@ -2940,6 +3416,10 @@
     "ImageUpdateAutomation_Update": {
       "kind": "property",
       "resourceType": "K8s::Flux::ImageUpdateAutomation.update"
+    },
+    "ImageVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ImageVolumeSource"
     },
     "InFlightConn": {
       "kind": "property",
@@ -3117,6 +3597,14 @@
         "metadata:false"
       ]
     },
+    "IngressClassParametersReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.IngressClassParametersReference"
+    },
+    "IngressClassSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.IngressClassSpec"
+    },
     "IngressList": {
       "kind": "resource",
       "resourceType": "K8s::Networking::IngressList",
@@ -3180,6 +3668,10 @@
     "IngressServiceBackend": {
       "kind": "property",
       "resourceType": "K8s::Networking::IngressServiceBackend"
+    },
+    "IngressSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.IngressSpec"
     },
     "IngressTLS": {
       "kind": "property",
@@ -3321,6 +3813,14 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::Issuer.venafi"
     },
+    "JSONPatch": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.JSONPatch"
+    },
+    "JSONSchemaProps": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSONSchemaProps"
+    },
     "Java": {
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::Instrumentation.java"
@@ -3340,6 +3840,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "JobSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.JobSpec"
+    },
+    "JobTemplateSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.JobTemplateSpec"
     },
     "K3sHelmChart": {
       "kind": "resource",
@@ -3513,6 +4021,10 @@
       "kind": "property",
       "resourceType": "K8s::Meta::LabelSelector"
     },
+    "LabelSelectorAttributes": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.LabelSelectorAttributes"
+    },
     "LabelSelectorRequirement": {
       "kind": "property",
       "resourceType": "K8s::Meta::LabelSelectorRequirement"
@@ -3545,6 +4057,10 @@
         "metadata:false"
       ]
     },
+    "LeaseCandidateSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.coordination.v1beta1.LeaseCandidateSpec"
+    },
     "LeaseList": {
       "kind": "resource",
       "resourceType": "K8s::Coordination::LeaseList",
@@ -3553,9 +4069,18 @@
         "metadata:false"
       ]
     },
+    "LeaseSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.coordination.v1.LeaseSpec"
+    },
     "Lifecycle": {
       "kind": "property",
-      "resourceType": "K8s::S3::Bucket.lifecycle"
+      "resourceType": "K8s::S3::Bucket.lifecycle",
+      "interface": "io.k8s.api.core.v1.Lifecycle"
+    },
+    "LifecycleHandler": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.LifecycleHandler"
     },
     "LifecycleHook": {
       "kind": "property",
@@ -3573,6 +4098,10 @@
         "spec:false"
       ]
     },
+    "LimitRangeItem": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.LimitRangeItem"
+    },
     "LimitRangeList": {
       "kind": "resource",
       "resourceType": "K8s::Core::LimitRangeList",
@@ -3581,6 +4110,18 @@
         "metadata:false"
       ]
     },
+    "LimitRangeSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.LimitRangeSpec"
+    },
+    "LimitResponse": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.LimitResponse"
+    },
+    "LimitedPriorityLevelConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.LimitedPriorityLevelConfiguration"
+    },
     "Limits": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::Alertmanager.limits"
@@ -3588,6 +4129,10 @@
     "LinodeSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.linodeSDConfigs"
+    },
+    "ListMeta": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta"
     },
     "Listener": {
       "kind": "property",
@@ -3604,6 +4149,10 @@
         "metadata:false",
         "spec:true"
       ]
+    },
+    "LocalVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.LocalVolumeSource"
     },
     "Logger": {
       "kind": "property",
@@ -3629,6 +4178,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.managed"
     },
+    "ManagedFieldsEntry": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsEntry"
+    },
     "ManagedKubeConfigMapReference": {
       "kind": "property",
       "resourceType": "K8s::Infisical::InfisicalSecret.managedKubeConfigMapReferences"
@@ -3645,6 +4198,14 @@
       "kind": "property",
       "resourceType": "K8s::Rds::DBInstance.masterUserSecretKMSKeyRef"
     },
+    "MatchCondition": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.MatchCondition"
+    },
+    "MatchResources": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.MatchResources"
+    },
     "Matcher": {
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.matchers"
@@ -3653,9 +4214,17 @@
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.metrics"
     },
+    "MetricIdentifier": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.MetricIdentifier"
+    },
     "MetricSpec": {
       "kind": "property",
       "resourceType": "K8s::Autoscaling::MetricSpec"
+    },
+    "MetricTarget": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.MetricTarget"
     },
     "Metrics": {
       "kind": "property",
@@ -3941,6 +4510,10 @@
         "metadata:false"
       ]
     },
+    "MutatingAdmissionPolicyBindingSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.MutatingAdmissionPolicyBindingSpec"
+    },
     "MutatingAdmissionPolicyList": {
       "kind": "resource",
       "resourceType": "K8s::Admissionregistration::MutatingAdmissionPolicyList",
@@ -3948,6 +4521,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "MutatingAdmissionPolicySpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.MutatingAdmissionPolicySpec"
+    },
+    "MutatingWebhook": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.MutatingWebhook"
     },
     "MutatingWebhookConfiguration": {
       "kind": "resource",
@@ -3965,9 +4546,17 @@
         "metadata:false"
       ]
     },
+    "Mutation": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.Mutation"
+    },
     "MuteTimeInterval": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::AlertmanagerConfig.muteTimeIntervals"
+    },
+    "NFSVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NFSVolumeSource"
     },
     "NS": {
       "kind": "resource",
@@ -3980,6 +4569,10 @@
     "NameConstraints": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.nameConstraints"
+    },
+    "NamedRuleWithOperations": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.NamedRuleWithOperations"
     },
     "Namespace": {
       "kind": "resource",
@@ -4008,6 +4601,10 @@
     "NamespaceSelector": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ServiceMonitor.namespaceSelector"
+    },
+    "NamespaceSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NamespaceSpec"
     },
     "NetPol": {
       "kind": "resource",
@@ -4053,6 +4650,10 @@
       "kind": "property",
       "resourceType": "K8s::Networking::NetworkPolicyPort"
     },
+    "NetworkPolicySpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.NetworkPolicySpec"
+    },
     "Nginx": {
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::Instrumentation.nginx"
@@ -4064,6 +4665,18 @@
         "metadata:false",
         "spec:false"
       ]
+    },
+    "NodeAffinity": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodeAffinity"
+    },
+    "NodeAllocatableResourceMapping": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.NodeAllocatableResourceMapping"
+    },
+    "NodeConfigSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodeConfigSource"
     },
     "NodeList": {
       "kind": "resource",
@@ -4081,6 +4694,22 @@
       "kind": "property",
       "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.nodeRepairConfig"
     },
+    "NodeSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodeSelector"
+    },
+    "NodeSelectorRequirement": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodeSelectorRequirement"
+    },
+    "NodeSelectorTerm": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodeSelectorTerm"
+    },
+    "NodeSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodeSpec"
+    },
     "Nodejs": {
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::Instrumentation.nodejs"
@@ -4088,6 +4717,14 @@
     "NomadSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.nomadSDConfigs"
+    },
+    "NonResourceAttributes": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.NonResourceAttributes"
+    },
+    "NonResourcePolicyRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.NonResourcePolicyRule"
     },
     "Notification": {
       "kind": "property",
@@ -4129,6 +4766,10 @@
       "kind": "property",
       "resourceType": "K8s::Flux::OCIRepository.verify"
     },
+    "ObjectFieldSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ObjectFieldSelector"
+    },
     "ObjectLockConfiguration": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.objectLockConfiguration"
@@ -4136,6 +4777,10 @@
     "ObjectMeta": {
       "kind": "property",
       "resourceType": "K8s::Meta::ObjectMeta"
+    },
+    "ObjectMetricSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.ObjectMetricSource"
     },
     "ObjectReference": {
       "kind": "property",
@@ -4244,6 +4889,10 @@
     "OpAMPBridge_VolumeMount": {
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::OpAMPBridge.volumeMounts"
+    },
+    "OpaqueDeviceConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.OpaqueDeviceConfiguration"
     },
     "OpenTelemetryCollector": {
       "kind": "resource",
@@ -4429,9 +5078,17 @@
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.otherNames"
     },
+    "Overhead": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.node.v1.Overhead"
+    },
     "OvhcloudSDConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.ovhcloudSDConfigs"
+    },
+    "OwnerReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.OwnerReference"
     },
     "OwnershipControls": {
       "kind": "property",
@@ -4465,9 +5122,21 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::Probe.params"
     },
+    "ParamKind": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ParamKind"
+    },
+    "ParamRef": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ParamRef"
+    },
     "ParametersRef": {
       "kind": "property",
       "resourceType": "K8s::Gateway::GatewayClass.parametersRef"
+    },
+    "ParentReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.ParentReference"
     },
     "PassTLSClientCert": {
       "kind": "property",
@@ -4509,6 +5178,14 @@
       "kind": "property",
       "resourceType": "K8s::Core::PersistentVolumeClaimSpec"
     },
+    "PersistentVolumeClaimTemplate": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PersistentVolumeClaimTemplate"
+    },
+    "PersistentVolumeClaimVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PersistentVolumeClaimVolumeSource"
+    },
     "PersistentVolumeList": {
       "kind": "resource",
       "resourceType": "K8s::Core::PersistentVolumeList",
@@ -4517,9 +5194,17 @@
         "metadata:false"
       ]
     },
+    "PersistentVolumeSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PersistentVolumeSpec"
+    },
     "Pgbouncer": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Pooler.pgbouncer"
+    },
+    "PhotonPersistentDiskVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PhotonPersistentDiskVolumeSource"
     },
     "Pod": {
       "kind": "resource",
@@ -4528,6 +5213,22 @@
         "metadata:false",
         "spec:false"
       ]
+    },
+    "PodAffinity": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodAffinity"
+    },
+    "PodAffinityTerm": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodAffinityTerm"
+    },
+    "PodAntiAffinity": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodAntiAffinity"
+    },
+    "PodCertificateProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodCertificateProjection"
     },
     "PodCertificateRequest": {
       "kind": "resource",
@@ -4544,6 +5245,18 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "PodCertificateRequestSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.certificates.v1beta1.PodCertificateRequestSpec"
+    },
+    "PodDNSConfig": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodDNSConfig"
+    },
+    "PodDNSConfigOption": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodDNSConfigOption"
     },
     "PodDisruptionBudget": {
       "kind": "resource",
@@ -4568,6 +5281,22 @@
     "PodEnvVariable": {
       "kind": "property",
       "resourceType": "K8s::Crdb::CrdbCluster.podEnvVariables"
+    },
+    "PodFailurePolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.PodFailurePolicy"
+    },
+    "PodFailurePolicyOnExitCodesRequirement": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.PodFailurePolicyOnExitCodesRequirement"
+    },
+    "PodFailurePolicyOnPodConditionsPattern": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.PodFailurePolicyOnPodConditionsPattern"
+    },
+    "PodFailurePolicyRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.PodFailurePolicyRule"
     },
     "PodIdentityAssociation": {
       "kind": "resource",
@@ -4633,6 +5362,26 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::PodMonitor.status"
     },
+    "PodOS": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodOS"
+    },
+    "PodReadinessGate": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodReadinessGate"
+    },
+    "PodResourceClaim": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodResourceClaim"
+    },
+    "PodSchedulingGate": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodSchedulingGate"
+    },
+    "PodSchedulingGroup": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PodSchedulingGroup"
+    },
     "PodSecurityContext": {
       "kind": "property",
       "resourceType": "K8s::Core::PodSecurityContext"
@@ -4665,6 +5414,10 @@
       "kind": "property",
       "resourceType": "K8s::Core::PodTemplateSpec"
     },
+    "PodsMetricSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.PodsMetricSource"
+    },
     "Policy": {
       "kind": "resource",
       "resourceType": "K8s::Iam::Policy",
@@ -4676,6 +5429,10 @@
     "PolicyRule": {
       "kind": "property",
       "resourceType": "K8s::Rbac::PolicyRule"
+    },
+    "PolicyRulesWithSubjects": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.PolicyRulesWithSubjects"
     },
     "PolicySelector": {
       "kind": "property",
@@ -4725,6 +5482,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Pooler.template"
     },
+    "PortworxVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PortworxVolumeSource"
+    },
     "PostBuild": {
       "kind": "property",
       "resourceType": "K8s::Flux::Kustomization.postBuild"
@@ -4737,9 +5498,17 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.postgresql"
     },
+    "Preconditions": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.Preconditions"
+    },
     "Predictor": {
       "kind": "property",
       "resourceType": "K8s::KServe::InferenceService.predictor"
+    },
+    "PreferredSchedulingTerm": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.PreferredSchedulingTerm"
     },
     "PreservedFields": {
       "kind": "property",
@@ -4780,6 +5549,14 @@
         "metadata:false"
       ]
     },
+    "PriorityLevelConfigurationReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.PriorityLevelConfigurationReference"
+    },
+    "PriorityLevelConfigurationSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.PriorityLevelConfigurationSpec"
+    },
     "PrivateKey": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.privateKey"
@@ -4799,6 +5576,10 @@
     "ProcessorFeature": {
       "kind": "property",
       "resourceType": "K8s::Rds::DBInstance.processorFeatures"
+    },
+    "ProjectedVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ProjectedVolumeSource"
     },
     "ProjectedVolumeTemplate": {
       "kind": "property",
@@ -5254,6 +6035,22 @@
       "kind": "property",
       "resourceType": "K8s::Monitoring::ThanosRuler.queryConfig"
     },
+    "QueuingConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.QueuingConfiguration"
+    },
+    "QuobyteVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.QuobyteVolumeSource"
+    },
+    "RBDPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.RBDPersistentVolumeSource"
+    },
+    "RBDVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.RBDVolumeSource"
+    },
     "RateLimit": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.rateLimit"
@@ -5434,6 +6231,10 @@
         "metadata:false"
       ]
     },
+    "ReplicaSetSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.ReplicaSetSpec"
+    },
     "Replication": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.replication"
@@ -5454,6 +6255,10 @@
         "metadata:false"
       ]
     },
+    "ReplicationControllerSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ReplicationControllerSpec"
+    },
     "ReplicationSlots": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.replicationSlots"
@@ -5465,6 +6270,10 @@
     "RequestPayment": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.requestPayment"
+    },
+    "ResourceAttributes": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.ResourceAttributes"
     },
     "ResourceClaim": {
       "kind": "resource",
@@ -5482,6 +6291,10 @@
         "metadata:false"
       ]
     },
+    "ResourceClaimSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.ResourceClaimSpec"
+    },
     "ResourceClaimTemplate": {
       "kind": "resource",
       "resourceType": "K8s::Resource::ResourceClaimTemplate",
@@ -5498,6 +6311,26 @@
         "metadata:false"
       ]
     },
+    "ResourceClaimTemplateSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.ResourceClaimTemplateSpec"
+    },
+    "ResourceFieldSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ResourceFieldSelector"
+    },
+    "ResourceMetricSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v2.ResourceMetricSource"
+    },
+    "ResourcePolicyRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.ResourcePolicyRule"
+    },
+    "ResourcePool": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.ResourcePool"
+    },
     "ResourceQuota": {
       "kind": "resource",
       "resourceType": "K8s::Core::ResourceQuota",
@@ -5513,6 +6346,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ResourceQuotaSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ResourceQuotaSpec"
     },
     "ResourceRequirements": {
       "kind": "property",
@@ -5598,6 +6435,18 @@
         "metadata:false"
       ]
     },
+    "ResourceSliceSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.ResourceSliceSpec"
+    },
+    "ResourceV1DeviceTaint": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceTaint"
+    },
+    "ResourceV1beta2DeviceTaint": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1beta2.DeviceTaint"
+    },
     "Retry": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.retry"
@@ -5643,9 +6492,17 @@
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.rollback"
     },
+    "RollingUpdateDaemonSet": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.RollingUpdateDaemonSet"
+    },
     "RollingUpdateDeployment": {
       "kind": "property",
       "resourceType": "K8s::Apps::RollingUpdateDeployment"
+    },
+    "RollingUpdateStatefulSetStrategy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.RollingUpdateStatefulSetStrategy"
     },
     "RootCA": {
       "kind": "property",
@@ -5654,6 +6511,10 @@
     "RouteSelector": {
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.routeSelector"
+    },
+    "RuleWithOperations": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.RuleWithOperations"
     },
     "Rules": {
       "kind": "property",
@@ -5780,6 +6641,10 @@
         "secrets:false"
       ]
     },
+    "SELinuxOptions": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SELinuxOptions"
+    },
     "STS": {
       "kind": "resource",
       "resourceType": "K8s::Apps::StatefulSet",
@@ -5803,6 +6668,18 @@
     "ScaleDown": {
       "kind": "property",
       "resourceType": "K8s::KubeMicroVM::MicroVMReplicaSet.scaleDown"
+    },
+    "ScaleIOPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ScaleIOPersistentVolumeSource"
+    },
+    "ScaleIOVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ScaleIOVolumeSource"
+    },
+    "ScaleSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.autoscaling.v1.ScaleSpec"
     },
     "ScalewaySDConfig": {
       "kind": "property",
@@ -5839,6 +6716,18 @@
     "ScheduledBackup_Status": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ScheduledBackup.status"
+    },
+    "Scheduling": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.node.v1.Scheduling"
+    },
+    "ScopeSelector": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ScopeSelector"
+    },
+    "ScopedResourceSelectorRequirement": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ScopedResourceSelectorRequirement"
     },
     "ScrapeConfig": {
       "kind": "resource",
@@ -5981,7 +6870,8 @@
     },
     "SeccompProfile": {
       "kind": "property",
-      "resourceType": "K8s::Cnpg::Cluster.seccompProfile"
+      "resourceType": "K8s::Cnpg::Cluster.seccompProfile",
+      "interface": "io.k8s.api.core.v1.SeccompProfile"
     },
     "Secret": {
       "kind": "resource",
@@ -5993,6 +6883,10 @@
         "stringData:false",
         "type:false"
       ]
+    },
+    "SecretEnvSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SecretEnvSource"
     },
     "SecretKeySelector": {
       "kind": "property",
@@ -6006,13 +6900,29 @@
         "metadata:false"
       ]
     },
+    "SecretProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SecretProjection"
+    },
+    "SecretReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SecretReference"
+    },
     "SecretTemplate": {
       "kind": "property",
       "resourceType": "K8s::CertManager::Certificate.secretTemplate"
     },
+    "SecretVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SecretVolumeSource"
+    },
     "SecurityContext": {
       "kind": "property",
       "resourceType": "K8s::Core::SecurityContext"
+    },
+    "SelectableField": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.SelectableField"
     },
     "Selector": {
       "kind": "property",
@@ -6025,6 +6935,10 @@
         "metadata:false",
         "spec:true"
       ]
+    },
+    "SelfSubjectAccessReviewSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.SelfSubjectAccessReviewSpec"
     },
     "SelfSubjectReview": {
       "kind": "resource",
@@ -6041,9 +6955,17 @@
         "spec:true"
       ]
     },
+    "SelfSubjectRulesReviewSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.SelfSubjectRulesReviewSpec"
+    },
     "ServeService": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.serveService"
+    },
+    "ServerAddressByClientCIDR": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.ServerAddressByClientCIDR"
     },
     "ServersTransport": {
       "kind": "resource",
@@ -6107,9 +7029,17 @@
         "metadata:false"
       ]
     },
+    "ServiceAccountSubject": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.ServiceAccountSubject"
+    },
     "ServiceAccountTemplate": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.serviceAccountTemplate"
+    },
+    "ServiceAccountTokenProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ServiceAccountTokenProjection"
     },
     "ServiceBackendPort": {
       "kind": "property",
@@ -6130,6 +7060,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ServiceCIDRSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.networking.v1.ServiceCIDRSpec"
     },
     "ServiceList": {
       "kind": "resource",
@@ -6170,6 +7104,10 @@
     "ServicePort": {
       "kind": "property",
       "resourceType": "K8s::Core::ServicePort"
+    },
+    "ServiceSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.ServiceSpec"
     },
     "ServiceTemplate": {
       "kind": "property",
@@ -6219,6 +7157,14 @@
       "kind": "property",
       "resourceType": "K8s::KServe::ServingRuntime.workerSpec"
     },
+    "SessionAffinityConfig": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SessionAffinityConfig"
+    },
+    "ShardInfo": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.ShardInfo"
+    },
     "ShardRetentionPolicy": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::Prometheus.shardRetentionPolicy"
@@ -6234,6 +7180,10 @@
     "Skip": {
       "kind": "property",
       "resourceType": "K8s::Flux::ResourceSetInputProvider.skip"
+    },
+    "SleepAction": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.SleepAction"
     },
     "Solver": {
       "kind": "property",
@@ -6267,6 +7217,22 @@
         "metadata:false"
       ]
     },
+    "StatefulSetOrdinals": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.StatefulSetOrdinals"
+    },
+    "StatefulSetPersistentVolumeClaimRetentionPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.StatefulSetPersistentVolumeClaimRetentionPolicy"
+    },
+    "StatefulSetSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.StatefulSetSpec"
+    },
+    "StatefulSetUpdateStrategy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.apps.v1.StatefulSetUpdateStrategy"
+    },
     "StaticConfig": {
       "kind": "property",
       "resourceType": "K8s::Monitoring::ScrapeConfig.staticConfigs"
@@ -6281,6 +7247,14 @@
         "metadata:false",
         "reason:false"
       ]
+    },
+    "StatusCause": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.StatusCause"
+    },
+    "StatusDetails": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apimachinery.pkg.apis.meta.v1.StatusDetails"
     },
     "Step": {
       "kind": "property",
@@ -6308,6 +7282,18 @@
         "metadata:false"
       ]
     },
+    "StorageOSPersistentVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.StorageOSPersistentVolumeSource"
+    },
+    "StorageOSVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.StorageOSVolumeSource"
+    },
+    "StorageTokenRequest": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.TokenRequest"
+    },
     "StorageVersionMigration": {
       "kind": "resource",
       "resourceType": "K8s::Storagemigration::StorageVersionMigration",
@@ -6323,6 +7309,10 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "StorageVersionMigrationSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storagemigration.v1beta1.StorageVersionMigrationSpec"
     },
     "Strategy": {
       "kind": "property",
@@ -6352,6 +7342,10 @@
         "spec:true"
       ]
     },
+    "SubjectAccessReviewSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authorization.v1.SubjectAccessReviewSpec"
+    },
     "SubmitterConfig": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayJob.submitterConfig"
@@ -6359,6 +7353,14 @@
     "SubmitterPodTemplate": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayJob.submitterPodTemplate"
+    },
+    "SuccessPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.SuccessPolicy"
+    },
+    "SuccessPolicyRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.SuccessPolicyRule"
     },
     "SuperuserSecret": {
       "kind": "property",
@@ -6371,6 +7373,10 @@
     "SyncWindow": {
       "kind": "property",
       "resourceType": "K8s::Argo::AppProject.syncWindows"
+    },
+    "Sysctl": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.Sysctl"
     },
     "TCPSocketAction": {
       "kind": "property",
@@ -6418,7 +7424,8 @@
     },
     "Taint": {
       "kind": "property",
-      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.taints"
+      "resourceType": "K8s::Infrastructure::AWSManagedMachinePool.taints",
+      "interface": "io.k8s.api.core.v1.Taint"
     },
     "TargetAllocator": {
       "kind": "resource",
@@ -6701,6 +7708,10 @@
         "spec:false"
       ]
     },
+    "TokenRequestSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authentication.v1.TokenRequestSpec"
+    },
     "TokenReview": {
       "kind": "resource",
       "resourceType": "K8s::Authentication::TokenReview",
@@ -6708,6 +7719,10 @@
         "metadata:false",
         "spec:true"
       ]
+    },
+    "TokenReviewSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.authentication.v1.TokenReviewSpec"
     },
     "TokenSecretReference": {
       "kind": "property",
@@ -6720,6 +7735,14 @@
     "Topology": {
       "kind": "property",
       "resourceType": "K8s::CAPI::Cluster.topology"
+    },
+    "TopologySelectorLabelRequirement": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.TopologySelectorLabelRequirement"
+    },
+    "TopologySelectorTerm": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.TopologySelectorTerm"
     },
     "TopologySpreadConstraint": {
       "kind": "property",
@@ -6753,6 +7776,14 @@
       "kind": "property",
       "resourceType": "K8s::KServe::InferenceService.transformer"
     },
+    "TypedLocalObjectReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.TypedLocalObjectReference"
+    },
+    "TypedObjectReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.TypedObjectReference"
+    },
     "Uninstall": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.uninstall"
@@ -6780,6 +7811,10 @@
         "metadata:false",
         "spec:false"
       ]
+    },
+    "UserSubject": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.flowcontrol.v1.UserSubject"
     },
     "User_PermissionsBoundaryRef": {
       "kind": "property",
@@ -6821,6 +7856,10 @@
         "metadata:false"
       ]
     },
+    "ValidatingAdmissionPolicyBindingSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ValidatingAdmissionPolicyBindingSpec"
+    },
     "ValidatingAdmissionPolicyList": {
       "kind": "resource",
       "resourceType": "K8s::Admissionregistration::ValidatingAdmissionPolicyList",
@@ -6828,6 +7867,14 @@
         "items:true",
         "metadata:false"
       ]
+    },
+    "ValidatingAdmissionPolicySpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ValidatingAdmissionPolicySpec"
+    },
+    "ValidatingWebhook": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.ValidatingWebhook"
     },
     "ValidatingWebhookConfiguration": {
       "kind": "resource",
@@ -6845,9 +7892,18 @@
         "metadata:false"
       ]
     },
+    "Validation": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.admissionregistration.v1.Validation"
+    },
+    "ValidationRule": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.ValidationRule"
+    },
     "Variable": {
       "kind": "property",
-      "resourceType": "K8s::Grafana::GrafanaDashboard.variables"
+      "resourceType": "K8s::Grafana::GrafanaDashboard.variables",
+      "interface": "io.k8s.api.admissionregistration.v1.Variable"
     },
     "Versioning": {
       "kind": "property",
@@ -6873,6 +7929,14 @@
         "metadata:false"
       ]
     },
+    "VolumeAttachmentSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.VolumeAttachmentSource"
+    },
+    "VolumeAttachmentSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.VolumeAttachmentSpec"
+    },
     "VolumeAttributesClass": {
       "kind": "resource",
       "resourceType": "K8s::Storage::VolumeAttributesClass",
@@ -6894,9 +7958,29 @@
       "kind": "property",
       "resourceType": "K8s::OpenTelemetry::OpenTelemetryCollector.volumeClaimTemplates"
     },
+    "VolumeDevice": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.VolumeDevice"
+    },
     "VolumeMount": {
       "kind": "property",
       "resourceType": "K8s::Core::VolumeMount"
+    },
+    "VolumeNodeAffinity": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.VolumeNodeAffinity"
+    },
+    "VolumeNodeResources": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.storage.v1.VolumeNodeResources"
+    },
+    "VolumeProjection": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.VolumeProjection"
+    },
+    "VolumeResourceRequirements": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.VolumeResourceRequirements"
     },
     "VpcCni": {
       "kind": "property",
@@ -6905,6 +7989,10 @@
     "VpcSecurityGroupRef": {
       "kind": "property",
       "resourceType": "K8s::Rds::DBInstance.vpcSecurityGroupRefs"
+    },
+    "VsphereVirtualDiskVolumeSource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.VsphereVirtualDiskVolumeSource"
     },
     "WaitStrategy": {
       "kind": "property",
@@ -6926,6 +8014,10 @@
         "type:true"
       ]
     },
+    "WebhookConversion": {
+      "kind": "interface",
+      "resourceType": "io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.WebhookConversion"
+    },
     "Website": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.website"
@@ -6933,6 +8025,14 @@
     "Weighted": {
       "kind": "property",
       "resourceType": "K8s::Traefik::TraefikService.weighted"
+    },
+    "WeightedPodAffinityTerm": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.WeightedPodAffinityTerm"
+    },
+    "WindowsSecurityContextOptions": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.WindowsSecurityContextOptions"
     },
     "WorkerGroupSpec": {
       "kind": "property",

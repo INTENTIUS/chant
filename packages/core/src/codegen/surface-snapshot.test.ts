@@ -174,6 +174,20 @@ describe("extractSurface", () => {
     // No props without .d.ts
     expect(bucket.props).toBeUndefined();
   });
+
+  test("records declaration-only interfaces, and the definition behind a name the registry also lists", () => {
+    const snap = extractSurface(SIMPLE_LEXICON_JSON, SIMPLE_DTS, {
+      DeploymentSpec: "io.k8s.api.apps.v1.DeploymentSpec",
+      Bucket_Tag: "io.example.v1.Tag",
+    });
+    expect(snap.entries.DeploymentSpec).toEqual({ kind: "interface", resourceType: "io.k8s.api.apps.v1.DeploymentSpec" });
+    expect(snap.entries.Bucket_Tag).toMatchObject({ kind: "property", interface: "io.example.v1.Tag" });
+  });
+
+  test("copies the upstream source a registry entry records", () => {
+    const json = JSON.stringify({ MachineConfig: { kind: "property", resourceType: "Fly::Machines::MachineConfig", source: "fly.MachineConfig" } });
+    expect(extractSurface(json, "").entries.MachineConfig.source).toBe("fly.MachineConfig");
+  });
 });
 
 // ── diffSurface ───────────────────────────────────────────────────────
