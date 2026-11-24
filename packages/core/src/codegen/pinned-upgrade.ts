@@ -644,7 +644,7 @@ export async function applyPinnedVersionBump(
   lexiconDir: string,
   newVersion: string,
   pinLabel?: string,
-): Promise<{ filePath: string }> {
+): Promise<{ filePath: string; extraFiles?: string[] }> {
   const pins = await loadUpstreamPins(lexicon, lexiconDir);
   const pin = (pinLabel === undefined ? pins[0] : pins.find((p) => p.label === pinLabel))?.pin;
   if (!pin) throw new Error(`Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable).`);
@@ -653,5 +653,29 @@ export async function applyPinnedVersionBump(
   }
   const location = pinLocationFrom(pin, lexiconDir);
   applyVersionBump(location, newVersion);
-  return { filePath: location.filePath };
+  if (!pin.npmPackage) return { filePath: location.filePath };
+  const pkgPath = join(lexiconDir, "package.json");
+  setDependencyVersion(pkgPath, pin.npmPackage, newVersion);
+  return { filePath: location.filePath, extraFiles: [pkgPath] };
+}
+
+/**
+ * Point `name` at `version` in whichever dependency table of a package.json
+ * lists it. Throws when none does, so a pin that names a package the lexicon
+ * does not depend on fails the upgrade instead of leaving it half moved.
+ */
+export function setDependencyVersion(pkgPath: string, name: string, version: string): void {
+  const raw = readFileSync(pkgPath, "utf-8");
+  const pkg = JSON.parse(raw) as Record<string, Record<string, string> | undefined>;
+  let found = false;
+  for (const table of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+    const deps = pkg[table];
+    if (deps && name in deps) {
+      deps[name] = version;
+      found = true;
+    }
+  }
+  if (!found) throw new Error(`${pkgPath} does not depend on ${name}`);
+  const indent = /^(\s+)"/m.exec(raw)?.[1] ?? "  ";
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, indent) + (raw.endsWith("\n") ? "\n" : ""), "utf-8");
 }

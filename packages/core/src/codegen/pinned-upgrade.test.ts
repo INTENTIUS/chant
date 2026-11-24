@@ -14,6 +14,7 @@ import {
   loadUpstreamPin,
   lexiconNameOf,
   applyPinnedVersionBump,
+  pickLatest,
   type LexiconId,
 } from "./pinned-upgrade";
 import { runPinnedUpgrade } from "../cli/commands/pinned-upgrade";
@@ -456,6 +457,34 @@ describe("loadUpstreamPin from a lexicon directory (#3258)", () => {
       const pin = await loadUpstreamPin(lexiconNameOf(dir), dir);
       expect(pin, name).not.toBeNull();
       expect(pin?.alsoMoves, name).toBeUndefined();
+    }
+  });
+
+  test("cedar: a release tag resolves to the bare npm version, and the pin names the npm package (#5573)", async () => {
+    const dir = join(repoLexicons, "cedar");
+    const pin = await loadUpstreamPin(lexiconNameOf(dir), dir);
+    expect(pin?.npmPackage).toBe("@cedar-policy/cedar-wasm");
+    const releases = [{ tag_name: "v4.14.1" }, { tag_name: "v4.15.0" }, { tag_name: "v4.13.0" }];
+    expect(pickLatest(releases, "releases", { tagVersion: pin?.upstream.tagVersion })).toBe("4.15.0");
+  });
+
+  test("applyPinnedVersionBump moves the npm dependency with the constant (#5573)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const dir = join(root, "cedar");
+      mkdirSync(join(dir, "src/spec"), { recursive: true });
+      writeFileSync(join(dir, "src/spec/pin.ts"), 'export const CEDAR_WASM_VERSION = "4.12.0";\n');
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "@intentius/chant-lexicon-cedar", dependencies: { "@cedar-policy/cedar-wasm": "4.12.0" } }, null, 2) + "\n",
+      );
+      const out = await applyPinnedVersionBump("cedar", dir, "4.15.0");
+      expect(readFileSync(join(dir, "src/spec/pin.ts"), "utf-8")).toContain('CEDAR_WASM_VERSION = "4.15.0"');
+      const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"));
+      expect(pkg.dependencies["@cedar-policy/cedar-wasm"]).toBe("4.15.0");
+      expect(out.extraFiles).toEqual([join(dir, "package.json")]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

@@ -295,7 +295,15 @@ export const cedarPlugin: LexiconPlugin = {
     file: "src/spec/pin.ts",
     pattern: /export const CEDAR_WASM_VERSION\s*=\s*"([^"]+)"/,
     replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${v}"`),
-    upstream: { owner: "cedar-policy", repo: "cedar", kind: "releases" as const },
+    // The pin is the npm version, so the release tag `v4.15.0` is stored as
+    // `4.15.0`, and the dependency in package.json moves with it.
+    npmPackage: "@cedar-policy/cedar-wasm",
+    upstream: {
+      owner: "cedar-policy",
+      repo: "cedar",
+      kind: "releases" as const,
+      tagVersion: (tag: string) => /^v?(\d+\.\d+\.\d+)$/.exec(tag)?.[1] ?? null,
+    },
   },
 
   // ── AVP lifecycle (#1652) ──────────────────────────────────────

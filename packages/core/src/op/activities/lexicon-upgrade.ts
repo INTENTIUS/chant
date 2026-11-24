@@ -171,7 +171,7 @@ export type CheckRollingFn = (opts: {
  */
 export type GhRunner = (
   cmd: string,
-  opts?: { env?: NodeJS.ProcessEnv },
+  opts?: { env?: NodeJS.ProcessEnv; cwd?: string },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 /** Applies a pinned version bump permanently (no revert). Async (core loads the lexicon's pin descriptor); a sync mock is also accepted. */
@@ -180,7 +180,7 @@ export type ApplyBumpFn = (
   lexiconDir: string,
   newVersion: string,
   pin?: string,
-) => { filePath: string } | Promise<{ filePath: string }>;
+) => { filePath: string; extraFiles?: string[] } | Promise<{ filePath: string; extraFiles?: string[] }>;
 
 /**
  * Write a new version into a package.json, returning the file path.
@@ -1044,8 +1044,15 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     // For pinned lexicons: apply the spec version bump permanently on this branch.
     if (pinned && to) {
       const applyBump = args._applyBump ?? (await getRealApplyBump());
-      const { filePath } = await (pinLabel ? applyBump(lexicon, lexiconDir, to, pinLabel) : applyBump(lexicon, lexiconDir, to));
+      const { filePath, extraFiles } = await (pinLabel ? applyBump(lexicon, lexiconDir, to, pinLabel) : applyBump(lexicon, lexiconDir, to));
       await gh(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
+      // A pin that mirrors an npm dependency moved package.json too: refresh
+      // the lock file so npm installs the version the constant names.
+      if (extraFiles?.length) {
+        await gh(`npm install --package-lock-only --ignore-scripts`, { cwd: lexiconDir });
+        for (const f of extraFiles) await gh(`git add ${shellQuote(f)}`).catch(() => {/* best-effort */});
+        await gh(`git add -u -- package-lock.json`).catch(() => {/* best-effort */});
+      }
 
       // Bump the lexicon's package.json version so merging this PR causes
       // publish-on-merge to ship exactly this lexicon (minor → minor bump,
