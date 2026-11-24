@@ -14,8 +14,17 @@
  *
  * The change set, and only the change set: what a run proposes to create,
  * update, replace or destroy, at which addresses, with which values. Two
- * plans share a digest exactly when applying either one would do the same
- * thing to the estate.
+ * plans that say the same thing share a digest, and two plans that differ in
+ * something the plan shows have different digests.
+ *
+ * A plan does not show everything an apply will do, so one digest is not a
+ * promise that two applies do the same thing. What a planner cannot see at
+ * plan time stays outside the digest: a secret it prints as a placeholder, a
+ * value known only after apply, and for Pulumi a stack output and what an
+ * `apply()` registers. A value the planner draws again on every plan, such
+ * as an autoname, is left out so two plans of one change agree. The docs'
+ * reference/change-set.mdx lists the Pulumi cases under "What a Pulumi digest
+ * leaves out".
  *
  * ## What it deliberately does not cover
  *

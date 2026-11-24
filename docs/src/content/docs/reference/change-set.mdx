@@ -155,6 +155,19 @@ A resource registered inside an `apply()` directly under the stack has no compon
 
 chant runs `pulumi preview --json --show-sames`. Without `--show-sames` the preview lists no unchanged resource, and the second rule would read every one as may-appear. The fixtures behind the adapter's tests are recorded from pulumi 3.272.0 and plunge against the plunge corpus on the floci emulator (#4475). In them a replace is one `replace` step and a secret is the blinded `"[secret]"`, with no planned outputs on the stack's step.
 
+#### What a Pulumi digest leaves out
+
+The member's `planDigest` and the document's `digest` are taken over what the preview shows. A preview does not show everything an apply does, so an approval of a digest does not vouch for these:
+
+- A secret. chant previews without showing secrets, so each one prints as `"[secret]"` and its entry is `sensitive: true`. A change from one secret value to another has the same digest whatever the new value is.
+- A value known only after apply. Pulumi prints it as one fixed string and the entry marks it `unknown: true`, so the digest holds that the value is unknown, not what it will be.
+- A stack output. The preview plans none, so a change that only moves an output does not move the digest. The preview's `config` block is left out too; a config value a resource input reads is in the digest through that input.
+- A resource registered inside an `apply()` the preview could not run. Where the adapter marks one `mayAppear`, the mark is in the document's digest but not in the member's `planDigest`, which covers the preview's steps. The two cases the adapter cannot detect, above, are in neither.
+
+A name the engine draws for a create or a replacement is left out of both digests: the member's reads it as a fixed marker, and its entry is `unknown: true`. A value the engine draws that is not listed in the step's `__defaults`, or does not read as the logical name and seven hex characters, is kept, so two previews of one change can still differ in it.
+
+After the gate, a stock Pulumi apply runs `pulumi up`, which previews once more, and holds the steps it ran to the approved plan's shape: resources, actions, types, the names of the inputs written and replacement. Values are not compared there, so a value that moves between the apply's preview and `up` without changing the shape, such as a stack reference output or a data source read, is applied. A plunge apply runs the plan it saved with the preview.
+
 ### SQL plans
 
 A versioned plan is the migrations a product would apply to one environment, in order:
