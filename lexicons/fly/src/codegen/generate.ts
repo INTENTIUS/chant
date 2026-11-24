@@ -12,7 +12,7 @@ import {
 } from "@intentius/chant/codegen/generate";
 import { fetchSchemas } from "../spec/fetch";
 import { parseFlyOpenAPI, type FlyParseResult } from "../spec/parse";
-import { NamingStrategy } from "./naming";
+import { NamingStrategy, publishedSchemaNames } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
 import {
@@ -31,12 +31,17 @@ export async function generate(opts: GenerateOptions = {}): Promise<GenerateResu
   // results. The pipeline calls parseSchema once, so we return the first result
   // and inject the rest via augmentResults.
   let pendingResults: FlyParseResult[] = [];
+  // #5551: a published property-type name stays with the schema that
+  // published it, so a new schema sharing its short name is the one that
+  // keeps its dotted part. A caller-supplied schema set names its fixtures by
+  // the rule alone.
+  const published = opts.schemaSource ? {} : publishedSchemaNames();
 
   const config: GeneratePipelineConfig<FlyParseResult> = {
     fetchSchemas: (fetchOpts) => fetchSchemas({ force: fetchOpts.force }),
 
     parseSchema: (_typeName, data) => {
-      const results = parseFlyOpenAPI(data);
+      const results = parseFlyOpenAPI(data, published);
       if (results.length === 0) return null;
       pendingResults = results.slice(1);
       return results[0];

@@ -222,3 +222,12 @@ export const SURFACE_SNAPSHOT_PATH = join(dirname(fileURLToPath(import.meta.url)
 export function publishedNames(snapshotPath: string = SURFACE_SNAPSHOT_PATH): Record<string, string> {
   return readPublishedNames(snapshotPath);
 }
+
+/**
+ * The definition interface names the k8s lexicon has published, read from the
+ * `interface` entries of its committed surface snapshot: definition key ->
+ * name. Empty when there is no snapshot or it records none.
+ */
+export function publishedDefinitionNames(snapshotPath: string = SURFACE_SNAPSHOT_PATH): Record<string, string> {
+  return readPublishedNames(snapshotPath, "interface");
+}

@@ -28,6 +28,7 @@ import { execSync } from "child_process";
 import { SNAPSHOT_UPDATE_ENV } from "./validate";
 import {
   extractSurface,
+  readInterfaceNames,
   diffSurface,
   serializeSnapshot,
   parseSnapshot,
@@ -434,7 +435,7 @@ export function extractFreshSurface(lexiconDir: string): SurfaceSnapshot | null 
   }
 
   try {
-    return extractSurface(lexiconJSON, typesDTS);
+    return extractSurface(lexiconJSON, typesDTS, readInterfaceNames(generatedDir));
   } catch {
     return null;
   }

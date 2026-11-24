@@ -13,6 +13,8 @@ export interface FlyLexiconEntry {
   resourceType: string;
   kind: "resource" | "property";
   lexicon: "fly";
+  /** For a property type, the upstream schema it was generated from. */
+  source?: string;
   constraints?: Record<string, PropertyConstraints>;
 }
 
@@ -36,6 +38,7 @@ export function generateLexiconJSON(results: FlyParseResult[], naming: NamingStr
         kind: r?.isProperty ? "property" : "resource",
         lexicon: "fly",
       };
+      if (r?.isProperty && r.schema) entry.source = r.schema;
       if (propConstraints && Object.keys(propConstraints).length > 0) {
         entry.constraints = propConstraints;
       }

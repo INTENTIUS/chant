@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-12T16:27:40.549Z",
+  "generatedAt": "2026-11-24T19:11:00.081Z",
   "entries": {
     "App": {
       "kind": "resource",
@@ -22,51 +22,63 @@
     },
     "ContainerConfig": {
       "kind": "property",
-      "resourceType": "Fly::Machines::ContainerConfig"
+      "resourceType": "Fly::Machines::ContainerConfig",
+      "source": "fly.ContainerConfig"
     },
     "ContainerDependency": {
       "kind": "property",
-      "resourceType": "Fly::Machines::ContainerDependency"
+      "resourceType": "Fly::Machines::ContainerDependency",
+      "source": "fly.ContainerDependency"
     },
     "ContainerHealthcheck": {
       "kind": "property",
-      "resourceType": "Fly::Machines::ContainerHealthcheck"
+      "resourceType": "Fly::Machines::ContainerHealthcheck",
+      "source": "fly.ContainerHealthcheck"
     },
     "DNSConfig": {
       "kind": "property",
-      "resourceType": "Fly::Machines::DNSConfig"
+      "resourceType": "Fly::Machines::DNSConfig",
+      "source": "fly.DNSConfig"
     },
     "DnsForwardRule": {
       "kind": "property",
-      "resourceType": "Fly::Machines::DnsForwardRule"
+      "resourceType": "Fly::Machines::DnsForwardRule",
+      "source": "fly.dnsForwardRule"
     },
     "DnsOption": {
       "kind": "property",
-      "resourceType": "Fly::Machines::DnsOption"
+      "resourceType": "Fly::Machines::DnsOption",
+      "source": "fly.dnsOption"
     },
     "EnvFrom": {
       "kind": "property",
-      "resourceType": "Fly::Machines::EnvFrom"
+      "resourceType": "Fly::Machines::EnvFrom",
+      "source": "fly.EnvFrom"
     },
     "ExecHealthcheck": {
       "kind": "property",
-      "resourceType": "Fly::Machines::ExecHealthcheck"
+      "resourceType": "Fly::Machines::ExecHealthcheck",
+      "source": "fly.ExecHealthcheck"
     },
     "File": {
       "kind": "property",
-      "resourceType": "Fly::Machines::File"
+      "resourceType": "Fly::Machines::File",
+      "source": "fly.File"
     },
     "HTTPHealthcheck": {
       "kind": "property",
-      "resourceType": "Fly::Machines::HTTPHealthcheck"
+      "resourceType": "Fly::Machines::HTTPHealthcheck",
+      "source": "fly.HTTPHealthcheck"
     },
     "HTTPOptions": {
       "kind": "property",
-      "resourceType": "Fly::Machines::HTTPOptions"
+      "resourceType": "Fly::Machines::HTTPOptions",
+      "source": "fly.HTTPOptions"
     },
     "HTTPResponseOptions": {
       "kind": "property",
-      "resourceType": "Fly::Machines::HTTPResponseOptions"
+      "resourceType": "Fly::Machines::HTTPResponseOptions",
+      "source": "fly.HTTPResponseOptions"
     },
     "IPAddress": {
       "kind": "resource",
@@ -95,79 +107,98 @@
     },
     "MachineCacheDrive": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineCacheDrive"
+      "resourceType": "Fly::Machines::MachineCacheDrive",
+      "source": "fly.MachineCacheDrive"
     },
     "MachineCheck": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineCheck"
+      "resourceType": "Fly::Machines::MachineCheck",
+      "source": "fly.MachineCheck"
     },
     "MachineConfig": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineConfig"
+      "resourceType": "Fly::Machines::MachineConfig",
+      "source": "fly.MachineConfig"
     },
     "MachineGuest": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineGuest"
+      "resourceType": "Fly::Machines::MachineGuest",
+      "source": "fly.MachineGuest"
     },
     "MachineHTTPHeader": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineHTTPHeader"
+      "resourceType": "Fly::Machines::MachineHTTPHeader",
+      "source": "fly.MachineHTTPHeader"
     },
     "MachineInit": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineInit"
+      "resourceType": "Fly::Machines::MachineInit",
+      "source": "fly.MachineInit"
     },
     "MachineMetrics": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineMetrics"
+      "resourceType": "Fly::Machines::MachineMetrics",
+      "source": "fly.MachineMetrics"
     },
     "MachineMount": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineMount"
+      "resourceType": "Fly::Machines::MachineMount",
+      "source": "fly.MachineMount"
     },
     "MachinePort": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachinePort"
+      "resourceType": "Fly::Machines::MachinePort",
+      "source": "fly.MachinePort"
     },
     "MachineProcess": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineProcess"
+      "resourceType": "Fly::Machines::MachineProcess",
+      "source": "fly.MachineProcess"
     },
     "MachineRestart": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineRestart"
+      "resourceType": "Fly::Machines::MachineRestart",
+      "source": "fly.MachineRestart"
     },
     "MachineRootfs": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineRootfs"
+      "resourceType": "Fly::Machines::MachineRootfs",
+      "source": "fly.MachineRootfs"
     },
     "MachineSecret": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineSecret"
+      "resourceType": "Fly::Machines::MachineSecret",
+      "source": "fly.MachineSecret"
     },
     "MachineService": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineService"
+      "resourceType": "Fly::Machines::MachineService",
+      "source": "fly.MachineService"
     },
     "MachineServiceCheck": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineServiceCheck"
+      "resourceType": "Fly::Machines::MachineServiceCheck",
+      "source": "fly.MachineServiceCheck"
     },
     "MachineServiceConcurrency": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineServiceConcurrency"
+      "resourceType": "Fly::Machines::MachineServiceConcurrency",
+      "source": "fly.MachineServiceConcurrency"
     },
     "MachineSpot": {
       "kind": "property",
-      "resourceType": "Fly::Machines::MachineSpot"
+      "resourceType": "Fly::Machines::MachineSpot",
+      "source": "fly.MachineSpot"
     },
     "ProxyProtoOptions": {
       "kind": "property",
-      "resourceType": "Fly::Machines::ProxyProtoOptions"
+      "resourceType": "Fly::Machines::ProxyProtoOptions",
+      "source": "fly.ProxyProtoOptions"
     },
     "ReplayCache": {
       "kind": "property",
-      "resourceType": "Fly::Machines::ReplayCache"
+      "resourceType": "Fly::Machines::ReplayCache",
+      "source": "fly.ReplayCache"
     },
     "Secret": {
       "kind": "resource",
@@ -179,19 +210,23 @@
     },
     "Static": {
       "kind": "property",
-      "resourceType": "Fly::Machines::Static"
+      "resourceType": "Fly::Machines::Static",
+      "source": "fly.Static"
     },
     "StopConfig": {
       "kind": "property",
-      "resourceType": "Fly::Machines::StopConfig"
+      "resourceType": "Fly::Machines::StopConfig",
+      "source": "fly.StopConfig"
     },
     "TCPHealthcheck": {
       "kind": "property",
-      "resourceType": "Fly::Machines::TCPHealthcheck"
+      "resourceType": "Fly::Machines::TCPHealthcheck",
+      "source": "fly.TCPHealthcheck"
     },
     "TLSOptions": {
       "kind": "property",
-      "resourceType": "Fly::Machines::TLSOptions"
+      "resourceType": "Fly::Machines::TLSOptions",
+      "source": "fly.TLSOptions"
     },
     "Volume": {
       "kind": "resource",

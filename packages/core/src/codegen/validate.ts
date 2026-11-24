@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { computeCoverage, checkThresholds, type CoverageThresholds } from "./coverage";
-import { extractSurface, diffSurface, parseSnapshot, formatDelta } from "./surface-snapshot";
+import { extractSurface, readInterfaceNames, diffSurface, parseSnapshot, formatDelta } from "./surface-snapshot";
 
 export interface ValidateCheck {
   name: string;
@@ -226,7 +226,11 @@ export async function validateLexiconArtifacts(config: LexiconValidationConfig):
     env[SNAPSHOT_UPDATE_ENV] !== "1";
   if (surfaceGate && lexiconData && existsSync(snapshotPath) && existsSync(dtsPath)) {
     try {
-      const fresh = extractSurface(readFileSync(lexiconPath, "utf-8"), readFileSync(dtsPath, "utf-8"));
+      const fresh = extractSurface(
+        readFileSync(lexiconPath, "utf-8"),
+        readFileSync(dtsPath, "utf-8"),
+        readInterfaceNames(generatedDir),
+      );
       const delta = diffSurface(parseSnapshot(readFileSync(snapshotPath, "utf-8")), fresh);
       const moved = delta.added.length + delta.removed.length + delta.renamed.length + delta.changed.length;
       checks.push(

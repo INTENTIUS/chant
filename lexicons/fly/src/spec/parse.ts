@@ -44,6 +44,8 @@ export interface FlyParseResult {
   enums: Array<{ name: string; values: string[] }>;
   /** Whether this entity is a property type (nested config shape). */
   isProperty?: boolean;
+  /** For a property type, the upstream schema it was generated from (`fly.MachineConfig`). */
+  schema?: string;
 }
 
 // ── OpenAPI types ──────────────────────────────────────────────────
@@ -106,17 +108,23 @@ const REF_PREFIX = "#/components/schemas/";
 /**
  * Parse the flaps OpenAPI spec into the curated resources and the property
  * types reachable from their request schemas.
+ *
+ * @param publishedSchemas upstream schema -> the class name the lexicon already
+ *   published for it, normally read from the committed surface snapshot. A
+ *   published name stays with its schema; see {@link nameSchemas}.
  */
-export function parseFlyOpenAPI(data: string | Buffer): FlyParseResult[] {
+export function parseFlyOpenAPI(
+  data: string | Buffer,
+  publishedSchemas: Record<string, string> = {},
+): FlyParseResult[] {
   const spec: OpenAPISpec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8"));
   const schemas = spec.components?.schemas ?? {};
 
   // Phase 1: discover the emitted property-type set — object schemas reachable
   // (transitively) from the request schemas' properties. Enums are inlined, so
   // they are never emitted as classes.
-  const emitted = collectPropertyTypes(schemas);
-  const className = (schemaName: string): string => schemaToClassName(schemaName);
-  const resolve = (prop: OpenAPISchema | undefined): string => resolveType(prop, schemas, emitted);
+  const names = nameSchemas(collectPropertyTypes(schemas), publishedSchemas);
+  const resolve = (prop: OpenAPISchema | undefined): string => resolveType(prop, schemas, names);
 
   const results: FlyParseResult[] = [];
 
@@ -156,7 +164,7 @@ export function parseFlyOpenAPI(data: string | Buffer): FlyParseResult[] {
   }
 
   // Phase 3: property-type classes.
-  for (const schemaName of emitted) {
+  for (const [schemaName, className] of names) {
     const def = schemas[schemaName];
     const requiredSet = new Set(def.required ?? []);
     const properties: ParsedProperty[] = [];
@@ -171,7 +179,7 @@ export function parseFlyOpenAPI(data: string | Buffer): FlyParseResult[] {
     }
     results.push({
       resource: {
-        typeName: `Fly::${SERVICE}::${className(schemaName)}`,
+        typeName: `Fly::${SERVICE}::${className}`,
         description: def.description,
         properties,
         attributes: [],
@@ -179,6 +187,7 @@ export function parseFlyOpenAPI(data: string | Buffer): FlyParseResult[] {
       propertyTypes: [],
       enums: [],
       isProperty: true,
+      schema: schemaName,
     });
   }
 
@@ -248,16 +257,16 @@ function isObjectSchema(def: OpenAPISchema): boolean {
 function resolveType(
   prop: OpenAPISchema | undefined,
   schemas: Record<string, OpenAPISchema>,
-  emitted: string[],
+  names: Map<string, string>,
 ): string {
   if (!prop) return "any";
 
-  if (prop.$ref) return resolveRefType(prop.$ref, schemas, emitted);
+  if (prop.$ref) return resolveRefType(prop.$ref, schemas, names);
 
   // allOf: [{ $ref }] — the OpenAPI idiom for "typed as this schema".
   if (prop.allOf && prop.allOf.length > 0) {
     const withRef = prop.allOf.find((s) => s.$ref);
-    if (withRef?.$ref) return resolveRefType(withRef.$ref, schemas, emitted);
+    if (withRef?.$ref) return resolveRefType(withRef.$ref, schemas, names);
   }
 
   if (prop.enum && prop.enum.length > 0) {
@@ -275,14 +284,14 @@ function resolveType(
       return "boolean";
     case "array": {
       if (prop.items) {
-        const itemType = resolveType(prop.items, schemas, emitted);
+        const itemType = resolveType(prop.items, schemas, names);
         return itemType.includes(" | ") ? `(${itemType})[]` : `${itemType}[]`;
       }
       return "any[]";
     }
     case "object":
       if (prop.additionalProperties && typeof prop.additionalProperties === "object") {
-        return `Record<string, ${resolveType(prop.additionalProperties, schemas, emitted)}>`;
+        return `Record<string, ${resolveType(prop.additionalProperties, schemas, names)}>`;
       }
       return "Record<string, any>";
     default:
@@ -291,14 +300,15 @@ function resolveType(
 }
 
 /** Resolve a `#/components/schemas/X` ref to a TypeScript type. */
-function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, emitted: string[]): string {
+function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, names: Map<string, string>): string {
   if (!ref.startsWith(REF_PREFIX)) return "any";
   const name = ref.slice(REF_PREFIX.length);
   const def = schemas[name];
   if (!def) return "any";
 
   // Emitted object schemas reference their class by name.
-  if (emitted.includes(name)) return schemaToClassName(name);
+  const className = names.get(name);
+  if (className !== undefined) return className;
 
   // Enums inline as string-literal unions.
   if (isEnumDefinition(def)) {
@@ -324,13 +334,84 @@ function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, emi
 
 // ── Naming helpers ─────────────────────────────────────────────────
 
+const pascal = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
 /**
  * Convert a schema name into a PascalCase class-name segment.
  * "fly.MachineConfig" → "MachineConfig", "fly.dnsOption" → "DnsOption".
+ *
+ * With `qualified`, the dotted part stays in the name:
+ * "fly.MachineConfig" → "FlyMachineConfig". A schema with no dotted part has
+ * the same name either way.
  */
-export function schemaToClassName(schemaName: string): string {
-  const base = schemaName.slice(schemaName.lastIndexOf(".") + 1);
-  return base.charAt(0).toUpperCase() + base.slice(1);
+export function schemaToClassName(schemaName: string, qualified = false): string {
+  if (!qualified) return pascal(schemaName.slice(schemaName.lastIndexOf(".") + 1));
+  return schemaName
+    .split(".")
+    .map((segment) => pascal(segment))
+    .join("");
+}
+
+/**
+ * Give every emitted schema its class-name segment.
+ *
+ * A schema keeps a name it has already published (`published`, upstream
+ * schema -> name). Every other schema takes its short name
+ * ({@link schemaToClassName}) when no other emitted schema shares it and no
+ * resource or published type holds it. Otherwise it keeps the dotted part of
+ * its schema name (`FlyMachineConfig`), so a new upstream schema that shares a
+ * published short name builds beside it and the published name does not move.
+ * A newcomer with no dotted part to keep is refused rather than renamed.
+ */
+export function nameSchemas(emitted: string[], published: Record<string, string> = {}): Map<string, string> {
+  const held = new Map<string, string>();
+  for (const r of RESOURCES) held.set(flyShortName(r.typeName), r.typeName);
+
+  const names = new Map<string, string>();
+  for (const schemaName of emitted) {
+    const name = published[schemaName];
+    if (name !== undefined && !held.has(name)) {
+      names.set(schemaName, name);
+      held.set(name, schemaName);
+    }
+  }
+
+  const byShortName = new Map<string, string[]>();
+  for (const schemaName of emitted) {
+    if (names.has(schemaName)) continue;
+    const short = schemaToClassName(schemaName);
+    byShortName.set(short, [...(byShortName.get(short) ?? []), schemaName]);
+  }
+
+  const assigned = new Map<string, string>();
+  for (const [short, users] of byShortName) {
+    if (users.length === 1 && !held.has(short)) {
+      assigned.set(users[0], short);
+      continue;
+    }
+    for (const schemaName of users) {
+      const qualified = schemaToClassName(schemaName, true);
+      if (qualified === short) {
+        const other = held.get(short) ?? users.find((u) => u !== schemaName);
+        throw new Error(
+          `fly codegen: schema ${schemaName} shares the name ${short} with ${other} and has no dotted part to tell it apart`,
+        );
+      }
+      assigned.set(schemaName, qualified);
+    }
+  }
+
+  for (const [schemaName, name] of assigned) {
+    const owner = held.get(name);
+    if (owner !== undefined) {
+      throw new Error(`fly codegen: schemas ${owner} and ${schemaName} both map to the type name ${name}`);
+    }
+    held.set(name, schemaName);
+    names.set(schemaName, name);
+  }
+
+  // Emission order follows the spec walk, not the naming passes.
+  return new Map(emitted.map((schemaName) => [schemaName, names.get(schemaName)!]));
 }
 
 /** Extract short name: "Fly::Machines::Machine" → "Machine". */

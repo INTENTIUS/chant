@@ -67,6 +67,21 @@ describe("reservedNamesFromSnapshot", () => {
     });
     expect(reserved).toEqual({ "AWS::X::Y": "Alpha" });
   });
+
+  test("interface names come from interface entries and from a registry entry's interface field", () => {
+    const snapshot = {
+      entries: {
+        Bucket: { kind: "resource", resourceType: "AWS::S3::Bucket" },
+        DeploymentSpec: { kind: "interface", resourceType: "io.k8s.api.apps.v1.DeploymentSpec" },
+        Endpoint: { kind: "property", resourceType: "K8s::Monitoring::ServiceMonitor.endpoints", interface: "io.k8s.api.discovery.v1.Endpoint" },
+      },
+    };
+    expect(reservedNamesFromSnapshot(snapshot, "interface")).toEqual({
+      "io.k8s.api.apps.v1.DeploymentSpec": "DeploymentSpec",
+      "io.k8s.api.discovery.v1.Endpoint": "Endpoint",
+    });
+    expect(reservedNamesFromSnapshot(snapshot)).toEqual({ "AWS::S3::Bucket": "Bucket" });
+  });
 });
 
 describe("reserved names survive their neighbours changing", () => {
