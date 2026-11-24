@@ -225,6 +225,8 @@ export function seedFakeNpmRegistry(log: string, registry: FakeNpmRegistry): voi
  *   its registry at that version, and installs nothing.
  * - `audit signatures` (#4049) prints what npm prints for verified
  *   signatures and attestations, and exits 1 when `$FAKE_NPM_AUDIT_FAIL` is set, or, with `$FAKE_NPM_AUDIT_NO_SIGNING`, with npm's line for a registry that serves no signing keys.
+ * - `$FAKE_NPM_AUDIT_FETCH_ERROR` (#5562), `<n>` or `always`: the first `n` audits
+ *   fail with npm's FETCH_ERROR for a response body that is not JSON.
  * - `$FAKE_NPM_LAG` (#4244), `<name>=<n>[,<name>=<n>]`: after a publish of
  *   that name, the next `n` views of the version find nothing, as a registry
  *   that accepted a publish but does not serve it yet.
@@ -335,6 +337,18 @@ if (args[0] === "publish") {
     fs.writeFileSync(".audit-count", String(seen + 1));
     if (lateAttest === "always" || seen < Number(lateAttest)) {
       console.error("npm error 404 Not Found - GET https://registry.npmjs.org/-/npm/v1/attestations/@acme%2fcore@1.0.0 - Not found");
+      process.exit(1);
+    }
+  }
+  // FAKE_NPM_AUDIT_FETCH_ERROR=N answers the first N audits with npm's FETCH_ERROR for a non-JSON body ("always" never stops).
+  const fetchErr = process.env.FAKE_NPM_AUDIT_FETCH_ERROR;
+  if (fetchErr) {
+    const seen = fs.existsSync(".fetch-count") ? Number(fs.readFileSync(".fetch-count", "utf-8")) : 0;
+    fs.writeFileSync(".fetch-count", String(seen + 1));
+    if (fetchErr === "always" || seen < Number(fetchErr)) {
+      console.error("npm error code FETCH_ERROR");
+      console.error("npm error errno FETCH_ERROR");
+      console.error("npm error invalid json response body at https://registry.npmjs.org/-/npm/v1/attestations/@acme%2fcore@1.0.0 reason: Unexpected token O in JSON at position 0");
       process.exit(1);
     }
   }
