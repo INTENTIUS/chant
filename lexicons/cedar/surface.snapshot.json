@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-24T22:56:17.305Z",
+  "entries": {
+    "AdminAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"admin\""
+    },
+    "AdminContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"admin\".Context"
+    },
+    "Application": {
+      "kind": "resource",
+      "resourceType": "App::Application"
+    },
+    "ApplicationAttributes": {
+      "kind": "property",
+      "resourceType": "App::Application.Attributes"
+    },
+    "ApproveAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"approve\""
+    },
+    "ApproveContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"approve\".Context"
+    },
+    "CommentAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"comment\""
+    },
+    "CommentContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"comment\".Context"
+    },
+    "CreateAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"create\""
+    },
+    "CreateContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"create\".Context"
+    },
+    "DeleteAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"delete\""
+    },
+    "DeleteContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"delete\".Context"
+    },
+    "Document": {
+      "kind": "resource",
+      "resourceType": "App::Document"
+    },
+    "DocumentAttributes": {
+      "kind": "property",
+      "resourceType": "App::Document.Attributes"
+    },
+    "Folder": {
+      "kind": "resource",
+      "resourceType": "App::Folder"
+    },
+    "FolderAttributes": {
+      "kind": "property",
+      "resourceType": "App::Folder.Attributes"
+    },
+    "Group": {
+      "kind": "resource",
+      "resourceType": "App::Group"
+    },
+    "GroupAttributes": {
+      "kind": "property",
+      "resourceType": "App::Group.Attributes"
+    },
+    "ListAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"list\""
+    },
+    "ListContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"list\".Context"
+    },
+    "Policy": {
+      "kind": "resource",
+      "resourceType": "Cedar::Policy"
+    },
+    "ReadAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"read\""
+    },
+    "ReadContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"read\".Context"
+    },
+    "ServiceAccount": {
+      "kind": "resource",
+      "resourceType": "App::ServiceAccount"
+    },
+    "ServiceAccountAttributes": {
+      "kind": "property",
+      "resourceType": "App::ServiceAccount.Attributes"
+    },
+    "ShareAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"share\""
+    },
+    "ShareContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"share\".Context"
+    },
+    "Team": {
+      "kind": "resource",
+      "resourceType": "App::Team"
+    },
+    "TeamAttributes": {
+      "kind": "property",
+      "resourceType": "App::Team.Attributes"
+    },
+    "User": {
+      "kind": "resource",
+      "resourceType": "App::User"
+    },
+    "UserAttributes": {
+      "kind": "property",
+      "resourceType": "App::User.Attributes"
+    },
+    "WriteAction": {
+      "kind": "resource",
+      "resourceType": "App::Action::\"write\""
+    },
+    "WriteContext": {
+      "kind": "property",
+      "resourceType": "App::Action::\"write\".Context"
+    }
+  }
+}

@@ -41,7 +41,7 @@ import pinnedNames from "./pinned-names.json" with { type: "json" };
 import { langVersion } from "./wasm";
 
 /** The pinned `@cedar-policy/cedar-wasm` version — what `upstreamPin` bumps. */
-export const CEDAR_WASM_VERSION = "4.12.0";
+export const CEDAR_WASM_VERSION = "4.15.0";
 
 /** The Cedar *language* version that package implements (`getCedarLangVersion()`). */
 export const CEDAR_LANG_VERSION = "4.5";
