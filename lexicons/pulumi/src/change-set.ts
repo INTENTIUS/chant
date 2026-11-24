@@ -30,7 +30,10 @@
  * `replaceReasons` and a `detailedDiff` kind ending in `-replace` mark
  * `forcesReplacement`. An input that holds Pulumi's unknown sentinel is
  * `unknown: true` with no `after`: a resource that reads an output of one
- * being created shows its dependent input as unknown. A value that holds a
+ * being created shows its dependent input as unknown. A name the engine drew
+ * for a create or a replacement ({@link pulumiPlannedInputs}) is `unknown:
+ * true` too, since the apply draws another, so the document's digest is the
+ * same for every preview of one change (#5563). A value that holds a
  * secret is `sensitive: true` with neither side.
  *
  * ## What preview cannot list: `mayAppear`
@@ -312,6 +315,11 @@ function attributesOf(steps: PulumiStep[], action: ChangeSetAction, states: { be
   if (action !== "create" && action !== "update" && action !== "replace") return [];
   const before = isObject(states.before?.inputs) ? states.before!.inputs! : {};
   const after = isObject(states.after?.inputs) ? states.after!.inputs! : {};
+  // #5563: a name the engine drew for this preview is not the one the apply will draw, so the entry says it is
+  // known only after apply, as `pulumiPlannedInputs` leaves it out of the member's digest.
+  const afterStep = steps.find((s) => s.newState === states.after);
+  const planned = afterStep ? pulumiPlannedInputs(afterStep) : null;
+  const drawn = (k: string): boolean => isObject(planned) && planned[k] === PULUMI_GENERATED && after[k] !== PULUMI_GENERATED;
   const forcing = new Set<string>();
   const named = new Set<string>();
   for (const s of steps) {
@@ -333,7 +341,7 @@ function attributesOf(steps: PulumiStep[], action: ChangeSetAction, states: { be
   for (const k of keys.sort()) {
     let b: unknown = before[k];
     let a: unknown = after[k];
-    let unknown = holdsUnknown(a);
+    let unknown = holdsUnknown(a) || drawn(k);
     // On an update a key the diff names is listed even when both sides read the same: the provider said it changes.
     if (action === "create" && !present(a) && !unknown) continue;
     // A key the diff names with no input on either side is an output the provider computes (an SSM parameter's

@@ -142,7 +142,7 @@ The pulumi adapter ([#4453](https://github.com/INTENTIUS/chant/issues/4453)) kee
 | `import` | `no-op` that is `importing` |
 | `discard` | `forget` |
 
-An input that holds Pulumi's unknown value is `unknown: true`, so a resource that reads an output of one being created shows that input as unknown. A secret is `sensitive: true`. Each entry is on its graph node by the URN rule of `@intentius/chant/pulumi-urn`.
+An input that holds Pulumi's unknown value is `unknown: true`, so a resource that reads an output of one being created shows that input as unknown. A name the engine drew for a create or a replacement, the input the member's `planDigest` reads as a fixed marker, is `unknown: true` too: the apply draws another, so the preview's name is not the one that gets created, and two previews of one change get one document digest ([#5563](https://github.com/INTENTIUS/chant/issues/5563)). A secret is `sensitive: true`. Each entry is on its graph node by the URN rule of `@intentius/chant/pulumi-urn`.
 
 At preview, an `apply()` whose input is unknown does not run, so resources the program registers inside it are not in the steps. The adapter marks them `mayAppear` in the cases below. The paragraph after them gives the two it cannot detect.
 
