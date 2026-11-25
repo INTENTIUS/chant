@@ -1,0 +1,28 @@
+---
+title: "Upgrade notes"
+description: "Names each upgrade of the gcp lexicon removed, renamed or changed, and what to use after it"
+diataxis: reference
+---
+
+Each section is one upgrade of the gcp lexicon that removed, renamed or changed a name you may import, headed by the package version it shipped in. The newest is last. An upgrade that only added names has no section.
+
+## 0.125.0 (spec v1.152.0 to v1.162.0)
+
+Upgraded on 2026-11-23.
+
+### Removed
+
+These names are gone from the lexicon and nothing replaces them. Code that imports one no longer builds until the import is taken out.
+
+| Name | Resource type |
+|---|---|
+| `AistreamsCluster` | `GCP::Aistreams::Cluster` |
+| `ProcessorVersion_KmsKeyVersionNameRef` | `GCP::Documentai::ProcessorVersion.kmsKeyVersionNameRef` |
+
+### Changed
+
+These names still exist with the changes listed. Code that sets a dropped property or reads a dropped attribute no longer builds.
+
+| Name | Change |
+|---|---|
+| `Tensorboard` | attributes dropped: `status_blobStoragePathPrefix`, `status_createTime`, `status_name`, `status_runCount`, `status_updateTime` |
