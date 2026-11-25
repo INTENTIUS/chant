@@ -77,7 +77,7 @@ Two, for two different things:
 
 - `CEDAR_WASM_VERSION` — the `@cedar-policy/cedar-wasm` package, bumped by the
   weekly `cedar-upgrade` Op.
-- `CEDAR_LANG_VERSION` — the Cedar *language* that package implements (4.5).
+- `CEDAR_LANG_VERSION` — the Cedar *language* that package implements (4.7).
   `generate()` asserts it before emitting anything, because a package bump that
   leaves the language alone cannot change what parses.
 

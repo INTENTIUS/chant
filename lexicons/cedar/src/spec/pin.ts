@@ -4,8 +4,8 @@
  * ## The version pin
  *
  * `@cedar-policy/cedar-wasm` and the Cedar *language* move independently: the
- * package is 4.12.0, the grammar it implements is 4.5 (#1648 §0). A package
- * bump that leaves the language at 4.5 cannot change what parses, so the
+ * package is 4.15.0, the grammar it implements is 4.7 (#1648 §0). A package
+ * bump that leaves the language at 4.7 cannot change what parses, so the
  * language version is the value worth asserting at generation time and the
  * package version is the one `upstreamPin` bumps. Both are recorded.
  *
@@ -44,7 +44,7 @@ import { langVersion } from "./wasm";
 export const CEDAR_WASM_VERSION = "4.15.0";
 
 /** The Cedar *language* version that package implements (`getCedarLangVersion()`). */
-export const CEDAR_LANG_VERSION = "4.5";
+export const CEDAR_LANG_VERSION = "4.7";
 
 /** Env var that proceeds past a language-version mismatch for one run. */
 export const ACCEPT_LANG_ENV = "CHANT_ACCEPT_CEDAR_LANG";

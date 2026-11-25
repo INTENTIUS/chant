@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cedarConfigSchema, CEDAR_DEFAULT_SCHEMA_PATH } from "./config";
 import { cedarPlugin } from "./plugin";
 import { resolveSchemaPath, defaultSchemaPath } from "./spec/fetch";
+import { CEDAR_WASM_VERSION } from "./spec/pin";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -88,7 +89,7 @@ describe("upstream pin declaration", () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(join(pkgDir, pin!.file), "utf-8");
     const match = pin!.pattern.exec(source);
-    expect(match?.[1]).toBe("4.12.0");
-    expect(pin!.replace("4.13.0", match![0])).toContain('"4.13.0"');
+    expect(match?.[1]).toBe(CEDAR_WASM_VERSION);
+    expect(pin!.replace("99.0.0", match![0])).toContain('"99.0.0"');
   });
 });
