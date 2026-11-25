@@ -287,7 +287,7 @@ export const cedarPlugin: LexiconPlugin = {
    *
    * `CEDAR_WASM_VERSION` is the package version the self-upgrade tooling bumps;
    * `CEDAR_LANG_VERSION` beside it is the language version `generate()` asserts
-   * at runtime, since a package bump that leaves the language at 4.5 cannot
+   * at runtime, since a package bump that leaves the language at 4.7 cannot
    * change what parses. Both live in src/spec/pin.ts, which also carries the
    * content pin over the bundled default schema.
    */

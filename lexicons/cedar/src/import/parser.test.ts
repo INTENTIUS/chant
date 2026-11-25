@@ -150,11 +150,11 @@ describe("the JSON policy-set envelope", () => {
 
   test("15. an envelope's conditions come back re-rendered, since there is no source to quote", () => {
     const props = parse(testdata("full.cedar.json")).entities[0].props;
-    // Semantically the same clause as the text fixture's, defensively
-    // parenthesized on the way out of the module (#1648 §1).
+    // Semantically the same clause as the text fixture's, as the module's
+    // formatter prints it (#1648 §1).
     expect(props.when).toEqual([
-      "((resource.owner) == principal) && ((context.mfa) == true)",
-      '(principal.department) == "eng"',
+      "(resource.owner == principal) && (context.mfa == true)",
+      'principal.department == "eng"',
     ]);
   });
 
