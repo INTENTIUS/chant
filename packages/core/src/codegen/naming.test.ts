@@ -2,8 +2,10 @@ import { join } from "node:path";
 import { describe, test, expect } from "vitest";
 import {
   NamingStrategy,
+  nameSchemas,
   publishedNamingConfig,
   readPublishedNames,
+  readPublishedSources,
   reservedNamesFromSnapshot,
   type NamingConfig,
   type NamingInput,
@@ -205,5 +207,48 @@ describe("publishedNamingConfig (#5551)", () => {
   test("a missing or unparseable snapshot reserves nothing", () => {
     expect(readPublishedNames(join(import.meta.dirname, "no-such-dir", "surface.snapshot.json"))).toEqual({});
     expect(readPublishedNames(join(import.meta.dirname, "naming.test.ts"))).toEqual({});
+  });
+});
+
+describe("nameSchemas (#5569)", () => {
+  const rule = {
+    lexicon: "test",
+    short: (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/Input$/, ""),
+    qualified: (s: string) => `Q${s.charAt(0).toUpperCase()}${s.slice(1)}`,
+    held: ["Bucket"],
+  };
+
+  test("a schema keeps its published name and a newcomer sharing it is qualified", () => {
+    const names = nameSchemas(["thingInput", "thing", "other"], rule, { thing: "Thing" });
+    expect([...names]).toEqual([
+      ["thingInput", "QThingInput"],
+      ["thing", "Thing"],
+      ["other", "Other"],
+    ]);
+  });
+
+  test("without published names every schema sharing a short name is qualified", () => {
+    expect(Object.fromEntries(nameSchemas(["thing", "thingInput"], rule))).toEqual({
+      thing: "QThing",
+      thingInput: "QThingInput",
+    });
+  });
+
+  test("a held name is never taken, and two schemas left with one name are refused", () => {
+    expect(Object.fromEntries(nameSchemas(["bucket"], rule))).toEqual({ bucket: "QBucket" });
+    expect(() => nameSchemas(["thing"], rule, { other: "Thing", thing: "Other" })).not.toThrow();
+    expect(() => nameSchemas(["Thing", "thing"], { ...rule, qualified: () => "Same" })).toThrow(
+      /test codegen: schema thing would take the type name Same, which schema Thing holds/,
+    );
+  });
+
+  test("readPublishedSources reads property sources, and nothing from a missing file", () => {
+    expect(readPublishedSources(join(import.meta.dirname, "no-such-dir", "surface.snapshot.json"))).toEqual({});
+    expect(
+      reservedNamesFromSnapshot(
+        { entries: { Thing: { kind: "property", resourceType: "T::S::Thing" }, B: { kind: "resource", resourceType: "T::S::B" } } },
+        "property",
+      ),
+    ).toEqual({ "T::S::Thing": "Thing" });
   });
 });

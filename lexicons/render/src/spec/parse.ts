@@ -27,6 +27,7 @@ import {
   type JsonSchemaProperty,
   type PropertyConstraints,
 } from "@intentius/chant/codegen/json-schema";
+import { nameSchemas, type SchemaNamingRule } from "@intentius/chant/codegen/naming";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -60,6 +61,8 @@ export interface RenderParseResult {
   enums: Array<{ name: string; values: string[] }>;
   /** Whether this entity is a property type (nested config shape). */
   isProperty?: boolean;
+  /** For a property type, the upstream schema it was generated from (`imagePOST`). */
+  schema?: string;
 }
 
 // ── OpenAPI types ──────────────────────────────────────────────────
@@ -312,16 +315,25 @@ const COMPONENT_PREFIX = "#/components/schemas/";
 /**
  * Parse the Render OpenAPI spec into the curated resources and the property
  * types reachable from their request schemas.
+ *
+ * @param publishedSchemas upstream schema -> the name the lexicon already
+ *   published for it, normally read from the committed surface snapshot. A
+ *   published name stays with its schema; see {@link nameRenderSchemas}.
  */
-export function parseRenderOpenAPI(data: string | Buffer): RenderParseResult[] {
+export function parseRenderOpenAPI(
+  data: string | Buffer,
+  publishedSchemas: Record<string, string> = {},
+): RenderParseResult[] {
   const spec: OpenAPISpec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8"));
   const schemas = spec.components?.schemas ?? {};
   const ctx = new ParseContext(spec, schemas);
   ctx.hoist(HOISTED);
 
   // Phase 1: discover the emitted property-type set — named object schemas
-  // reachable (transitively) from the request schemas' properties.
+  // reachable (transitively) from the request schemas' properties — and name
+  // each one.
   ctx.collectPropertyTypes();
+  ctx.nameEmitted(publishedSchemas);
 
   const results: RenderParseResult[] = [];
 
@@ -370,7 +382,7 @@ export function parseRenderOpenAPI(data: string | Buffer): RenderParseResult[] {
   }
 
   // Phase 3: property-type classes.
-  for (const schemaName of ctx.emitted) {
+  for (const [schemaName, className] of ctx.classNames) {
     const def = schemas[schemaName];
     const requiredSet = new Set(ctx.flattenRequired(def));
     const optional = new Set(PROPERTY_OPTIONAL[schemaName] ?? []);
@@ -388,7 +400,7 @@ export function parseRenderOpenAPI(data: string | Buffer): RenderParseResult[] {
     }
     results.push({
       resource: {
-        typeName: `${NAMESPACE}::${SERVICES}::${schemaToClassName(schemaName)}`,
+        typeName: `${NAMESPACE}::${SERVICES}::${className}`,
         description: def.description,
         properties,
         attributes: [],
@@ -396,6 +408,7 @@ export function parseRenderOpenAPI(data: string | Buffer): RenderParseResult[] {
       propertyTypes: [],
       enums: [],
       isProperty: true,
+      schema: schemaName,
     });
   }
 
@@ -406,7 +419,8 @@ class ParseContext {
   /** Emitted property-type schema names, in insertion order. */
   readonly emitted: string[] = [];
   private readonly emittedSet = new Set<string>();
-  private readonly classNames = new Map<string, string>();
+  /** Emitted schema -> class name, in emission order. Set by {@link nameEmitted}. */
+  classNames = new Map<string, string>();
 
   constructor(
     private readonly spec: OpenAPISpec,
@@ -542,6 +556,11 @@ class ParseContext {
     }
   }
 
+  /** Name the emitted schemas; see {@link nameRenderSchemas}. */
+  nameEmitted(published: Record<string, string>): void {
+    this.classNames = nameRenderSchemas(this.emitted, published);
+  }
+
   /** An object schema with properties (directly or via allOf), not a pure enum. */
   isObjectSchema(def: OpenAPISchema): boolean {
     if (isEnumDefinition(def)) return false;
@@ -638,7 +657,8 @@ class ParseContext {
     if (!def) return "any";
 
     // Emitted object schemas reference their class by name.
-    if (this.emittedSet.has(name)) return schemaToClassName(name);
+    const className = this.classNames.get(name);
+    if (className !== undefined) return className;
 
     // Enums inline as string-literal unions.
     if (isEnumDefinition(def)) return enumUnion(def.enum ?? []);
@@ -706,6 +726,39 @@ export function schemaToClassName(schemaName: string): string {
   base = base.replace(/(POST|PATCH|PUT|Post|Patch|Put)$/, "");
   base = base.replace(/Input$/, "");
   return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+/**
+ * The name a schema takes when another schema, a resource or a published type
+ * holds its short name: the schema name with its request-shape suffix kept
+ * ("imageInput" -> "ImageInput", "imagePOST" -> "ImagePOST"). A schema with no
+ * suffix to keep takes the service segment instead ("image" ->
+ * "ServicesImage").
+ */
+export function qualifiedClassName(schemaName: string): string {
+  const name = schemaName.charAt(0).toUpperCase() + schemaName.slice(1);
+  return name === schemaToClassName(schemaName) ? `${SERVICES}${name}` : name;
+}
+
+const RENDER_SCHEMA_NAMING: SchemaNamingRule = {
+  lexicon: "render",
+  short: schemaToClassName,
+  qualified: qualifiedClassName,
+  held: RESOURCES.map((r) => renderShortName(r.typeName)),
+};
+
+/**
+ * Give every emitted schema its class-name segment (chant #5569).
+ *
+ * A schema keeps a name it has already published. Any other schema takes its
+ * short name ({@link schemaToClassName}) when no other emitted schema shares
+ * it and no resource or published type holds it, and its qualified name
+ * ({@link qualifiedClassName}) otherwise. Upstream adding `imageInput` beside
+ * the schema that published `Image` therefore emits `ImageInput` for the
+ * newcomer and leaves `Image` where it was.
+ */
+export function nameRenderSchemas(emitted: string[], published: Record<string, string> = {}): Map<string, string> {
+  return nameSchemas(emitted, RENDER_SCHEMA_NAMING, published);
 }
 
 /** Extract short name: "Render::Services::WebService" → "WebService". */

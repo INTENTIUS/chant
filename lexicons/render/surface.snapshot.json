@@ -1,0 +1,324 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-25T04:52:58.607Z",
+  "entries": {
+    "Autoscaling": {
+      "kind": "property",
+      "resourceType": "Render::Services::Autoscaling",
+      "source": "Autoscaling"
+    },
+    "AutoscalingCriteria": {
+      "kind": "property",
+      "resourceType": "Render::Services::AutoscalingCriteria",
+      "source": "AutoscalingCriteria"
+    },
+    "AutoscalingCriterion": {
+      "kind": "property",
+      "resourceType": "Render::Services::AutoscalingCriterion",
+      "source": "AutoscalingCriterion"
+    },
+    "BackgroundWorker": {
+      "kind": "resource",
+      "resourceType": "Render::Services::BackgroundWorker",
+      "props": [
+        "autoDeploy:false",
+        "autoDeployTrigger:false",
+        "branch:false",
+        "buildFilter:false",
+        "envVars:false",
+        "environmentId:false",
+        "image:false",
+        "name:true",
+        "ownerId:false",
+        "repo:false",
+        "rootDir:false",
+        "secretFiles:false",
+        "serviceDetails:true"
+      ]
+    },
+    "BackgroundWorkerDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::BackgroundWorkerDetails",
+      "source": "backgroundWorkerDetailsPOST"
+    },
+    "BuildFilter": {
+      "kind": "property",
+      "resourceType": "Render::Services::BuildFilter",
+      "source": "buildFilter"
+    },
+    "CidrBlockAndDescription": {
+      "kind": "property",
+      "resourceType": "Render::Services::CidrBlockAndDescription",
+      "source": "cidrBlockAndDescription"
+    },
+    "CronJob": {
+      "kind": "resource",
+      "resourceType": "Render::Services::CronJob",
+      "props": [
+        "autoDeploy:false",
+        "autoDeployTrigger:false",
+        "branch:false",
+        "buildFilter:false",
+        "envVars:false",
+        "environmentId:false",
+        "image:false",
+        "name:true",
+        "ownerId:false",
+        "repo:false",
+        "rootDir:false",
+        "secretFiles:false",
+        "serviceDetails:true"
+      ]
+    },
+    "CronJobDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::CronJobDetails",
+      "source": "cronJobDetailsPOST"
+    },
+    "CustomDomain": {
+      "kind": "resource",
+      "resourceType": "Render::Services::CustomDomain",
+      "props": [
+        "name:true",
+        "serviceId:true"
+      ]
+    },
+    "Disk": {
+      "kind": "resource",
+      "resourceType": "Render::Services::Disk",
+      "props": [
+        "mountPath:true",
+        "name:true",
+        "serviceId:true",
+        "sizeGB:true"
+      ]
+    },
+    "DockerDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::DockerDetails",
+      "source": "dockerDetailsPOST"
+    },
+    "EnvGroup": {
+      "kind": "resource",
+      "resourceType": "Render::Config::EnvGroup",
+      "props": [
+        "envVars:true",
+        "environmentId:false",
+        "name:true",
+        "ownerId:false",
+        "secretFiles:false",
+        "serviceIds:false"
+      ]
+    },
+    "EnvVar": {
+      "kind": "property",
+      "resourceType": "Render::Services::EnvVar",
+      "source": "EnvVar"
+    },
+    "Environment": {
+      "kind": "resource",
+      "resourceType": "Render::Projects::Environment",
+      "props": [
+        "ipAllowList:false",
+        "name:true",
+        "networkIsolationEnabled:false",
+        "projectId:true",
+        "protectedStatus:false"
+      ]
+    },
+    "GeneratedEnvVar": {
+      "kind": "property",
+      "resourceType": "Render::Services::GeneratedEnvVar",
+      "source": "GeneratedEnvVar"
+    },
+    "Header": {
+      "kind": "property",
+      "resourceType": "Render::Services::Header",
+      "source": "headerInput"
+    },
+    "Image": {
+      "kind": "property",
+      "resourceType": "Render::Services::Image",
+      "source": "image"
+    },
+    "KeyValue": {
+      "kind": "resource",
+      "resourceType": "Render::Datastores::KeyValue",
+      "props": [
+        "environmentId:false",
+        "ipAllowList:false",
+        "maxmemoryPolicy:false",
+        "name:true",
+        "ownerId:false",
+        "persistenceMode:false",
+        "plan:true",
+        "region:false"
+      ]
+    },
+    "MaintenanceMode": {
+      "kind": "property",
+      "resourceType": "Render::Services::MaintenanceMode",
+      "source": "maintenanceMode"
+    },
+    "NativeEnvironmentDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::NativeEnvironmentDetails",
+      "source": "nativeEnvironmentDetailsPOST"
+    },
+    "Postgres": {
+      "kind": "resource",
+      "resourceType": "Render::Datastores::Postgres",
+      "props": [
+        "connectionPool:false",
+        "databaseName:false",
+        "databaseUser:false",
+        "datadogAPIKey:false",
+        "datadogSite:false",
+        "diskSizeGB:false",
+        "enableDiskAutoscaling:false",
+        "enableHighAvailability:false",
+        "environmentId:false",
+        "ipAllowList:false",
+        "name:true",
+        "ownerId:false",
+        "plan:true",
+        "readReplicas:false",
+        "region:false",
+        "version:true"
+      ]
+    },
+    "Previews": {
+      "kind": "property",
+      "resourceType": "Render::Services::Previews",
+      "source": "previews"
+    },
+    "PrivateService": {
+      "kind": "resource",
+      "resourceType": "Render::Services::PrivateService",
+      "props": [
+        "autoDeploy:false",
+        "autoDeployTrigger:false",
+        "branch:false",
+        "buildFilter:false",
+        "envVars:false",
+        "environmentId:false",
+        "image:false",
+        "name:true",
+        "ownerId:false",
+        "repo:false",
+        "rootDir:false",
+        "secretFiles:false",
+        "serviceDetails:true"
+      ]
+    },
+    "PrivateServiceDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::PrivateServiceDetails",
+      "source": "privateServiceDetailsPOST"
+    },
+    "Project": {
+      "kind": "resource",
+      "resourceType": "Render::Projects::Project",
+      "props": [
+        "environments:true",
+        "name:true",
+        "ownerId:false"
+      ]
+    },
+    "ProjectEnvironment": {
+      "kind": "property",
+      "resourceType": "Render::Services::ProjectEnvironment",
+      "source": "projectPOSTEnvironmentInput"
+    },
+    "ReadReplica": {
+      "kind": "property",
+      "resourceType": "Render::Services::ReadReplica",
+      "source": "readReplicaInput"
+    },
+    "RegistryCredential": {
+      "kind": "resource",
+      "resourceType": "Render::Config::RegistryCredential",
+      "props": [
+        "authToken:true",
+        "name:true",
+        "ownerId:false",
+        "registry:true",
+        "username:true"
+      ]
+    },
+    "Route": {
+      "kind": "property",
+      "resourceType": "Render::Services::Route",
+      "source": "routePost"
+    },
+    "SecretFile": {
+      "kind": "property",
+      "resourceType": "Render::Services::SecretFile",
+      "source": "SecretFile"
+    },
+    "ServiceDisk": {
+      "kind": "property",
+      "resourceType": "Render::Services::ServiceDisk",
+      "source": "serviceDisk"
+    },
+    "StaticSite": {
+      "kind": "resource",
+      "resourceType": "Render::Services::StaticSite",
+      "props": [
+        "autoDeploy:false",
+        "autoDeployTrigger:false",
+        "branch:false",
+        "buildFilter:false",
+        "envVars:false",
+        "environmentId:false",
+        "image:false",
+        "name:true",
+        "ownerId:false",
+        "repo:false",
+        "rootDir:false",
+        "secretFiles:false",
+        "serviceDetails:false"
+      ]
+    },
+    "StaticSiteDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::StaticSiteDetails",
+      "source": "staticSiteDetailsPOST"
+    },
+    "WebService": {
+      "kind": "resource",
+      "resourceType": "Render::Services::WebService",
+      "props": [
+        "autoDeploy:false",
+        "autoDeployTrigger:false",
+        "branch:false",
+        "buildFilter:false",
+        "envVars:false",
+        "environmentId:false",
+        "image:false",
+        "name:true",
+        "ownerId:false",
+        "repo:false",
+        "rootDir:false",
+        "secretFiles:false",
+        "serviceDetails:true"
+      ]
+    },
+    "WebServiceDetails": {
+      "kind": "property",
+      "resourceType": "Render::Services::WebServiceDetails",
+      "source": "webServiceDetailsPOST"
+    },
+    "Webhook": {
+      "kind": "resource",
+      "resourceType": "Render::Config::Webhook",
+      "props": [
+        "enabled:true",
+        "eventFilter:true",
+        "name:true",
+        "ownerId:false",
+        "url:true"
+      ]
+    }
+  }
+}
