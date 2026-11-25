@@ -527,6 +527,8 @@ export function cosignSigner(env: NodeJS.ProcessEnv, redactor: Redactor, cosign 
 const COSIGN_TYPES: Record<string, string> = { [SLSA_PROVENANCE_PREDICATE]: "slsaprovenance1", [SPDX_PREDICATE]: "spdxjson", [CYCLONEDX_PREDICATE]: "cyclonedx", [COSIGN_VULN_PREDICATE]: "vuln" };
 export const cosignType = (predicateType: string): string => COSIGN_TYPES[predicateType] ?? predicateType;
 const hexOf = (digest: string): string => (digest.includes(":") ? digest.split(":")[1]! : digest);
+/** A digest's algorithm, from its `<alg>:` prefix: `sha512` for an npm package (#5572), else `sha256`. */
+const algOf = (digest: string): string => (digest.includes(":") ? digest.split(":")[0]! : "sha256");
 
 /** How cosign verifies (#5458): `tlog: false` for a signature that went to no transparency log, and a private instance's trusted root (an absolute path). */
 export interface CosignVerifyOptions {
@@ -561,7 +563,7 @@ export function cosignVerifier(env: NodeJS.ProcessEnv, cosign = cosignPath(env),
     },
     unavailable: () => check().reason,
     verifyBlob: (bundle, digest, id) => blob(bundle, (f) => ["verify-blob", "--bundle", f, ...idFlags(id), `sha256:${hexOf(digest)}`]),
-    verifyBlobAttestation: (bundle, digest, predicateType, id) => blob(bundle, (f) => ["verify-blob-attestation", "--bundle", f, "--type", cosignType(predicateType), "--digest", hexOf(digest), "--digestAlg", "sha256", ...idFlags(id)]),
+    verifyBlobAttestation: (bundle, digest, predicateType, id) => blob(bundle, (f) => ["verify-blob-attestation", "--bundle", f, "--type", cosignType(predicateType), "--digest", hexOf(digest), "--digestAlg", algOf(digest), ...idFlags(id)]),
     verifyImage: (ref, id) => go(["verify", ...idFlags(id), ref]),
     verifyImageAttestation: (ref, predicateType, id) => go(["verify-attestation", "--type", cosignType(predicateType), ...idFlags(id), ref]),
   };
