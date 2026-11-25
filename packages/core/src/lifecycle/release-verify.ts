@@ -84,6 +84,22 @@ export function sigstoreCarries(v: ReleaseVerification, sigstore: Pick<SigstoreV
   return !!sigstore && v.digestMatches && v.status === "unsigned" && !v.releaseGate && sigstore.status === "verified" && sigstore.checks.length > 0;
 }
 
+/**
+ * The exit code `release verify` starts from, with `--sigstore`'s result
+ * applied: a release `sigstoreCarries` passes has no code, and `carriedBy`
+ * and `reason` say so. Sets `carriedBy` on `v`.
+ */
+export function carriedVerification(v: ReleaseVerification, sigstore: SigstoreVerification | null): ReturnType<typeof verificationCode> {
+  let code = verificationCode(v);
+  const bySigstore = code === "release-unsigned" && sigstoreCarries(v, sigstore);
+  if (bySigstore) {
+    code = null;
+    v.reason = "no cut is ssh-signed; the release is verified by its Sigstore identity";
+  }
+  v.carriedBy = code ? null : bySigstore ? "sigstore" : "ssh";
+  return code;
+}
+
 /** Check the release `ref` names in the member at `cwd`. Reads only the local repository. */
 export async function verifyRelease(req: { cwd: string; ref: string }): Promise<ReleaseVerification | { error: ReleaseVerifyError }> {
   const { resolveRelease, readCuts, verifyReleaseDigest } = await import("./release-store");
@@ -194,13 +210,79 @@ export interface SigstoreVerification {
  * target, with its target's kind and name.
  */
 export async function recordedSignatures(cwd: string, releaseDigest: string): Promise<Array<{ kind: string; target: string; item: import("./release-publish").PublishItem }>> {
+  return (await newestRevealed(cwd, releaseDigest)).flatMap((r) =>
+    r.items.filter((i) => (i.attachment === "signature" || i.attachment === "attestation") && (i.signs?.length ?? 0) > 0).map((item) => ({ kind: r.kind, target: r.name, item })),
+  );
+}
+
+/** The newest `revealed` line of each target the publish record holds for `releaseDigest`. */
+async function newestRevealed(cwd: string, releaseDigest: string): Promise<import("./publish-record").PublishRecord[]> {
   const { readPublishRecords } = await import("./publish-record");
   const records = await readPublishRecords(releaseDigest, { cwd }).catch(() => []);
   const newest = new Map<string, (typeof records)[number]>();
   for (const r of records) if (r.step === "revealed") newest.set(r.target, r);
-  return [...newest.values()].flatMap((r) =>
-    r.items.filter((i) => (i.attachment === "signature" || i.attachment === "attestation") && (i.signs?.length ?? 0) > 0).map((item) => ({ kind: r.kind, target: r.name, item })),
-  );
+  return [...newest.values()];
+}
+
+/** The registry an npm target names when it names none. */
+export const NPMJS_REGISTRY = "https://registry.npmjs.org";
+
+/** Where an npm registry serves the attestations of `<name>@<version>` (#5572), a scope's `/` written `%2f` as npm writes it. */
+export function npmAttestationsUrl(registry: string, name: string, version: string): string {
+  return `${registry.replace(/\/+$/, "")}/-/npm/v1/attestations/${name.replace("/", "%2f")}@${version}`;
+}
+
+/** Where an npm registry serves the manifest of `<name>@<version>`, whose `dist.integrity` is the SHA-512 its provenance signs. */
+export function npmVersionUrl(registry: string, name: string, version: string): string {
+  return `${registry.replace(/\/+$/, "")}/${name.replace("/", "%2f")}/${version}`;
+}
+
+/**
+ * What the registry holds for one package's provenance (#5572): its SLSA
+ * provenance bundle, `none` when the registry holds no attestation for the
+ * version (a 404, or a list with no SLSA provenance in it), or why it could
+ * not be read. npmjs.org has answered this path with a cached `200` whose
+ * body is the text `OK`: that is an answer that can't be read, never a
+ * bundle, so it is a reason here and fails the check.
+ */
+export async function fetchNpmProvenance(
+  fetchFn: import("./release-publish").PublishFetch,
+  registry: string,
+  name: string,
+  version: string,
+): Promise<{ bundle: Uint8Array; digest: string } | { none: true } | { reason: string }> {
+  const { SLSA_PROVENANCE_PREDICATE } = await import("./publish-signing");
+  const get = async (url: string): Promise<{ status: number; body: unknown; text: string } | { reason: string }> => {
+    try {
+      const res = await fetchFn(url, { method: "GET", headers: { accept: "application/json" } });
+      const text = await res.text();
+      let body: unknown = undefined;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        // Not JSON; the caller says so.
+      }
+      return { status: res.status, body, text };
+    } catch (err) {
+      return { reason: `${url} could not be read: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  };
+  const shown = (text: string) => JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}...` : text);
+  const atts = await get(npmAttestationsUrl(registry, name, version));
+  if ("reason" in atts) return atts;
+  if (atts.status === 404) return { none: true };
+  if (atts.status !== 200) return { reason: `the registry answered ${atts.status} for its attestations` };
+  const list = (atts.body as { attestations?: unknown } | undefined)?.attestations;
+  if (!Array.isArray(list)) return { reason: `the registry answered 200 with ${shown(atts.text)} for its attestations, which is not an attestation list, so there is no provenance to check` };
+  const slsa = list.find((a): a is { bundle: unknown } => !!a && typeof a === "object" && (a as { predicateType?: unknown }).predicateType === SLSA_PROVENANCE_PREDICATE);
+  if (!slsa) return { none: true };
+  if (!slsa.bundle || typeof slsa.bundle !== "object") return { reason: "the registry's SLSA provenance for it holds no bundle" };
+  const manifest = await get(npmVersionUrl(registry, name, version));
+  if ("reason" in manifest) return manifest;
+  const integrity = (manifest.body as { dist?: { integrity?: unknown } } | undefined)?.dist?.integrity;
+  const sha512 = typeof integrity === "string" ? /^sha512-([A-Za-z0-9+/=]+)$/.exec(integrity.split(/\s+/).find((i) => i.startsWith("sha512-")) ?? "") : null;
+  if (manifest.status !== 200 || !sha512) return { reason: `the registry answered ${manifest.status} with no sha512 dist.integrity for ${name}@${version}, so what its provenance signs can't be checked` };
+  return { bundle: new Uint8Array(Buffer.from(JSON.stringify(slsa.bundle))), digest: `sha512:${Buffer.from(sha512[1]!, "base64").toString("hex")}` };
 }
 
 /**
@@ -216,7 +298,11 @@ export async function recordedSignatures(cwd: string, releaseDigest: string): Pr
  * (which cosign asks for the public key), else the key the publish
  * recorded, from the member, and without the transparency log when the
  * config says `rekor: false`. A private instance's bundles are checked
- * against the `release.signing.trustRoot` it names.
+ * against the `release.signing.trustRoot` it names. An npm package published
+ * with provenance (#5572) has its SLSA provenance read from the registry's
+ * attestations, and checked against the SHA-512 the registry serves for the
+ * version, as a keyless bundle is: npm keeps it, so the record holds only
+ * the identity it names.
  */
 export async function verifySigstore(req: {
   cwd: string;
@@ -226,15 +312,22 @@ export async function verifySigstore(req: {
   env?: NodeJS.ProcessEnv;
   /** Check only the bundles of targets of these kinds, such as `["oci"]` (#5467). Default: every one. */
   kinds?: readonly string[];
+  /** How an npm package's provenance is read from its registry (#5572). Default: the global fetch, with a 30s timeout. */
+  fetch?: import("./release-publish").PublishFetch;
 }): Promise<SigstoreVerification> {
   const { existsSync, readFileSync } = await import("node:fs");
   const { join, resolve } = await import("node:path");
-  const { cosignVerifier, cosignPath, isKeyIdentity, resolveSigning } = await import("./publish-signing");
+  const { cosignVerifier, cosignPath, isKeyIdentity, resolveSigning, SLSA_PROVENANCE_PREDICATE } = await import("./publish-signing");
   const { bytesDigest } = await import("./publish-targets");
   const { loadChantConfig } = await import("../config");
+  const { publishTargetKey } = await import("./publish-targets");
+  const NONE = "the publish record holds no Sigstore signature for this release";
   const recorded = (await recordedSignatures(req.cwd, req.releaseDigest)).filter((r) => !req.kinds || req.kinds.includes(r.kind));
-  if (recorded.length === 0) return { status: "none", checks: [], reason: "the publish record holds no Sigstore signature for this release" };
-  const config = (await loadChantConfig(req.cwd).catch(() => null))?.config.release?.signing;
+  // #5572: each npm package a publish revealed, whose provenance npm keeps on the registry.
+  const npmLines = (await newestRevealed(req.cwd, req.releaseDigest)).filter((r) => r.kind === "npm" && (!req.kinds || req.kinds.includes("npm")));
+  if (recorded.length === 0 && npmLines.length === 0) return { status: "none", checks: [], reason: NONE };
+  const chantConfig = (await loadChantConfig(req.cwd).catch(() => null))?.config;
+  const config = chantConfig?.release?.signing;
   const setting = resolveSigning(config ?? true, new Set());
   const env = req.env ?? process.env;
   // #5458: a private instance's trusted root, from the member.
@@ -307,6 +400,41 @@ export async function verifySigstore(req: {
     }
     done(why ? "failed" : "verified", why ?? `${verifier.name} verified it for ${signs.map((s) => s.name).join(", ")}`);
   }
+  // #5572: an npm package's provenance, from the registry it was published to. npm signs it keylessly
+  // with the job's token, so it is checked against release.signing.identity and issuer when the config
+  // names them, else the identity the publish recorded. A package with neither was not published from CI
+  // with provenance, and the registry is not asked; nor is a package the registry holds no provenance for.
+  const fetchFn: import("./release-publish").PublishFetch = req.fetch ?? ((url, init) => fetch(url, { method: init.method, headers: init.headers, signal: AbortSignal.timeout(30_000) }));
+  const decls = (chantConfig?.release?.publish ?? []) as import("./publish-declaration").PublishDeclaration[];
+  for (const r of npmLines) {
+    const decl = decls.find((d) => d.type === "npm" && publishTargetKey(d) === r.target) as { registry?: string } | undefined;
+    const registry = decl?.registry ?? NPMJS_REGISTRY;
+    for (const item of r.items.filter((i) => i.attachment === undefined && !i.refused)) {
+      const was = item.sigstore && !isKeyIdentity(item.sigstore) ? item.sigstore : undefined;
+      const issuer = setting.issuer ?? was?.issuer;
+      const identity = setting.identity ?? was?.identity;
+      if (!issuer || !identity) continue;
+      const id = { issuer, identity };
+      const at = item.name.lastIndexOf("@");
+      const [name, version] = [item.name.slice(0, at), item.name.slice(at + 1)];
+      const base = { name: `${item.name} provenance`, kind: "npm", target: r.name, attachment: "attestation" as const, identity: id };
+      const got = await fetchNpmProvenance(fetchFn, registry, name, version);
+      if ("none" in got) continue;
+      if ("reason" in got) {
+        checks.push({ ...base, signs: [], status: "unchecked", reason: got.reason });
+        continue;
+      }
+      const signs = [{ name: item.name, digest: got.digest }];
+      const done = (status: SigstoreCheck["status"], reason: string) => checks.push({ ...base, signs, status, reason });
+      if (noTrustRoot) done("unchecked", noTrustRoot);
+      else if (missing) done("unchecked", missing);
+      else {
+        const why = await verifier.verifyBlobAttestation(got.bundle, got.digest, SLSA_PROVENANCE_PREDICATE, id);
+        done(why ? "failed" : "verified", why ?? `${verifier.name} verified the registry's provenance for ${item.name}`);
+      }
+    }
+  }
+  if (checks.length === 0) return { status: "none", checks: [], reason: `${NONE}, and the registry holds no provenance for its npm packages` };
   const bad = checks.filter((c) => c.status !== "verified");
   return {
     status: bad.length === 0 ? "verified" : "failed",

@@ -1282,24 +1282,19 @@ export async function runReleaseVerify(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "release verify needs a release", hint: USAGE }));
     return 1;
   }
-  const { verifyRelease, verificationCode, verifySigstore, recordedSignatures, sigstoreCarries } = await import("../../lifecycle/release-verify");
+  const { verifyRelease, carriedVerification, verifySigstore, recordedSignatures } = await import("../../lifecycle/release-verify");
   const result = await verifyRelease({ cwd: resolve("."), ref });
   if ("error" in result) {
     if (args.json) console.log(JSON.stringify({ ref, error: result.error }, null, 2));
     else console.error(formatError({ message: `${result.error.message} [${result.error.code}]`, ...(result.error.fix ? { hint: result.error.fix } : {}) }));
     return 1;
   }
-  let code: string | null = verificationCode(result);
-  // #5164: --sigstore checks the bundles the publish recorded; without it, verify stays offline and says how many there are.
+  // #5164: --sigstore checks the bundles the publish recorded, and (#5572) an npm package's provenance on its registry; without it, verify stays offline and says how many there are.
   const sigstore = args.sigstore ? await verifySigstore({ cwd: resolve("."), releaseDigest: result.releaseDigest, ...(args.assets ? { assetsDir: args.assets } : {}) }) : null;
   const recorded = sigstore ? sigstore.checks.length : (await recordedSignatures(resolve("."), result.releaseDigest)).length;
   // The Sigstore identity carries a CI release no cut of which is ssh-signed, unless the workspace names a `release` gate.
-  const bySigstore = code === "release-unsigned" && sigstoreCarries(result, sigstore);
-  if (bySigstore) {
-    code = null;
-    result.reason = "no cut is ssh-signed; the release is verified by its Sigstore identity";
-  }
-  result.carriedBy = code ? null : bySigstore ? "sigstore" : "ssh";
+  let code: string | null = carriedVerification(result, sigstore);
+  const bySigstore = result.carriedBy === "sigstore";
   // #4657: a package built here that pins an image digest the release does not record fails the check.
   const pins = code ? null : await unknownPackagePins(resolve("."), result.releaseDigest);
   if (pins) {

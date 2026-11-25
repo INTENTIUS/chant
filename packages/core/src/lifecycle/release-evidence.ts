@@ -503,7 +503,7 @@ export async function exportEvidence(req: ExportEvidenceRequest): Promise<Export
     const entry: EvidenceRelease = { releaseDigest: r.digest, label: r.label, commit: r.commit, cutAt: r.cutAt, verify: "error" in v ? "error" : v.status, verifyFile };
     if ("error" in v) problems.push(`release verify could not check ${r.label ?? r.digest}: ${v.error.message}`);
     if (req.sigstore) {
-      const s = await verifySigstore({ cwd: req.cwd, releaseDigest: r.digest, env, ...(req.assetsDir ? { assetsDir: req.assetsDir } : {}), ...(req.verifier ? { verifier: req.verifier } : {}) });
+      const s = await verifySigstore({ cwd: req.cwd, releaseDigest: r.digest, env, ...(req.assetsDir ? { assetsDir: req.assetsDir } : {}), ...(req.verifier ? { verifier: req.verifier } : {}), ...(req.fetch ? { fetch: req.fetch } : {}) });
       const sigstoreFile = `verify/${safe(r.digest)}.sigstore.json`;
       add(sigstoreFile, json(s), { produced: `chant release verify ${r.digest} --sigstore --json` }, [{ kind: "sigstore-verify" }]);
       entry.sigstore = s.status;

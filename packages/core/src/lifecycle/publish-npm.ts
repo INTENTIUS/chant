@@ -28,8 +28,11 @@
  * reveal then checks what it published (#4049): in an empty directory it
  * installs every package at its version with `npm install --ignore-scripts`
  * and runs `npm audit signatures`, which fails on a package whose registry
- * signature or provenance attestation does not verify. From a workstation
- * there is no npm provenance, and the release's signature, which
+ * signature or provenance attestation does not verify. Each package's line
+ * in the publish record then names the identity the provenance certificate
+ * was issued to (#5572), and `chant release verify --sigstore` reads the
+ * provenance from the registry and checks it against that identity. From a
+ * workstation there is no npm provenance, and the release's signature, which
  * `chant release verify` checks, is the only provenance.
  *
  * Each package carries its SBOM (#4049): npm keeps no file beside a package,
@@ -69,6 +72,7 @@ import { trainName } from "./publish-train-names";
 import { readPins, unknownPins } from "./release-images";
 import { NPM_STAGE_TAG, PublishTargetError, statusMessage, type PublishContext, type PublishContextBase, type PublishDeps, type PublishItem, type PublishTarget, type StatusAction, type StatusContext } from "./release-publish";
 import { prereleaseOf } from "./release-prerelease";
+import { signingIdentity } from "./publish-signing";
 
 /** npm's output when a publish could not authenticate. */
 const NPM_AUTH_FAILED = /ENEEDAUTH|E401|need auth/;
@@ -414,6 +418,19 @@ export function checkPackagesPublished(
     .filter((p) => isNpmjsRegistry(p.registry) && !lookup(p.name, p.registry))
     .map((p) => p.name);
   if (missing.length > 0) throw neverPublishedError(missing);
+}
+
+/**
+ * #5572: the identity the certificate of a package's npm provenance names,
+ * when the publish passed `--provenance`: npm signs it keylessly with the
+ * job's OIDC token, so it names what {@link signingIdentity} reads from the
+ * job. Nothing is signed or fetched here; `release verify --sigstore` reads
+ * the provenance from the registry and checks it against this.
+ */
+function provenanceIdentity(ctx: Pick<PublishContext, "provenance" | "env">): Pick<PublishItem, "sigstore"> {
+  if (!ctx.provenance.oidc) return {};
+  const id = signingIdentity(ctx.env);
+  return "identity" in id ? { sigstore: id.identity } : {};
 }
 
 export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): PublishTarget {
@@ -796,10 +813,13 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
       const tag = revealTag(ctx);
       const pkgs = read(ctx);
       const items: PublishItem[] = [];
+      // #5572: who the registry's provenance for each package names, so `release verify --sigstore` checks it against the same identity as an OCI or forge bundle.
+      const signed = provenanceIdentity(ctx);
+      const revealed = (pkg: NpmPackage): PublishItem => ({ name: `${pkg.name}@${pkg.version}`, destination: shown(tag), ...extra(pkg), ...signed });
       if (!staging) {
         // Already under the reveal tag since the stage; only the audit is left.
         if (ctx.provenance.oidc) await audit(ctx, pkgs);
-        return { target: this.name, destination: this.destination, items: pkgs.map((pkg) => ({ name: `${pkg.name}@${pkg.version}`, destination: shown(tag), ...extra(pkg) })) };
+        return { target: this.name, destination: this.destination, items: pkgs.map(revealed) };
       }
       // The declared order: the first package is the set's core, and its tag moves first.
       for (const pkg of pkgs) {
@@ -815,7 +835,7 @@ export function npmTarget(decl: NpmPublishDeclaration, deps: PublishDeps): Publi
             `Moving a dist-tag needs npm credentials that may change dist-tags; over OIDC that is "Allow npm dist-tag" on the package's trusted-publisher record.`,
           );
         }
-        items.push({ name: `${pkg.name}@${pkg.version}`, destination: shown(tag), ...extra(pkg) });
+        items.push(revealed(pkg));
       }
       if (ctx.provenance.oidc) await audit(ctx, pkgs);
       return { target: this.name, destination: this.destination, items };
