@@ -13,6 +13,8 @@ export interface RenderLexiconEntry {
   resourceType: string;
   kind: "resource" | "property";
   lexicon: "render";
+  /** For a property type, the upstream schema it was generated from. */
+  source?: string;
   constraints?: Record<string, PropertyConstraints>;
 }
 
@@ -36,6 +38,7 @@ export function generateLexiconJSON(results: RenderParseResult[], naming: Naming
         kind: r?.isProperty ? "property" : "resource",
         lexicon: "render",
       };
+      if (r?.isProperty && r.schema) entry.source = r.schema;
       if (propConstraints && Object.keys(propConstraints).length > 0) {
         entry.constraints = propConstraints;
       }

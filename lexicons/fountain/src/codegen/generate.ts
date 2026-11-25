@@ -12,7 +12,7 @@ import {
 } from "@intentius/chant/codegen/generate";
 import { fetchSchemas } from "../spec/fetch";
 import { parseFountainOpenAPI, type FountainParseResult } from "../spec/parse";
-import { NamingStrategy } from "./naming";
+import { NamingStrategy, publishedNames, publishedSchemaNames } from "./naming";
 import { generateLexiconJSON } from "./generate-lexicon";
 import { generateTypeScriptDeclarations } from "./generate-typescript";
 import {
@@ -33,18 +33,23 @@ export async function generate(opts: GenerateOptions = {}): Promise<GenerateResu
   // multiple results. The pipeline calls parseSchema once, so we return the
   // first result and inject the rest via augmentResults.
   let pendingResults: FountainParseResult[] = [];
+  // #5569: a published name stays with the type and the schema that
+  // published it, so a new schema sharing its name is the one qualified. A
+  // caller-supplied schema set names its fixtures by the rule alone.
+  const published = opts.schemaSource ? {} : publishedNames();
+  const publishedSchemas = opts.schemaSource ? {} : publishedSchemaNames();
 
   const config: GeneratePipelineConfig<FountainParseResult> = {
     fetchSchemas: (fetchOpts) => fetchSchemas({ force: fetchOpts.force }),
 
     parseSchema: (_typeName, data) => {
-      const results = parseFountainOpenAPI(data);
+      const results = parseFountainOpenAPI(data, publishedSchemas);
       if (results.length === 0) return null;
       pendingResults = results.slice(1);
       return results[0];
     },
 
-    createNaming: (results) => new NamingStrategy(results),
+    createNaming: (results) => new NamingStrategy(results, published),
 
     augmentResults: (results, _opts, log) => {
       if (pendingResults.length > 0) {

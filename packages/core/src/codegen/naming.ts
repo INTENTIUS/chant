@@ -82,13 +82,15 @@ export interface NamingConfig {
  * Pass `kind: "interface"` for the declaration-only interface names a lexicon
  * records (k8s definitions): upstream definition key -> name, from the
  * `interface` entries and from the `interface` field of a registry entry that
- * shares its name with one.
+ * shares its name with one. Pass `kind: "property"` for a lexicon whose
+ * property types are standalone inputs to the naming step rather than
+ * children of a resource (fountain, render).
  */
 export function reservedNamesFromSnapshot(
   snapshot:
     | { entries?: Record<string, { kind?: string; resourceType?: string; interface?: string }> }
     | undefined,
-  kind: "resource" | "interface" = "resource",
+  kind: "resource" | "property" | "interface" = "resource",
 ): Record<string, string> {
   const reserved: Record<string, string> = {};
   for (const [tsName, entry] of Object.entries(snapshot?.entries ?? {})) {
@@ -112,7 +114,7 @@ export function reservedNamesFromSnapshot(
  */
 export function readPublishedNames(
   snapshotPath: string,
-  kind: "resource" | "interface" = "resource",
+  kind: "resource" | "property" | "interface" = "resource",
 ): Record<string, string> {
   try {
     if (!existsSync(snapshotPath)) return {};
@@ -120,6 +122,109 @@ export function readPublishedNames(
   } catch {
     return {};
   }
+}
+
+/**
+ * The property-type names a lexicon has published, by the upstream schema
+ * each came from: schema -> the last segment of its type name. Read from the
+ * `source` the committed surface snapshot records for each property type.
+ * Empty when there is no snapshot, it cannot be parsed, or it records no
+ * sources yet.
+ */
+export function readPublishedSources(snapshotPath: string): Record<string, string> {
+  try {
+    if (!existsSync(snapshotPath)) return {};
+    const snapshot = JSON.parse(readFileSync(snapshotPath, "utf-8")) as {
+      entries?: Record<string, { kind?: string; resourceType?: string; source?: string }>;
+    };
+    const names: Record<string, string> = {};
+    for (const entry of Object.values(snapshot.entries ?? {})) {
+      if (entry.kind !== "property" || !entry.source || !entry.resourceType) continue;
+      names[entry.source] ??= entry.resourceType.slice(entry.resourceType.lastIndexOf("::") + 2);
+    }
+    return names;
+  } catch {
+    return {};
+  }
+}
+
+/** How {@link nameSchemas} names the schemas of one lexicon. */
+export interface SchemaNamingRule {
+  /** The lexicon, for error messages. */
+  lexicon: string;
+  /** The name a schema takes when nothing else shares it. */
+  short: (schemaName: string) => string;
+  /**
+   * The name a schema takes when another schema, a resource or a published
+   * type holds its short name.
+   */
+  qualified: (schemaName: string) => string;
+  /** Names that no schema may take: the lexicon's resources. */
+  held?: Iterable<string>;
+}
+
+/**
+ * Give every emitted upstream schema the last segment of its type name, so
+ * that no two schemas share one and a published name stays with the schema
+ * that published it (chant #5569, the rule fly adopted in #5551).
+ *
+ * A schema keeps a name it has already published (`published`, schema ->
+ * name, normally {@link readPublishedSources}). Every other schema takes its
+ * short name when no other emitted schema shares it and no resource or
+ * published type holds it. Otherwise it takes its qualified name, so a new
+ * upstream schema that shares a published short name builds beside it and
+ * the published name does not move. Without published names, every schema
+ * sharing a short name is qualified, whatever order the spec lists them in.
+ * Two schemas left with one name are refused rather than emitted twice.
+ *
+ * Returns schema -> name in the order of `emitted`.
+ */
+export function nameSchemas(
+  emitted: string[],
+  rule: SchemaNamingRule,
+  published: Record<string, string> = {},
+): Map<string, string> {
+  const held = new Map<string, string>();
+  for (const name of rule.held ?? []) held.set(name, `the resource ${name}`);
+
+  const names = new Map<string, string>();
+  for (const schemaName of emitted) {
+    const name = published[schemaName];
+    if (name !== undefined && !held.has(name)) {
+      names.set(schemaName, name);
+      held.set(name, `schema ${schemaName}`);
+    }
+  }
+
+  const byShortName = new Map<string, string[]>();
+  for (const schemaName of emitted) {
+    if (names.has(schemaName)) continue;
+    const short = rule.short(schemaName);
+    byShortName.set(short, [...(byShortName.get(short) ?? []), schemaName]);
+  }
+
+  const assigned: Array<[string, string]> = [];
+  for (const [short, users] of byShortName) {
+    if (users.length === 1 && !held.has(short)) {
+      assigned.push([users[0], short]);
+      continue;
+    }
+    for (const schemaName of users) assigned.push([schemaName, rule.qualified(schemaName)]);
+  }
+
+  for (const [schemaName, name] of assigned) {
+    const owner = held.get(name);
+    if (owner !== undefined) {
+      throw new Error(
+        `${rule.lexicon} codegen: schema ${schemaName} would take the type name ${name}, which ${owner} holds. ` +
+          `Give one of them a name of its own in the lexicon's parser.`,
+      );
+    }
+    held.set(name, `schema ${schemaName}`);
+    names.set(schemaName, name);
+  }
+
+  return new Map(emitted.map((schemaName) => [schemaName, names.get(schemaName)!]));
 }
 
 /**

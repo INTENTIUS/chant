@@ -35,6 +35,7 @@ import {
   type JsonSchemaProperty,
   type PropertyConstraints,
 } from "@intentius/chant/codegen/json-schema";
+import { nameSchemas, type SchemaNamingRule } from "@intentius/chant/codegen/naming";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ export interface FountainParseResult {
   enums: Array<{ name: string; values: string[] }>;
   /** Whether this entity is a property type (nested config shape). */
   isProperty?: boolean;
+  /** For a property type, the upstream schema it was generated from (`Repository`). */
+  schema?: string;
 }
 
 // ── OpenAPI types ──────────────────────────────────────────────────
@@ -188,12 +191,19 @@ function refProperty(ref: RefSpec): ParsedProperty {
 /**
  * Parse the fountain OpenAPI spec into the curated resources and the
  * property types reachable from their request schemas.
+ *
+ * @param publishedSchemas upstream schema -> the name the lexicon already
+ *   published for it, normally read from the committed surface snapshot. A
+ *   published name stays with its schema; see {@link nameFountainSchemas}.
  */
-export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult[] {
+export function parseFountainOpenAPI(
+  data: string | Buffer,
+  publishedSchemas: Record<string, string> = {},
+): FountainParseResult[] {
   const spec: OpenAPISpec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8"));
   const schemas = spec.components?.schemas ?? {};
 
-  const emitted = collectPropertyTypes(schemas);
+  const emitted = nameFountainSchemas(collectPropertyTypes(schemas), publishedSchemas);
   const resolve = (prop: OpenAPISchema | undefined): string => resolveType(prop, schemas, emitted);
 
   const results: FountainParseResult[] = [];
@@ -271,7 +281,7 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
     });
   }
 
-  for (const schemaName of emitted) {
+  for (const [schemaName, className] of emitted) {
     const def = schemas[schemaName];
     const requiredSet = new Set(def.required ?? []);
     const properties: ParsedProperty[] = [];
@@ -286,7 +296,7 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
     }
     results.push({
       resource: {
-        typeName: `Fountain::${SERVICE}::${schemaToClassName(schemaName)}`,
+        typeName: `Fountain::${SERVICE}::${className}`,
         description: def.description,
         properties,
         attributes: [],
@@ -294,6 +304,7 @@ export function parseFountainOpenAPI(data: string | Buffer): FountainParseResult
       propertyTypes: [],
       enums: [],
       isProperty: true,
+      schema: schemaName,
     });
   }
 
@@ -381,7 +392,7 @@ function unionOf(types: string[]): string {
 function resolveType(
   prop: OpenAPISchema | undefined,
   schemas: Record<string, OpenAPISchema>,
-  emitted: string[],
+  emitted: Map<string, string>,
 ): string {
   if (!prop) return "any";
 
@@ -429,13 +440,14 @@ function resolveType(
 }
 
 /** Resolve a `#/components/schemas/X` ref to a TypeScript type. */
-function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, emitted: string[]): string {
+function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, emitted: Map<string, string>): string {
   if (!ref.startsWith(REF_PREFIX)) return "any";
   const name = ref.slice(REF_PREFIX.length);
   const def = schemas[name];
   if (!def) return "any";
 
-  if (emitted.includes(name)) return schemaToClassName(name);
+  const className = emitted.get(name);
+  if (className !== undefined) return className;
 
   if (isEnumDefinition(def)) {
     return [...(def.enum ?? [])].sort().map((v) => JSON.stringify(v)).join(" | ");
@@ -466,9 +478,40 @@ function resolveRefType(ref: string, schemas: Record<string, OpenAPISchema>, emi
 
 // ── Naming helpers ─────────────────────────────────────────────────
 
-/** Convert a schema name into a PascalCase class-name segment. */
-export function schemaToClassName(schemaName: string): string {
-  return schemaName.charAt(0).toUpperCase() + schemaName.slice(1);
+/**
+ * Convert a schema name into a PascalCase class-name segment.
+ *
+ * With `qualified`, the service segment leads the name: "repository" ->
+ * "V1Repository". Fountain's schema names have no namespace of their own, so
+ * that is the part a newcomer keeps when another schema holds its name.
+ */
+export function schemaToClassName(schemaName: string, qualified = false): string {
+  const name = schemaName.charAt(0).toUpperCase() + schemaName.slice(1);
+  return qualified ? `${SERVICE}${name}` : name;
+}
+
+const FOUNTAIN_SCHEMA_NAMING: SchemaNamingRule = {
+  lexicon: "fountain",
+  short: (schemaName) => schemaToClassName(schemaName),
+  qualified: (schemaName) => schemaToClassName(schemaName, true),
+  held: RESOURCES.map((r) => fountainShortName(r.typeName)),
+};
+
+/**
+ * Give every emitted schema its class-name segment (chant #5569).
+ *
+ * A schema keeps a name it has already published. Any other schema takes its
+ * short name ({@link schemaToClassName}) when no other emitted schema shares
+ * it and no resource or published type holds it, and the qualified name
+ * otherwise. Upstream adding `repository` beside a published `Repository`
+ * therefore emits `V1Repository` for the newcomer and leaves `Repository`
+ * where it was.
+ */
+export function nameFountainSchemas(
+  emitted: string[],
+  published: Record<string, string> = {},
+): Map<string, string> {
+  return nameSchemas(emitted, FOUNTAIN_SCHEMA_NAMING, published);
 }
 
 /** Extract short name: "Fountain::V1::Agent" → "Agent". */

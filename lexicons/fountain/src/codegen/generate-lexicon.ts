@@ -13,6 +13,8 @@ export interface FountainLexiconEntry {
   resourceType: string;
   kind: "resource" | "property";
   lexicon: "fountain";
+  /** For a property type, the upstream schema it was generated from. */
+  source?: string;
   /**
    * Every authored prop name, sorted.
    *
@@ -52,6 +54,7 @@ export function generateLexiconJSON(results: FountainParseResult[], naming: Nami
         kind: r?.isProperty ? "property" : "resource",
         lexicon: "fountain",
       };
+      if (r?.isProperty && r.schema) entry.source = r.schema;
       const propNames = (r?.resource.properties ?? []).map((p) => p.name).sort();
       if (propNames.length > 0) entry.props = propNames;
       if (propConstraints && Object.keys(propConstraints).length > 0) {

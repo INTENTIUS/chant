@@ -124,7 +124,7 @@ export interface FountainCoverageReport {
 }
 
 interface SurfaceSnapshot {
-  entries: Record<string, { kind: string; props?: string[] }>;
+  entries: Record<string, { kind: string; resourceType?: string; source?: string; props?: string[] }>;
 }
 
 /** Strip the `name:required` encoding the surface baseline uses. */
@@ -136,7 +136,15 @@ export function computeFountainCoverage(
   specJSON: string | Buffer,
   surface: SurfaceSnapshot,
 ): FountainCoverageReport {
-  const parsed = parseFountainOpenAPI(specJSON);
+  // Parse with the published names, as generation does (#5569), so a spec
+  // with two schemas sharing a name parses here too.
+  const published: Record<string, string> = {};
+  for (const entry of Object.values(surface.entries)) {
+    if (entry.kind === "property" && entry.source && entry.resourceType) {
+      published[entry.source] ??= fountainShortName(entry.resourceType);
+    }
+  }
+  const parsed = parseFountainOpenAPI(specJSON, published);
 
   const kinds: KindCoverage[] = [];
   const modeledKinds: string[] = [];
