@@ -331,8 +331,8 @@ function exitCodeOf(error: string | undefined): number | undefined {
 
 /**
  * The code `chant ci run` exits with for a settled job: 0 when it passed,
- * else its command's own code when that is 1 to 255, such as 3 for a moved
- * plan or a waiting wave (#4156), else 1. The run index records the same
+ * else its command's own code when that is 1 to 255, such as 4 for a moved
+ * plan or 3 for a waiting wave (#4156), else 1. The run index records the same
  * code (#4165).
  */
 export function ciJobExitCode(result: { status: OpRunResult["status"]; exitCode?: number }): number {
@@ -590,7 +590,7 @@ export interface CiRunResult {
   warnings: string[];
   /** What `--verbose` prints: such as a run left unsigned when nothing asks for a signature (#4156). */
   notes: string[];
-  /** The exit code of the job's command when it failed with one, such as pr-apply's 3 for a moved plan. */
+  /** The exit code of the job's command when it failed with one, such as pr-apply's 4 for a moved plan. */
   exitCode?: number;
   /** The checkout the job ran in, removed by now. */
   checkout: string;
@@ -1337,7 +1337,7 @@ export async function runCiRun(ctx: CommandContext): Promise<number> {
       for (const w of result.post.warnings) console.error(formatWarning({ message: w }));
       console.error(formatCiRun(result.post));
     }
-    // #4156: a failed command's own exit code, such as 3 for a moved plan, is the job's, as it was before the job ran through ci run.
+    // #4156: a failed command's own exit code, such as 4 for a moved plan, is the job's, as it was before the job ran through ci run.
     // #4330: an env-up whose env-post failed fails too, since its record was not kept.
     const code = ciJobExitCode(result);
     return code === 0 && result.post ? ciJobExitCode(result.post) : code;
