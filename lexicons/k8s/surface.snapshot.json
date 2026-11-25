@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-24T19:16:20.830Z",
+  "generatedAt": "2026-11-24T22:56:54.500Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -1408,7 +1408,7 @@
     },
     "ClusterTrustBundleSpec": {
       "kind": "interface",
-      "resourceType": "io.k8s.api.certificates.v1beta1.ClusterTrustBundleSpec"
+      "resourceType": "io.k8s.api.certificates.v1.ClusterTrustBundleSpec"
     },
     "CnpgCluster": {
       "kind": "resource",
@@ -1574,6 +1574,26 @@
         "metadata:false"
       ]
     },
+    "CompositeDisruptionMode": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.CompositeDisruptionMode"
+    },
+    "CompositeGangSchedulingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.CompositeGangSchedulingPolicy"
+    },
+    "CompositePodGroupSchedulingConstraints": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.CompositePodGroupSchedulingConstraints"
+    },
+    "CompositePodGroupSchedulingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.CompositePodGroupSchedulingPolicy"
+    },
+    "CompositePodGroupTemplate": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.CompositePodGroupTemplate"
+    },
     "Compress": {
       "kind": "property",
       "resourceType": "K8s::Traefik::Middleware.compress"
@@ -1664,9 +1684,9 @@
       "kind": "resource",
       "resourceType": "K8s::Apps::ControllerRevision",
       "props": [
-        "data:false",
+        "data:true",
         "metadata:false",
-        "revision:true"
+        "revision:false"
       ]
     },
     "ControllerRevisionList": {
@@ -1890,7 +1910,7 @@
       "resourceType": "K8s::Apps::DaemonSet",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "DaemonSet": {
@@ -1898,7 +1918,7 @@
       "resourceType": "K8s::Apps::DaemonSet",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "DaemonSetList": {
@@ -1959,7 +1979,7 @@
       "resourceType": "K8s::Apps::Deployment",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "Deployment": {
@@ -1967,7 +1987,7 @@
       "resourceType": "K8s::Apps::Deployment",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "DeploymentList": {
@@ -2023,7 +2043,7 @@
       "resourceType": "K8s::Resource::DeviceClass",
       "props": [
         "metadata:false",
-        "spec:true"
+        "spec:false"
       ]
     },
     "DeviceClassConfiguration": {
@@ -2049,6 +2069,10 @@
     "DeviceCounterConsumption": {
       "kind": "interface",
       "resourceType": "io.k8s.api.resource.v1.DeviceCounterConsumption"
+    },
+    "DeviceDerivedAttribute": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.DeviceDerivedAttribute"
     },
     "DeviceRequest": {
       "kind": "interface",
@@ -2080,11 +2104,11 @@
     },
     "DeviceTaintRuleSpec": {
       "kind": "interface",
-      "resourceType": "io.k8s.api.resource.v1beta2.DeviceTaintRuleSpec"
+      "resourceType": "io.k8s.api.resource.v1.DeviceTaintRuleSpec"
     },
     "DeviceTaintSelector": {
       "kind": "interface",
-      "resourceType": "io.k8s.api.resource.v1beta2.DeviceTaintSelector"
+      "resourceType": "io.k8s.api.resource.v1.DeviceTaintSelector"
     },
     "DeviceToleration": {
       "kind": "interface",
@@ -2101,6 +2125,10 @@
     "DiscoveryEndpointPort": {
       "kind": "interface",
       "resourceType": "io.k8s.api.discovery.v1.EndpointPort"
+    },
+    "DisruptionMode": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.DisruptionMode"
     },
     "DnsSDConfig": {
       "kind": "property",
@@ -2321,6 +2349,10 @@
         "metadata:false"
       ]
     },
+    "EvictionResponder": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.EvictionResponder"
+    },
     "ExactDeviceRequest": {
       "kind": "interface",
       "resourceType": "io.k8s.api.resource.v1.ExactDeviceRequest"
@@ -2410,7 +2442,7 @@
       "resourceType": "K8s::Flowcontrol::FlowSchema",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "FlowSchemaList": {
@@ -2600,6 +2632,10 @@
     "GRPCRoute_Status": {
       "kind": "property",
       "resourceType": "K8s::Gateway::GRPCRoute.status"
+    },
+    "GangSchedulingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.GangSchedulingPolicy"
     },
     "Gateway": {
       "kind": "resource",
@@ -3841,6 +3877,10 @@
         "metadata:false"
       ]
     },
+    "JobSchedulingConfiguration": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.batch.v1.JobSchedulingConfiguration"
+    },
     "JobSpec": {
       "kind": "interface",
       "resourceType": "io.k8s.api.batch.v1.JobSpec"
@@ -4670,9 +4710,17 @@
       "kind": "interface",
       "resourceType": "io.k8s.api.core.v1.NodeAffinity"
     },
-    "NodeAllocatableResourceMapping": {
+    "NodeAllocatableMapping": {
       "kind": "interface",
-      "resourceType": "io.k8s.api.resource.v1.NodeAllocatableResourceMapping"
+      "resourceType": "io.k8s.api.resource.v1.NodeAllocatableMapping"
+    },
+    "NodeAllocatableOverhead": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.NodeAllocatableOverhead"
+    },
+    "NodeAllocatableResource": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.resource.v1.NodeAllocatableResource"
     },
     "NodeConfigSource": {
       "kind": "interface",
@@ -4689,6 +4737,10 @@
     "NodeMaintenanceWindow": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Cluster.nodeMaintenanceWindow"
+    },
+    "NodePodPreemptionPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.core.v1.NodePodPreemptionPolicy"
     },
     "NodeRepairConfig": {
       "kind": "property",
@@ -5248,7 +5300,7 @@
     },
     "PodCertificateRequestSpec": {
       "kind": "interface",
-      "resourceType": "io.k8s.api.certificates.v1beta1.PodCertificateRequestSpec"
+      "resourceType": "io.k8s.api.certificates.v1.PodCertificateRequestSpec"
     },
     "PodDNSConfig": {
       "kind": "interface",
@@ -5297,6 +5349,42 @@
     "PodFailurePolicyRule": {
       "kind": "interface",
       "resourceType": "io.k8s.api.batch.v1.PodFailurePolicyRule"
+    },
+    "PodGroup": {
+      "kind": "resource",
+      "resourceType": "K8s::Scheduling::PodGroup",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "PodGroupList": {
+      "kind": "resource",
+      "resourceType": "K8s::Scheduling::PodGroupList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "PodGroupResourceClaim": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.PodGroupResourceClaim"
+    },
+    "PodGroupSchedulingConstraints": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.PodGroupSchedulingConstraints"
+    },
+    "PodGroupSchedulingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.PodGroupSchedulingPolicy"
+    },
+    "PodGroupSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.PodGroupSpec"
+    },
+    "PodGroupTemplate": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.PodGroupTemplate"
     },
     "PodIdentityAssociation": {
       "kind": "resource",
@@ -5538,7 +5626,7 @@
       "resourceType": "K8s::Flowcontrol::PriorityLevelConfiguration",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "PriorityLevelConfigurationList": {
@@ -6220,7 +6308,7 @@
       "resourceType": "K8s::Apps::ReplicaSet",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "ReplicaSetList": {
@@ -6280,7 +6368,7 @@
       "resourceType": "K8s::Resource::ResourceClaim",
       "props": [
         "metadata:false",
-        "spec:true"
+        "spec:false"
       ]
     },
     "ResourceClaimList": {
@@ -6300,7 +6388,7 @@
       "resourceType": "K8s::Resource::ResourceClaimTemplate",
       "props": [
         "metadata:false",
-        "spec:true"
+        "spec:false"
       ]
     },
     "ResourceClaimTemplateList": {
@@ -6442,10 +6530,6 @@
     "ResourceV1DeviceTaint": {
       "kind": "interface",
       "resourceType": "io.k8s.api.resource.v1.DeviceTaint"
-    },
-    "ResourceV1beta2DeviceTaint": {
-      "kind": "interface",
-      "resourceType": "io.k8s.api.resource.v1beta2.DeviceTaint"
     },
     "Retry": {
       "kind": "property",
@@ -6650,7 +6734,7 @@
       "resourceType": "K8s::Apps::StatefulSet",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "Sampler": {
@@ -6720,6 +6804,18 @@
     "Scheduling": {
       "kind": "interface",
       "resourceType": "io.k8s.api.node.v1.Scheduling"
+    },
+    "SchedulingTypedLocalObjectReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.TypedLocalObjectReference"
+    },
+    "SchedulingV1alpha3TopologyConstraint": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1alpha3.TopologyConstraint"
+    },
+    "SchedulingV1beta1TopologyConstraint": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.TopologyConstraint"
     },
     "ScopeSelector": {
       "kind": "interface",
@@ -7206,7 +7302,7 @@
       "resourceType": "K8s::Apps::StatefulSet",
       "props": [
         "metadata:false",
-        "spec:false"
+        "spec:true"
       ]
     },
     "StatefulSetList": {
@@ -7312,7 +7408,7 @@
     },
     "StorageVersionMigrationSpec": {
       "kind": "interface",
-      "resourceType": "io.k8s.api.storagemigration.v1beta1.StorageVersionMigrationSpec"
+      "resourceType": "io.k8s.api.storagemigration.v1.StorageVersionMigrationSpec"
     },
     "Strategy": {
       "kind": "property",
@@ -8037,6 +8133,50 @@
     "WorkerGroupSpec": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayCluster.workerGroupSpecs"
+    },
+    "Workload": {
+      "kind": "resource",
+      "resourceType": "K8s::Scheduling::Workload",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "WorkloadList": {
+      "kind": "resource",
+      "resourceType": "K8s::Scheduling::WorkloadList",
+      "props": [
+        "items:true",
+        "metadata:false"
+      ]
+    },
+    "WorkloadPodGroupDisruptionMode": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1alpha3.WorkloadPodGroupDisruptionMode"
+    },
+    "WorkloadPodGroupGangSchedulingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1alpha3.WorkloadPodGroupGangSchedulingPolicy"
+    },
+    "WorkloadPodGroupResourceClaim": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1alpha3.WorkloadPodGroupResourceClaim"
+    },
+    "WorkloadPodGroupSchedulingConstraints": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1alpha3.WorkloadPodGroupSchedulingConstraints"
+    },
+    "WorkloadPodGroupSchedulingPolicy": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1alpha3.WorkloadPodGroupSchedulingPolicy"
+    },
+    "WorkloadReference": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.WorkloadReference"
+    },
+    "WorkloadSpec": {
+      "kind": "interface",
+      "resourceType": "io.k8s.api.scheduling.v1beta1.WorkloadSpec"
     }
   }
 }

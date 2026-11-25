@@ -1,0 +1,42 @@
+---
+title: "Upgrade notes"
+description: "Names each upgrade of the k8s lexicon removed, renamed or changed, and what to use after it"
+diataxis: reference
+---
+
+Each section is one upgrade of the k8s lexicon that removed, renamed or changed a name you may import, headed by the package version it shipped in. The newest is last. An upgrade that only added names has no section.
+
+## 0.125.0 (spec v1.36.2 to v1.37.2)
+
+Upgraded on 2026-11-24.
+
+### Removed
+
+These names are gone from the lexicon and nothing replaces them. Code that imports one no longer builds until the import is taken out.
+
+| Name | Resource type |
+|---|---|
+| `NodeAllocatableResourceMapping` | `io.k8s.api.resource.v1.NodeAllocatableResourceMapping` |
+| `ResourceV1beta2DeviceTaint` | `io.k8s.api.resource.v1beta2.DeviceTaint` |
+
+### Changed
+
+These names still exist with the changes listed. Code that sets a dropped property or reads a dropped attribute no longer builds.
+
+| Name | Change |
+|---|---|
+| `ClusterTrustBundleSpec` | resource type is now `io.k8s.api.certificates.v1.ClusterTrustBundleSpec`, was `io.k8s.api.certificates.v1beta1.ClusterTrustBundleSpec` |
+| `ControllerRevision` | properties now required: `data` |
+| `DS` | properties now required: `spec` |
+| `DaemonSet` | properties now required: `spec` |
+| `Deploy` | properties now required: `spec` |
+| `Deployment` | properties now required: `spec` |
+| `DeviceTaintRuleSpec` | resource type is now `io.k8s.api.resource.v1.DeviceTaintRuleSpec`, was `io.k8s.api.resource.v1beta2.DeviceTaintRuleSpec` |
+| `DeviceTaintSelector` | resource type is now `io.k8s.api.resource.v1.DeviceTaintSelector`, was `io.k8s.api.resource.v1beta2.DeviceTaintSelector` |
+| `FlowSchema` | properties now required: `spec` |
+| `PodCertificateRequestSpec` | resource type is now `io.k8s.api.certificates.v1.PodCertificateRequestSpec`, was `io.k8s.api.certificates.v1beta1.PodCertificateRequestSpec` |
+| `PriorityLevelConfiguration` | properties now required: `spec` |
+| `ReplicaSet` | properties now required: `spec` |
+| `STS` | properties now required: `spec` |
+| `StatefulSet` | properties now required: `spec` |
+| `StorageVersionMigrationSpec` | resource type is now `io.k8s.api.storagemigration.v1.StorageVersionMigrationSpec`, was `io.k8s.api.storagemigration.v1beta1.StorageVersionMigrationSpec` |
