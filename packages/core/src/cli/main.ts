@@ -1447,7 +1447,7 @@ Component release ledger + status:
   components pr-apply      With --apply-on-merge: plan the same members again and apply
                             them only if an approval stands for that digest
                             (chant approve pr-<n> pr-apply --plan <digest>);
-                            a moved plan refuses with exit 3
+                            a moved plan refuses with exit 4
                             (--require-review: the approver must have
                             approved the pull request on the forge;
                             --member <name>, both commands: a workspace

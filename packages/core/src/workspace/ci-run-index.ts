@@ -66,7 +66,7 @@ export interface CiRunIndexEntry {
   signer?: string | null;
   /**
    * The code `chant ci run` exited with for the job: 0, its command's own
-   * code such as 3 for a moved plan or a waiting wave, else 1 (#4165).
+   * code such as 4 for a moved plan or 3 for a waiting wave, else 1 (#4165).
    * Written by chant 0.124.32 and newer; an entry from an older chant lacks it.
    */
   exitCode?: number;
